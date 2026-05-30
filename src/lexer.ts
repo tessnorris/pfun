@@ -82,7 +82,6 @@ export class Lexer {
         case ':': tokens.push({ type: 'ColonToken' }); break;
         case '?': tokens.push({ type: 'QuestionToken' }); break;
         case '.': tokens.push({ type: 'DotToken' }); break;
-        case '_': tokens.push({ type: 'WildcardToken' }); break;
         // '|' is now a pipe token for union variants and match arms.
         // '||' is still supported for boolean or.
         case '|':
@@ -174,6 +173,7 @@ export class Lexer {
     let s = '';
     while (!this.isAtEnd() && this.isAlphaNumeric(this.peek())) s += this.advance();
     switch (s) {
+      case '_':        return { type: 'WildcardToken' };
       case 'true':     return { type: 'BoolToken', value: true };
       case 'false':    return { type: 'BoolToken', value: false };
       case 'let':      return { type: 'LetToken' };

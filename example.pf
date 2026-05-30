@@ -214,7 +214,6 @@ let classify = match ci {
 };
 print classify; // medium circle
 
-/*
 // Wildcard arm as a catch-all (also satisfies exhaustiveness)
 let fallback = match re {
   | Square s -> s.side
@@ -228,7 +227,6 @@ let doubled_area = (match sq {
   | _ -> 0
 }) * 2;
 print doubled_area; // 200
-*/
 
 // Match inside a function
 function describe(shape): {
