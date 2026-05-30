@@ -1,0 +1,128 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE language>
+<language
+  name="Pfun"
+  section="Scripts"
+  extensions="*.pf"
+  mimetype="text/x-pfun"
+  version="5"
+  kateversion="5.0"
+  casesensitive="true"
+  author="Pfun Language"
+  license="MIT"
+>
+
+  <highlighting>
+
+    <!-- Declaration keywords: let, var, type, function, fn -->
+    <list name="declarations">
+      <item>let</item>
+      <item>var</item>
+      <item>type</item>
+      <item>fn</item>
+      <item>function</item>
+    </list>
+
+    <!-- Control flow keywords -->
+    <list name="controlflow">
+      <item>return</item>
+      <item>if</item>
+      <item>then</item>
+      <item>else</item>
+      <item>match</item>
+      <item>where</item>
+    </list>
+
+    <!-- Other keywords -->
+    <list name="other">
+      <item>print</item>
+      <item>eval</item>
+    </list>
+
+    <list name="builtins">
+      <item>head</item>
+      <item>tail</item>
+      <item>cons</item>
+      <item>map</item>
+      <item>filter</item>
+      <item>reduce</item>
+    </list>
+
+    <list name="booleans">
+      <item>true</item>
+      <item>false</item>
+    </list>
+
+    <contexts>
+
+      <context name="Normal" attribute="Normal Text" lineEndContext="#stay">
+
+        <!-- Comments -->
+        <Detect2Chars attribute="Comment" context="LineComment"  char="/" char1="/"/>
+        <Detect2Chars attribute="Comment" context="BlockComment" char="/" char1="*"/>
+
+        <!-- String literals -->
+        <DetectChar attribute="String" context="String" char="&quot;"/>
+
+        <!-- Numbers -->
+        <Int attribute="Decimal" context="#stay"/>
+
+        <!-- Keywords -->
+        <keyword attribute="Declaration"  context="#stay" String="declarations"/>
+        <keyword attribute="ControlFlow"  context="#stay" String="controlflow"/>
+        <keyword attribute="Other"        context="#stay" String="other"/>
+        <keyword attribute="Builtin"      context="#stay" String="builtins"/>
+        <keyword attribute="Boolean"      context="#stay" String="booleans"/>
+
+        <!-- Wildcard _ -->
+        <DetectChar attribute="Wildcard" context="#stay" char="_"/>
+
+        <!-- Multi-char operators -->
+        <Detect2Chars attribute="Operator" context="#stay" char="=" char1="&gt;"/>
+        <Detect2Chars attribute="Operator" context="#stay" char="-" char1="&gt;"/>
+        <Detect2Chars attribute="Operator" context="#stay" char="=" char1="="/>
+        <Detect2Chars attribute="Operator" context="#stay" char="!" char1="="/>
+        <Detect2Chars attribute="Operator" context="#stay" char="&lt;" char1="="/>
+        <Detect2Chars attribute="Operator" context="#stay" char="&gt;" char1="="/>
+        <Detect2Chars attribute="Operator" context="#stay" char="&amp;" char1="&amp;"/>
+        <Detect2Chars attribute="Operator" context="#stay" char="|" char1="|"/>
+
+        <!-- Single-char operators -->
+        <AnyChar attribute="Operator" context="#stay" String="+-*/%=&lt;&gt;!|?"/>
+
+        <!-- Punctuation -->
+        <AnyChar attribute="Punctuation" context="#stay" String="(){}[];:,."/>
+
+      </context>
+
+      <context name="LineComment" attribute="Comment" lineEndContext="#pop">
+      </context>
+
+      <context name="BlockComment" attribute="Comment" lineEndContext="#stay">
+        <Detect2Chars attribute="Comment" context="#pop" char="*" char1="/"/>
+      </context>
+
+      <context name="String" attribute="String" lineEndContext="#pop">
+        <DetectChar attribute="String" context="#pop" char="&quot;"/>
+      </context>
+
+    </contexts>
+
+    <itemDatas>
+      <itemData name="Normal Text"  defStyleNum="dsNormal"       spellChecking="false"/>
+      <itemData name="Declaration"  defStyleNum="dsKeyword"      spellChecking="false"/>
+      <itemData name="ControlFlow"  defStyleNum="dsControlFlow"  spellChecking="false"/>
+      <itemData name="Other"        defStyleNum="dsPreprocessor" spellChecking="false"/>
+      <itemData name="Builtin"      defStyleNum="dsFunction"     spellChecking="false"/>
+      <itemData name="Boolean"      defStyleNum="dsConstant"     spellChecking="false"/>
+      <itemData name="String"       defStyleNum="dsString"       spellChecking="false"/>
+      <itemData name="Decimal"      defStyleNum="dsDecVal"       spellChecking="false"/>
+      <itemData name="Operator"     defStyleNum="dsOperator"     spellChecking="false"/>
+      <itemData name="Punctuation"  defStyleNum="dsOperator"     spellChecking="false"/>
+      <itemData name="Wildcard"     defStyleNum="dsSpecialChar"  spellChecking="false"/>
+      <itemData name="Comment"      defStyleNum="dsComment"      spellChecking="true"/>
+    </itemDatas>
+
+  </highlighting>
+
+</language>

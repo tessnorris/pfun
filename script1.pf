@@ -17,16 +17,16 @@
 
   print v || false;
 
-  function addone(n): {
+  function addone(n) {
     return n+1;
   }
   print addone(5);
 
-  function fact_a(n, acc): {
+  function fact_a(n, acc) {
     if n <= 1 then return acc else fact_a(n - 1, n * acc);
   }
 
-  function fact(n): {
+  function fact(n) {
     return fact_a(n, 1)
   }
 

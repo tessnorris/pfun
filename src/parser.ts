@@ -49,7 +49,6 @@ export class Parser {
     this.consume('LParenToken', "Expected '(' after function name.");
     const params = this.parseParameters();
     this.consume('RParenToken', "Expected ')' after parameters.");
-    this.consume('ColonToken', "Expected ':' after function signature.");
 
     const statements: Stmt[] = [];
     if (this.match('LBraceToken')) {

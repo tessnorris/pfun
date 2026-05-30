@@ -32,7 +32,7 @@ function runFile(filePath: string) {
 
 const args = process.argv.slice(2);
 if (args.length === 0) {
-  console.log('Usage: d1 <script.d1>');
+  console.log('Usage: pfun <script.pf>');
   process.exit(1);
 }
 

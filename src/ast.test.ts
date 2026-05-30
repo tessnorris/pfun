@@ -141,7 +141,7 @@ describe('AST Construction Tests', () => {
   // 4. Functions & Lambdas
   describe('Functions', () => {
     it('should build FunctionStmt', () => {
-      const ast = parse('function add(x, y): { return x + y; }');
+      const ast = parse('function add(x, y) { return x + y; }');
       const stmt = ast[0] as any;
       expect(stmt.type).toBe('FunctionStmt');
       expect(stmt.name).toBe('add');
@@ -174,7 +174,7 @@ describe('AST Construction Tests', () => {
     });
 
     it('should build ReturnStmt with value', () => {
-      const ast = parse('function f(): { return 42; }');
+      const ast = parse('function f() { return 42; }');
       const ret = (ast[0] as any).body[0];
       expect(ret.type).toBe('ReturnStmt');
       expect(ret.value).toEqual({ type: 'IntExpr', value: 42n });

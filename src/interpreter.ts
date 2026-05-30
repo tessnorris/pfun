@@ -11,7 +11,7 @@ function getValueType(v: any): string {
     if (v.length === 0) return 'list';
     return `list<${getValueType(v[0])}>`;
   }
-  if (v instanceof D1Function || v instanceof NativeFunction) return 'function';
+  if (v instanceof PfunFunction || v instanceof NativeFunction) return 'function';
   if (v && v.__type) return v.__type;
   return typeof v;
 }
@@ -58,7 +58,7 @@ export class Thunk {
  * TAIL CALL (Trampolining)
  */
 export class TailCall {
-  constructor(public fn: D1Function, public args: any[]) {}
+  constructor(public fn: PfunFunction, public args: any[]) {}
 }
 
 export class NativeFunction {
@@ -66,7 +66,7 @@ export class NativeFunction {
   execute(args: any[]) { return this.fn(args); }
 }
 
-export class D1Function {
+export class PfunFunction {
   public cache = new Map<string, any>();
   constructor(
     public name: string | null,
@@ -289,7 +289,7 @@ export class Interpreter {
         return;
       }
       case 'FunctionStmt':
-        env.define(stmt.name, new D1Function(stmt.name, stmt.params, stmt.body, env), false);
+        env.define(stmt.name, new PfunFunction(stmt.name, stmt.params, stmt.body, env), false);
         return;
       case 'ReturnStmt':
         throw new ReturnValue(stmt.value ? this.evaluateExpr(stmt.value, env) : undefined);
@@ -331,10 +331,10 @@ export class Interpreter {
         if (!(expr.name in obj)) throw new Error(`Undefined property '${expr.name}'.`);
         return obj[expr.name];
       }
-      case 'LambdaExpr': return new D1Function(null, expr.params, expr.body, env);
+      case 'LambdaExpr': return new PfunFunction(null, expr.params, expr.body, env);
       case 'CallExpr': {
         const callee = this.force(this.evaluateExpr(expr.callee, env));
-        if (!(callee instanceof D1Function) && !(callee instanceof NativeFunction)) {
+        if (!(callee instanceof PfunFunction) && !(callee instanceof NativeFunction)) {
           throw new Error("Can only call functions.");
         }
         const args = expr.args.map(arg => this.force(this.evaluateExpr(arg, env)));
@@ -486,10 +486,10 @@ export class Interpreter {
   /**
    * TRAMPOLINE & MEMOIZATION LOOP
    */
-  private trampoline(fn: D1Function, args: any[]): any {
+  private trampoline(fn: PfunFunction, args: any[]): any {
     let currentFn = fn;
     let currentArgs = args;
-    const callStack: { fn: D1Function, args: any[], key: string }[] = [];
+    const callStack: { fn: PfunFunction, args: any[], key: string }[] = [];
 
     while (true) {
       const cacheKey = this.getCacheKey(currentFn, currentArgs);
@@ -521,7 +521,7 @@ export class Interpreter {
     }
   }
 
-  private getCacheKey(fn: D1Function, args: any[]): string {
+  private getCacheKey(fn: PfunFunction, args: any[]): string {
     const forcedArgs = args.map(arg => this.force(arg));
     return JSON.stringify(forcedArgs, (key, value) =>
       typeof value === 'bigint' ? value.toString() + 'n' : value

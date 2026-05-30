@@ -387,7 +387,7 @@ describe('Interpreter Feature Tests', () => {
     it('should work inside a function body', () => {
       const { logs } = run(`
         ${SHAPE_DEF}
-        function area(shape): {
+        function area(shape) {
           return match shape {
             | Square s -> s.side * s.side
             | Circle c -> c.radius * c.radius
