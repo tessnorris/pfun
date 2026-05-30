@@ -53,7 +53,7 @@ if a < b then {
   4. FUNCTIONS & LAMBDAS
 */
 
-function add(x, y): {
+function add(x, y) {
     return x + y;
 }
 
@@ -68,11 +68,11 @@ print multiply(4, 5);   // 20
   5. TAIL-CALL OPTIMIZATION (TCO) & MEMOIZATION
 */
 
-function countdown(n): {
+function countdown(n) {
     if n <= 0 then return "Liftoff!" else countdown(n - 1);
 }
 
-function fact(n, acc): {
+function fact(n, acc) {
     if n <= 1 then return acc else fact(n - 1, n * acc);
 }
 
@@ -229,7 +229,7 @@ let doubled_area = (match sq {
 print doubled_area; // 200
 
 // Match inside a function
-function describe(shape): {
+function describe(shape) {
   return match shape {
     | Square s    -> "Square with side " + s.side
     | Circle c    -> "Circle with radius " + c.radius

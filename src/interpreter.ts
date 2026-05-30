@@ -62,8 +62,8 @@ export class TailCall {
 }
 
 export class NativeFunction {
-  constructor(public fn: (args: any[]) => any) {}
-  execute(args: any[]) { return this.fn(args); }
+  constructor(public fn: (args: any[], interpreter: Interpreter) => any) {}
+  execute(args: any[], interpreter: Interpreter) { return this.fn(args, interpreter); }
 }
 
 export class PfunFunction {
@@ -200,38 +200,46 @@ export class Interpreter {
   }
 
   private registerBuiltins() {
-    this.globals.define('head', new NativeFunction((args) => {
-      if (!Array.isArray(args[0]) || args[0].length === 0) throw new Error("head requires a non-empty list.");
-      return args[0][0];
+    this.globals.define('head', new NativeFunction((args, interpreter) => {
+      const list = interpreter.force(args[0]);
+      if (!Array.isArray(list) || list.length === 0) throw new Error("head requires a non-empty list.");
+      return list[0];
     }), false);
 
-    this.globals.define('tail', new NativeFunction((args) => {
-      if (!Array.isArray(args[0])) throw new Error("tail requires a list.");
-      return args[0].slice(1);
+    this.globals.define('tail', new NativeFunction((args, interpreter) => {
+      const list = interpreter.force(args[0]);
+      if (!Array.isArray(list)) throw new Error("tail requires a list.");
+      return list.slice(1);
     }), false);
 
-    this.globals.define('cons', new NativeFunction((args) => {
-      if (!Array.isArray(args[1])) throw new Error("cons requires a list as second argument.");
-      const newList = [args[0], ...args[1]];
+    this.globals.define('cons', new NativeFunction((args, interpreter) => {
+      const head = interpreter.force(args[0]);
+      const list = interpreter.force(args[1]);
+      if (!Array.isArray(list)) throw new Error("cons requires a list as second argument.");
+      const newList = [head, ...list];
       this.enforceListType(newList);
       return newList;
     }), false);
 
-    this.globals.define('map', new NativeFunction((args) => {
-      const fn = args[0]; const list = args[1];
-      const mapped = list.map((item: any) => this.force(fn.execute([item], this)));
+    this.globals.define('map', new NativeFunction((args, interpreter) => {
+      const fn = interpreter.force(args[0]);
+      const list = interpreter.force(args[1]);
+      const mapped = list.map((item: any) => interpreter.force(fn.execute([item], interpreter)));
       this.enforceListType(mapped);
       return mapped;
     }), false);
 
-    this.globals.define('filter', new NativeFunction((args) => {
-      const fn = args[0]; const list = args[1];
-      return list.filter((item: any) => this.isTruthy(this.force(fn.execute([item], this))));
+    this.globals.define('filter', new NativeFunction((args, interpreter) => {
+      const fn = interpreter.force(args[0]);
+      const list = interpreter.force(args[1]);
+      return list.filter((item: any) => this.isTruthy(interpreter.force(fn.execute([item], interpreter))));
     }), false);
 
-    this.globals.define('reduce', new NativeFunction((args) => {
-      const fn = args[0]; let acc = args[1]; const list = args[2];
-      for (const item of list) acc = this.force(fn.execute([acc, item], this));
+    this.globals.define('reduce', new NativeFunction((args, interpreter) => {
+      const fn = interpreter.force(args[0]);
+      let acc = interpreter.force(args[1]);
+      const list = interpreter.force(args[2]);
+      for (const item of list) acc = interpreter.force(fn.execute([acc, item], interpreter));
       return acc;
     }), false);
   }
@@ -337,8 +345,8 @@ export class Interpreter {
         if (!(callee instanceof PfunFunction) && !(callee instanceof NativeFunction)) {
           throw new Error("Can only call functions.");
         }
-        const args = expr.args.map(arg => this.force(this.evaluateExpr(arg, env)));
-        if (callee instanceof NativeFunction) return callee.execute(args);
+        const args = expr.args.map(arg => new Thunk(arg, env));
+        if (callee instanceof NativeFunction) return callee.execute(args, this);
         return new TailCall(callee, args);
       }
       case 'MatchExpr': return this.evaluateMatch(expr, env);
