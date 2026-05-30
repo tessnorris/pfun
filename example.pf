@@ -1,0 +1,253 @@
+// ============================================================================
+// D1 LANGUAGE SAMPLES
+// ============================================================================
+// This file demonstrates the core features of the language.
+// You can execute this file directly using the interpreter.
+// ============================================================================
+
+/*
+  1. COMMENTS & VARIABLES
+  The language supports single-line (//) and multi-line comments.
+
+  - `let` creates an IMMUTABLE, LAZILY evaluated binding.
+  - `var` creates a MUTABLE, STRICTLY evaluated binding.
+*/
+
+let lazy_constant = 100;
+var mutable_counter = 0;
+
+mutable_counter = 10;
+// lazy_constant = 200; // ERROR: "Cannot assign to immutable variable"
+
+print "--- 1. Variables ---";
+print mutable_counter;
+
+
+/*
+  2. OPERATORS & TERNARY LOGIC
+*/
+
+let a = 10;
+let b = 20;
+let is_equal = (a == b);
+let is_greater = (b > a);
+let max_val = is_greater ? b : a;
+
+print "--- 2. Operators & Ternary ---";
+print max_val; // 20
+
+
+/*
+  3. CONTROL FLOW
+*/
+
+print "--- 3. Control Flow ---";
+if a < b then {
+    print "a is less than b";
+} else {
+    print "a is greater than or equal to b";
+}
+
+
+/*
+  4. FUNCTIONS & LAMBDAS
+*/
+
+function add(x, y): {
+    return x + y;
+}
+
+let multiply = fn x, y => x * y;
+
+print "--- 4. Functions ---";
+print add(15, 5);       // 20
+print multiply(4, 5);   // 20
+
+
+/*
+  5. TAIL-CALL OPTIMIZATION (TCO) & MEMOIZATION
+*/
+
+function countdown(n): {
+    if n <= 0 then return "Liftoff!" else countdown(n - 1);
+}
+
+function fact(n, acc): {
+    if n <= 1 then return acc else fact(n - 1, n * acc);
+}
+
+print "--- 5. TCO & Memoization ---";
+print countdown(10000); // Liftoff!
+print fact(5, 1);       // 120
+
+
+/*
+  6. LISTS & HIGHER-ORDER FUNCTIONS
+*/
+
+let numbers = [1, 2, 3, 4, 5];
+
+print "--- 6. Lists ---";
+print head(numbers);                // 1
+print tail(numbers);                // [2, 3, 4, 5]
+print cons(0, numbers);             // [0, 1, 2, 3, 4, 5]
+
+let evens = filter(fn x => x % 2 == 0, numbers);
+let doubled = map(fn x => x * 2, evens);
+let sum = reduce(fn acc, x => acc + x, 0, doubled);
+
+print doubled; // [4, 8]
+print sum;     // 12
+
+
+/*
+  7. RECORDS & CUSTOM TYPES
+*/
+
+type Point = { x, y, z };
+type User = { name, age, active };
+
+let p1 = Point { 10, 20, 30 };
+let u1 = User(name="Alice", age=30, active=true);
+let u2 = User(age=25, active=false, name="Bob");
+
+print "--- 7. Records ---";
+print p1.x;
+print u1.name + " is " + u1.age;
+
+
+/*
+  8. DISCRIMINATED UNION TYPES
+  ============================================================================
+  A discriminated union groups several named variants under one type.
+  The syntax uses a pipe '|' to introduce each variant, followed by its
+  name, a colon, and a comma-separated list of field names.
+
+  type <UnionName> = {
+    | <VariantA>: field1, field2, ...
+    | <VariantB>: field1, ...
+  }
+
+  Construction uses the same three syntaxes as plain records:
+    - Positional:        Square { 10 }
+    - Named via braces:  Circle { radius = 5 }
+    - Named via parens:  Rectangle(x=3, y=4)
+
+  The runtime type tag (__type) is set to the VARIANT name, not the union.
+
+  Type consistency is enforced per variant: once the first Square is
+  constructed with a bigint side, all future Squares must also have a
+  bigint side. Different variants are completely independent.
+*/
+
+type Shape = {
+  | Square: side
+  | Circle: radius
+  | Rectangle: x, y
+}
+
+var sq = Square { 10 };
+var ci = Circle { radius = 5 };
+var re = Rectangle(x=3, y=4);
+
+print "--- 8. Discriminated Unions ---";
+print sq.side;    // 10
+print ci.radius;  // 5
+print re.x;       // 3
+print re.y;       // 4
+
+// Type enforcement: the second Square must also have a bigint side.
+// var bad = Square { "ten" }; // ERROR: Type mismatch in Square: field 'side' expected bigint, got string.
+
+
+/*
+  9. PATTERN MATCHING WITH MATCH
+  ============================================================================
+  The `match` expression dispatches on the runtime variant of a value.
+
+  Syntax:
+    match <expr> {
+      | <VariantName> <binding> [where <guard>] -> <result-expr>
+      | <VariantName> _                         -> <result-expr>   // discard binding
+      | _                                       -> <result-expr>   // wildcard
+    }
+
+  Rules:
+    - Arms are tried in ORDER. The FIRST matching arm wins.
+    - A `where` guard is an optional boolean filter on the binding.
+      If the guard is false the arm is SKIPPED and the next arm is tried.
+    - `_` as a binding discards the matched value (no name bound).
+    - `| _ ->` is a wildcard arm that matches any variant.
+    - EXHAUSTIVENESS: if no wildcard arm is present, every variant of the
+      matched union must appear at least once as an arm. A missing variant
+      is a runtime error at the point the match is evaluated.
+
+  Match is an EXPRESSION — it produces a value and can appear anywhere
+  an expression is valid.
+*/
+
+print "--- 9. Pattern Matching ---";
+
+// Basic dispatch
+let area = match sq {
+  | Square s    -> s.side * s.side
+  | Circle c    -> c.radius * c.radius
+  | Rectangle r -> r.x * r.y
+};
+print area; // 100  (10 * 10)
+
+// Wildcard binding _ discards the value
+let kind = match ci {
+  | Square _    -> "square"
+  | Circle _    -> "circle"
+  | Rectangle _ -> "rectangle"
+};
+print kind; // circle
+
+// where guard: guarded arm is skipped when guard is false
+let classify = match ci {
+  | Circle c where c.radius > 10 -> "big circle"
+  | Circle c where c.radius > 2  -> "medium circle"
+  | Circle _                     -> "small circle"
+  | Square s                     -> "square"
+  | Rectangle r                  -> "rectangle"
+};
+print classify; // medium circle
+
+/*
+// Wildcard arm as a catch-all (also satisfies exhaustiveness)
+let fallback = match re {
+  | Square s -> s.side
+  | _ -> 0
+};
+print fallback; // 0  (re is a Rectangle, falls through to wildcard)
+
+// Match as a nested expression
+let doubled_area = (match sq {
+  | Square s -> s.side * s.side
+  | _ -> 0
+}) * 2;
+print doubled_area; // 200
+*/
+
+// Match inside a function
+function describe(shape): {
+  return match shape {
+    | Square s    -> "Square with side " + s.side
+    | Circle c    -> "Circle with radius " + c.radius
+    | Rectangle r -> "Rectangle " + r.x + "x" + r.y
+  };
+}
+
+print describe(sq); // Square with side 10
+print describe(ci); // Circle with radius 5
+print describe(re); // Rectangle 3x4
+
+// Non-exhaustive match (uncomment to see the error):
+// match sq {
+//   | Square s -> s.side
+//   | Circle c -> c.radius
+//   // Missing Rectangle arm → ERROR: Non-exhaustive match on 'Shape': missing arm(s) for 'Rectangle'.
+// };
+
+print "--- Execution Complete ---";

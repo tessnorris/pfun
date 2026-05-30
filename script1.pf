@@ -1,0 +1,40 @@
+  let x = 5 * 2;
+  print x;
+
+  print x + 5;
+
+  print "foo";
+
+  print "foo" + "bar";
+
+  print false;
+
+  let v = x && true;
+
+  print v;
+
+  print v && false;
+
+  print v || false;
+
+  function addone(n): {
+    return n+1;
+  }
+  print addone(5);
+
+  function fact_a(n, acc): {
+    if n <= 1 then return acc else fact_a(n - 1, n * acc);
+  }
+
+  function fact(n): {
+    return fact_a(n, 1)
+  }
+
+  print fact_a(5, 1);
+
+  print fact(5);
+
+  print fact(100);
+
+  print fact(100);
+
