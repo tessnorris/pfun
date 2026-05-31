@@ -591,7 +591,147 @@ describe('Interpreter Feature Tests', () => {
     });
   });
 
-  // ─── Match Expressions ─────────────────────────────────────────────────────
+  // ─── Infinite Lists ────────────────────────────────────────────────────────
+
+  describe('Infinite Lists', () => {
+    it('iterate should produce values by repeatedly applying f to seed', () => {
+      const { logs } = run(`
+        let nats = iterate(fn x => x + 1, 1);
+        print take(5, nats);
+      `);
+      expect(logs).toEqual(['[1, 2, 3, 4, 5]']);
+    });
+
+    it('repeat should produce an infinite list of one value', () => {
+      const { logs } = run(`
+        print take(4, repeat(7));
+      `);
+      expect(logs).toEqual(['[7, 7, 7, 7]']);
+    });
+
+    it('cycle should repeat a finite list', () => {
+      const { logs } = run(`
+        print take(7, cycle(["a", "b", "c"]));
+      `);
+      expect(logs).toEqual(['[a, b, c, a, b, c, a]']);
+    });
+
+    it('map over a lazy list should produce a new lazy list', () => {
+      const { logs } = run(`
+        let nats = iterate(fn x => x + 1, 1);
+        let doubled = map(fn x => x * 2, nats);
+        print take(5, doubled);
+      `);
+      expect(logs).toEqual(['[2, 4, 6, 8, 10]']);
+    });
+
+    it('filter over a lazy list should produce a new lazy list', () => {
+      const { logs } = run(`
+        let nats = iterate(fn x => x + 1, 1);
+        let evens = filter(fn x => x % 2 == 0, nats);
+        print take(5, evens);
+      `);
+      expect(logs).toEqual(['[2, 4, 6, 8, 10]']);
+    });
+
+    it('should support chained map and filter on lazy lists', () => {
+      const { logs } = run(`
+        let nats = iterate(fn x => x + 1, 1);
+        let result = take(5, filter(fn x => x % 3 == 0, map(fn x => x * 2, nats)));
+        print result;
+      `);
+      expect(logs).toEqual(['[6, 12, 18, 24, 30]']);
+    });
+
+    it('cons onto a lazy list should produce a new lazy list', () => {
+      const { logs } = run(`
+        let nats = iterate(fn x => x + 1, 1);
+        print take(5, cons(0, nats));
+      `);
+      expect(logs).toEqual(['[0, 1, 2, 3, 4]']);
+    });
+
+    it('tail of a lazy list should skip the first element', () => {
+      const { logs } = run(`
+        let nats = iterate(fn x => x + 1, 1);
+        print take(5, tail(nats));
+      `);
+      expect(logs).toEqual(['[2, 3, 4, 5, 6]']);
+    });
+
+    it('take on a finite list should slice it', () => {
+      const { logs } = run(`
+        print take(3, [10, 20, 30, 40, 50]);
+      `);
+      expect(logs).toEqual(['[10, 20, 30]']);
+    });
+
+    it('take of more elements than the list has should return the whole list', () => {
+      const { logs } = run(`
+        print take(10, [1, 2, 3]);
+      `);
+      expect(logs).toEqual(['[1, 2, 3]']);
+    });
+
+    it('should support reduce on a taken finite slice', () => {
+      const { logs } = run(`
+        let nats = iterate(fn x => x + 1, 1);
+        let sum = reduce(fn acc, x => acc + x, 0, take(10, nats));
+        print sum;
+      `);
+      expect(logs).toEqual(['55']);
+    });
+
+    it('reduce should throw on a lazy list', () => {
+      expect(() => run(`
+        let nats = iterate(fn x => x + 1, 1);
+        reduce(fn acc, x => acc + x, 0, nats);
+      `)).toThrow("reduce cannot be used on an infinite list");
+    });
+
+    it('should support fibonacci via iterate with a pair record', () => {
+      const { logs } = run(`
+        type Pair = { a, b }
+        let fibs = map(fn p => p.a, iterate(fn p => Pair { p.b, p.a + p.b }, Pair { 0, 1 }));
+        print take(8, fibs);
+      `);
+      expect(logs).toEqual(['[0, 1, 1, 2, 3, 5, 8, 13]']);
+    });
+
+    it('should support powers of 2 via iterate', () => {
+      const { logs } = run(`
+        let powers = iterate(fn x => x * 2, 1);
+        print take(6, powers);
+      `);
+      expect(logs).toEqual(['[1, 2, 4, 8, 16, 32]']);
+    });
+
+    it('should allow a pure function to return a lazy list', () => {
+      const { logs } = run(`
+        function multiplesOf(n) {
+          return iterate(fn x => x + n, n);
+        }
+        print take(5, multiplesOf(3));
+      `);
+      expect(logs).toEqual(['[3, 6, 9, 12, 15]']);
+    });
+
+    it('should support head on a lazy list', () => {
+      const { logs } = run(`
+        let nats = iterate(fn x => x + 1, 1);
+        print head(nats);
+      `);
+      expect(logs).toEqual(['1']);
+    });
+
+    it('lazy list should print as <lazylist>', () => {
+      const { logs } = run(`
+        let nats = iterate(fn x => x + 1, 1);
+        print nats;
+      `);
+      expect(logs).toEqual(['<lazylist>']);
+    });
+  });
 
   describe('Match Expressions', () => {
     const SHAPE_DEF = `

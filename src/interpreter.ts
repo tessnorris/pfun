@@ -7,6 +7,7 @@ import { Expr, Stmt } from './ast';
  */
 function getValueType(v: any): string {
   if (v === null || v === undefined) return 'nil';
+  if (v instanceof LazyList) return 'lazylist';
   if (Array.isArray(v)) {
     if (v.length === 0) return 'list';
     return `list<${getValueType(v[0])}>`;
@@ -60,6 +61,34 @@ export class Thunk {
 export class TailCall {
   constructor(public fn: PfunFunction, public args: any[]) {}
 }
+
+/**
+ * LAZY LIST (Infinite List Descriptor)
+ *
+ * Represents an infinite (or lazily-evaluated) list as a descriptor object.
+ * Values are never computed until take() materializes them into a finite array.
+ * Operations like map/filter/cons produce new descriptors wrapping the old one.
+ *
+ * Kinds:
+ *   iterate  — [seed, f(seed), f(f(seed)), ...]
+ *   repeat   — [x, x, x, ...]
+ *   cycle    — [a,b,c, a,b,c, ...] from a finite array or another LazyList
+ *   map      — applies f to each element of source at take-time
+ *   filter   — keeps elements of source passing predicate at take-time
+ *   cons     — prepends a single value to a source list
+ */
+export class LazyList {
+  constructor(public descriptor: LazyListDescriptor) {}
+}
+
+type LazyListDescriptor =
+  | { kind: 'iterate'; f: any; seed: any }
+  | { kind: 'repeat';  value: any }
+  | { kind: 'cycle';   source: any }
+  | { kind: 'map';     f: any; source: any }
+  | { kind: 'filter';  f: any; source: any }
+  | { kind: 'cons';    head: any; tail: any }
+  | { kind: 'drop';    n: number; source: LazyList };
 
 export class NativeFunction {
   constructor(public fn: (args: any[], interpreter: Interpreter) => any) {}
@@ -219,21 +248,29 @@ export class Interpreter {
   private registerBuiltins() {
     this.globals.define('head', new NativeFunction((args, interpreter) => {
       const list = interpreter.force(args[0]);
+      if (list instanceof LazyList) {
+        const taken = interpreter.takeFrom(list, 1);
+        if (taken.length === 0) throw new Error("head requires a non-empty list.");
+        return taken[0];
+      }
       if (!Array.isArray(list) || list.length === 0) throw new Error("head requires a non-empty list.");
       return list[0];
     }), false);
 
     this.globals.define('tail', new NativeFunction((args, interpreter) => {
       const list = interpreter.force(args[0]);
+      if (list instanceof LazyList) return new LazyList({ kind: 'drop', n: 1, source: list });
       if (!Array.isArray(list)) throw new Error("tail requires a list.");
       return list.slice(1);
     }), false);
 
     this.globals.define('cons', new NativeFunction((args, interpreter) => {
       const head = interpreter.force(args[0]);
-      const list = interpreter.force(args[1]);
-      if (!Array.isArray(list)) throw new Error("cons requires a list as second argument.");
-      const newList = [head, ...list];
+      const tail = interpreter.force(args[1]);
+      // cons onto a lazy list produces a new lazy list descriptor
+      if (tail instanceof LazyList) return new LazyList({ kind: 'cons', head, tail });
+      if (!Array.isArray(tail)) throw new Error("cons requires a list as second argument.");
+      const newList = [head, ...tail];
       this.enforceListType(newList);
       return newList;
     }), false);
@@ -241,6 +278,8 @@ export class Interpreter {
     this.globals.define('map', new NativeFunction((args, interpreter) => {
       const fn = interpreter.force(args[0]);
       const list = interpreter.force(args[1]);
+      // map over a lazy list produces a new lazy descriptor — no values computed yet
+      if (list instanceof LazyList) return new LazyList({ kind: 'map', f: fn, source: list });
       const mapped = list.map((item: any) => interpreter.force(fn.execute([item], interpreter)));
       this.enforceListType(mapped);
       return mapped;
@@ -249,6 +288,8 @@ export class Interpreter {
     this.globals.define('filter', new NativeFunction((args, interpreter) => {
       const fn = interpreter.force(args[0]);
       const list = interpreter.force(args[1]);
+      // filter over a lazy list produces a new lazy descriptor
+      if (list instanceof LazyList) return new LazyList({ kind: 'filter', f: fn, source: list });
       return list.filter((item: any) => this.isTruthy(interpreter.force(fn.execute([item], interpreter))));
     }), false);
 
@@ -256,8 +297,47 @@ export class Interpreter {
       const fn = interpreter.force(args[0]);
       let acc = interpreter.force(args[1]);
       const list = interpreter.force(args[2]);
+      if (list instanceof LazyList) throw new Error("reduce cannot be used on an infinite list. Use take() first to get a finite list.");
       for (const item of list) acc = interpreter.force(fn.execute([acc, item], interpreter));
       return acc;
+    }), false);
+
+    // ─── Infinite List Constructors ───────────────────────────────────────────
+
+    this.globals.define('iterate', new NativeFunction((args, interpreter) => {
+      const f    = interpreter.force(args[0]);
+      const seed = interpreter.force(args[1]);
+      return new LazyList({ kind: 'iterate', f, seed });
+    }), false);
+
+    this.globals.define('repeat', new NativeFunction((args, interpreter) => {
+      const value = interpreter.force(args[0]);
+      return new LazyList({ kind: 'repeat', value });
+    }), false);
+
+    this.globals.define('cycle', new NativeFunction((args, interpreter) => {
+      const source = interpreter.force(args[0]);
+      return new LazyList({ kind: 'cycle', source });
+    }), false);
+
+    // ─── Materialization ──────────────────────────────────────────────────────
+
+    this.globals.define('take', new NativeFunction((args, interpreter) => {
+      const n    = interpreter.force(args[0]);
+      const list = interpreter.force(args[1]);
+      if (typeof n !== 'bigint') throw new Error("take requires an integer as first argument.");
+      const count = Number(n);
+      if (Array.isArray(list)) {
+        const result = list.slice(0, count);
+        this.enforceListType(result);
+        return result;
+      }
+      if (list instanceof LazyList) {
+        const result = interpreter.takeFrom(list, count);
+        this.enforceListType(result);
+        return result;
+      }
+      throw new Error("take requires a list as second argument.");
     }), false);
   }
 
@@ -594,6 +674,110 @@ export class Interpreter {
     }
   }
 
+  /**
+   * MATERIALIZATION ENGINE
+   *
+   * Pulls up to `n` values from a LazyList descriptor chain,
+   * returning a finite JavaScript array. For 'filter' descriptors,
+   * more than n source values may be consumed to find n passing ones.
+   *
+   * Each descriptor kind has a generator-style implementation that
+   * yields one value at a time without recursion.
+   */
+  takeFrom(list: LazyList, n: number): any[] {
+    const results: any[] = [];
+    // Use an explicit stack of iterators to avoid deep recursion on
+    // chained descriptors (e.g. map(filter(iterate(...)))).
+    // Each frame is a generator function over a descriptor.
+    const gen = this.makeGenerator(list.descriptor);
+    while (results.length < n) {
+      const { value, done } = gen.next();
+      if (done) break;
+      results.push(value);
+    }
+    return results;
+  }
+
+  private *makeGenerator(desc: LazyList['descriptor']): Generator<any> {
+    switch (desc.kind) {
+      case 'iterate': {
+        let current = desc.seed;
+        while (true) {
+          yield current;
+          current = this.force(desc.f.execute([current], this));
+        }
+      }
+      case 'repeat': {
+        while (true) yield desc.value;
+      }
+      case 'cycle': {
+        const source = desc.source;
+        if (Array.isArray(source)) {
+          if (source.length === 0) return;
+          let i = 0;
+          while (true) { yield source[i % source.length]; i++; }
+        } else if (source instanceof LazyList) {
+          // cycle of a lazy list: buffer values as we go, then cycle the buffer
+          const buffer: any[] = [];
+          const inner = this.makeGenerator(source.descriptor);
+          while (true) {
+            const { value, done } = inner.next();
+            if (done) break;
+            buffer.push(value);
+            yield value;
+          }
+          if (buffer.length === 0) return;
+          let i = 0;
+          while (true) { yield buffer[i % buffer.length]; i++; }
+        }
+        break;
+      }
+      case 'map': {
+        const inner = this.makeGenerator(desc.source.descriptor);
+        while (true) {
+          const { value, done } = inner.next();
+          if (done) break;
+          yield this.force(desc.f.execute([value], this));
+        }
+        break;
+      }
+      case 'filter': {
+        const inner = this.makeGenerator(desc.source.descriptor);
+        while (true) {
+          const { value, done } = inner.next();
+          if (done) break;
+          if (this.isTruthy(this.force(desc.f.execute([value], this)))) yield value;
+        }
+        break;
+      }
+      case 'cons': {
+        yield desc.head;
+        const tailSrc = desc.tail;
+        if (tailSrc instanceof LazyList) {
+          yield* this.makeGenerator(tailSrc.descriptor);
+        } else if (Array.isArray(tailSrc)) {
+          yield* tailSrc;
+        }
+        break;
+      }
+      case 'drop': {
+        const inner = this.makeGenerator(desc.source.descriptor);
+        let skipped = 0;
+        while (skipped < desc.n) {
+          const { done } = inner.next();
+          if (done) return;
+          skipped++;
+        }
+        while (true) {
+          const { value, done } = inner.next();
+          if (done) break;
+          yield value;
+        }
+        break;
+      }
+    }
+  }
+
   private getCacheKey(fn: PfunFunction, args: any[]): string {
     return JSON.stringify(args, (key, value) =>
       typeof value === 'bigint' ? value.toString() + 'n' : value
@@ -613,9 +797,11 @@ export class Interpreter {
     if (value === null || value === undefined) return 'nil';
     if (typeof value === 'boolean') return value ? 'true' : 'false';
     if (typeof value === 'bigint') return value.toString();
+    if (value instanceof LazyList) return '<lazylist>';
     if (Array.isArray(value)) return `[${value.map(v => this.stringify(v)).join(', ')}]`;
     if (value && value.__type) {
-      const fields = Object.keys(value).filter(k => k !== '__type');
+      const fields = Object.keys(value).filter(k => k !== '__type' && k !== '__union');
+      if (fields.length === 0) return value.__type;
       return `${value.__type} { ${fields.map(f => this.stringify(value[f])).join(', ')} }`;
     }
     return String(value);

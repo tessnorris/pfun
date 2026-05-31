@@ -341,6 +341,88 @@ print flat; // [1, 2, 3, 4, 5, 6]
 
 
 /*
+  12. INFINITE LISTS
+  ============================================================================
+  Infinite lists are represented as lazy descriptors — no values are computed
+  until take() materializes them into a finite array.
+
+  Constructors:
+    iterate(f, seed)  — [seed, f(seed), f(f(seed)), ...]
+    repeat(x)         — [x, x, x, ...]
+    cycle(list)       — [a, b, c, a, b, c, ...] cycling any list
+
+  Operations (return new lazy descriptors, still infinite):
+    map(f, lazyList)
+    filter(f, lazyList)
+    cons(x, lazyList)
+    tail(lazyList)
+
+  Materialization:
+    take(n, list)  — returns the first n elements as a finite array.
+                     Works on both finite and infinite lists.
+
+  Note: reduce requires a finite list — use take() first.
+*/
+
+print "--- 12. Infinite Lists ---";
+
+// Natural numbers starting from 1
+let nats = iterate(fn x => x + 1, 1);
+print take(5, nats); // [1, 2, 3, 4, 5]
+
+// Powers of 2
+let powers = iterate(fn x => x * 2, 1);
+print take(8, powers); // [1, 2, 4, 8, 16, 32, 64, 128]
+
+// All even numbers via filter
+let evens = filter(fn x => x % 2 == 0, nats);
+print take(5, evens); // [2, 4, 6, 8, 10]
+
+// All even numbers via map — more efficient
+let evens2 = map(fn x => x * 2, nats);
+print take(5, evens2); // [2, 4, 6, 8, 10]
+
+// repeat: infinite list of one value
+let ones = repeat(1);
+print take(4, ones); // [1, 1, 1, 1]
+
+// Sum of first 10 naturals using take then reduce
+let sum = reduce(fn acc, x => acc + x, 0, take(10, nats));
+print sum; // 55
+
+// cycle: repeat a finite list forever
+let traffic = cycle(["red", "green", "blue"]);
+print take(7, traffic); // [red, green, blue, red, green, blue, red]
+
+// Chaining: map then filter then take
+let result = take(5, filter(fn x => x % 3 == 0, map(fn x => x * 2, nats)));
+print result; // [6, 12, 18, 24, 30]
+
+// cons onto an infinite list
+let from0 = cons(0, nats);
+print take(5, from0); // [0, 1, 2, 3, 4]
+
+// tail of an infinite list
+let from2 = tail(nats);
+print take(5, from2); // [2, 3, 4, 5, 6]
+
+// take on a finite list just slices it
+let short = take(3, [10, 20, 30, 40, 50]);
+print short; // [10, 20, 30]
+
+// Fibonacci using iterate with a pair encoded as a record
+type Pair = { a, b }
+let fibs = map(fn p => p.a, iterate(fn p => Pair { p.b, p.a + p.b }, Pair { 0, 1 }));
+print take(10, fibs); // [0, 1, 1, 2, 3, 5, 8, 13, 21, 34]
+
+// Pure function returning an infinite list — fine, no side effects
+function multiplesOf(n) {
+  return iterate(fn x => x + n, n);
+}
+print take(5, multiplesOf(7)); // [7, 14, 21, 28, 35]
+
+
+/*
   10. OPTION TYPE
   ============================================================================
   Option is a built-in union type representing a value that may or may not
