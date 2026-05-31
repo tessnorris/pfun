@@ -25,6 +25,7 @@ export type Token =
   | { type: 'FunctionToken' } | { type: 'ReturnToken' } | { type: 'FnToken' } | { type: 'ProcToken' }
   | { type: 'ForToken' }        // 'for' list comprehension generator
   | { type: 'ArrowLeftToken' }  // '<-' generator binding
+  | { type: 'DictToken' }       // 'dict' dictionary literal
   | { type: 'ArrowToken' }      // '=>' Lambda arrow
   | { type: 'ArrowRightToken' } // '->' Match arm arrow
   | { type: 'CommaToken' } | { type: 'ColonToken' }
@@ -191,6 +192,7 @@ export class Lexer {
       case 'return':   return { type: 'ReturnToken' };
       case 'fn':       return { type: 'FnToken' };
       case 'for':      return { type: 'ForToken' };
+      case 'dict':     return { type: 'DictToken' };
       case 'match':    return { type: 'MatchToken' };
       case 'where':    return { type: 'WhereToken' };
       default:         return { type: 'IdentToken', value: s };

@@ -423,6 +423,83 @@ print take(5, multiplesOf(7)); // [7, 14, 21, 28, 35]
 
 
 /*
+  13. DICTIONARIES
+  ============================================================================
+  Dictionaries are mutable key-value stores. Keys are primitives (string,
+  integer, or boolean) compared by value. Values can be anything.
+
+  Dictionaries must always be declared with `var` — they are inherently
+  imperative and cannot be used with `let`.
+
+  Syntax:
+    var d = dict { "key" -> value, 42 -> "other" }
+    var empty = dict {}
+
+  Access:   d["key"]
+  Update:   d["key"] = newValue
+  Builtins: has(d, key), remove(d, key), keys(d), values(d)
+*/
+
+print "--- 13. Dictionaries ---";
+
+// Construction
+var scores = dict { "Alice" -> 95, "Bob" -> 87, "Carol" -> 92 };
+print scores["Alice"];  // 95
+print scores["Bob"];    // 87
+
+// Update
+scores["Bob"] = 90;
+print scores["Bob"];    // 90
+
+// Add a new key
+scores["Dave"] = 88;
+print has(scores, "Dave");   // true
+print has(scores, "Eve");    // false
+
+// Remove a key
+remove(scores, "Dave");
+print has(scores, "Dave");   // false
+
+// Integer keys
+var table = dict { 1 -> "one", 2 -> "two", 3 -> "three" };
+print table[1];   // one
+print table[2];   // two
+
+// Empty dict
+var cache = dict {};
+cache["result"] = 42;
+print cache["result"];  // 42
+
+// keys() and values()
+var small = dict { "x" -> 10, "y" -> 20 };
+print keys(small);    // [x, y]
+print values(small);  // [10, 20]
+
+// Dicts work well with procedures
+proc updateAll(d, lst, val) {
+  var i = 0;
+  var len = head(reduce(fn acc, _ => cons(acc + 1, []), 0, lst));
+  // simpler: iterate over keys
+}
+
+// Using a dict as a frequency counter in a procedure
+proc countWords(words) {
+  var counts = dict {};
+  var i = 0;
+  var remaining = words;
+  if remaining == [] then return counts;
+  var word = head(remaining);
+  remaining = tail(remaining);
+  // Use has to check and increment
+  if has(counts, word)
+    then counts[word] = counts[word] + 1
+    else counts[word] = 1;
+  print counts[word];
+}
+countWords(["hello", "world", "hello"]);  // 1 then 1
+
+
+/*
   10. OPTION TYPE
   ============================================================================
   Option is a built-in union type representing a value that may or may not

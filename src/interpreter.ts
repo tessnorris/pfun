@@ -8,6 +8,7 @@ import { Expr, Stmt } from './ast';
 function getValueType(v: any): string {
   if (v === null || v === undefined) return 'nil';
   if (v instanceof LazyList) return 'lazylist';
+  if (v instanceof PfunDict) return 'dict';
   if (Array.isArray(v)) {
     if (v.length === 0) return 'list';
     return `list<${getValueType(v[0])}>`;
@@ -63,6 +64,22 @@ export class TailCall {
 }
 
 /**
+ * DICTIONARY
+ * A mutable, key-value store. Keys must be primitives (string, bigint, boolean).
+ * Dictionaries must always be declared with `var`.
+ */
+export class PfunDict {
+  public entries: Map<string, any>;
+  constructor(entries: Map<string, any>) { this.entries = entries; }
+  static keyOf(k: any): string {
+    if (typeof k === 'string') return `s:${k}`;
+    if (typeof k === 'bigint') return `i:${k}`;
+    if (typeof k === 'boolean') return `b:${k}`;
+    throw new Error(`Dictionary keys must be strings, integers, or booleans, got ${typeof k}.`);
+  }
+}
+
+/**
  * LAZY LIST (Infinite List Descriptor)
  *
  * Represents an infinite (or lazily-evaluated) list as a descriptor object.
@@ -70,12 +87,12 @@ export class TailCall {
  * Operations like map/filter/cons produce new descriptors wrapping the old one.
  *
  * Kinds:
- *   iterate  — [seed, f(seed), f(f(seed)), ...]
- *   repeat   — [x, x, x, ...]
- *   cycle    — [a,b,c, a,b,c, ...] from a finite array or another LazyList
- *   map      — applies f to each element of source at take-time
- *   filter   — keeps elements of source passing predicate at take-time
- *   cons     — prepends a single value to a source list
+ *   iterate  - [seed, f(seed), f(f(seed)), ...]
+ *   repeat   - [x, x, x, ...]
+ *   cycle    - [a,b,c, a,b,c, ...] from a finite array or another LazyList
+ *   map      - applies f to each element of source at take-time
+ *   filter   - keeps elements of source passing predicate at take-time
+ *   cons     - prepends a single value to a source list
  */
 export class LazyList {
   constructor(public descriptor: LazyListDescriptor) {}
@@ -167,7 +184,7 @@ class TypeRegistry {
       }
       this.schemas.set(v.name, { fields: v.fields, inferredTypes: null, unionName });
       variantNames.add(v.name);
-      // Zero-field variants are singletons — seed them into the environment
+      // Zero-field variants are singletons - seed them into the environment
       // so bare identifiers like `None` resolve without needing braces.
       if (v.fields.length === 0 && globals) {
         globals.define(v.name, { __type: v.name, __union: unionName }, false);
@@ -278,7 +295,7 @@ export class Interpreter {
     this.globals.define('map', new NativeFunction((args, interpreter) => {
       const fn = interpreter.force(args[0]);
       const list = interpreter.force(args[1]);
-      // map over a lazy list produces a new lazy descriptor — no values computed yet
+      // map over a lazy list produces a new lazy descriptor - no values computed yet
       if (list instanceof LazyList) return new LazyList({ kind: 'map', f: fn, source: list });
       const mapped = list.map((item: any) => interpreter.force(fn.execute([item], interpreter)));
       this.enforceListType(mapped);
@@ -339,6 +356,42 @@ export class Interpreter {
       }
       throw new Error("take requires a list as second argument.");
     }), false);
+
+    // ─── Dictionary Operations ────────────────────────────────────────────────
+
+    this.globals.define('has', new NativeFunction((args, interpreter) => {
+      const dict = interpreter.force(args[0]);
+      const key  = interpreter.force(args[1]);
+      if (!(dict instanceof PfunDict)) throw new Error("has() requires a dict as first argument.");
+      return dict.entries.has(PfunDict.keyOf(key));
+    }), false);
+
+    this.globals.define('remove', new NativeFunction((args, interpreter) => {
+      const dict = interpreter.force(args[0]);
+      const key  = interpreter.force(args[1]);
+      if (!(dict instanceof PfunDict)) throw new Error("remove() requires a dict as first argument.");
+      dict.entries.delete(PfunDict.keyOf(key));
+      return dict;
+    }), false);
+
+    this.globals.define('keys', new NativeFunction((args, interpreter) => {
+      const dict = interpreter.force(args[0]);
+      if (!(dict instanceof PfunDict)) throw new Error("keys() requires a dict as first argument.");
+      return [...dict.entries.keys()].map(k => {
+        const prefix = k.slice(0, 2);
+        const raw = k.slice(2);
+        if (prefix === 's:') return raw;
+        if (prefix === 'i:') return BigInt(raw);
+        if (prefix === 'b:') return raw === 'true';
+        return raw;
+      });
+    }), false);
+
+    this.globals.define('values', new NativeFunction((args, interpreter) => {
+      const dict = interpreter.force(args[0]);
+      if (!(dict instanceof PfunDict)) throw new Error("values() requires a dict as first argument.");
+      return [...dict.entries.values()];
+    }), false);
   }
 
   private enforceListType(elements: any[]): void {
@@ -361,9 +414,15 @@ export class Interpreter {
 
   evaluateStmt(stmt: Stmt, env: Environment): any {
     switch (stmt.type) {
-      case 'LetStmt':
+      case 'LetStmt': {
+        // Eagerly check: if the initializer is a dict literal, disallow let
+        // (we must force to find out, so we peek at the AST node type)
+        if (stmt.initializer.type === 'DictExpr') {
+          throw new Error(`Dictionaries must be declared with 'var', not 'let'. Use: var ${stmt.name} = dict { ... }`);
+        }
         env.define(stmt.name, new Thunk(stmt.initializer, env), false);
         return;
+      }
       case 'VarStmt': {
         if (this.inPureContext) throw new Error("Functions cannot use 'var': side-effectful mutation is not allowed in pure functions. Use 'let' or convert to a procedure.");
         const val = this.force(this.evaluateExpr(stmt.initializer, env));
@@ -440,7 +499,7 @@ export class Interpreter {
         const results: any[] = [];
         const evalGenerators = (genIndex: number, scopeEnv: Environment) => {
           if (genIndex === expr.generators.length) {
-            // All generators exhausted — check guard then collect body
+            // All generators exhausted - check guard then collect body
             if (expr.guard) {
               const guardVal = this.force(this.evaluateExpr(expr.guard, scopeEnv));
               if (!this.isTruthy(guardVal)) return;
@@ -462,6 +521,40 @@ export class Interpreter {
         return results;
       }
       case 'RecordExpr': return this.evaluateRecord(expr, env);
+      case 'DictExpr': {
+        const map = new Map<string, any>();
+        for (const entry of expr.entries) {
+          const k = this.force(this.evaluateExpr(entry.key, env));
+          const v = this.force(this.evaluateExpr(entry.value, env));
+          map.set(PfunDict.keyOf(k), v);
+        }
+        return new PfunDict(map);
+      }
+      case 'IndexExpr': {
+        const obj = this.force(this.evaluateExpr(expr.object, env));
+        const idx = this.force(this.evaluateExpr(expr.index, env));
+        if (obj instanceof PfunDict) {
+          const key = PfunDict.keyOf(idx);
+          if (!obj.entries.has(key)) throw new Error(`Key not found in dict: ${this.stringify(idx)}`);
+          return obj.entries.get(key);
+        }
+        if (Array.isArray(obj)) {
+          if (typeof idx !== 'bigint') throw new Error("List index must be an integer.");
+          const i = Number(idx);
+          if (i < 0 || i >= obj.length) throw new Error(`List index ${i} out of bounds (length ${obj.length}).`);
+          return obj[i];
+        }
+        throw new Error("Index operator requires a dict or list.");
+      }
+      case 'IndexAssignExpr': {
+        if (this.inPureContext) throw new Error("Functions cannot mutate dicts: side-effectful mutation is not allowed in pure functions. Use a procedure instead.");
+        const obj = this.force(this.evaluateExpr(expr.object, env));
+        if (!(obj instanceof PfunDict)) throw new Error("Index assignment is only supported on dicts.");
+        const idx = this.force(this.evaluateExpr(expr.index, env));
+        const val = this.force(this.evaluateExpr(expr.value, env));
+        obj.entries.set(PfunDict.keyOf(idx), val);
+        return val;
+      }
       case 'GetExpr': {
         const obj = this.force(this.evaluateExpr(expr.object, env));
         if (!(expr.name in obj)) throw new Error(`Undefined property '${expr.name}'.`);
@@ -798,6 +891,11 @@ export class Interpreter {
     if (typeof value === 'boolean') return value ? 'true' : 'false';
     if (typeof value === 'bigint') return value.toString();
     if (value instanceof LazyList) return '<lazylist>';
+    if (value instanceof PfunDict) {
+      const entries = [...value.entries.entries()]
+        .map(([k, v]) => `${k.slice(2)} -> ${this.stringify(v)}`);
+      return `dict { ${entries.join(', ')} }`;
+    }
     if (Array.isArray(value)) return `[${value.map(v => this.stringify(v)).join(', ')}]`;
     if (value && value.__type) {
       const fields = Object.keys(value).filter(k => k !== '__type' && k !== '__union');

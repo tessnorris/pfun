@@ -30,7 +30,10 @@ export type Expr =
   | { type: 'RecordExpr'; name: string; fields: { key: string | null, value: Expr }[] }
   | { type: 'GetExpr'; object: Expr; name: string }
   | { type: 'MatchExpr'; subject: Expr; arms: MatchArm[] }
-  | { type: 'ComprehensionExpr'; body: Expr; generators: { variable: string; source: Expr }[]; guard?: Expr };
+  | { type: 'ComprehensionExpr'; body: Expr; generators: { variable: string; source: Expr }[]; guard?: Expr }
+  | { type: 'DictExpr'; entries: { key: Expr; value: Expr }[] }
+  | { type: 'IndexExpr'; object: Expr; index: Expr }
+  | { type: 'IndexAssignExpr'; object: Expr; index: Expr; value: Expr };
 
 /**
  * Statements represent actions or control flow.

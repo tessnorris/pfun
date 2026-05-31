@@ -81,7 +81,12 @@ export class Parser {
     const params: string[] = [];
     if (!this.check('RParenToken')) {
       do {
-        params.push((this.consume('IdentToken', "Expected parameter name.") as any).value);
+        if (this.check('WildcardToken')) {
+          this.advance();
+          params.push('_');
+        } else {
+          params.push((this.consume('IdentToken', "Expected parameter name.") as any).value);
+        }
       } while (this.match('CommaToken'));
     }
     return params;
@@ -238,6 +243,20 @@ export class Parser {
         return { type: 'UnaryExpr', operator: token.type, right: this.parseExpression(Precedence.UNARY) };
       case 'FnToken': return this.parseLambda();
       case 'MatchToken': return this.parseMatchExpression();
+      case 'DictToken': {
+        this.consume('LBraceToken', "Expected '{' after 'dict'.");
+        const entries: { key: Expr; value: Expr }[] = [];
+        if (!this.check('RBraceToken')) {
+          do {
+            const key = this.parseExpression();
+            this.consume('ArrowRightToken', "Expected '->' between dict key and value.");
+            const value = this.parseExpression();
+            entries.push({ key, value });
+          } while (this.match('CommaToken'));
+        }
+        this.consume('RBraceToken', "Expected '}' after dict entries.");
+        return { type: 'DictExpr', entries };
+      }
       case 'LParenToken': {
         const expr = this.parseExpression();
         this.consume('RParenToken', "Expected ')' after expression.");
@@ -341,7 +360,12 @@ export class Parser {
       this.consume('RParenToken', "Expected ')' after parameters.");
     } else {
       do {
-        params.push((this.consume('IdentToken', "Expected parameter name.") as any).value);
+        if (this.check('WildcardToken')) {
+          this.advance();
+          params.push('_');
+        } else {
+          params.push((this.consume('IdentToken', "Expected parameter name.") as any).value);
+        }
       } while (this.match('CommaToken'));
     }
     this.consume('ArrowToken', "Expected '=>' after lambda parameters.");
@@ -357,6 +381,9 @@ export class Parser {
     const precedence = this.getPrecedence(token.type);
 
     if (token.type === 'AssignToken') {
+      if (left.type === 'IndexExpr') {
+        return { type: 'IndexAssignExpr', object: left.object, index: left.index, value: this.parseExpression(precedence - 1) };
+      }
       if (left.type !== 'IdentExpr') throw new Error("Invalid assignment target.");
       return { type: 'AssignExpr', name: left.name, value: this.parseExpression(precedence - 1) };
     }
@@ -375,6 +402,12 @@ export class Parser {
 
     if (token.type === 'LParenToken') {
       return this.parseCall(left);
+    }
+
+    if (token.type === 'LBracketToken') {
+      const index = this.parseExpression();
+      this.consume('RBracketToken', "Expected ']' after index.");
+      return { type: 'IndexExpr', object: left, index };
     }
 
     return { type: 'BinaryExpr', left, operator: token.type, right: this.parseExpression(precedence) };
@@ -411,7 +444,7 @@ export class Parser {
       case 'GreaterToken': case 'LessToken': case 'GreaterEqualToken': case 'LessEqualToken': return Precedence.COMPARISON;
       case 'PlusToken': case 'MinusToken': return Precedence.TERM;
       case 'StarToken': case 'SlashToken': case 'PercentToken': return Precedence.FACTOR;
-      case 'LParenToken': case 'DotToken': return Precedence.CALL;
+      case 'LParenToken': case 'DotToken': case 'LBracketToken': return Precedence.CALL;
       default: return Precedence.NONE;
     }
   }
@@ -420,7 +453,7 @@ export class Parser {
   private isExprStart(): boolean {
     const t = this.peek().type;
     return ['IntToken', 'BoolToken', 'StrToken', 'IdentToken', 'BooleanNot', 'MinusToken',
-            'LParenToken', 'LBracketToken', 'FnToken', 'MatchToken'].includes(t);
+            'LParenToken', 'LBracketToken', 'FnToken', 'MatchToken', 'DictToken'].includes(t);
   }
   private isAtEnd(): boolean { return this.peek().type === 'EOFToken'; }
   private peek(): Token { return this.tokens[this.current]; }

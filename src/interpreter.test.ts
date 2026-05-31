@@ -591,7 +591,153 @@ describe('Interpreter Feature Tests', () => {
     });
   });
 
-  // ─── Infinite Lists ────────────────────────────────────────────────────────
+  // ─── Dictionaries ──────────────────────────────────────────────────────────
+
+  describe('Dictionaries', () => {
+    it('should construct a dict and access values by string key', () => {
+      const { logs } = run(`
+        var d = dict { "name" -> "Alice", "age" -> "30" };
+        print d["name"];
+        print d["age"];
+      `);
+      expect(logs).toEqual(['Alice', '30']);
+    });
+
+    it('should construct a dict with integer keys', () => {
+      const { logs } = run(`
+        var d = dict { 1 -> "one", 2 -> "two" };
+        print d[1];
+        print d[2];
+      `);
+      expect(logs).toEqual(['one', 'two']);
+    });
+
+    it('should construct an empty dict', () => {
+      const { logs } = run(`
+        var d = dict {};
+        d["key"] = "value";
+        print d["key"];
+      `);
+      expect(logs).toEqual(['value']);
+    });
+
+    it('should update an existing key', () => {
+      const { logs } = run(`
+        var d = dict { "x" -> 1 };
+        d["x"] = 99;
+        print d["x"];
+      `);
+      expect(logs).toEqual(['99']);
+    });
+
+    it('should add a new key via index assignment', () => {
+      const { logs } = run(`
+        var d = dict {};
+        d["new"] = 42;
+        print d["new"];
+      `);
+      expect(logs).toEqual(['42']);
+    });
+
+    it('should throw when accessing a missing key', () => {
+      expect(() => run(`
+        var d = dict { "a" -> 1 };
+        eval d["b"];
+      `)).toThrow("Key not found in dict");
+    });
+
+    it('has() should return true for existing keys', () => {
+      const { logs } = run(`
+        var d = dict { "x" -> 1 };
+        print has(d, "x");
+        print has(d, "y");
+      `);
+      expect(logs).toEqual(['true', 'false']);
+    });
+
+    it('remove() should delete a key', () => {
+      const { logs } = run(`
+        var d = dict { "a" -> 1, "b" -> 2 };
+        remove(d, "a");
+        print has(d, "a");
+        print has(d, "b");
+      `);
+      expect(logs).toEqual(['false', 'true']);
+    });
+
+    it('keys() should return all keys as a list', () => {
+      const { logs } = run(`
+        var d = dict { "x" -> 1 };
+        print keys(d);
+      `);
+      expect(logs).toEqual(['[x]']);
+    });
+
+    it('values() should return all values as a list', () => {
+      const { logs } = run(`
+        var d = dict { "x" -> 10, "y" -> 20 };
+        print values(d);
+      `);
+      expect(logs).toEqual(['[10, 20]']);
+    });
+
+    it('should throw when declaring a dict with let', () => {
+      expect(() => run(`
+        let d = dict { "x" -> 1 };
+      `)).toThrow("Dictionaries must be declared with 'var'");
+    });
+
+    it('should throw on non-primitive key', () => {
+      expect(() => run(`
+        var d = dict {};
+        var r = dict { [1, 2] -> "bad" };
+      `)).toThrow("Dictionary keys must be");
+    });
+
+    it('should support boolean keys', () => {
+      const { logs } = run(`
+        var d = dict { true -> "yes", false -> "no" };
+        print d[true];
+        print d[false];
+      `);
+      expect(logs).toEqual(['yes', 'no']);
+    });
+
+    it('keys with the same value should be the same entry', () => {
+      const { logs } = run(`
+        var d = dict { "k" -> 1 };
+        d["k"] = 2;
+        print d["k"];
+      `);
+      expect(logs).toEqual(['2']);
+    });
+
+    it('should work inside a procedure', () => {
+      const { logs } = run(`
+        proc buildDict(lst) {
+          var d = dict {};
+          var i = 0;
+          var remaining = lst;
+          var item = head(remaining);
+          d[item] = i;
+          print d[item];
+        }
+        buildDict(["hello"]);
+      `);
+      expect(logs).toEqual(['0']);
+    });
+
+    it('should throw when trying to mutate a dict in a pure function', () => {
+      expect(() => run(`
+        function bad(d) {
+          d["x"] = 1;
+          return d;
+        }
+        var d = dict {};
+        bad(d);
+      `)).toThrow("Functions cannot mutate dicts");
+    });
+  });
 
   describe('Infinite Lists', () => {
     it('iterate should produce values by repeatedly applying f to seed', () => {
