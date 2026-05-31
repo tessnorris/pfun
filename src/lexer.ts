@@ -22,7 +22,9 @@ export type Token =
   | { type: 'LetToken' } | { type: 'VarToken' } | { type: 'TypeToken' } // Mutability & Types
   | { type: 'EvalToken' } | { type: 'IfToken' }
   | { type: 'ThenToken' } | { type: 'ElseToken' } | { type: 'PrintToken' }
-  | { type: 'FunctionToken' } | { type: 'ReturnToken' } | { type: 'FnToken' }
+  | { type: 'FunctionToken' } | { type: 'ReturnToken' } | { type: 'FnToken' } | { type: 'ProcToken' }
+  | { type: 'ForToken' }        // 'for' list comprehension generator
+  | { type: 'ArrowLeftToken' }  // '<-' generator binding
   | { type: 'ArrowToken' }      // '=>' Lambda arrow
   | { type: 'ArrowRightToken' } // '->' Match arm arrow
   | { type: 'CommaToken' } | { type: 'ColonToken' }
@@ -89,7 +91,7 @@ export class Lexer {
           break;
         // Lookahead for compound comparison operators
         case '>': tokens.push(this.match('=') ? { type: 'GreaterEqualToken' } : { type: 'GreaterToken' }); break;
-        case '<': tokens.push(this.match('=') ? { type: 'LessEqualToken' } : { type: 'LessToken' }); break;
+        case '<': tokens.push(this.match('=') ? { type: 'LessEqualToken' } : (this.match('-') ? { type: 'ArrowLeftToken' } : { type: 'LessToken' })); break;
         case '!': tokens.push(this.match('=') ? { type: 'NotEqualToken' } : { type: 'BooleanNot' }); break;
         // Strict requirement for double-character logical and
         case '&': if (this.match('&')) tokens.push({ type: 'BooleanAnd' }); else throw new Error("Expected '&&'"); break;
@@ -185,8 +187,10 @@ export class Lexer {
       case 'else':     return { type: 'ElseToken' };
       case 'print':    return { type: 'PrintToken' };
       case 'function': return { type: 'FunctionToken' };
+      case 'proc':     return { type: 'ProcToken' };
       case 'return':   return { type: 'ReturnToken' };
       case 'fn':       return { type: 'FnToken' };
+      case 'for':      return { type: 'ForToken' };
       case 'match':    return { type: 'MatchToken' };
       case 'where':    return { type: 'WhereToken' };
       default:         return { type: 'IdentToken', value: s };

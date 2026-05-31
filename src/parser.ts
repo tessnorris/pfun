@@ -29,6 +29,7 @@ export class Parser {
   private parseStatement(): Stmt {
     if (this.match('SemiToken')) return this.parseStatement();
     if (this.match('FunctionToken')) return this.parseFunctionStatement();
+    if (this.match('ProcToken')) return this.parseProcedureStatement();
     if (this.match('LetToken')) return this.parseLetStatement();
     if (this.match('VarToken')) return this.parseVarStatement();
     if (this.match('TypeToken')) return this.parseTypeStatement();
@@ -58,6 +59,22 @@ export class Parser {
       while (!this.check('FunctionToken') && !this.isAtEnd()) statements.push(this.parseStatement());
     }
     return { type: 'FunctionStmt', name, params, body: statements };
+  }
+
+  private parseProcedureStatement(): Stmt {
+    const name = (this.consume('IdentToken', "Expected procedure name.") as any).value;
+    this.consume('LParenToken', "Expected '(' after procedure name.");
+    const params = this.parseParameters();
+    this.consume('RParenToken', "Expected ')' after parameters.");
+
+    const statements: Stmt[] = [];
+    if (this.match('LBraceToken')) {
+      while (!this.check('RBraceToken') && !this.isAtEnd()) statements.push(this.parseStatement());
+      this.consume('RBraceToken', "Expected '}' after block.");
+    } else {
+      while (!this.check('ProcToken') && !this.isAtEnd()) statements.push(this.parseStatement());
+    }
+    return { type: 'ProcedureStmt', name, params, body: statements };
   }
 
   private parseParameters(): string[] {
@@ -109,13 +126,15 @@ export class Parser {
       const variants: { name: string; fields: string[] }[] = [];
       while (this.match('PipeToken')) {
         const variantName = (this.consume('IdentToken', "Expected variant name.") as any).value;
-        this.consume('ColonToken', `Expected ':' after variant name '${variantName}'.`);
         const fields: string[] = [];
-        // Fields are a comma-separated list of identifiers on the same logical line.
-        // We stop when we hit another pipe, a closing brace, or EOF.
-        do {
-          fields.push((this.consume('IdentToken', "Expected field name.") as any).value);
-        } while (this.match('CommaToken') && !this.check('PipeToken') && !this.check('RBraceToken'));
+        // Colon and fields are optional — zero-field variants like `| None` have neither.
+        if (this.match('ColonToken')) {
+          // Fields are a comma-separated list of identifiers.
+          // Stop when we hit another pipe, a closing brace, or EOF.
+          do {
+            fields.push((this.consume('IdentToken', "Expected field name.") as any).value);
+          } while (this.match('CommaToken') && !this.check('PipeToken') && !this.check('RBraceToken'));
+        }
         variants.push({ name: variantName, fields });
       }
       this.consume('RBraceToken', "Expected '}' after union variants.");
@@ -225,11 +244,31 @@ export class Parser {
         return { type: 'GroupExpr', expression: expr };
       }
       case 'LBracketToken': {
-        const elements: Expr[] = [];
-        if (!this.check('RBracketToken')) {
-          do {
-            elements.push(this.parseExpression());
-          } while (this.match('CommaToken'));
+        // Empty list: []
+        if (this.check('RBracketToken')) {
+          this.advance();
+          return { type: 'ListExpr', elements: [] };
+        }
+        // Parse the first expression — could be a list element or comprehension body
+        const first = this.parseExpression();
+        // Comprehension: [ <body> for <var> <- <source> [for ...] [where <guard>] ]
+        if (this.check('ForToken')) {
+          const generators: { variable: string; source: Expr }[] = [];
+          while (this.match('ForToken')) {
+            const variable = (this.consume('IdentToken', "Expected variable name after 'for'.") as any).value;
+            this.consume('ArrowLeftToken', "Expected '<-' after generator variable.");
+            const source = this.parseExpression();
+            generators.push({ variable, source });
+          }
+          let guard: Expr | undefined = undefined;
+          if (this.match('WhereToken')) guard = this.parseExpression();
+          this.consume('RBracketToken', "Expected ']' after list comprehension.");
+          return { type: 'ComprehensionExpr', body: first, generators, guard };
+        }
+        // Regular list literal
+        const elements: Expr[] = [first];
+        while (this.match('CommaToken')) {
+          elements.push(this.parseExpression());
         }
         this.consume('RBracketToken', "Expected ']' after list elements.");
         return { type: 'ListExpr', elements };

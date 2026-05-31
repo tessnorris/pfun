@@ -150,6 +150,16 @@ describe('AST Construction Tests', () => {
       expect(stmt.body[0].type).toBe('ReturnStmt');
     });
 
+    it('should build ProcedureStmt', () => {
+      const ast = parse('proc greet(name) { print name; }');
+      const stmt = ast[0] as any;
+      expect(stmt.type).toBe('ProcedureStmt');
+      expect(stmt.name).toBe('greet');
+      expect(stmt.params).toEqual(['name']);
+      expect(stmt.body).toHaveLength(1);
+      expect(stmt.body[0].type).toBe('PrintStmt');
+    });
+
     it('should build LambdaExpr with single param', () => {
       const ast = parse('let f = fn x => x * 2;');
       const expr = (ast[0] as any).initializer;

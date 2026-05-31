@@ -12,7 +12,7 @@ function getValueType(v: any): string {
     return `list<${getValueType(v[0])}>`;
   }
   if (v instanceof PfunFunction || v instanceof NativeFunction) return 'function';
-  if (v && v.__type) return v.__type;
+  if (v && v.__type) return v.__union ?? v.__type;
   return typeof v;
 }
 
@@ -72,7 +72,8 @@ export class PfunFunction {
     public name: string | null,
     public params: string[],
     public body: Stmt[] | Expr,
-    public closure: Environment
+    public closure: Environment,
+    public kind: 'function' | 'procedure' = 'function'
   ) {}
 
   execute(args: any[], interpreter: Interpreter): any {
@@ -91,6 +92,7 @@ export class PfunFunction {
         throw e;
       }
     } else {
+      // Lambda body is always a pure expression
       return interpreter.evaluateExpr(this.body, env);
     }
   }
@@ -128,7 +130,7 @@ class TypeRegistry {
   }
 
   /** Register a discriminated union and all its variants (UnionTypeStmt). */
-  registerUnion(unionName: string, variants: { name: string; fields: string[] }[]) {
+  registerUnion(unionName: string, variants: { name: string; fields: string[] }[], globals?: Environment) {
     const variantNames = new Set<string>();
     for (const v of variants) {
       if (this.schemas.has(v.name)) {
@@ -136,6 +138,11 @@ class TypeRegistry {
       }
       this.schemas.set(v.name, { fields: v.fields, inferredTypes: null, unionName });
       variantNames.add(v.name);
+      // Zero-field variants are singletons — seed them into the environment
+      // so bare identifiers like `None` resolve without needing braces.
+      if (v.fields.length === 0 && globals) {
+        globals.define(v.name, { __type: v.name, __union: unionName }, false);
+      }
     }
     this.unions.set(unionName, variantNames);
   }
@@ -165,7 +172,7 @@ class TypeRegistry {
       }
     }
 
-    const obj: any = { __type: name };
+    const obj: any = { __type: name, __union: schema.unionName ?? undefined };
     schema.fields.forEach((f, i) => obj[f] = orderedValues[i]);
     return obj;
   }
@@ -194,9 +201,19 @@ class TypeRegistry {
 export class Interpreter {
   private globals = new Environment();
   private types = new TypeRegistry();
+  public inPureContext: boolean = false;
 
   constructor() {
     this.registerBuiltins();
+    this.registerBuiltinTypes();
+  }
+
+  private registerBuiltinTypes() {
+    // Option is a built-in union type: Some { value } | None
+    this.types.registerUnion('Option', [
+      { name: 'Some', fields: ['value'] },
+      { name: 'None', fields: [] },
+    ], this.globals);
   }
 
   private registerBuiltins() {
@@ -257,10 +274,10 @@ export class Interpreter {
   }
 
   interpret(statements: Stmt[]) {
-    for (const stmt of statements) this.evaluateStmt(stmt, this.globals);
+    for (const stmt of statements) this.force(this.evaluateStmt(stmt, this.globals));
   }
 
-  getGlobal(name: string): any { return this.globals.get(name); }
+  getGlobal(name: string): any { return this.force(this.globals.get(name)); }
 
   evaluateStmt(stmt: Stmt, env: Environment): any {
     switch (stmt.type) {
@@ -268,6 +285,7 @@ export class Interpreter {
         env.define(stmt.name, new Thunk(stmt.initializer, env), false);
         return;
       case 'VarStmt': {
+        if (this.inPureContext) throw new Error("Functions cannot use 'var': side-effectful mutation is not allowed in pure functions. Use 'let' or convert to a procedure.");
         const val = this.force(this.evaluateExpr(stmt.initializer, env));
         env.define(stmt.name, val, true);
         return;
@@ -276,10 +294,11 @@ export class Interpreter {
         this.types.registerPlain(stmt.name, stmt.fields);
         return;
       case 'UnionTypeStmt':
-        this.types.registerUnion(stmt.name, stmt.variants);
+        this.types.registerUnion(stmt.name, stmt.variants, this.globals);
         return;
       case 'ExprStmt': return this.evaluateExpr(stmt.expression, env);
       case 'PrintStmt': {
+        if (this.inPureContext) throw new Error("Functions cannot use 'print': side effects are not allowed in pure functions. Use a procedure instead.");
         const printVal = this.force(this.evaluateExpr(stmt.expression, env));
         console.log(this.stringify(printVal));
         return printVal;
@@ -287,8 +306,9 @@ export class Interpreter {
       case 'EvalStmt': return this.force(this.evaluateExpr(stmt.expression, env));
       case 'BlockStmt': {
         const blockEnv = new Environment(env);
-        for (const s of stmt.statements) this.evaluateStmt(s, blockEnv);
-        return;
+        let blockResult: any = undefined;
+        for (const s of stmt.statements) blockResult = this.evaluateStmt(s, blockEnv);
+        return blockResult;
       }
       case 'IfStmt': {
         const cond = this.force(this.evaluateExpr(stmt.condition, env));
@@ -297,7 +317,10 @@ export class Interpreter {
         return;
       }
       case 'FunctionStmt':
-        env.define(stmt.name, new PfunFunction(stmt.name, stmt.params, stmt.body, env), false);
+        env.define(stmt.name, new PfunFunction(stmt.name, stmt.params, stmt.body, env, 'function'), false);
+        return;
+      case 'ProcedureStmt':
+        env.define(stmt.name, new PfunFunction(stmt.name, stmt.params, stmt.body, env, 'procedure'), false);
         return;
       case 'ReturnStmt':
         throw new ReturnValue(stmt.value ? this.evaluateExpr(stmt.value, env) : undefined);
@@ -333,6 +356,31 @@ export class Interpreter {
         this.enforceListType(elements);
         return elements;
       }
+      case 'ComprehensionExpr': {
+        const results: any[] = [];
+        const evalGenerators = (genIndex: number, scopeEnv: Environment) => {
+          if (genIndex === expr.generators.length) {
+            // All generators exhausted — check guard then collect body
+            if (expr.guard) {
+              const guardVal = this.force(this.evaluateExpr(expr.guard, scopeEnv));
+              if (!this.isTruthy(guardVal)) return;
+            }
+            results.push(this.force(this.evaluateExpr(expr.body, scopeEnv)));
+            return;
+          }
+          const gen = expr.generators[genIndex];
+          const source = this.force(this.evaluateExpr(gen.source, scopeEnv));
+          if (!Array.isArray(source)) throw new Error(`Comprehension source must be a list, got ${typeof source}.`);
+          for (const item of source) {
+            const innerEnv = new Environment(scopeEnv);
+            innerEnv.define(gen.variable, item, false);
+            evalGenerators(genIndex + 1, innerEnv);
+          }
+        };
+        evalGenerators(0, env);
+        this.enforceListType(results);
+        return results;
+      }
       case 'RecordExpr': return this.evaluateRecord(expr, env);
       case 'GetExpr': {
         const obj = this.force(this.evaluateExpr(expr.object, env));
@@ -345,8 +393,18 @@ export class Interpreter {
         if (!(callee instanceof PfunFunction) && !(callee instanceof NativeFunction)) {
           throw new Error("Can only call functions.");
         }
+        // Procedures cannot be called from inside a pure function
+        if (this.inPureContext && callee instanceof PfunFunction && callee.kind === 'procedure') {
+          const name = callee.name ? `'${callee.name}'` : 'anonymous';
+          throw new Error(`Functions cannot call procedures: ${name} is a procedure. Move the call to a procedure, or convert ${name} to a function.`);
+        }
         const args = expr.args.map(arg => new Thunk(arg, env));
         if (callee instanceof NativeFunction) return callee.execute(args, this);
+        // Procedures use strict evaluation: force all args immediately, skip memoization
+        if (callee.kind === 'procedure') {
+          const forcedArgs = args.map(a => this.force(a));
+          return callee.execute(forcedArgs, this);
+        }
         return new TailCall(callee, args);
       }
       case 'MatchExpr': return this.evaluateMatch(expr, env);
@@ -496,42 +554,48 @@ export class Interpreter {
    */
   private trampoline(fn: PfunFunction, args: any[]): any {
     let currentFn = fn;
-    let currentArgs = args;
+    let currentArgs = args.map(a => this.force(a));
     const callStack: { fn: PfunFunction, args: any[], key: string }[] = [];
+    const prevPure = this.inPureContext;
+    if (currentFn.kind === 'function') this.inPureContext = true;
 
-    while (true) {
-      const cacheKey = this.getCacheKey(currentFn, currentArgs);
+    try {
+      while (true) {
+        const cacheKey = this.getCacheKey(currentFn, currentArgs);
 
-      if (currentFn.cache.has(cacheKey)) {
-        let result = currentFn.cache.get(cacheKey);
+        if (currentFn.cache.has(cacheKey)) {
+          let result = currentFn.cache.get(cacheKey);
+          while (callStack.length > 0) {
+            const prev = callStack.pop()!;
+            prev.fn.cache.set(prev.key, result);
+          }
+          return result;
+        }
+
+        callStack.push({ fn: currentFn, args: currentArgs, key: cacheKey });
+        let result = currentFn.execute(currentArgs, this);
+
+        if (result instanceof TailCall) {
+          this.inPureContext = result.fn.kind === 'function';
+          currentFn = result.fn;
+          currentArgs = result.args.map(a => this.force(a));
+          continue;
+        }
+
+        let finalResult = this.force(result);
         while (callStack.length > 0) {
           const prev = callStack.pop()!;
-          prev.fn.cache.set(prev.key, result);
+          prev.fn.cache.set(prev.key, finalResult);
         }
-        return result;
+        return finalResult;
       }
-
-      callStack.push({ fn: currentFn, args: currentArgs, key: cacheKey });
-      let result = currentFn.execute(currentArgs, this);
-
-      if (result instanceof TailCall) {
-        currentFn = result.fn;
-        currentArgs = result.args;
-        continue;
-      }
-
-      let finalResult = this.force(result);
-      while (callStack.length > 0) {
-        const prev = callStack.pop()!;
-        prev.fn.cache.set(prev.key, finalResult);
-      }
-      return finalResult;
+    } finally {
+      this.inPureContext = prevPure;
     }
   }
 
   private getCacheKey(fn: PfunFunction, args: any[]): string {
-    const forcedArgs = args.map(arg => this.force(arg));
-    return JSON.stringify(forcedArgs, (key, value) =>
+    return JSON.stringify(args, (key, value) =>
       typeof value === 'bigint' ? value.toString() + 'n' : value
     );
   }

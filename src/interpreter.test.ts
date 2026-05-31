@@ -208,6 +208,389 @@ describe('Interpreter Feature Tests', () => {
     });
   });
 
+  // ─── Functions vs Procedures ───────────────────────────────────────────────
+
+  describe('Functions and Procedures', () => {
+    it('should allow print inside a procedure', () => {
+      const { logs } = run(`
+        proc greet(name) {
+          print "Hello, " + name;
+        }
+        greet("Alice");
+      `);
+      expect(logs).toEqual(['Hello, Alice']);
+    });
+
+    it('should allow var inside a procedure', () => {
+      const { logs } = run(`
+        proc counter() {
+          var x = 0;
+          x = x + 1;
+          print x;
+        }
+        counter();
+      `);
+      expect(logs).toEqual(['1']);
+    });
+
+    it('should allow a procedure to call a pure function', () => {
+      const { logs } = run(`
+        function double(x) { return x * 2; }
+        proc printDouble(n) { print double(n); }
+        printDouble(7);
+      `);
+      expect(logs).toEqual(['14']);
+    });
+
+    it('should throw when a function uses print', () => {
+      expect(() => run(`
+        function bad(x) { print x; }
+        bad(1);
+      `)).toThrow("Functions cannot use 'print'");
+    });
+
+    it('should throw when a function uses var', () => {
+      expect(() => run(`
+        function bad(x) { var y = x + 1; return y; }
+        bad(1);
+      `)).toThrow("Functions cannot use 'var'");
+    });
+
+    it('should throw when a function calls a procedure', () => {
+      expect(() => run(`
+        proc sideEffect() { print "oops"; }
+        function bad(x) { return sideEffect(); }
+        bad(1);
+      `)).toThrow("Functions cannot call procedures");
+    });
+
+    it('should use strict evaluation in procedures', () => {
+      // var requires strict evaluation; this verifies the proc forces args immediately
+      const { logs } = run(`
+        function add(x, y) { return x + y; }
+        proc printSum(a, b) {
+          var result = add(a, b);
+          print result;
+        }
+        printSum(3, 4);
+      `);
+      expect(logs).toEqual(['7']);
+    });
+
+    it('should support tail-call optimized recursion in functions', () => {
+      const { logs } = run(`
+        function countdown(n) {
+          if n <= 0 then return "done" else countdown(n - 1);
+        }
+        print countdown(10000);
+      `);
+      expect(logs).toEqual(['done']);
+    });
+
+    it('should memoize pure function results', () => {
+      // fact(5,1) called twice — second call should hit the cache
+      const { logs } = run(`
+        function fact(n, acc) {
+          if n <= 1 then return acc else fact(n - 1, n * acc);
+        }
+        print fact(5, 1);
+        print fact(5, 1);
+      `);
+      expect(logs).toEqual(['120', '120']);
+    });
+
+    it('should allow procedures to mutate vars across multiple calls', () => {
+      const { logs } = run(`
+        var total = 0;
+        proc add(n) {
+          total = total + n;
+          print total;
+        }
+        add(5);
+        add(3);
+        add(2);
+      `);
+      expect(logs).toEqual(['5', '8', '10']);
+    });
+
+    it('should allow lambdas to be passed to procedures', () => {
+      const { logs } = run(`
+        proc applyAndPrint(f, x) {
+          print f(x);
+        }
+        applyAndPrint(fn x => x * x, 7);
+      `);
+      expect(logs).toEqual(['49']);
+    });
+  });
+
+  // ─── Option Type ───────────────────────────────────────────────────────────
+
+  describe('Option Type', () => {
+    it('Some and None should be available without any type declaration', () => {
+      const { interpreter } = run(`
+        var s = Some { 1 };
+        var n = None;
+      `);
+      expect(interpreter.getGlobal('s').__type).toBe('Some');
+      expect(interpreter.getGlobal('n').__type).toBe('None');
+    });
+
+    it('should match Some and extract the value', () => {
+      const { logs } = run(`
+        let x = Some { 42 };
+        let result = match x {
+          | Some s -> s.value
+          | None   -> 0
+        };
+        print result;
+      `);
+      expect(logs).toEqual(['42']);
+    });
+
+    it('should match None and return the default', () => {
+      const { logs } = run(`
+        let x = None;
+        let result = match x {
+          | Some s -> s.value
+          | None   -> 0
+        };
+        print result;
+      `);
+      expect(logs).toEqual(['0']);
+    });
+
+    it('should support None as a bare identifier without braces', () => {
+      const { interpreter } = run('let x = None;');
+      expect(interpreter.getGlobal('x').__type).toBe('None');
+    });
+
+    it('should support Some with positional braces', () => {
+      const { interpreter } = run('var s = Some { 99 };');
+      expect(interpreter.getGlobal('s').value).toBe(99n);
+    });
+
+    it('should allow a function to return an Option', () => {
+      const { logs } = run(`
+        function safeDivide(a, b) {
+          return b == 0 ? None : Some { a / b };
+        }
+        let good = safeDivide(10, 2);
+        let bad  = safeDivide(10, 0);
+        print match good { | Some s -> s.value | None -> 0 };
+        print match bad  { | Some s -> s.value | None -> 0 };
+      `);
+      expect(logs).toEqual(['5', '0']);
+    });
+
+    it('should support where guards on Some', () => {
+      const { logs } = run(`
+        let x = Some { 100 };
+        let result = match x {
+          | Some s where s.value > 50 -> "big"
+          | Some _                    -> "small"
+          | None                      -> "nothing"
+        };
+        print result;
+      `);
+      expect(logs).toEqual(['big']);
+    });
+
+    it('should require exhaustive match on Option', () => {
+      expect(() => run(`
+        let x = Some { 1 };
+        match x { | Some s -> s.value };
+      `)).toThrow("Non-exhaustive match on 'Option': missing arm(s) for 'None'.");
+    });
+
+    it('should work with wildcard instead of explicit None arm', () => {
+      const { logs } = run(`
+        let x = None;
+        let result = match x {
+          | Some s -> s.value
+          | _      -> 999
+        };
+        print result;
+      `);
+      expect(logs).toEqual(['999']);
+    });
+
+    it('should support Option values in lists with map', () => {
+      const { logs } = run(`
+        let opts = [Some { 1 }, Some { 2 }, Some { 3 }];
+        let vals = map(fn o => match o { | Some s -> s.value | None -> 0 }, opts);
+        print vals;
+      `);
+      expect(logs).toEqual(['[1, 2, 3]']);
+    });
+
+    it('should support chaining with reduce to find first Some', () => {
+      const { logs } = run(`
+        function firstSome(acc, x) {
+          return match acc {
+            | Some _ -> acc
+            | None   -> x
+          };
+        }
+        let candidates = [None, None, Some { 7 }, Some { 8 }];
+        let first = reduce(fn a, x => firstSome(a, x), None, candidates);
+        print match first { | Some s -> s.value | None -> 0 };
+      `);
+      expect(logs).toEqual(['7']);
+    });
+
+    it('should allow user-defined zero-field variants in other union types', () => {
+      const { logs } = run(`
+        type Result = {
+          | Ok: value
+          | Err
+        }
+        let ok  = Ok { 42 };
+        let err = Err;
+        print match ok  { | Ok o -> o.value | Err -> 0 };
+        print match err { | Ok o -> o.value | Err -> 0 };
+      `);
+      expect(logs).toEqual(['42', '0']);
+    });
+  });
+
+  // ─── List Comprehensions ───────────────────────────────────────────────────
+
+  describe('List Comprehensions', () => {
+    it('should produce a transformed list from a single generator', () => {
+      const { logs } = run(`
+        let nums = [1, 2, 3];
+        print [ x * 2 for x <- nums ];
+      `);
+      expect(logs).toEqual(['[2, 4, 6]']);
+    });
+
+    it('should filter with a where guard', () => {
+      const { logs } = run(`
+        let nums = [1, 2, 3, 4, 5];
+        print [ x for x <- nums where x % 2 == 0 ];
+      `);
+      expect(logs).toEqual(['[2, 4]']);
+    });
+
+    it('should support combined conditions with &&', () => {
+      const { logs } = run(`
+        let nums = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+        print [ x for x <- nums where x > 3 && x < 8 ];
+      `);
+      expect(logs).toEqual(['[4, 5, 6, 7]']);
+    });
+
+    it('should apply body expression after filtering', () => {
+      const { logs } = run(`
+        let nums = [1, 2, 3, 4, 5];
+        print [ x * x for x <- nums where x > 2 ];
+      `);
+      expect(logs).toEqual(['[9, 16, 25]']);
+    });
+
+    it('should produce cartesian product with two generators', () => {
+      const { logs } = run(`
+        let xs = [1, 2];
+        let ys = [10, 20];
+        print [ x + y for x <- xs for y <- ys ];
+      `);
+      expect(logs).toEqual(['[11, 21, 12, 22]']);
+    });
+
+    it('should support multiple generators with a guard', () => {
+      const { logs } = run(`
+        print [ x + y for x <- [1, 2, 3] for y <- [1, 2, 3] where x != y ];
+      `);
+      expect(logs).toEqual(['[3, 4, 3, 5, 4, 5]']);
+    });
+
+    it('should support three generators', () => {
+      const { logs } = run(`
+        let result = [ x + y + z for x <- [1, 2] for y <- [10] for z <- [100] ];
+        print result;
+      `);
+      expect(logs).toEqual(['[111, 112]']);
+    });
+
+    it('should produce an empty list when the guard filters everything', () => {
+      const { logs } = run(`
+        print [ x for x <- [1, 2, 3] where x > 10 ];
+      `);
+      expect(logs).toEqual(['[]']);
+    });
+
+    it('should produce an empty list from an empty source', () => {
+      const { logs } = run(`
+        let empty = [];
+        let result = [ x * 2 for x <- empty ];
+        print result;
+      `);
+      expect(logs).toEqual(['[]']);
+    });
+
+    it('should work as an expression inside let', () => {
+      const { logs } = run(`
+        let evens = [ x for x <- [1, 2, 3, 4, 5, 6] where x % 2 == 0 ];
+        print evens;
+      `);
+      expect(logs).toEqual(['[2, 4, 6]']);
+    });
+
+    it('should work inside a pure function body', () => {
+      const { logs } = run(`
+        function evens(lst) { return [ x for x <- lst where x % 2 == 0 ]; }
+        print evens([1, 2, 3, 4, 5, 6]);
+      `);
+      expect(logs).toEqual(['[2, 4, 6]']);
+    });
+
+    it('should work nested inside another comprehension', () => {
+      const { logs } = run(`
+        let matrix = [[1, 2], [3, 4]];
+        let flat = [ x for row <- matrix for x <- row ];
+        print flat;
+      `);
+      expect(logs).toEqual(['[1, 2, 3, 4]']);
+    });
+
+    it('should enforce type consistency in result', () => {
+      expect(() => run(`
+        let mixed = [ x == 1 ? 1 : "two" for x <- [1, 2] ];
+        eval mixed;
+      `)).toThrow("Type mismatch in list");
+    });
+
+    it('should throw when source is not a list', () => {
+      expect(() => run(`
+        let result = [ x for x <- 42 ];
+        eval result;
+      `)).toThrow("Comprehension source must be a list");
+    });
+
+    it('should work inside a procedure with print', () => {
+      const { logs } = run(`
+        proc printEvens(lst) {
+          let evens = [ x for x <- lst where x % 2 == 0 ];
+          print evens;
+        }
+        printEvens([1, 2, 3, 4, 5, 6]);
+      `);
+      expect(logs).toEqual(['[2, 4, 6]']);
+    });
+
+    it('should compose with map and filter', () => {
+      const { logs } = run(`
+        let nums = [1, 2, 3, 4, 5];
+        let comp   = [ x * 2 for x <- nums where x % 2 == 0 ];
+        let mapped = map(fn x => x * 2, filter(fn x => x % 2 == 0, nums));
+        print comp;
+        print mapped;
+      `);
+      expect(logs).toEqual(['[4, 8]', '[4, 8]']);
+    });
+  });
+
   // ─── Match Expressions ─────────────────────────────────────────────────────
 
   describe('Match Expressions', () => {
@@ -384,7 +767,7 @@ describe('Interpreter Feature Tests', () => {
       expect(logs).toEqual(['12']);
     });
 
-    it('should work inside a function body', () => {
+    it('should work inside a pure function body', () => {
       const { logs } = run(`
         ${SHAPE_DEF}
         function area(shape) {

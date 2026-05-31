@@ -50,7 +50,14 @@ if a < b then {
 
 
 /*
-  4. FUNCTIONS & LAMBDAS
+  4. FUNCTIONS, LAMBDAS & PROCEDURES
+
+  - `function` defines a PURE function: no side effects, lazy args, memoized.
+    Functions cannot use `print`, `var`, or call procedures.
+  - `fn` defines an anonymous pure lambda (always pure by construction).
+  - `proc` defines a PROCEDURE: side effects allowed, strict evaluation,
+    not memoized. Procedures can call functions, but functions cannot call
+    procedures.
 */
 
 function add(x, y) {
@@ -59,9 +66,14 @@ function add(x, y) {
 
 let multiply = fn x, y => x * y;
 
-print "--- 4. Functions ---";
-print add(15, 5);       // 20
-print multiply(4, 5);   // 20
+proc printResult(label, value) {
+    print label + ": " + value;
+}
+
+print "--- 4. Functions & Procedures ---";
+print add(15, 5);               // 20
+print multiply(4, 5);           // 20
+printResult("sum", add(3, 4));  // sum: 7
 
 
 /*
@@ -228,7 +240,7 @@ let doubled_area = (match sq {
 }) * 2;
 print doubled_area; // 200
 
-// Match inside a function
+// Match inside a pure function — fine, no side effects
 function describe(shape) {
   return match shape {
     | Square s    -> "Square with side " + s.side
@@ -237,9 +249,21 @@ function describe(shape) {
   };
 }
 
-print describe(sq); // Square with side 10
-print describe(ci); // Circle with radius 5
-print describe(re); // Rectangle 3x4
+// Procedures can call pure functions and print results
+proc printDescriptions(a, b, c) {
+    print describe(a);
+    print describe(b);
+    print describe(c);
+}
+
+printDescriptions(sq, ci, re);
+// Square with side 10
+// Circle with radius 5
+// Rectangle 3x4
+
+// Purity violations (uncomment to see errors):
+// function bad(x) { print x; }         // ERROR: Functions cannot use 'print'
+// function bad(x) { var y = x + 1; }   // ERROR: Functions cannot use 'var'
 
 // Non-exhaustive match (uncomment to see the error):
 // match sq {
@@ -249,3 +273,147 @@ print describe(re); // Rectangle 3x4
 // };
 
 print "--- Execution Complete ---";
+
+
+/*
+  11. LIST COMPREHENSIONS
+  ============================================================================
+  List comprehensions provide a concise way to build lists from other lists.
+
+  Syntax:
+    [ <body> for <var> <- <source> [for <var2> <- <source2>] [where <guard>] ]
+
+  - `for x <- list`  binds each element of list to x in turn (generator)
+  - Multiple `for` clauses produce the cartesian product of the sources
+  - `where <expr>`   filters elements — only items where the guard is true
+    are included. The guard is a normal boolean expression, so use &&
+    to combine multiple conditions.
+  - The body expression is evaluated for each passing element.
+  - Comprehensions are pure expressions and can appear anywhere a list can.
+*/
+
+print "--- 11. List Comprehensions ---";
+
+// Basic: double every number
+let nums = [1, 2, 3, 4, 5];
+let doubled = [ x * 2 for x <- nums ];
+print doubled; // [2, 4, 6, 8, 10]
+
+// With a where guard: only even numbers, doubled
+let even_doubled = [ x * 2 for x <- nums where x % 2 == 0 ];
+print even_doubled; // [4, 8]
+
+// Combined conditions with &&
+let range = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+let mid = [ x for x <- range where x > 3 && x < 8 ];
+print mid; // [4, 5, 6, 7]
+
+// String transformation
+let words = ["hello", "world", "pfun"];
+let lengths = [ w + "!" for w <- words ];
+print lengths; // [hello!, world!, pfun!]
+
+// Multiple generators — cartesian product
+let xs = [1, 2, 3];
+let ys = [10, 20];
+let pairs_sum = [ x + y for x <- xs for y <- ys ];
+print pairs_sum; // [11, 21, 12, 22, 13, 23]
+
+// Multiple generators with a guard
+let coords = [ x + y for x <- [1, 2, 3] for y <- [1, 2, 3] where x != y ];
+print coords; // [3, 4, 3, 5, 4, 5]
+
+// Comprehension over a computed list
+let squares = [ x * x for x <- nums ];
+let big_squares = [ s for s <- squares where s > 9 ];
+print big_squares; // [16, 25]
+
+// Comprehension inside a pure function
+function evens(lst) {
+  return [ x for x <- lst where x % 2 == 0 ];
+}
+print evens([1, 2, 3, 4, 5, 6]); // [2, 4, 6]
+
+// Nested comprehension — flatten one level using multiple generators
+let matrix = [[1, 2], [3, 4], [5, 6]];
+let flat = [ x for row <- matrix for x <- row ];
+print flat; // [1, 2, 3, 4, 5, 6]
+
+
+/*
+  10. OPTION TYPE
+  ============================================================================
+  Option is a built-in union type representing a value that may or may not
+  exist. It has two variants:
+
+    Some { value }   — wraps a value
+    None             — represents absence (bare identifier, no braces)
+
+  Use `match` to safely unwrap Option values. Because Option is built-in,
+  Some and None are always available without any type declaration.
+*/
+
+print "--- 10. Option Type ---";
+
+// Constructing Option values
+let present = Some { 42 };
+let absent = None;
+
+// Basic unwrapping with match
+let result = match present {
+  | Some s -> s.value
+  | None   -> 0
+};
+print result; // 42
+
+let missing = match absent {
+  | Some s -> s.value
+  | None   -> 0
+};
+print missing; // 0
+
+// A pure function returning an Option — safe division
+function safeDivide(a, b) {
+  return b == 0 ? None : Some { a / b };
+}
+
+let good = safeDivide(10, 2);
+let bad  = safeDivide(10, 0);
+
+print match good {
+  | Some s -> "Result: " + s.value
+  | None   -> "Division by zero"
+};  // Result: 5
+
+print match bad {
+  | Some s -> "Result: " + s.value
+  | None   -> "Division by zero"
+};  // Division by zero
+
+// where guard on Some — only match large values
+let big = Some { 100 };
+let classify_opt = match big {
+  | Some s where s.value > 50 -> "big"
+  | Some _                    -> "small"
+  | None                      -> "nothing"
+};
+print classify_opt; // big
+
+// Option in a list — filter out None values with a procedure
+let opts = [Some { 1 }, Some { 2 }, Some { 3 }];
+let values = map(fn o => match o { | Some s -> s.value | None -> 0 }, opts);
+print values; // [1, 2, 3]
+
+// Chaining: find first Some in a list using reduce
+function firstSome(acc, x) {
+  return match acc {
+    | Some _ -> acc
+    | None   -> x
+  };
+}
+let candidates = [None, None, Some { 7 }, Some { 8 }];
+let first = reduce(fn a, x => firstSome(a, x), None, candidates);
+print match first {
+  | Some s -> s.value
+  | None   -> 0
+}; // 7

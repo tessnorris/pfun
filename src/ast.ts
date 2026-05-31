@@ -2,23 +2,17 @@
 
 /**
  * A single arm of a match expression.
- *
- * Examples:
- *   | Square s -> s.side          { variant: 'Square', binding: 's',    guard: undefined, body: ... }
- *   | Circle c where c.r > 3 -> c.radius { variant: 'Circle', binding: 'c', guard: ...,  body: ... }
- *   | Circle _ -> 1               { variant: 'Circle', binding: null,   guard: undefined, body: ... }
- *   | _ -> 0                      { variant: null,     binding: null,   guard: undefined, body: ... }
  */
 export type MatchArm = {
-  variant: string | null;  // null = wildcard '_'
-  binding: string | null;  // null = wildcard '_' or no binding
-  guard?: Expr;            // optional 'where <expr>' guard
+  variant: string | null;
+  binding: string | null;
+  guard?: Expr;
   body: Expr;
 };
 
 /**
  * Expressions evaluate to a value.
- * They can be nested and combined to form complex computations.
+ * All expressions are pure — they may not produce side effects.
  */
 export type Expr =
   | { type: 'IntExpr'; value: bigint }
@@ -35,21 +29,25 @@ export type Expr =
   | { type: 'ListExpr'; elements: Expr[] }
   | { type: 'RecordExpr'; name: string; fields: { key: string | null, value: Expr }[] }
   | { type: 'GetExpr'; object: Expr; name: string }
-  | { type: 'MatchExpr'; subject: Expr; arms: MatchArm[] };
+  | { type: 'MatchExpr'; subject: Expr; arms: MatchArm[] }
+  | { type: 'ComprehensionExpr'; body: Expr; generators: { variable: string; source: Expr }[]; guard?: Expr };
 
 /**
  * Statements represent actions or control flow.
- * They do not inherently resolve to a value in the same way expressions do.
+ *
+ * Functions are pure: no side effects, lazy evaluation, memoized.
+ * Procedures are impure: may produce side effects, strict evaluation, not memoized.
  */
 export type Stmt =
   | { type: 'LetStmt'; name: string; initializer: Expr }
-  | { type: 'VarStmt'; name: string; initializer: Expr }       // Mutable, strictly evaluated
-  | { type: 'TypeStmt'; name: string; fields: string[] }       // Plain record definitions
-  | { type: 'UnionTypeStmt'; name: string; variants: { name: string; fields: string[] }[] } // Discriminated union
+  | { type: 'VarStmt'; name: string; initializer: Expr }
+  | { type: 'TypeStmt'; name: string; fields: string[] }
+  | { type: 'UnionTypeStmt'; name: string; variants: { name: string; fields: string[] }[] }
   | { type: 'ExprStmt'; expression: Expr }
   | { type: 'BlockStmt'; statements: Stmt[] }
   | { type: 'IfStmt'; condition: Expr; thenBranch: Stmt; elseBranch?: Stmt }
   | { type: 'FunctionStmt'; name: string; params: string[]; body: Stmt[] }
+  | { type: 'ProcedureStmt'; name: string; params: string[]; body: Stmt[] }
   | { type: 'ReturnStmt'; value?: Expr }
   | { type: 'PrintStmt'; expression: Expr }
   | { type: 'EvalStmt'; expression: Expr };
