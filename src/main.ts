@@ -1,3 +1,4 @@
+
 // src/main.ts
 import * as fs from 'fs';
 import * as path from 'path';
@@ -7,6 +8,7 @@ import { Interpreter, ModuleLoader } from './interpreter';
 import { stdlibFunctions, stdlibTypes } from './library';
 import { iolibFunctions } from './iolib';
 import { filelibFunctions, filelibTypes } from './filelib';
+import { PfunError, buildPfunError } from './errors';
 
 /**
  * Sets up a fresh interpreter with the core standard library.
@@ -31,10 +33,31 @@ function runFile(filePath: string) {
   loader.registerBuiltin('file', filelibFunctions, filelibTypes);
 
   const source = fs.readFileSync(absolutePath, 'utf-8');
-  const ast    = new Parser(new Lexer(source).lex()).parse();
+
+  // Lex + parse — catch lexical and syntax errors here
+  let ast;
+  try {
+    ast = new Parser(new Lexer(source).lex()).parse();
+  } catch (e) {
+    const raw = e instanceof Error ? e : new Error(String(e));
+    const pfunErr = buildPfunError(raw, source, (raw as any).pos, null, () => undefined, { stringify: String });
+    console.error(pfunErr.pfunMessage);
+    process.exit(1);
+  }
+
   const interp = new Interpreter(baseDir, loader);
   setupInterpreter(interp);
-  interp.interpret(ast);
+
+  try {
+    interp.interpret(ast!, source);
+  } catch (e) {
+    if (e instanceof PfunError) {
+      console.error(e.pfunMessage);
+    } else {
+      console.error(interp.wrapError(e).pfunMessage);
+    }
+    process.exit(1);
+  }
 }
 
 const args = process.argv.slice(2);

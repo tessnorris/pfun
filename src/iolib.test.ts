@@ -1,3 +1,4 @@
+// src/iolib.test.ts
 import { Lexer } from './lexer';
 import { Parser } from './parser';
 import { Interpreter } from './interpreter';
@@ -29,7 +30,7 @@ const run = (source: string) => {
     return true;
   };
   try {
-    interpreter.interpret(ast);
+    interpreter.interpret(ast, source);
     if (currentLine.length > 0) { logs.push(currentLine); currentLine = ''; }
   } finally {
     console.log = originalLog;

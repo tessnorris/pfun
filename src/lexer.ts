@@ -1,51 +1,64 @@
 // src/lexer.ts
 
 /**
+ * Source position — 1-based line and column, plus absolute character offset.
+ */
+export type SourcePos = { line: number; col: number; offset: number };
+
+/**
  * Discriminated union representing all possible lexical tokens in the language.
- * Using a discriminated union on the `type` property allows for exhaustive
- * type-checking in the parser.
+ * Every token carries an optional `pos` field with its source position.
+ * It is optional so that synthetic tokens and tokens produced in tests without
+ * positions still type-check without changes.
  */
 export type Token =
-  | { type: 'IntToken'; value: bigint }
-  | { type: 'BoolToken'; value: boolean }
-  | { type: 'StrToken'; value: string }
-  | { type: 'CharToken'; value: string }  // single-character, distinct from string
-  | { type: 'IdentToken'; value: string }
-  | { type: 'PlusToken' } | { type: 'MinusToken' } | { type: 'StarToken' }
-  | { type: 'SlashToken' } | { type: 'PercentToken' }
-  | { type: 'AssignToken' }   // '=' (Assignment)
-  | { type: 'EqualToken' }    // '==' (Equality Test)
-  | { type: 'GreaterToken' } | { type: 'LessToken' } | { type: 'NotEqualToken' }
-  | { type: 'LessEqualToken' } | { type: 'GreaterEqualToken' } | { type: 'BooleanNot' }
-  | { type: 'BooleanAnd' } | { type: 'BooleanOr' } | { type: 'LParenToken' }
-  | { type: 'RParenToken' } | { type: 'LBraceToken' } | { type: 'RBraceToken' }
-  | { type: 'LBracketToken' } | { type: 'RBracketToken' } // List brackets
-  | { type: 'LetToken' } | { type: 'VarToken' } | { type: 'TypeToken' } // Mutability & Types
-  | { type: 'EvalToken' } | { type: 'IfToken' }
-  | { type: 'ThenToken' } | { type: 'ElseToken' }
-  | { type: 'FunctionToken' } | { type: 'ReturnToken' } | { type: 'FnToken' } | { type: 'ProcToken' }
-  | { type: 'ForToken' }        // 'for' list comprehension generator
-  | { type: 'ArrowLeftToken' }  // '<-' generator binding
-  | { type: 'DictToken' }       // 'dict' dictionary literal
-  | { type: 'ImportToken' }     // 'import' module import
-  | { type: 'ExportToken' }     // 'export' module export
-  | { type: 'AsToken' }         // 'as' namespace alias
-  | { type: 'FromToken' }       // 'from' import source
-  | { type: 'ArrowToken' }      // '=>' Lambda arrow
-  | { type: 'ArrowRightToken' } // '->' Match arm arrow
-  | { type: 'CommaToken' } | { type: 'ColonToken' }
-  | { type: 'QuestionToken' } | { type: 'DotToken' } // Ternary & Property Access
-  | { type: 'PipeToken' }       // '|' Match arm / union variant separator
-  | { type: 'MatchToken' }      // 'match' keyword
-  | { type: 'WhereToken' }      // 'where' guard clause
-  | { type: 'WildcardToken' }   // '_' wildcard pattern
-  | { type: 'SemiToken' } | { type: 'EOFToken' };
+  | { type: 'IntToken'; value: bigint; pos?: SourcePos }
+  | { type: 'BoolToken'; value: boolean; pos?: SourcePos }
+  | { type: 'StrToken'; value: string; pos?: SourcePos }
+  | { type: 'CharToken'; value: string; pos?: SourcePos }
+  | { type: 'IdentToken'; value: string; pos?: SourcePos }
+  | { type: 'PlusToken'; pos?: SourcePos } | { type: 'MinusToken'; pos?: SourcePos } | { type: 'StarToken'; pos?: SourcePos }
+  | { type: 'SlashToken'; pos?: SourcePos } | { type: 'PercentToken'; pos?: SourcePos }
+  | { type: 'AssignToken'; pos?: SourcePos }
+  | { type: 'EqualToken'; pos?: SourcePos }
+  | { type: 'GreaterToken'; pos?: SourcePos } | { type: 'LessToken'; pos?: SourcePos } | { type: 'NotEqualToken'; pos?: SourcePos }
+  | { type: 'LessEqualToken'; pos?: SourcePos } | { type: 'GreaterEqualToken'; pos?: SourcePos } | { type: 'BooleanNot'; pos?: SourcePos }
+  | { type: 'BooleanAnd'; pos?: SourcePos } | { type: 'BooleanOr'; pos?: SourcePos } | { type: 'LParenToken'; pos?: SourcePos }
+  | { type: 'RParenToken'; pos?: SourcePos } | { type: 'LBraceToken'; pos?: SourcePos } | { type: 'RBraceToken'; pos?: SourcePos }
+  | { type: 'LBracketToken'; pos?: SourcePos } | { type: 'RBracketToken'; pos?: SourcePos }
+  | { type: 'LetToken'; pos?: SourcePos } | { type: 'VarToken'; pos?: SourcePos } | { type: 'TypeToken'; pos?: SourcePos }
+  | { type: 'EvalToken'; pos?: SourcePos } | { type: 'IfToken'; pos?: SourcePos }
+  | { type: 'ThenToken'; pos?: SourcePos } | { type: 'ElseToken'; pos?: SourcePos }
+  | { type: 'FunctionToken'; pos?: SourcePos } | { type: 'ReturnToken'; pos?: SourcePos } | { type: 'FnToken'; pos?: SourcePos } | { type: 'ProcToken'; pos?: SourcePos }
+  | { type: 'ForToken'; pos?: SourcePos }
+  | { type: 'ArrowLeftToken'; pos?: SourcePos }
+  | { type: 'DictToken'; pos?: SourcePos }
+  | { type: 'ImportToken'; pos?: SourcePos }
+  | { type: 'ExportToken'; pos?: SourcePos }
+  | { type: 'AsToken'; pos?: SourcePos }
+  | { type: 'FromToken'; pos?: SourcePos }
+  | { type: 'ArrowToken'; pos?: SourcePos }
+  | { type: 'ArrowRightToken'; pos?: SourcePos }
+  | { type: 'CommaToken'; pos?: SourcePos } | { type: 'ColonToken'; pos?: SourcePos }
+  | { type: 'QuestionToken'; pos?: SourcePos } | { type: 'DotToken'; pos?: SourcePos }
+  | { type: 'PipeToken'; pos?: SourcePos }
+  | { type: 'MatchToken'; pos?: SourcePos }
+  | { type: 'WhereToken'; pos?: SourcePos }
+  | { type: 'WildcardToken'; pos?: SourcePos }
+  | { type: 'SemiToken'; pos?: SourcePos } | { type: 'EOFToken'; pos?: SourcePos };
 
 export class Lexer {
   private input: string;
   private pos: number = 0;
+  private line: number = 1;
+  private col: number = 1;
 
   constructor(input: string) { this.input = input; }
+
+  /** Returns the current source position (before advancing). */
+  private currentPos(): SourcePos {
+    return { line: this.line, col: this.col, offset: this.pos };
+  }
 
   /**
    * Main scanning loop. Iterates through the input string character by character,
@@ -59,60 +72,67 @@ export class Lexer {
       if (this.isAtEnd()) break;
       const char = this.peek();
 
+      // Capture position before reading the token
+      const tokPos = this.currentPos();
+
       // Delegate to specialized readers for multi-character literals
-      if (this.isDigit(char)) { tokens.push(this.readNumber()); continue; }
-      if (char === '"') { tokens.push(this.readString()); continue; }
-      if (char === "'") { tokens.push(this.readChar()); continue; }
-      if (this.isAlpha(char)) { tokens.push(this.readIdentifierOrKeyword()); continue; }
+      if (this.isDigit(char)) { tokens.push({ ...this.readNumber(), pos: tokPos }); continue; }
+      if (char === '"') { tokens.push({ ...this.readString(), pos: tokPos }); continue; }
+      if (char === "'") { tokens.push({ ...this.readChar(), pos: tokPos }); continue; }
+      if (this.isAlpha(char)) { tokens.push({ ...this.readIdentifierOrKeyword(), pos: tokPos }); continue; }
 
       // Handle single and multi-character operators
       this.advance();
       switch (char) {
-        case '+': tokens.push({ type: 'PlusToken' }); break;
-        case '*': tokens.push({ type: 'StarToken' }); break;
-        case '/': tokens.push({ type: 'SlashToken' }); break;
-        case '%': tokens.push({ type: 'PercentToken' }); break;
+        case '+': tokens.push({ type: 'PlusToken', pos: tokPos }); break;
+        case '*': tokens.push({ type: 'StarToken', pos: tokPos }); break;
+        case '/': tokens.push({ type: 'SlashToken', pos: tokPos }); break;
+        case '%': tokens.push({ type: 'PercentToken', pos: tokPos }); break;
         // '-' could be subtraction or the start of '->' (match arm arrow)
         case '-':
-          tokens.push(this.match('>') ? { type: 'ArrowRightToken' } : { type: 'MinusToken' });
+          tokens.push(this.match('>') ? { type: 'ArrowRightToken', pos: tokPos } : { type: 'MinusToken', pos: tokPos });
           break;
         // '=' could be assignment '=', equality '==', or lambda arrow '=>'
         case '=':
-          tokens.push(this.match('=') ? { type: 'EqualToken' } : (this.match('>') ? { type: 'ArrowToken' } : { type: 'AssignToken' }));
+          tokens.push(this.match('=') ? { type: 'EqualToken', pos: tokPos } : (this.match('>') ? { type: 'ArrowToken', pos: tokPos } : { type: 'AssignToken', pos: tokPos }));
           break;
-        case '(': tokens.push({ type: 'LParenToken' }); break;
-        case ')': tokens.push({ type: 'RParenToken' }); break;
-        case '{': tokens.push({ type: 'LBraceToken' }); break;
-        case '}': tokens.push({ type: 'RBraceToken' }); break;
-        case '[': tokens.push({ type: 'LBracketToken' }); break;
-        case ']': tokens.push({ type: 'RBracketToken' }); break;
-        case ',': tokens.push({ type: 'CommaToken' }); break;
-        case ';': tokens.push({ type: 'SemiToken' }); break;
-        case ':': tokens.push({ type: 'ColonToken' }); break;
-        case '?': tokens.push({ type: 'QuestionToken' }); break;
-        case '.': tokens.push({ type: 'DotToken' }); break;
+        case '(': tokens.push({ type: 'LParenToken', pos: tokPos }); break;
+        case ')': tokens.push({ type: 'RParenToken', pos: tokPos }); break;
+        case '{': tokens.push({ type: 'LBraceToken', pos: tokPos }); break;
+        case '}': tokens.push({ type: 'RBraceToken', pos: tokPos }); break;
+        case '[': tokens.push({ type: 'LBracketToken', pos: tokPos }); break;
+        case ']': tokens.push({ type: 'RBracketToken', pos: tokPos }); break;
+        case ',': tokens.push({ type: 'CommaToken', pos: tokPos }); break;
+        case ';': tokens.push({ type: 'SemiToken', pos: tokPos }); break;
+        case ':': tokens.push({ type: 'ColonToken', pos: tokPos }); break;
+        case '?': tokens.push({ type: 'QuestionToken', pos: tokPos }); break;
+        case '.': tokens.push({ type: 'DotToken', pos: tokPos }); break;
         // '|' is now a pipe token for union variants and match arms.
         // '||' is still supported for boolean or.
         case '|':
-          tokens.push(this.match('|') ? { type: 'BooleanOr' } : { type: 'PipeToken' });
+          tokens.push(this.match('|') ? { type: 'BooleanOr', pos: tokPos } : { type: 'PipeToken', pos: tokPos });
           break;
         // Lookahead for compound comparison operators
-        case '>': tokens.push(this.match('=') ? { type: 'GreaterEqualToken' } : { type: 'GreaterToken' }); break;
-        case '<': tokens.push(this.match('=') ? { type: 'LessEqualToken' } : (this.match('-') ? { type: 'ArrowLeftToken' } : { type: 'LessToken' })); break;
-        case '!': tokens.push(this.match('=') ? { type: 'NotEqualToken' } : { type: 'BooleanNot' }); break;
+        case '>': tokens.push(this.match('=') ? { type: 'GreaterEqualToken', pos: tokPos } : { type: 'GreaterToken', pos: tokPos }); break;
+        case '<': tokens.push(this.match('=') ? { type: 'LessEqualToken', pos: tokPos } : (this.match('-') ? { type: 'ArrowLeftToken', pos: tokPos } : { type: 'LessToken', pos: tokPos })); break;
+        case '!': tokens.push(this.match('=') ? { type: 'NotEqualToken', pos: tokPos } : { type: 'BooleanNot', pos: tokPos }); break;
         // Strict requirement for double-character logical and
-        case '&': if (this.match('&')) tokens.push({ type: 'BooleanAnd' }); else throw new Error("Expected '&&'"); break;
+        case '&': if (this.match('&')) tokens.push({ type: 'BooleanAnd', pos: tokPos }); else throw new Error("Expected '&&'"); break;
         default: throw new Error(`Unexpected character '${char}'`);
       }
     }
-    tokens.push({ type: 'EOFToken' });
+    tokens.push({ type: 'EOFToken', pos: this.currentPos() });
     return tokens;
   }
 
   // --- Scanner State Helpers ---
   private isAtEnd(): boolean { return this.pos >= this.input.length; }
   private peek(): string { return this.input[this.pos]; }
-  private advance(): string { return this.input[this.pos++]; }
+  private advance(): string {
+    const c = this.input[this.pos++];
+    if (c === '\n') { this.line++; this.col = 1; } else { this.col++; }
+    return c;
+  }
 
   /**
    * Consumes the current character only if it matches the expected character.

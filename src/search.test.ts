@@ -1,3 +1,4 @@
+// src/search.test.ts
 import { Lexer } from './lexer';
 import { Parser } from './parser';
 import { Interpreter } from './interpreter';
@@ -34,7 +35,7 @@ const run = (source: string) => {
     return true;
   };
   try {
-    interpreter.interpret(ast);
+    interpreter.interpret(ast, source);
     if (currentLine.length > 0) { logs.push(currentLine); currentLine = ''; }
   } finally {
     console.log = originalLog;
@@ -115,6 +116,7 @@ describe('Search and Access Tests', () => {
 
 
   describe('find and findSlice', () => {
+    it('find should return the index of an existing item', () => {
       const { logs } = run(`println(find([10, 20, 30], 20));`);
       expect(logs).toEqual(['1']);
     });
@@ -185,4 +187,4 @@ describe('Search and Access Tests', () => {
       `)).toThrow("cannot search an infinite list");
     });
   });
-
+});

@@ -41,12 +41,14 @@ export class Parser {
     if (this.match('LBraceToken')) return this.parseBlockStatement();
 
     // Fallback: If no statement keyword is found, it must be an expression statement.
+    const exprStmtPos = this.pos();
     const expr = this.parseExpression();
     this.match('SemiToken'); // Consume optional trailing semicolon
-    return { type: 'ExprStmt', expression: expr };
+    return { type: 'ExprStmt', expression: expr, pos: exprStmtPos };
   }
 
   private parseFunctionStatement(): Stmt {
+    const stmtPos = this.pos();
     const name = (this.consume('IdentToken', "Expected function name.") as any).value;
     this.consume('LParenToken', "Expected '(' after function name.");
     const params = this.parseParameters();
@@ -59,10 +61,11 @@ export class Parser {
     } else {
       while (!this.check('FunctionToken') && !this.isAtEnd()) statements.push(this.parseStatement());
     }
-    return { type: 'FunctionStmt', name, params, body: statements };
+    return { type: 'FunctionStmt', name, params, body: statements, pos: stmtPos };
   }
 
   private parseProcedureStatement(): Stmt {
+    const stmtPos = this.pos();
     const name = (this.consume('IdentToken', "Expected procedure name.") as any).value;
     this.consume('LParenToken', "Expected '(' after procedure name.");
     const params = this.parseParameters();
@@ -75,7 +78,7 @@ export class Parser {
     } else {
       while (!this.check('ProcToken') && !this.isAtEnd()) statements.push(this.parseStatement());
     }
-    return { type: 'ProcedureStmt', name, params, body: statements };
+    return { type: 'ProcedureStmt', name, params, body: statements, pos: stmtPos };
   }
 
   private parseParameters(): string[] {
@@ -94,19 +97,21 @@ export class Parser {
   }
 
   private parseLetStatement(): Stmt {
+    const stmtPos = this.pos();
     const name = (this.consume('IdentToken', "Expected variable name.") as any).value;
     this.consume('AssignToken', "Expected '=' after variable name.");
     const initializer = this.parseExpression();
     this.match('SemiToken');
-    return { type: 'LetStmt', name, initializer };
+    return { type: 'LetStmt', name, initializer, pos: stmtPos };
   }
 
   private parseVarStatement(): Stmt {
+    const stmtPos = this.pos();
     const name = (this.consume('IdentToken', "Expected variable name.") as any).value;
     this.consume('AssignToken', "Expected '=' after variable name.");
     const initializer = this.parseExpression();
     this.match('SemiToken');
-    return { type: 'VarStmt', name, initializer };
+    return { type: 'VarStmt', name, initializer, pos: stmtPos };
   }
 
   /**
@@ -123,6 +128,7 @@ export class Parser {
    *   }
    */
   private parseTypeStatement(): Stmt {
+    const stmtPos = this.pos();
     const name = (this.consume('IdentToken', "Expected type name.") as any).value;
     this.consume('AssignToken', "Expected '=' after type name.");
     this.consume('LBraceToken', "Expected '{' for type definition.");
@@ -145,7 +151,7 @@ export class Parser {
       }
       this.consume('RBraceToken', "Expected '}' after union variants.");
       this.match('SemiToken');
-      return { type: 'UnionTypeStmt', name, variants };
+      return { type: 'UnionTypeStmt', name, variants, pos: stmtPos };
     }
 
     // Plain record type
@@ -157,10 +163,11 @@ export class Parser {
     }
     this.consume('RBraceToken', "Expected '}' after type fields.");
     this.match('SemiToken');
-    return { type: 'TypeStmt', name, fields };
+    return { type: 'TypeStmt', name, fields, pos: stmtPos };
   }
 
   private parseImportStatement(): Stmt {
+    const stmtPos = this.pos();
     // import * from "path"          — star: all exports into current scope
     // import * as Name from "path"  — namespace: all exports under alias
     if (this.match('StarToken')) {
@@ -169,13 +176,13 @@ export class Parser {
         this.consume('FromToken', "Expected 'from' after alias.");
         const path = (this.consume('StrToken', "Expected module path string.") as any).value;
         this.match('SemiToken');
-        return { type: 'ImportStmt', kind: 'namespace', alias, path };
+        return { type: 'ImportStmt', kind: 'namespace', alias, path, pos: stmtPos };
       }
       // bare star — no alias
       this.consume('FromToken', "Expected 'from' after '*'.");
       const path = (this.consume('StrToken', "Expected module path string.") as any).value;
       this.match('SemiToken');
-      return { type: 'ImportStmt', kind: 'star', path };
+      return { type: 'ImportStmt', kind: 'star', path, pos: stmtPos };
     }
     // import { name, name as alias, ... } from "path"
     this.consume('LBraceToken', "Expected '{', '*' after 'import'.");
@@ -194,7 +201,7 @@ export class Parser {
     this.consume('FromToken', "Expected 'from' after import list.");
     const path = (this.consume('StrToken', "Expected module path string.") as any).value;
     this.match('SemiToken');
-    return { type: 'ImportStmt', kind: 'named', names, path };
+    return { type: 'ImportStmt', kind: 'named', names, path, pos: stmtPos };
   }
 
   private parseExportStatement(): Stmt {
@@ -204,29 +211,33 @@ export class Parser {
   }
 
   private parseEvalStatement(): Stmt {
+    const stmtPos = this.pos();
     const expr = this.parseExpression();
     this.match('SemiToken');
-    return { type: 'EvalStmt', expression: expr };
+    return { type: 'EvalStmt', expression: expr, pos: stmtPos };
   }
 
   private parseReturnStatement(): Stmt {
+    const stmtPos = this.pos();
     let value: Expr | undefined = undefined;
     if (this.isExprStart()) value = this.parseExpression();
     this.match('SemiToken');
-    return { type: 'ReturnStmt', value };
+    return { type: 'ReturnStmt', value, pos: stmtPos };
   }
 
   private parseIfStatement(): Stmt {
+    const stmtPos = this.pos();
     const condition = this.parseExpression();
     this.consume('ThenToken', "Expected 'then' after if condition.");
     const thenBranch = this.parseStatement();
     let elseBranch: Stmt | undefined = undefined;
     if (this.match('ElseToken')) elseBranch = this.parseStatement();
-    return { type: 'IfStmt', condition, thenBranch, elseBranch };
+    return { type: 'IfStmt', condition, thenBranch, elseBranch, pos: stmtPos };
   }
 
   private parseBlockExpr(): Expr {
     // Parses { stmt; stmt; expr } as a BlockExpr — evaluates stmts, returns last value.
+    const exprPos = this.pos();
     this.advance(); // consume '{'
     const statements: Stmt[] = [];
     while (!this.check('RBraceToken') && !this.isAtEnd()) {
@@ -234,7 +245,7 @@ export class Parser {
       statements.push(this.parseStatement());
     }
     this.consume('RBraceToken', "Expected '}' after block.");
-    return { type: 'BlockExpr', statements };
+    return { type: 'BlockExpr', statements, pos: exprPos };
   }
 
   private parseBlockStatement(): Stmt {
@@ -259,12 +270,13 @@ export class Parser {
    * Prefix parser (Nud): Handles tokens that appear at the beginning of an expression.
    */
   private parsePrefix(): Expr {
+    const exprPos = this.pos();
     const token = this.advance();
     switch (token.type) {
-      case 'IntToken': return { type: 'IntExpr', value: token.value };
-      case 'BoolToken': return { type: 'BoolExpr', value: token.value };
-      case 'StrToken': return { type: 'StrExpr', value: token.value };
-      case 'CharToken': return { type: 'CharExpr', value: token.value };
+      case 'IntToken': return { type: 'IntExpr', value: token.value, pos: token.pos ?? exprPos };
+      case 'BoolToken': return { type: 'BoolExpr', value: token.value, pos: token.pos ?? exprPos };
+      case 'StrToken': return { type: 'StrExpr', value: token.value, pos: token.pos ?? exprPos };
+      case 'CharToken': return { type: 'CharExpr', value: token.value, pos: token.pos ?? exprPos };
       case 'IdentToken':
         // printf("...{name}...{name.field}...") desugars at parse time into
         // a print() call with a string concatenation expression.
@@ -292,11 +304,11 @@ export class Parser {
             } while (this.match('CommaToken'));
           }
           this.consume('RBraceToken', "Expected '}' after record fields.");
-          return { type: 'RecordExpr', name: token.value, fields };
+          return { type: 'RecordExpr', name: token.value, fields, pos: token.pos ?? exprPos };
         }
-        return { type: 'IdentExpr', name: token.value };
+        return { type: 'IdentExpr', name: token.value, pos: token.pos ?? exprPos };
       case 'BooleanNot': case 'MinusToken':
-        return { type: 'UnaryExpr', operator: token.type, right: this.parseExpression(Precedence.UNARY) };
+        return { type: 'UnaryExpr', operator: token.type, right: this.parseExpression(Precedence.UNARY), pos: token.pos ?? exprPos };
       case 'FnToken': return this.parseLambda();
       case 'MatchToken': return this.parseMatchExpression();
       case 'DictToken': {
@@ -311,18 +323,18 @@ export class Parser {
           } while (this.match('CommaToken'));
         }
         this.consume('RBraceToken', "Expected '}' after dict entries.");
-        return { type: 'DictExpr', entries };
+        return { type: 'DictExpr', entries, pos: exprPos };
       }
       case 'LParenToken': {
         const expr = this.parseExpression();
         this.consume('RParenToken', "Expected ')' after expression.");
-        return { type: 'GroupExpr', expression: expr };
+        return { type: 'GroupExpr', expression: expr, pos: exprPos };
       }
       case 'LBracketToken': {
         // Empty list: []
         if (this.check('RBracketToken')) {
           this.advance();
-          return { type: 'ListExpr', elements: [] };
+          return { type: 'ListExpr', elements: [], pos: exprPos };
         }
         // Parse the first expression — could be a list element or comprehension body
         const first = this.parseExpression();
@@ -338,7 +350,7 @@ export class Parser {
           let guard: Expr | undefined = undefined;
           if (this.match('WhereToken')) guard = this.parseExpression();
           this.consume('RBracketToken', "Expected ']' after list comprehension.");
-          return { type: 'ComprehensionExpr', body: first, generators, guard };
+          return { type: 'ComprehensionExpr', body: first, generators, guard, pos: exprPos };
         }
         // Regular list literal
         const elements: Expr[] = [first];
@@ -346,7 +358,7 @@ export class Parser {
           elements.push(this.parseExpression());
         }
         this.consume('RBracketToken', "Expected ']' after list elements.");
-        return { type: 'ListExpr', elements };
+        return { type: 'ListExpr', elements, pos: exprPos };
       }
       default: throw new Error(`Unexpected token in expression: ${token.type}`);
     }
@@ -406,7 +418,7 @@ export class Parser {
     }
 
     this.consume('RBraceToken', "Expected '}' after match arms.");
-    return { type: 'MatchExpr', subject, arms };
+    return { type: 'MatchExpr', subject, arms, pos: subject.pos };
   }
 
   /**
@@ -415,6 +427,7 @@ export class Parser {
    * Escape sequences: \n \t \\ \" \{ \}
    */
   private parsePrintf(): Expr {
+    const printfPos = this.pos();
     this.advance(); // consume '('
     const fmtToken = this.advance();
     if (fmtToken.type !== 'StrToken') throw new Error("printf requires a string literal as its argument.");
@@ -453,16 +466,17 @@ export class Parser {
     if (current.length > 0) parts.push({ type: 'StrExpr', value: current });
 
     if (parts.length === 0) {
-      return { type: 'CallExpr', callee: { type: 'IdentExpr', name: 'print' }, args: [{ type: 'StrExpr', value: '' }] };
+      return { type: 'CallExpr', callee: { type: 'IdentExpr', name: 'print' }, args: [{ type: 'StrExpr', value: '' }], pos: printfPos };
     }
     let concat: Expr = parts[0];
     for (let j = 1; j < parts.length; j++) {
       concat = { type: 'BinaryExpr', left: concat, operator: 'PlusToken', right: parts[j] };
     }
-    return { type: 'CallExpr', callee: { type: 'IdentExpr', name: 'print' }, args: [concat] };
+    return { type: 'CallExpr', callee: { type: 'IdentExpr', name: 'print' }, args: [concat], pos: printfPos };
   }
 
   private parseLambda(): Expr {
+    const exprPos = this.pos();
     let params: string[] = [];
     if (this.match('LParenToken')) {
       params = this.parseParameters();
@@ -479,34 +493,35 @@ export class Parser {
     }
     this.consume('ArrowToken', "Expected '=>' after lambda parameters.");
     const body = this.parseExpression();
-    return { type: 'LambdaExpr', params, body };
+    return { type: 'LambdaExpr', params, body, pos: exprPos };
   }
 
   /**
    * Infix parser (Led): Handles tokens that appear between two expressions.
    */
   private parseInfix(left: Expr): Expr {
+    const infixPos = left.pos ?? this.pos();
     const token = this.advance();
     const precedence = this.getPrecedence(token.type);
 
     if (token.type === 'AssignToken') {
       if (left.type === 'IndexExpr') {
-        return { type: 'IndexAssignExpr', object: left.object, index: left.index, value: this.parseExpression(precedence - 1) };
+        return { type: 'IndexAssignExpr', object: left.object, index: left.index, value: this.parseExpression(precedence - 1), pos: infixPos };
       }
       if (left.type !== 'IdentExpr') throw new Error("Invalid assignment target.");
-      return { type: 'AssignExpr', name: left.name, value: this.parseExpression(precedence - 1) };
+      return { type: 'AssignExpr', name: left.name, value: this.parseExpression(precedence - 1), pos: infixPos };
     }
 
     if (token.type === 'QuestionToken') {
       const thenBranch = this.parseExpression();
       this.consume('ColonToken', "Expected ':' in ternary expression.");
       const elseBranch = this.parseExpression(precedence - 1);
-      return { type: 'TernaryExpr', condition: left, thenBranch, elseBranch };
+      return { type: 'TernaryExpr', condition: left, thenBranch, elseBranch, pos: infixPos };
     }
 
     if (token.type === 'DotToken') {
       const prop = this.consume('IdentToken', "Expected property name after '.'.");
-      return { type: 'GetExpr', object: left, name: (prop as any).value };
+      return { type: 'GetExpr', object: left, name: (prop as any).value, pos: infixPos };
     }
 
     if (token.type === 'LParenToken') {
@@ -516,10 +531,10 @@ export class Parser {
     if (token.type === 'LBracketToken') {
       const index = this.parseExpression();
       this.consume('RBracketToken', "Expected ']' after index.");
-      return { type: 'IndexExpr', object: left, index };
+      return { type: 'IndexExpr', object: left, index, pos: infixPos };
     }
 
-    return { type: 'BinaryExpr', left, operator: token.type, right: this.parseExpression(precedence) };
+    return { type: 'BinaryExpr', left, operator: token.type, right: this.parseExpression(precedence), pos: infixPos };
   }
 
   private parseCall(callee: Expr): Expr {
@@ -537,10 +552,10 @@ export class Parser {
 
     if (callee.type === 'IdentExpr' && isNamedRecord) {
       const fields = args.map(a => ({ key: (a as any).name, value: (a as any).value }));
-      return { type: 'RecordExpr', name: callee.name, fields };
+      return { type: 'RecordExpr', name: callee.name, fields, pos: callee.pos };
     }
 
-    return { type: 'CallExpr', callee, args };
+    return { type: 'CallExpr', callee, args, pos: callee.pos };
   }
 
   private getPrecedence(type: Token['type']): Precedence {
@@ -559,6 +574,12 @@ export class Parser {
   }
 
   // --- Parser State Helpers ---
+
+  /** Returns the source position of the current (not-yet-consumed) token. */
+  private pos(): import('./lexer').SourcePos | undefined {
+    return this.peek().pos;
+  }
+
   private isExprStart(): boolean {
     const t = this.peek().type;
     return ['IntToken', 'BoolToken', 'StrToken', 'CharToken', 'IdentToken', 'BooleanNot', 'MinusToken',

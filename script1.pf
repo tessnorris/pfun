@@ -224,14 +224,3 @@ println(area(sq)); // 16
 println(area(ci)); // 9
 println(area(tr)); // 12
 
-println("Speak, friend, and enter");
-var inp = readln();
-let answer = match inp {
-  | Some s -> s.value
-  | None   -> "No input"
-};
-if answer == "friend" then {
-  println("Welcome!");
-} else {
-  println("None shall pass!");
-}

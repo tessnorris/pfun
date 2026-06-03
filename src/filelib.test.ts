@@ -33,7 +33,7 @@ const run = (source: string) => {
     return true;
   };
   try {
-    interp.interpret(ast);
+    interp.interpret(ast, source);
     if (currentLine.length > 0) { logs.push(currentLine); currentLine = ''; }
   } finally {
     console.log = originalLog;

@@ -1,5 +1,7 @@
 // src/interpreter.ts
 import { Expr, Stmt } from './ast';
+import { SourcePos } from './lexer';
+import { buildPfunError, PfunError } from './errors';
 import * as fs from 'fs';
 import * as path from 'path';
 import { Lexer } from './lexer';
@@ -308,9 +310,42 @@ export class Interpreter {
   private baseDir:      string;
   private moduleLoader: ModuleLoader;
 
+  // ─── Error reporting context ──────────────────────────────────────────────
+  // Tracks the source text and current position for error reporting.
+  // The interpreter pushes/pops positions as it evaluates AST nodes so that
+  // the innermost position is always available when an error is thrown.
+  public  sourceText: string = '';
+  private _currentPos: SourcePos | undefined = undefined;
+  private _currentNode: Expr | Stmt | null = null;
+  private _currentEnv: Environment | null = null;
+
   constructor(baseDir: string = process.cwd(), moduleLoader?: ModuleLoader) {
     this.baseDir      = baseDir;
     this.moduleLoader = moduleLoader ?? new ModuleLoader(path.join(baseDir, 'lib'));
+  }
+
+  /** Update the "currently executing" position for error reporting. */
+  private trackPos(node: Expr | Stmt, env: Environment): void {
+    if (node.pos) {
+      this._currentPos  = node.pos;
+      this._currentNode = node;
+      this._currentEnv  = env;
+    }
+  }
+
+  /**
+   * Wrap a raw Error into a PfunError with source context.
+   * If the error is already a PfunError, re-throw it unchanged so the innermost
+   * (most specific) location is preserved.
+   */
+  wrapError(err: unknown): PfunError {
+    if (err instanceof PfunError) return err;
+    const raw = err instanceof Error ? err : new Error(String(err));
+    const envLookup = (name: string) => {
+      try { return this._currentEnv ? this._currentEnv.get(name) : undefined; }
+      catch { return undefined; }
+    };
+    return buildPfunError(raw, this.sourceText, this._currentPos, this._currentNode, envLookup, this);
   }
 
   getExports(): Map<string, any> { return this.exports; }
@@ -339,8 +374,15 @@ export class Interpreter {
 
   // ─── Public Interpreter API ─────────────────────────────────────────────────
 
-  interpret(statements: Stmt[]) {
-    for (const stmt of statements) this.force(this.evaluateStmt(stmt, this.globals));
+  interpret(statements: Stmt[], sourceText?: string) {
+    if (sourceText !== undefined) this.sourceText = sourceText;
+    for (const stmt of statements) {
+      try {
+        this.force(this.evaluateStmt(stmt, this.globals));
+      } catch (e) {
+        throw this.wrapError(e);
+      }
+    }
   }
 
   getGlobal(name: string): any { return this.force(this.globals.get(name)); }
@@ -348,6 +390,7 @@ export class Interpreter {
   // ─── Statement Evaluation ───────────────────────────────────────────────────
 
   evaluateStmt(stmt: Stmt, env: Environment): any {
+    this.trackPos(stmt, env);
     switch (stmt.type) {
       case 'LetStmt': {
         if (stmt.initializer.type === 'DictExpr') {
@@ -457,6 +500,7 @@ export class Interpreter {
   // ─── Expression Evaluation ──────────────────────────────────────────────────
 
   evaluateExpr(expr: Expr, env: Environment): any {
+    this.trackPos(expr, env);
     switch (expr.type) {
       case 'IntExpr':   return expr.value;
       case 'BoolExpr':  return expr.value;
@@ -664,8 +708,12 @@ export class Interpreter {
     switch (expr.operator) {
       case 'MinusToken':        return left - right;
       case 'StarToken':         return left * right;
-      case 'SlashToken':        return left / right;
-      case 'PercentToken':      return left % right;
+      case 'SlashToken':
+        if (typeof right === 'bigint' && right === 0n) throw new Error('Divide by zero.');
+        return left / right;
+      case 'PercentToken':
+        if (typeof right === 'bigint' && right === 0n) throw new Error('Divide by zero (modulo by zero).');
+        return left % right;
       case 'EqualToken': {
         if (left instanceof PfunChar && right instanceof PfunChar) return left.value === right.value;
         if (left instanceof PfunChar || right instanceof PfunChar) return false;
