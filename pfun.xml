@@ -5,7 +5,7 @@
   section="Scripts"
   extensions="*.pf"
   mimetype="text/x-pfun"
-  version="5"
+  version="6"
   kateversion="5.0"
   casesensitive="true"
   author="Pfun Language"
@@ -14,113 +14,328 @@
 
   <highlighting>
 
-    <!-- Declaration keywords: let, var, type, function, fn -->
-    <list name="declarations">
+    <!-- ─── Keyword lists ──────────────────────────────────────────────────── -->
+
+    <!-- Immutable binding and type declarations -->
+    <list name="kw-let">
       <item>let</item>
-      <item>var</item>
-      <item>type</item>
-      <item>fn</item>
-      <item>function</item>
     </list>
 
-    <!-- Control flow keywords -->
-    <list name="controlflow">
-      <item>return</item>
+    <!-- Mutable binding — visually distinct from let -->
+    <list name="kw-var">
+      <item>var</item>
+    </list>
+
+    <!-- Pure function definition keywords -->
+    <list name="kw-function">
+      <item>function</item>
+      <item>fn</item>
+    </list>
+
+    <!-- Procedure definition — side-effectful, distinct from function -->
+    <list name="kw-proc">
+      <item>proc</item>
+    </list>
+
+    <!-- Type system keywords -->
+    <list name="kw-type">
+      <item>type</item>
+    </list>
+
+    <!-- Control flow -->
+    <list name="kw-control">
       <item>if</item>
       <item>then</item>
       <item>else</item>
+      <item>return</item>
+    </list>
+
+    <!-- Pattern matching keywords -->
+    <list name="kw-match">
       <item>match</item>
       <item>where</item>
     </list>
 
-    <!-- Other keywords -->
-    <list name="other">
-      <item>print</item>
-      <item>eval</item>
+    <!-- List comprehension keywords -->
+    <list name="kw-comprehension">
+      <item>for</item>
     </list>
 
-    <list name="builtins">
+    <!-- Module system keywords -->
+    <list name="kw-module">
+      <item>import</item>
+      <item>export</item>
+      <item>from</item>
+      <item>as</item>
+    </list>
+
+    <!-- Miscellaneous keywords -->
+    <list name="kw-other">
+      <item>eval</item>
+      <item>dict</item>
+    </list>
+
+    <!-- Boolean literals -->
+    <list name="kw-bool">
+      <item>true</item>
+      <item>false</item>
+    </list>
+
+    <!-- Built-in Option type constructors -->
+    <list name="kw-option">
+      <item>Some</item>
+      <item>None</item>
+    </list>
+
+    <!-- List / sequence builtins -->
+    <list name="builtin-list">
       <item>head</item>
       <item>tail</item>
       <item>cons</item>
       <item>map</item>
       <item>filter</item>
       <item>reduce</item>
+      <item>take</item>
+      <item>slice</item>
+      <item>nth</item>
     </list>
 
-    <list name="booleans">
-      <item>true</item>
-      <item>false</item>
+    <!-- Lazy / infinite list builtins -->
+    <list name="builtin-lazy">
+      <item>iterate</item>
+      <item>repeat</item>
+      <item>cycle</item>
+      <item>isInfinite</item>
     </list>
+
+    <!-- Search builtins -->
+    <list name="builtin-search">
+      <item>find</item>
+      <item>findSlice</item>
+    </list>
+
+    <!-- String / char builtins -->
+    <list name="builtin-string">
+      <item>asc</item>
+      <item>chr</item>
+    </list>
+
+    <!-- Dictionary builtins -->
+    <list name="builtin-dict">
+      <item>has</item>
+      <item>remove</item>
+      <item>keys</item>
+      <item>values</item>
+    </list>
+
+    <!-- I/O builtins (procedures only — purity-enforced) -->
+    <list name="builtin-io">
+      <item>print</item>
+      <item>println</item>
+      <item>printf</item>
+      <item>readChar</item>
+      <item>readln</item>
+      <item>readFile</item>
+      <item>writeFile</item>
+      <item>fileOpen</item>
+      <item>fileClose</item>
+      <item>readLine</item>
+      <item>writeLine</item>
+      <item>writeChar</item>
+    </list>
+
+    <!-- ─── Contexts ───────────────────────────────────────────────────────── -->
 
     <contexts>
 
       <context name="Normal" attribute="Normal Text" lineEndContext="#stay">
 
         <!-- Comments -->
-        <Detect2Chars attribute="Comment" context="LineComment"  char="/" char1="/"/>
-        <Detect2Chars attribute="Comment" context="BlockComment" char="/" char1="*"/>
+        <Detect2Chars attribute="Comment"      context="LineComment"  char="/" char1="/"/>
+        <Detect2Chars attribute="Comment"      context="BlockComment" char="/" char1="*"/>
 
         <!-- String literals -->
-        <DetectChar attribute="String" context="String" char="&quot;"/>
+        <DetectChar   attribute="String"       context="String"       char="&quot;"/>
+
+        <!-- Char literals -->
+        <DetectChar   attribute="Char"         context="Char"         char="'"/>
 
         <!-- Numbers -->
-        <Int attribute="Decimal" context="#stay"/>
+        <Int          attribute="Number"       context="#stay"/>
 
-        <!-- Keywords -->
-        <keyword attribute="Declaration"  context="#stay" String="declarations"/>
-        <keyword attribute="ControlFlow"  context="#stay" String="controlflow"/>
-        <keyword attribute="Other"        context="#stay" String="other"/>
-        <keyword attribute="Builtin"      context="#stay" String="builtins"/>
-        <keyword attribute="Boolean"      context="#stay" String="booleans"/>
+        <!-- ── Keywords ── -->
+        <keyword attribute="KwLet"           context="#stay" String="kw-let"/>
+        <keyword attribute="KwVar"           context="#stay" String="kw-var"/>
+        <keyword attribute="KwFunction"      context="#stay" String="kw-function"/>
+        <keyword attribute="KwProc"          context="#stay" String="kw-proc"/>
+        <keyword attribute="KwType"          context="#stay" String="kw-type"/>
+        <keyword attribute="KwControl"       context="#stay" String="kw-control"/>
+        <keyword attribute="KwMatch"         context="#stay" String="kw-match"/>
+        <keyword attribute="KwComprehension" context="#stay" String="kw-comprehension"/>
+        <keyword attribute="KwModule"        context="#stay" String="kw-module"/>
+        <keyword attribute="KwOther"         context="#stay" String="kw-other"/>
+        <keyword attribute="KwBool"          context="#stay" String="kw-bool"/>
+        <keyword attribute="KwOption"        context="#stay" String="kw-option"/>
+
+        <!-- ── Builtins ── -->
+        <keyword attribute="BuiltinList"     context="#stay" String="builtin-list"/>
+        <keyword attribute="BuiltinLazy"     context="#stay" String="builtin-lazy"/>
+        <keyword attribute="BuiltinSearch"   context="#stay" String="builtin-search"/>
+        <keyword attribute="BuiltinString"   context="#stay" String="builtin-string"/>
+        <keyword attribute="BuiltinDict"     context="#stay" String="builtin-dict"/>
+        <keyword attribute="BuiltinIO"       context="#stay" String="builtin-io"/>
+
+        <!-- ── Operators (most-specific first) ── -->
+
+        <!-- Lambda arrow => -->
+        <Detect2Chars attribute="OpLambda"   context="#stay" char="=" char1="&gt;"/>
+
+        <!-- Match arm arrow -> -->
+        <Detect2Chars attribute="OpMatch"    context="#stay" char="-" char1="&gt;"/>
+
+        <!-- Generator arrow <- -->
+        <Detect2Chars attribute="OpGen"      context="#stay" char="&lt;" char1="-"/>
+
+        <!-- Equality / comparison operators -->
+        <Detect2Chars attribute="OpCompare"  context="#stay" char="=" char1="="/>
+        <Detect2Chars attribute="OpCompare"  context="#stay" char="!" char1="="/>
+        <Detect2Chars attribute="OpCompare"  context="#stay" char="&lt;" char1="="/>
+        <Detect2Chars attribute="OpCompare"  context="#stay" char="&gt;" char1="="/>
+
+        <!-- Logical operators -->
+        <Detect2Chars attribute="OpLogical"  context="#stay" char="&amp;" char1="&amp;"/>
+        <Detect2Chars attribute="OpLogical"  context="#stay" char="|"     char1="|"/>
+
+        <!-- Pipe | for union variants and match arms (single, after || handled above) -->
+        <DetectChar   attribute="OpPipe"     context="#stay" char="|"/>
+
+        <!-- Ternary ? -->
+        <DetectChar   attribute="OpTernary"  context="#stay" char="?"/>
+
+        <!-- Arithmetic operators -->
+        <AnyChar      attribute="OpArith"    context="#stay" String="+-*/%"/>
+
+        <!-- Assignment = (after == handled above) -->
+        <DetectChar   attribute="OpAssign"   context="#stay" char="="/>
+
+        <!-- Remaining single-char comparison (< and > not caught by <= >= above) -->
+        <AnyChar      attribute="OpCompare"  context="#stay" String="&lt;&gt;"/>
+
+        <!-- Boolean not -->
+        <DetectChar   attribute="OpLogical"  context="#stay" char="!"/>
 
         <!-- Wildcard _ -->
-        <DetectChar attribute="Wildcard" context="#stay" char="_"/>
-
-        <!-- Multi-char operators -->
-        <Detect2Chars attribute="Operator" context="#stay" char="=" char1="&gt;"/>
-        <Detect2Chars attribute="Operator" context="#stay" char="-" char1="&gt;"/>
-        <Detect2Chars attribute="Operator" context="#stay" char="=" char1="="/>
-        <Detect2Chars attribute="Operator" context="#stay" char="!" char1="="/>
-        <Detect2Chars attribute="Operator" context="#stay" char="&lt;" char1="="/>
-        <Detect2Chars attribute="Operator" context="#stay" char="&gt;" char1="="/>
-        <Detect2Chars attribute="Operator" context="#stay" char="&amp;" char1="&amp;"/>
-        <Detect2Chars attribute="Operator" context="#stay" char="|" char1="|"/>
-
-        <!-- Single-char operators -->
-        <AnyChar attribute="Operator" context="#stay" String="+-*/%=&lt;&gt;!|?"/>
+        <DetectChar   attribute="Wildcard"   context="#stay" char="_"/>
 
         <!-- Punctuation -->
-        <AnyChar attribute="Punctuation" context="#stay" String="(){}[];:,."/>
+        <AnyChar      attribute="Punctuation" context="#stay" String="(){}[];:,."/>
 
       </context>
 
+      <!-- ── Line comment ── -->
       <context name="LineComment" attribute="Comment" lineEndContext="#pop">
       </context>
 
+      <!-- ── Block comment ── -->
       <context name="BlockComment" attribute="Comment" lineEndContext="#stay">
         <Detect2Chars attribute="Comment" context="#pop" char="*" char1="/"/>
       </context>
 
+      <!-- ── String literal with escape sequences and {interpolation} ── -->
       <context name="String" attribute="String" lineEndContext="#pop">
-        <DetectChar attribute="String" context="#pop" char="&quot;"/>
+        <!-- Closing quote -->
+        <DetectChar   attribute="String"       context="#pop"           char="&quot;"/>
+        <!-- Escape sequences: \n \t \\ \" \{ \} -->
+        <Detect2Chars attribute="StringEscape" context="#stay"          char="\" char1="n"/>
+        <Detect2Chars attribute="StringEscape" context="#stay"          char="\" char1="t"/>
+        <Detect2Chars attribute="StringEscape" context="#stay"          char="\" char1="\"/>
+        <Detect2Chars attribute="StringEscape" context="#stay"          char="\" char1="&quot;"/>
+        <Detect2Chars attribute="StringEscape" context="#stay"          char="\" char1="{"/>
+        <Detect2Chars attribute="StringEscape" context="#stay"          char="\" char1="}"/>
+        <!-- printf {interpolation} -->
+        <DetectChar   attribute="Interpolation" context="Interpolation" char="{"/>
+      </context>
+
+      <!-- ── printf {name} or {record.field} interpolation ── -->
+      <context name="Interpolation" attribute="Interpolation" lineEndContext="#pop">
+        <DetectChar attribute="Interpolation" context="#pop"  char="}"/>
+        <DetectChar attribute="Punctuation"   context="#stay" char="."/>
+      </context>
+
+      <!-- ── Char literal: 'x' or '\n' etc. ── -->
+      <context name="Char" attribute="Char" lineEndContext="#pop">
+        <!-- Escape sequences inside char literal -->
+        <Detect2Chars attribute="CharEscape" context="CharClose" char="\" char1="n"/>
+        <Detect2Chars attribute="CharEscape" context="CharClose" char="\" char1="t"/>
+        <Detect2Chars attribute="CharEscape" context="CharClose" char="\" char1="\"/>
+        <Detect2Chars attribute="CharEscape" context="CharClose" char="\" char1="'"/>
+        <Detect2Chars attribute="CharEscape" context="CharClose" char="\" char1="&quot;"/>
+        <!-- Plain single char — consume one character then wait for closing ' -->
+        <RegExpr      attribute="Char"       context="CharClose" String="."/>
+      </context>
+
+      <!-- After the char value, expect closing ' -->
+      <context name="CharClose" attribute="Char" lineEndContext="#pop">
+        <DetectChar attribute="Char" context="#pop" char="'"/>
       </context>
 
     </contexts>
 
+    <!-- ─── Style mappings ────────────────────────────────────────────────── -->
+
     <itemDatas>
-      <itemData name="Normal Text"  defStyleNum="dsNormal"       spellChecking="false"/>
-      <itemData name="Declaration"  defStyleNum="dsKeyword"      spellChecking="false"/>
-      <itemData name="ControlFlow"  defStyleNum="dsControlFlow"  spellChecking="false"/>
-      <itemData name="Other"        defStyleNum="dsPreprocessor" spellChecking="false"/>
-      <itemData name="Builtin"      defStyleNum="dsFunction"     spellChecking="false"/>
-      <itemData name="Boolean"      defStyleNum="dsConstant"     spellChecking="false"/>
-      <itemData name="String"       defStyleNum="dsString"       spellChecking="false"/>
-      <itemData name="Decimal"      defStyleNum="dsDecVal"       spellChecking="false"/>
-      <itemData name="Operator"     defStyleNum="dsOperator"     spellChecking="false"/>
-      <itemData name="Punctuation"  defStyleNum="dsOperator"     spellChecking="false"/>
-      <itemData name="Wildcard"     defStyleNum="dsSpecialChar"  spellChecking="false"/>
-      <itemData name="Comment"      defStyleNum="dsComment"      spellChecking="true"/>
+      <!-- Normal text -->
+      <itemData name="Normal Text"     defStyleNum="dsNormal"        spellChecking="false"/>
+
+      <!-- Keywords -->
+      <itemData name="KwLet"           defStyleNum="dsKeyword"       spellChecking="false"/>
+      <itemData name="KwVar"           defStyleNum="dsVariable"      spellChecking="false"/>
+      <itemData name="KwFunction"      defStyleNum="dsKeyword"       spellChecking="false"/>
+      <itemData name="KwProc"          defStyleNum="dsAttribute"     spellChecking="false"/>
+      <itemData name="KwType"          defStyleNum="dsDataType"      spellChecking="false"/>
+      <itemData name="KwControl"       defStyleNum="dsControlFlow"   spellChecking="false"/>
+      <itemData name="KwMatch"         defStyleNum="dsControlFlow"   spellChecking="false"/>
+      <itemData name="KwComprehension" defStyleNum="dsControlFlow"   spellChecking="false"/>
+      <itemData name="KwModule"        defStyleNum="dsImport"        spellChecking="false"/>
+      <itemData name="KwOther"         defStyleNum="dsPreprocessor"  spellChecking="false"/>
+      <itemData name="KwBool"          defStyleNum="dsConstant"      spellChecking="false"/>
+      <itemData name="KwOption"        defStyleNum="dsConstant"      spellChecking="false"/>
+
+      <!-- Builtins -->
+      <itemData name="BuiltinList"     defStyleNum="dsBuiltIn"       spellChecking="false"/>
+      <itemData name="BuiltinLazy"     defStyleNum="dsExtension"     spellChecking="false"/>
+      <itemData name="BuiltinSearch"   defStyleNum="dsFunction"      spellChecking="false"/>
+      <itemData name="BuiltinString"   defStyleNum="dsFunction"      spellChecking="false"/>
+      <itemData name="BuiltinDict"     defStyleNum="dsBuiltIn"       spellChecking="false"/>
+      <itemData name="BuiltinIO"       defStyleNum="dsWarning"       spellChecking="false"/>
+
+      <!-- Operators -->
+      <itemData name="OpLambda"        defStyleNum="dsOperator"      spellChecking="false"/>
+      <itemData name="OpMatch"         defStyleNum="dsOperator"      spellChecking="false"/>
+      <itemData name="OpGen"           defStyleNum="dsOperator"      spellChecking="false"/>
+      <itemData name="OpCompare"       defStyleNum="dsOperator"      spellChecking="false"/>
+      <itemData name="OpLogical"       defStyleNum="dsOperator"      spellChecking="false"/>
+      <itemData name="OpPipe"          defStyleNum="dsSpecialChar"   spellChecking="false"/>
+      <itemData name="OpTernary"       defStyleNum="dsOperator"      spellChecking="false"/>
+      <itemData name="OpArith"         defStyleNum="dsOperator"      spellChecking="false"/>
+      <itemData name="OpAssign"        defStyleNum="dsOperator"      spellChecking="false"/>
+
+      <!-- Wildcard -->
+      <itemData name="Wildcard"        defStyleNum="dsSpecialChar"   spellChecking="false"/>
+
+      <!-- Literals -->
+      <itemData name="Number"          defStyleNum="dsDecVal"        spellChecking="false"/>
+      <itemData name="String"          defStyleNum="dsString"        spellChecking="false"/>
+      <itemData name="StringEscape"    defStyleNum="dsSpecialChar"   spellChecking="false"/>
+      <itemData name="Interpolation"   defStyleNum="dsSpecialString" spellChecking="false"/>
+      <itemData name="Char"            defStyleNum="dsChar"          spellChecking="false"/>
+      <itemData name="CharEscape"      defStyleNum="dsSpecialChar"   spellChecking="false"/>
+
+      <!-- Punctuation -->
+      <itemData name="Punctuation"     defStyleNum="dsOperator"      spellChecking="false"/>
+
+      <!-- Comments -->
+      <itemData name="Comment"         defStyleNum="dsComment"       spellChecking="true"/>
     </itemDatas>
 
   </highlighting>
