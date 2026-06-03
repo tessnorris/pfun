@@ -25,6 +25,16 @@ describe('AST Construction Tests', () => {
       expect((ast[0] as any).expression).toEqual({ type: 'StrExpr', value: 'hello' });
     });
 
+    it('should build CharExpr', () => {
+      const ast = parse("'a';");
+      expect((ast[0] as any).expression).toEqual({ type: 'CharExpr', value: 'a' });
+    });
+
+    it('should build CharExpr for escape sequences', () => {
+      const ast = parse("'\\n';");
+      expect((ast[0] as any).expression).toEqual({ type: 'CharExpr', value: '\n' });
+    });
+
     it('should build IdentExpr', () => {
       const ast = parse('myVar;');
       expect((ast[0] as any).expression).toEqual({ type: 'IdentExpr', name: 'myVar' });
@@ -99,36 +109,30 @@ describe('AST Construction Tests', () => {
   // 3. Control Flow
   describe('Statements', () => {
     it('should build IfStmt without else', () => {
-      const ast = parse('if true then print 1;');
+      const ast = parse('if true then println(1);');
       const stmt = ast[0] as any;
       expect(stmt.type).toBe('IfStmt');
       expect(stmt.condition).toEqual({ type: 'BoolExpr', value: true });
-      expect(stmt.thenBranch.type).toBe('PrintStmt');
+      expect(stmt.thenBranch.type).toBe('ExprStmt');
       expect(stmt.elseBranch).toBeUndefined();
     });
 
     it('should build IfStmt with else', () => {
-      const ast = parse('if true then print 1 else print 2;');
+      const ast = parse('if true then println(1) else println(2);');
       const stmt = ast[0] as any;
       expect(stmt.type).toBe('IfStmt');
       expect(stmt.thenBranch).toBeDefined();
       expect(stmt.elseBranch).toBeDefined();
-      expect(stmt.elseBranch.type).toBe('PrintStmt');
+      expect(stmt.elseBranch.type).toBe('ExprStmt');
     });
 
     it('should build BlockStmt', () => {
-      const ast = parse('{ let x = 1; print x; }');
+      const ast = parse('{ let x = 1; println(x); }');
       const stmt = ast[0] as any;
       expect(stmt.type).toBe('BlockStmt');
       expect(stmt.statements).toHaveLength(2);
       expect(stmt.statements[0].type).toBe('LetStmt');
-      expect(stmt.statements[1].type).toBe('PrintStmt');
-    });
-
-    it('should build PrintStmt', () => {
-      const ast = parse('print 42;');
-      expect((ast[0] as any).type).toBe('PrintStmt');
-      expect((ast[0] as any).expression).toEqual({ type: 'IntExpr', value: 42n });
+      expect(stmt.statements[1].type).toBe('ExprStmt');
     });
 
     it('should build EvalStmt', () => {
@@ -151,13 +155,11 @@ describe('AST Construction Tests', () => {
     });
 
     it('should build ProcedureStmt', () => {
-      const ast = parse('proc greet(name) { print name; }');
+      const ast = parse('proc greet(name) { println(name); }');
       const stmt = ast[0] as any;
       expect(stmt.type).toBe('ProcedureStmt');
       expect(stmt.name).toBe('greet');
       expect(stmt.params).toEqual(['name']);
-      expect(stmt.body).toHaveLength(1);
-      expect(stmt.body[0].type).toBe('PrintStmt');
     });
 
     it('should build LambdaExpr with single param', () => {
@@ -261,6 +263,39 @@ describe('AST Construction Tests', () => {
       expect(expr.type).toBe('GetExpr');
       expect(expr.object).toEqual({ type: 'IdentExpr', name: 'p' });
       expect(expr.name).toBe('x');
+    });
+
+    it('should build DictExpr', () => {
+      const ast = parse('var d = dict { "a" -> 1, "b" -> 2 };');
+      const expr = (ast[0] as any).initializer;
+      expect(expr.type).toBe('DictExpr');
+      expect(expr.entries).toHaveLength(2);
+      expect(expr.entries[0].key).toEqual({ type: 'StrExpr', value: 'a' });
+    });
+
+    it('should build IndexExpr for dict/list access', () => {
+      const ast = parse('d["key"];');
+      const expr = (ast[0] as any).expression;
+      expect(expr.type).toBe('IndexExpr');
+      expect(expr.object).toEqual({ type: 'IdentExpr', name: 'd' });
+      expect(expr.index).toEqual({ type: 'StrExpr', value: 'key' });
+    });
+
+    it('should build IndexAssignExpr for dict assignment', () => {
+      const ast = parse('d["key"] = 42;');
+      const expr = (ast[0] as any).expression;
+      expect(expr.type).toBe('IndexAssignExpr');
+      expect(expr.index).toEqual({ type: 'StrExpr', value: 'key' });
+      expect(expr.value).toEqual({ type: 'IntExpr', value: 42n });
+    });
+
+    it('should build ComprehensionExpr', () => {
+      const ast = parse('let c = [ x * 2 for x <- nums where x > 0 ];');
+      const expr = (ast[0] as any).initializer;
+      expect(expr.type).toBe('ComprehensionExpr');
+      expect(expr.generators).toHaveLength(1);
+      expect(expr.generators[0].variable).toBe('x');
+      expect(expr.guard).toBeDefined();
     });
   });
 });

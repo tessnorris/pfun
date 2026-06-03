@@ -3,21 +3,17 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { Lexer } from './lexer';
 import { Parser } from './parser';
-import { Interpreter } from './interpreter';
+import { Interpreter, ModuleLoader } from './interpreter';
+import { stdlibFunctions, stdlibTypes } from './library';
+import { iolibFunctions } from './iolib';
+import { filelibFunctions, filelibTypes } from './filelib';
 
 /**
- * Orchestrates the interpretation pipeline:
- * Source Code -> Lexer -> Tokens -> Parser -> AST -> Interpreter -> Execution
+ * Sets up a fresh interpreter with the core standard library.
+ * IO functions are NOT included here — scripts must: import * from 'io';
  */
-function run(source: string) {
-  const lexer = new Lexer(source);
-  const tokens = lexer.lex();
-
-  const parser = new Parser(tokens);
-  const ast = parser.parse();
-
-  const interpreter = new Interpreter();
-  interpreter.interpret(ast);
+function setupInterpreter(interp: Interpreter): void {
+  interp.registerLibrary(stdlibFunctions, stdlibTypes);
 }
 
 function runFile(filePath: string) {
@@ -26,8 +22,19 @@ function runFile(filePath: string) {
     console.error(`File not found: ${absolutePath}`);
     process.exit(1);
   }
+
+  const baseDir = path.dirname(absolutePath);
+  const loader  = new ModuleLoader(path.join(baseDir, 'lib'), setupInterpreter);
+
+  // Register built-in system modules
+  loader.registerBuiltin('io', iolibFunctions);
+  loader.registerBuiltin('file', filelibFunctions, filelibTypes);
+
   const source = fs.readFileSync(absolutePath, 'utf-8');
-  run(source);
+  const ast    = new Parser(new Lexer(source).lex()).parse();
+  const interp = new Interpreter(baseDir, loader);
+  setupInterpreter(interp);
+  interp.interpret(ast);
 }
 
 const args = process.argv.slice(2);

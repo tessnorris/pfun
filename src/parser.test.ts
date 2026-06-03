@@ -1,3 +1,4 @@
+// src/parser.test.ts
 import { Lexer } from './lexer';
 import { Parser } from './parser';
 import { Stmt, Expr } from './ast';
@@ -205,6 +206,137 @@ describe('Parser Unit Tests', () => {
       `);
       expect((ast[0] as any).type).toBe('ExprStmt');
       expect((ast[0] as any).expression.type).toBe('MatchExpr');
+    });
+  });
+
+  describe('Procedures', () => {
+    it('should parse a procedure statement', () => {
+      const ast = parse('proc greet(name) { println(name); }');
+      const stmt = ast[0] as any;
+      expect(stmt.type).toBe('ProcedureStmt');
+      expect(stmt.name).toBe('greet');
+      expect(stmt.params).toEqual(['name']);
+    });
+  });
+
+  describe('Char Literals', () => {
+    it('should parse a char literal as CharExpr', () => {
+      const ast = parse("let c = 'a';");
+      const expr = (ast[0] as any).initializer;
+      expect(expr.type).toBe('CharExpr');
+      expect(expr.value).toBe('a');
+    });
+
+    it('should parse escape sequences in char literals', () => {
+      const ast = parse("let nl = '\\n';");
+      const expr = (ast[0] as any).initializer;
+      expect(expr.type).toBe('CharExpr');
+      expect(expr.value).toBe('\n');
+    });
+  });
+
+  describe('Dict & Index', () => {
+    it('should parse a dict literal', () => {
+      const ast = parse('var d = dict { "x" -> 1 };');
+      const expr = (ast[0] as any).initializer;
+      expect(expr.type).toBe('DictExpr');
+      expect(expr.entries[0].key).toEqual({ type: 'StrExpr', value: 'x' });
+    });
+
+    it('should parse an empty dict literal', () => {
+      const ast = parse('var d = dict {};');
+      const expr = (ast[0] as any).initializer;
+      expect(expr.type).toBe('DictExpr');
+      expect(expr.entries).toHaveLength(0);
+    });
+
+    it('should parse index access', () => {
+      const ast = parse('d["key"];');
+      const expr = (ast[0] as any).expression;
+      expect(expr.type).toBe('IndexExpr');
+      expect(expr.index).toEqual({ type: 'StrExpr', value: 'key' });
+    });
+
+    it('should parse index assignment', () => {
+      const ast = parse('d["key"] = 99;');
+      const expr = (ast[0] as any).expression;
+      expect(expr.type).toBe('IndexAssignExpr');
+      expect(expr.value).toEqual({ type: 'IntExpr', value: 99n });
+    });
+  });
+
+  describe('List Comprehensions', () => {
+    it('should parse a basic comprehension', () => {
+      const ast = parse('let c = [ x * 2 for x <- nums ];');
+      const expr = (ast[0] as any).initializer;
+      expect(expr.type).toBe('ComprehensionExpr');
+      expect(expr.generators[0].variable).toBe('x');
+      expect(expr.guard).toBeUndefined();
+    });
+
+    it('should parse a comprehension with a where guard', () => {
+      const ast = parse('let c = [ x for x <- nums where x > 0 ];');
+      const expr = (ast[0] as any).initializer;
+      expect(expr.guard).toBeDefined();
+    });
+
+    it('should parse a comprehension with two generators', () => {
+      const ast = parse('let c = [ x + y for x <- xs for y <- ys ];');
+      const expr = (ast[0] as any).initializer;
+      expect(expr.generators).toHaveLength(2);
+    });
+  });
+
+  describe('Zero-field Union Variants', () => {
+    it('should parse a union with a zero-field variant', () => {
+      const ast = parse(`
+        type Option = {
+          | Some: value
+          | None
+        }
+      `);
+      const stmt = ast[0] as any;
+      expect(stmt.variants[0]).toEqual({ name: 'Some', fields: ['value'] });
+      expect(stmt.variants[1]).toEqual({ name: 'None', fields: [] });
+    });
+  });
+
+  describe('printf', () => {
+    it('should desugar printf into a print CallExpr', () => {
+      const ast = parse('printf("hello {name}\\n");');
+      const expr = (ast[0] as any).expression;
+      expect(expr.type).toBe('CallExpr');
+      expect(expr.callee).toEqual({ type: 'IdentExpr', name: 'print' });
+    });
+
+    it('should desugar {name.field} into a GetExpr', () => {
+      const ast = parse('printf("x is {pt.x}\\n");');
+      const expr = (ast[0] as any).expression;
+      const findGetExpr = (e: any): boolean => {
+        if (!e || typeof e !== 'object') return false;
+        if (e.type === 'GetExpr' && e.name === 'x') return true;
+        return findGetExpr(e.left) || findGetExpr(e.right) || findGetExpr(e.args?.[0]);
+      };
+      expect(findGetExpr(expr)).toBe(true);
+    });
+  });
+
+  describe('Star imports', () => {
+    it('should parse import * from "path" as kind star', () => {
+      const ast = parse(`import * from "io";`);
+      const stmt = ast[0] as any;
+      expect(stmt.type).toBe('ImportStmt');
+      expect(stmt.kind).toBe('star');
+      expect(stmt.path).toBe('io');
+    });
+
+    it('should parse import * as X from "path" as kind namespace', () => {
+      const ast = parse(`import * as IO from "io";`);
+      const stmt = ast[0] as any;
+      expect(stmt.type).toBe('ImportStmt');
+      expect(stmt.kind).toBe('namespace');
+      expect(stmt.alias).toBe('IO');
+      expect(stmt.path).toBe('io');
     });
   });
 });

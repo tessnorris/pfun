@@ -18,6 +18,7 @@ export type Expr =
   | { type: 'IntExpr'; value: bigint }
   | { type: 'BoolExpr'; value: boolean }
   | { type: 'StrExpr'; value: string }
+  | { type: 'CharExpr'; value: string }   // distinct char type, not a string
   | { type: 'IdentExpr'; name: string }
   | { type: 'UnaryExpr'; operator: string; right: Expr }
   | { type: 'BinaryExpr'; left: Expr; operator: string; right: Expr }
@@ -33,7 +34,8 @@ export type Expr =
   | { type: 'ComprehensionExpr'; body: Expr; generators: { variable: string; source: Expr }[]; guard?: Expr }
   | { type: 'DictExpr'; entries: { key: Expr; value: Expr }[] }
   | { type: 'IndexExpr'; object: Expr; index: Expr }
-  | { type: 'IndexAssignExpr'; object: Expr; index: Expr; value: Expr };
+  | { type: 'IndexAssignExpr'; object: Expr; index: Expr; value: Expr }
+  | { type: 'BlockExpr'; statements: Stmt[] };
 
 /**
  * Statements represent actions or control flow.
@@ -52,5 +54,8 @@ export type Stmt =
   | { type: 'FunctionStmt'; name: string; params: string[]; body: Stmt[] }
   | { type: 'ProcedureStmt'; name: string; params: string[]; body: Stmt[] }
   | { type: 'ReturnStmt'; value?: Expr }
-  | { type: 'PrintStmt'; expression: Expr }
-  | { type: 'EvalStmt'; expression: Expr };
+  | { type: 'EvalStmt'; expression: Expr }
+  | { type: 'ImportStmt'; kind: 'named'; names: { name: string; alias?: string }[]; path: string }
+  | { type: 'ImportStmt'; kind: 'namespace'; alias: string; path: string }
+  | { type: 'ImportStmt'; kind: 'star'; path: string }
+  | { type: 'ExportStmt'; declaration: Stmt };

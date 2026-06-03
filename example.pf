@@ -5,6 +5,9 @@
 // You can execute this file directly using the interpreter.
 // ============================================================================
 
+import * from "io";
+import * from "file";
+
 /*
   1. COMMENTS & VARIABLES
   The language supports single-line (//) and multi-line comments.
@@ -19,8 +22,8 @@ var mutable_counter = 0;
 mutable_counter = 10;
 // lazy_constant = 200; // ERROR: "Cannot assign to immutable variable"
 
-print "--- 1. Variables ---";
-print mutable_counter;
+println("--- 1. Variables ---");
+println(mutable_counter);
 
 
 /*
@@ -33,19 +36,19 @@ let is_equal = (a == b);
 let is_greater = (b > a);
 let max_val = is_greater ? b : a;
 
-print "--- 2. Operators & Ternary ---";
-print max_val; // 20
+println("--- 2. Operators & Ternary ---");
+println(max_val); // 20
 
 
 /*
   3. CONTROL FLOW
 */
 
-print "--- 3. Control Flow ---";
+println("--- 3. Control Flow ---");
 if a < b then {
-    print "a is less than b";
+    println("a is less than b");
 } else {
-    print "a is greater than or equal to b";
+    println("a is greater than or equal to b");
 }
 
 
@@ -67,12 +70,12 @@ function add(x, y) {
 let multiply = fn x, y => x * y;
 
 proc printResult(label, value) {
-    print label + ": " + value;
+    println(label + ": " + value);
 }
 
-print "--- 4. Functions & Procedures ---";
-print add(15, 5);               // 20
-print multiply(4, 5);           // 20
+println("--- 4. Functions & Procedures ---");
+println(add(15, 5));               // 20
+println(multiply(4, 5));           // 20
 printResult("sum", add(3, 4));  // sum: 7
 
 
@@ -88,9 +91,9 @@ function fact(n, acc) {
     if n <= 1 then return acc else fact(n - 1, n * acc);
 }
 
-print "--- 5. TCO & Memoization ---";
-print countdown(10000); // Liftoff!
-print fact(5, 1);       // 120
+println("--- 5. TCO & Memoization ---");
+println(countdown(10000)); // Liftoff!
+println(fact(5, 1));       // 120
 
 
 /*
@@ -99,17 +102,17 @@ print fact(5, 1);       // 120
 
 let numbers = [1, 2, 3, 4, 5];
 
-print "--- 6. Lists ---";
-print head(numbers);                // 1
-print tail(numbers);                // [2, 3, 4, 5]
-print cons(0, numbers);             // [0, 1, 2, 3, 4, 5]
+println("--- 6. Lists ---");
+println(head(numbers));                // 1
+println(tail(numbers));                // [2, 3, 4, 5]
+println(cons(0, numbers));             // [0, 1, 2, 3, 4, 5]
 
 let evens = filter(fn x => x % 2 == 0, numbers);
 let doubled = map(fn x => x * 2, evens);
 let sum = reduce(fn acc, x => acc + x, 0, doubled);
 
-print doubled; // [4, 8]
-print sum;     // 12
+println(doubled); // [4, 8]
+println(sum);     // 12
 
 
 /*
@@ -123,9 +126,9 @@ let p1 = Point { 10, 20, 30 };
 let u1 = User(name="Alice", age=30, active=true);
 let u2 = User(age=25, active=false, name="Bob");
 
-print "--- 7. Records ---";
-print p1.x;
-print u1.name + " is " + u1.age;
+println("--- 7. Records ---");
+println(p1.x);
+println(u1.name + " is " + u1.age);
 
 
 /*
@@ -162,11 +165,11 @@ var sq = Square { 10 };
 var ci = Circle { radius = 5 };
 var re = Rectangle(x=3, y=4);
 
-print "--- 8. Discriminated Unions ---";
-print sq.side;    // 10
-print ci.radius;  // 5
-print re.x;       // 3
-print re.y;       // 4
+println("--- 8. Discriminated Unions ---");
+println(sq.side);    // 10
+println(ci.radius);  // 5
+println(re.x);       // 3
+println(re.y);       // 4
 
 // Type enforcement: the second Square must also have a bigint side.
 // var bad = Square { "ten" }; // ERROR: Type mismatch in Square: field 'side' expected bigint, got string.
@@ -198,7 +201,7 @@ print re.y;       // 4
   an expression is valid.
 */
 
-print "--- 9. Pattern Matching ---";
+println("--- 9. Pattern Matching ---");
 
 // Basic dispatch
 let area = match sq {
@@ -206,7 +209,7 @@ let area = match sq {
   | Circle c    -> c.radius * c.radius
   | Rectangle r -> r.x * r.y
 };
-print area; // 100  (10 * 10)
+println(area); // 100  (10 * 10)
 
 // Wildcard binding _ discards the value
 let kind = match ci {
@@ -214,7 +217,7 @@ let kind = match ci {
   | Circle _    -> "circle"
   | Rectangle _ -> "rectangle"
 };
-print kind; // circle
+println(kind); // circle
 
 // where guard: guarded arm is skipped when guard is false
 let classify = match ci {
@@ -224,21 +227,21 @@ let classify = match ci {
   | Square s                     -> "square"
   | Rectangle r                  -> "rectangle"
 };
-print classify; // medium circle
+println(classify); // medium circle
 
 // Wildcard arm as a catch-all (also satisfies exhaustiveness)
 let fallback = match re {
   | Square s -> s.side
   | _ -> 0
 };
-print fallback; // 0  (re is a Rectangle, falls through to wildcard)
+println(fallback); // 0  (re is a Rectangle, falls through to wildcard)
 
 // Match as a nested expression
 let doubled_area = (match sq {
   | Square s -> s.side * s.side
   | _ -> 0
 }) * 2;
-print doubled_area; // 200
+println(doubled_area); // 200
 
 // Match inside a pure function — fine, no side effects
 function describe(shape) {
@@ -251,9 +254,9 @@ function describe(shape) {
 
 // Procedures can call pure functions and print results
 proc printDescriptions(a, b, c) {
-    print describe(a);
-    print describe(b);
-    print describe(c);
+    println(describe(a));
+    println(describe(b));
+    println(describe(c));
 }
 
 printDescriptions(sq, ci, re);
@@ -262,7 +265,7 @@ printDescriptions(sq, ci, re);
 // Rectangle 3x4
 
 // Purity violations (uncomment to see errors):
-// function bad(x) { print x; }         // ERROR: Functions cannot use 'print'
+// function bad(x) { println(x); }         // ERROR: Functions cannot use 'print'
 // function bad(x) { var y = x + 1; }   // ERROR: Functions cannot use 'var'
 
 // Non-exhaustive match (uncomment to see the error):
@@ -272,7 +275,7 @@ printDescriptions(sq, ci, re);
 //   // Missing Rectangle arm → ERROR: Non-exhaustive match on 'Shape': missing arm(s) for 'Rectangle'.
 // };
 
-print "--- Execution Complete ---";
+println("--- Execution Complete ---");
 
 
 /*
@@ -292,52 +295,52 @@ print "--- Execution Complete ---";
   - Comprehensions are pure expressions and can appear anywhere a list can.
 */
 
-print "--- 11. List Comprehensions ---";
+println("--- 11. List Comprehensions ---");
 
 // Basic: double every number
 let nums = [1, 2, 3, 4, 5];
 let doubled = [ x * 2 for x <- nums ];
-print doubled; // [2, 4, 6, 8, 10]
+println(doubled); // [2, 4, 6, 8, 10]
 
 // With a where guard: only even numbers, doubled
 let even_doubled = [ x * 2 for x <- nums where x % 2 == 0 ];
-print even_doubled; // [4, 8]
+println(even_doubled); // [4, 8]
 
 // Combined conditions with &&
 let range = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 let mid = [ x for x <- range where x > 3 && x < 8 ];
-print mid; // [4, 5, 6, 7]
+println(mid); // [4, 5, 6, 7]
 
 // String transformation
 let words = ["hello", "world", "pfun"];
 let lengths = [ w + "!" for w <- words ];
-print lengths; // [hello!, world!, pfun!]
+println(lengths); // [hello!, world!, pfun!]
 
 // Multiple generators — cartesian product
 let xs = [1, 2, 3];
 let ys = [10, 20];
 let pairs_sum = [ x + y for x <- xs for y <- ys ];
-print pairs_sum; // [11, 21, 12, 22, 13, 23]
+println(pairs_sum); // [11, 21, 12, 22, 13, 23]
 
 // Multiple generators with a guard
 let coords = [ x + y for x <- [1, 2, 3] for y <- [1, 2, 3] where x != y ];
-print coords; // [3, 4, 3, 5, 4, 5]
+println(coords); // [3, 4, 3, 5, 4, 5]
 
 // Comprehension over a computed list
 let squares = [ x * x for x <- nums ];
 let big_squares = [ s for s <- squares where s > 9 ];
-print big_squares; // [16, 25]
+println(big_squares); // [16, 25]
 
 // Comprehension inside a pure function
 function evens(lst) {
   return [ x for x <- lst where x % 2 == 0 ];
 }
-print evens([1, 2, 3, 4, 5, 6]); // [2, 4, 6]
+println(evens([1, 2, 3, 4, 5, 6])); // [2, 4, 6]
 
 // Nested comprehension — flatten one level using multiple generators
 let matrix = [[1, 2], [3, 4], [5, 6]];
 let flat = [ x for row <- matrix for x <- row ];
-print flat; // [1, 2, 3, 4, 5, 6]
+println(flat); // [1, 2, 3, 4, 5, 6]
 
 
 /*
@@ -364,62 +367,62 @@ print flat; // [1, 2, 3, 4, 5, 6]
   Note: reduce requires a finite list — use take() first.
 */
 
-print "--- 12. Infinite Lists ---";
+println("--- 12. Infinite Lists ---");
 
 // Natural numbers starting from 1
 let nats = iterate(fn x => x + 1, 1);
-print take(5, nats); // [1, 2, 3, 4, 5]
+println(take(5, nats)); // [1, 2, 3, 4, 5]
 
 // Powers of 2
 let powers = iterate(fn x => x * 2, 1);
-print take(8, powers); // [1, 2, 4, 8, 16, 32, 64, 128]
+println(take(8, powers)); // [1, 2, 4, 8, 16, 32, 64, 128]
 
 // All even numbers via filter
 let evens = filter(fn x => x % 2 == 0, nats);
-print take(5, evens); // [2, 4, 6, 8, 10]
+println(take(5, evens)); // [2, 4, 6, 8, 10]
 
 // All even numbers via map — more efficient
 let evens2 = map(fn x => x * 2, nats);
-print take(5, evens2); // [2, 4, 6, 8, 10]
+println(take(5, evens2)); // [2, 4, 6, 8, 10]
 
 // repeat: infinite list of one value
 let ones = repeat(1);
-print take(4, ones); // [1, 1, 1, 1]
+println(take(4, ones)); // [1, 1, 1, 1]
 
 // Sum of first 10 naturals using take then reduce
 let sum = reduce(fn acc, x => acc + x, 0, take(10, nats));
-print sum; // 55
+println(sum); // 55
 
 // cycle: repeat a finite list forever
 let traffic = cycle(["red", "green", "blue"]);
-print take(7, traffic); // [red, green, blue, red, green, blue, red]
+println(take(7, traffic)); // [red, green, blue, red, green, blue, red]
 
 // Chaining: map then filter then take
 let result = take(5, filter(fn x => x % 3 == 0, map(fn x => x * 2, nats)));
-print result; // [6, 12, 18, 24, 30]
+println(result); // [6, 12, 18, 24, 30]
 
 // cons onto an infinite list
 let from0 = cons(0, nats);
-print take(5, from0); // [0, 1, 2, 3, 4]
+println(take(5, from0)); // [0, 1, 2, 3, 4]
 
 // tail of an infinite list
 let from2 = tail(nats);
-print take(5, from2); // [2, 3, 4, 5, 6]
+println(take(5, from2)); // [2, 3, 4, 5, 6]
 
 // take on a finite list just slices it
 let short = take(3, [10, 20, 30, 40, 50]);
-print short; // [10, 20, 30]
+println(short); // [10, 20, 30]
 
 // Fibonacci using iterate with a pair encoded as a record
 type Pair = { a, b }
 let fibs = map(fn p => p.a, iterate(fn p => Pair { p.b, p.a + p.b }, Pair { 0, 1 }));
-print take(10, fibs); // [0, 1, 1, 2, 3, 5, 8, 13, 21, 34]
+println(take(10, fibs)); // [0, 1, 1, 2, 3, 5, 8, 13, 21, 34]
 
 // Pure function returning an infinite list — fine, no side effects
 function multiplesOf(n) {
   return iterate(fn x => x + n, n);
 }
-print take(5, multiplesOf(7)); // [7, 14, 21, 28, 35]
+println(take(5, multiplesOf(7))); // [7, 14, 21, 28, 35]
 
 
 /*
@@ -440,61 +443,54 @@ print take(5, multiplesOf(7)); // [7, 14, 21, 28, 35]
   Builtins: has(d, key), remove(d, key), keys(d), values(d)
 */
 
-print "--- 13. Dictionaries ---";
+println("--- 13. Dictionaries ---");
 
 // Construction
 var scores = dict { "Alice" -> 95, "Bob" -> 87, "Carol" -> 92 };
-print scores["Alice"];  // 95
-print scores["Bob"];    // 87
+println(scores["Alice"]);  // 95
+println(scores["Bob"]);    // 87
 
 // Update
 scores["Bob"] = 90;
-print scores["Bob"];    // 90
+println(scores["Bob"]);    // 90
 
 // Add a new key
 scores["Dave"] = 88;
-print has(scores, "Dave");   // true
-print has(scores, "Eve");    // false
+println(has(scores, "Dave"));   // true
+println(has(scores, "Eve"));    // false
 
 // Remove a key
 remove(scores, "Dave");
-print has(scores, "Dave");   // false
+println(has(scores, "Dave"));   // false
 
 // Integer keys
 var table = dict { 1 -> "one", 2 -> "two", 3 -> "three" };
-print table[1];   // one
-print table[2];   // two
+println(table[1]);   // one
+println(table[2]);   // two
 
 // Empty dict
 var cache = dict {};
 cache["result"] = 42;
-print cache["result"];  // 42
+println(cache["result"]);  // 42
 
 // keys() and values()
 var small = dict { "x" -> 10, "y" -> 20 };
-print keys(small);    // [x, y]
-print values(small);  // [10, 20]
-
-// Dicts work well with procedures
-proc updateAll(d, lst, val) {
-  var i = 0;
-  var len = head(reduce(fn acc, _ => cons(acc + 1, []), 0, lst));
-  // simpler: iterate over keys
-}
+println(keys(small));    // [x, y]
+println(values(small));  // [10, 20]
 
 // Using a dict as a frequency counter in a procedure
 proc countWords(words) {
   var counts = dict {};
-  var i = 0;
   var remaining = words;
   if remaining == [] then return counts;
   var word = head(remaining);
   remaining = tail(remaining);
-  // Use has to check and increment
-  if has(counts, word)
-    then counts[word] = counts[word] + 1
-    else counts[word] = 1;
-  print counts[word];
+  if has(counts, word) then {
+    counts[word] = counts[word] + 1;
+  } else {
+    counts[word] = 1;
+  };
+  println(counts[word]);
 }
 countWords(["hello", "world", "hello"]);  // 1 then 1
 
@@ -512,7 +508,7 @@ countWords(["hello", "world", "hello"]);  // 1 then 1
   Some and None are always available without any type declaration.
 */
 
-print "--- 10. Option Type ---";
+println("--- 10. Option Type ---");
 
 // Constructing Option values
 let present = Some { 42 };
@@ -523,13 +519,13 @@ let result = match present {
   | Some s -> s.value
   | None   -> 0
 };
-print result; // 42
+println(result); // 42
 
 let missing = match absent {
   | Some s -> s.value
   | None   -> 0
 };
-print missing; // 0
+println(missing); // 0
 
 // A pure function returning an Option — safe division
 function safeDivide(a, b) {
@@ -539,15 +535,15 @@ function safeDivide(a, b) {
 let good = safeDivide(10, 2);
 let bad  = safeDivide(10, 0);
 
-print match good {
+println(match good {
   | Some s -> "Result: " + s.value
   | None   -> "Division by zero"
-};  // Result: 5
+});  // Result: 5
 
-print match bad {
+println(match bad {
   | Some s -> "Result: " + s.value
   | None   -> "Division by zero"
-};  // Division by zero
+});  // Division by zero
 
 // where guard on Some — only match large values
 let big = Some { 100 };
@@ -556,12 +552,12 @@ let classify_opt = match big {
   | Some _                    -> "small"
   | None                      -> "nothing"
 };
-print classify_opt; // big
+println(classify_opt); // big
 
 // Option in a list — filter out None values with a procedure
 let opts = [Some { 1 }, Some { 2 }, Some { 3 }];
 let values = map(fn o => match o { | Some s -> s.value | None -> 0 }, opts);
-print values; // [1, 2, 3]
+println(values); // [1, 2, 3]
 
 // Chaining: find first Some in a list using reduce
 function firstSome(acc, x) {
@@ -572,7 +568,315 @@ function firstSome(acc, x) {
 }
 let candidates = [None, None, Some { 7 }, Some { 8 }];
 let first = reduce(fn a, x => firstSome(a, x), None, candidates);
-print match first {
+println(match first {
   | Some s -> s.value
   | None   -> 0
-}; // 7
+}); // 7
+
+
+/*
+  14. STRINGS, CHARS & OUTPUT
+  ============================================================================
+  Chars ('a') are a distinct type from strings ("a").
+  Semantically, a string is a list of chars — head/tail/cons/map/filter
+  all work on strings the same way they work on lists.
+
+  Char literals:  'a'  '\n'  '\t'  '\\'  '\''
+  String escapes: \"  \\  \n  \t
+
+  Output:
+    println(x)  — prints x with a newline
+    print(x)    — prints x without a newline
+    printf("text {name} or {rec.field}\n")  — interpolated print (no newline)
+
+  Char/string builtins:
+    asc('a')    — char -> integer (ascii code)
+    chr(97)     — integer -> char
+    head("str") — first char
+    tail("str") — rest of string
+    cons('c', "str") — prepend char to string
+
+  List builtins that work on strings and lists:
+    slice(n, k, list)  — k items starting at index n (0-based)
+    nth(list, n)       — item at index n, or false if out of bounds
+    isInfinite(x)      — true if x is a lazy list
+*/
+
+println("--- 14. Strings, Chars & Output ---");
+
+// Char literals are distinct from strings
+let c = 'A';
+println(c);             // A
+println(asc(c));        // 65
+println(chr(65));       // A
+
+// Escape sequences
+let newline = '\n';
+println(asc(newline));  // 10
+let tab = '\t';
+println(asc(tab));      // 9
+
+// String escapes
+println("He said \"hello\"");   // He said "hello"
+
+// Strings as lists of chars
+let greeting = "hello";
+println(head(greeting));         // h
+println(tail(greeting));         // ello
+println(cons('H', tail(greeting))); // Hello
+
+// map over a string returns a string (when fn returns chars)
+function toUpper(c) {
+  return chr(asc(c) - 32);
+}
+// map each char: 'h' -> 'H', etc.
+// (only works for lowercase ascii in this example)
+
+// filter over a string returns a string
+let no_l = filter(fn c => c != 'l', "hello");
+println(no_l);  // heo
+
+// println vs print
+proc printWithoutNewline() {
+  print("one ");
+  print("two ");
+  println("three");
+}
+printWithoutNewline();  // one two three
+
+// printf interpolation
+let name = "Alice";
+let age = 30;
+printf("Name: {name}, Age: {age}\n");  // Name: Alice, Age: 30
+
+type Rect = { w, l }
+var r = Rect { 3, 4 };
+printf("Dimensions: {r.w} by {r.l}\n");  // Dimensions: 3 by 4
+
+// Escaped braces in printf
+printf("Use \{ and \} for literal braces\n");
+
+
+/*
+  15. SLICE, NTH & ISINFINITE
+  ============================================================================
+  slice(n, k, list)  — returns k items starting at index n (0-based)
+                       works on strings, finite lists, and lazy lists
+  nth(list, n)       — item at index n, or false if out of bounds
+  isInfinite(x)      — true if x is a LazyList descriptor
+*/
+
+println("--- 15. Slice, nth & isInfinite ---");
+
+let nums = [10, 20, 30, 40, 50];
+println(slice(1, 3, nums));   // [20, 30, 40]
+println(slice(0, 2, nums));   // [10, 20]
+
+// slice on a string
+println(slice(1, 3, "hello"));  // ell
+
+// slice on an infinite list
+let nats = iterate(fn x => x + 1, 1);
+println(slice(5, 3, nats));   // [6, 7, 8]
+
+// nth
+println(nth(nums, 0));   // 10
+println(nth(nums, 2));   // 30
+println(nth(nums, 99));  // false
+
+// nth on a string
+println(nth("hello", 1));  // e
+
+// nth on a lazy list
+println(nth(nats, 9));  // 10
+
+// isInfinite
+println(isInfinite(nats));       // true
+println(isInfinite([1, 2, 3]));  // false
+println(isInfinite("hello"));    // false
+
+
+/*
+  16. FIND & FINDSLICE
+  ============================================================================
+  find(list, item)        — returns index of first matching item, or -1
+  findSlice(list, slice)  — returns index of first matching sublist, or -1
+
+  Both use deep value equality (not reference equality), work on strings,
+  finite lists, and records. Require a finite list — use take() first on
+  lazy lists.
+*/
+
+println("--- 16. find & findSlice ---");
+
+// find on a list
+let nums = [10, 20, 30, 40, 50];
+println(find(nums, 30));   // 2
+println(find(nums, 99));   // -1
+
+// find returns first match
+println(find([1, 2, 1, 3], 1));  // 0
+
+// find on a string (char search)
+println(find("hello", 'l'));   // 2
+println(find("hello", 'z'));   // -1
+
+// find with records — value equality
+type Point = { x, y }
+let pts = [Point { 1, 2 }, Point { 3, 4 }, Point { 5, 6 }];
+println(find(pts, Point { 3, 4 }));  // 1
+
+// findSlice on a list
+println(findSlice([1, 2, 3, 4, 5], [2, 3, 4]));  // 1
+println(findSlice([1, 2, 3], [4, 5]));            // -1
+println(findSlice([1, 2, 3], []));                // 0
+
+// findSlice on a string (substring search)
+println(findSlice("hello world", "world"));  // 6
+println(findSlice("hello world", "xyz"));    // -1
+
+// findSlice finds the first of multiple matches
+println(findSlice([1, 2, 1, 2, 3], [1, 2]));  // 0
+
+// Practical: find a record in a list returned from a function
+function findByX(pts, targetX) {
+  return find(pts, nth([ p for p <- pts where p.x == targetX ], 0));
+}
+println(findByX(pts, 3));  // 1
+
+
+/*
+  17. INPUT — readChar & readln
+  ============================================================================
+  readChar()  — reads one character from stdin, returns Some { value } or None
+  readln()    — reads one line from stdin (newline stripped), returns
+                Some { value } or None at EOF
+
+  Both are procedure-only (side effects). Both return an Option so you
+  can match on them safely. Use s.value to extract the contents of Some.
+
+  Example — echo loop:
+
+    proc echoLoop() {
+      var line = readln();
+      match line {
+        | Some s -> {
+            println("Got: " + s.value);
+            echoLoop();
+          }
+        | None -> println("EOF")
+      };
+    }
+
+  Example — single prompt:
+
+    proc greet() {
+      print("Enter your name: ");
+      var input = readln();
+      let name = match input {
+        | Some s -> s.value
+        | None   -> "stranger"
+      };
+      printf("Hello, {name}!\n");
+    }
+
+  Example — gate check (the Mines of Moria):
+
+    proc gate() {
+      println("Speak, friend, and enter");
+      var inp = readln();
+      let answer = match inp {
+        | Some s -> s.value
+        | None   -> ""
+      };
+      if answer == "friend" then {
+        println("Welcome!");
+      } else {
+        println("None shall pass!");
+      };
+    }
+
+  Note: these examples are commented out to avoid hanging when example.pf
+  is run non-interactively. Uncomment to try them.
+*/
+
+// Note: this section reads from stdin. Run interactively or pipe input:
+//   echo "friend" | npm start example.pf
+
+proc gate() {
+  println("Speak, friend, and enter");
+  var inp = readln();
+  let answer = match inp {
+    | Some s -> s.value
+    | None   -> ""
+  };
+  if answer == "friend" then {
+    println("Welcome!");
+  } else {
+    println("None shall pass!");
+  };
+}
+gate();
+
+
+/*
+  18. MODULES & IMPORTS
+  ============================================================================
+  Pfun supports TypeScript-style imports for multi-file projects.
+
+  Named import:
+    import { add, multiply } from "./mathutils";
+
+  Namespace import:
+    import * as Math from "./mathutils";
+
+  Export (in the module file):
+    export function add(x, y) { return x + y; }
+    export let tau = 6;
+    export proc printResult(label, val) { println(label + ": " + val); }
+
+  Rules:
+  - Paths starting with ./ or ../ are relative to the importing file.
+  - Bare names (no ./) are resolved from a lib/ subdirectory.
+  - Modules are executed once and cached.
+  - Circular imports are detected and throw an error.
+  - Only explicitly exported names are importable.
+*/
+
+println("--- 18. Modules & Imports ---");
+
+// Named imports from ./mathutils.pf
+import { add, fact, safeDivide, clamp, printResult } from "./mathutils";
+
+println(add(10, 5));        // 15
+println(fact(6));           // 720
+println(clamp(15, 0, 10));  // 10
+println(clamp(5, 0, 10));   // 5
+printResult("fact(5)", fact(5));  // fact(5): 120
+
+// Option result from safeDivide
+let divided = safeDivide(20, 4);
+println(match divided {
+  | Some s -> "Result: " + s.value
+  | None   -> "Division by zero"
+});  // Result: 5
+
+// Namespace import — all exports under one name
+import * as Math from "./mathutils";
+
+println(Math.multiply(6, 7));   // 42
+println(Math.subtract(10, 3));  // 7
+println(Math.tau);              // 6
+Math.printResult("countdown", Math.countdown(3));  // countdown: Liftoff!
+
+
+var src = "./testsrc.txt"
+var dst = "./testdst.txt"
+
+proc copyFile(src, dst) {
+  let content = readFile(src);
+  match content {
+    | Some s -> writeFile(dst, s.value)
+    | None   -> println("Could not read source file")
+  };
+}

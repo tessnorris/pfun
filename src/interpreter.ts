@@ -1,14 +1,36 @@
 // src/interpreter.ts
 import { Expr, Stmt } from './ast';
+import * as fs from 'fs';
+import * as path from 'path';
+import { Lexer } from './lexer';
+import { Parser } from './parser';
+
+// ─── Registry Types ───────────────────────────────────────────────────────────
 
 /**
- * Utility function to determine the runtime type of a value.
- * Recursively checks nested lists to ensure deep type consistency (e.g., list<bigint>).
+ * A named native function entry for the interpreter registry.
+ * The fn receives forced-thunk args and the interpreter instance.
  */
+export type RegistryFunction = {
+  name: string;
+  fn: (args: any[], interpreter: Interpreter) => any;
+};
+
+/**
+ * A type entry for the interpreter registry.
+ * Plain records have fields; union types have variants each with their own fields.
+ */
+export type RegistryType =
+  | { kind: 'plain'; name: string; fields: string[] }
+  | { kind: 'union'; name: string; variants: { name: string; fields: string[] }[] };
+
+// ─── Value Types ──────────────────────────────────────────────────────────────
+
 function getValueType(v: any): string {
   if (v === null || v === undefined) return 'nil';
   if (v instanceof LazyList) return 'lazylist';
   if (v instanceof PfunDict) return 'dict';
+  if (v instanceof PfunChar) return 'char';
   if (Array.isArray(v)) {
     if (v.length === 0) return 'list';
     return `list<${getValueType(v[0])}>`;
@@ -18,11 +40,6 @@ function getValueType(v: any): string {
   return typeof v;
 }
 
-/**
- * Lexical Environment.
- * Implements a scope chain using parent pointers to resolve variables.
- * Tracks variable values and their mutability status (let vs var).
- */
 export class Environment {
   private values = new Map<string, { value: any, mutable: boolean }>();
   constructor(public parent?: Environment) {}
@@ -49,25 +66,14 @@ export class Environment {
   }
 }
 
-/**
- * THUNK (Lazy Evaluation)
- */
 export class Thunk {
   constructor(public expr: Expr, public env: Environment) {}
 }
 
-/**
- * TAIL CALL (Trampolining)
- */
 export class TailCall {
   constructor(public fn: PfunFunction, public args: any[]) {}
 }
 
-/**
- * DICTIONARY
- * A mutable, key-value store. Keys must be primitives (string, bigint, boolean).
- * Dictionaries must always be declared with `var`.
- */
 export class PfunDict {
   public entries: Map<string, any>;
   constructor(entries: Map<string, any>) { this.entries = entries; }
@@ -79,26 +85,15 @@ export class PfunDict {
   }
 }
 
-/**
- * LAZY LIST (Infinite List Descriptor)
- *
- * Represents an infinite (or lazily-evaluated) list as a descriptor object.
- * Values are never computed until take() materializes them into a finite array.
- * Operations like map/filter/cons produce new descriptors wrapping the old one.
- *
- * Kinds:
- *   iterate  - [seed, f(seed), f(f(seed)), ...]
- *   repeat   - [x, x, x, ...]
- *   cycle    - [a,b,c, a,b,c, ...] from a finite array or another LazyList
- *   map      - applies f to each element of source at take-time
- *   filter   - keeps elements of source passing predicate at take-time
- *   cons     - prepends a single value to a source list
- */
+export class PfunChar {
+  constructor(public value: string) {}
+}
+
 export class LazyList {
   constructor(public descriptor: LazyListDescriptor) {}
 }
 
-type LazyListDescriptor =
+export type LazyListDescriptor =
   | { kind: 'iterate'; f: any; seed: any }
   | { kind: 'repeat';  value: any }
   | { kind: 'cycle';   source: any }
@@ -127,7 +122,6 @@ export class PfunFunction {
     for (let i = 0; i < this.params.length; i++) {
       env.define(this.params[i], args[i], false);
     }
-
     if (Array.isArray(this.body)) {
       try {
         let result: any = undefined;
@@ -138,54 +132,35 @@ export class PfunFunction {
         throw e;
       }
     } else {
-      // Lambda body is always a pure expression
       return interpreter.evaluateExpr(this.body, env);
     }
   }
 }
 
-class ReturnValue { constructor(public value: any) {} }
+export class ReturnValue { constructor(public value: any) {} }
 
 // ─── Type Registry ────────────────────────────────────────────────────────────
 
-/**
- * Schema entry for a single type (plain record or union variant).
- */
 interface TypeSchema {
   fields: string[];
-  inferredTypes: string[] | null; // null = not yet inferred
-  unionName: string | null;       // set for union variants; null for plain records
+  inferredTypes: string[] | null;
+  unionName: string | null;
 }
 
-/**
- * Unified Type Registry for both plain records and discriminated union types.
- *
- * Plain record:   registerPlain(name, fields)
- * Union type:     registerUnion(unionName, variants)
- *   - Registers each variant independently so it can be constructed by name.
- *   - Tracks which union a variant belongs to for exhaustiveness checking.
- */
-class TypeRegistry {
+export class TypeRegistry {
   private schemas = new Map<string, TypeSchema>();
-  // unionName → Set of variant names
-  private unions = new Map<string, Set<string>>();
+  private unions   = new Map<string, Set<string>>();
 
-  /** Register a plain record type (TypeStmt). */
   registerPlain(name: string, fields: string[]) {
     this.schemas.set(name, { fields, inferredTypes: null, unionName: null });
   }
 
-  /** Register a discriminated union and all its variants (UnionTypeStmt). */
   registerUnion(unionName: string, variants: { name: string; fields: string[] }[], globals?: Environment) {
     const variantNames = new Set<string>();
     for (const v of variants) {
-      if (this.schemas.has(v.name)) {
-        throw new Error(`Variant '${v.name}' is already defined.`);
-      }
+      if (this.schemas.has(v.name)) throw new Error(`Variant '${v.name}' is already defined.`);
       this.schemas.set(v.name, { fields: v.fields, inferredTypes: null, unionName });
       variantNames.add(v.name);
-      // Zero-field variants are singletons - seed them into the environment
-      // so bare identifiers like `None` resolve without needing braces.
       if (v.fields.length === 0 && globals) {
         globals.define(v.name, { __type: v.name, __union: unionName }, false);
       }
@@ -193,218 +168,176 @@ class TypeRegistry {
     this.unions.set(unionName, variantNames);
   }
 
-  /**
-   * Construct a record/variant value.
-   * Infers field types on first use and enforces them on subsequent uses.
-   */
   instantiate(name: string, orderedValues: any[]): any {
     const schema = this.schemas.get(name);
     if (!schema) throw new Error(`Unknown type '${name}'.`);
     if (orderedValues.length !== schema.fields.length) {
       throw new Error(`'${name}' expects ${schema.fields.length} field(s), got ${orderedValues.length}.`);
     }
-
     const currentTypes = orderedValues.map(v => getValueType(v));
-
     if (schema.inferredTypes === null) {
       schema.inferredTypes = currentTypes;
     } else {
       for (let i = 0; i < schema.fields.length; i++) {
         if (schema.inferredTypes[i] !== currentTypes[i]) {
-          throw new Error(
-            `Type mismatch in ${name}: field '${schema.fields[i]}' expected ${schema.inferredTypes[i]}, got ${currentTypes[i]}.`
-          );
+          throw new Error(`Type mismatch in ${name}: field '${schema.fields[i]}' expected ${schema.inferredTypes[i]}, got ${currentTypes[i]}.`);
         }
       }
     }
-
     const obj: any = { __type: name, __union: schema.unionName ?? undefined };
     schema.fields.forEach((f, i) => obj[f] = orderedValues[i]);
     return obj;
   }
 
-  /** Returns the union name for a variant, or null if it's a plain record. */
   unionOf(variantName: string): string | null {
     return this.schemas.get(variantName)?.unionName ?? null;
   }
 
-  /** Returns all variant names for a union, or null if not a known union. */
   variantsOf(unionName: string): Set<string> | null {
     return this.unions.get(unionName) ?? null;
   }
 
-  hasType(name: string): boolean {
-    return this.schemas.has(name);
+  hasType(name: string): boolean { return this.schemas.has(name); }
+  getFields(name: string): string[] { return this.schemas.get(name)?.fields ?? []; }
+}
+
+// ─── Stdin Buffer ─────────────────────────────────────────────────────────────
+
+export class StdinBuffer {
+  private buf: Buffer = Buffer.alloc(1);
+  private eof: boolean = false;
+
+  readByte(): number | null {
+    if (this.eof) return null;
+    try {
+      const n = fs.readSync(0, this.buf, 0, 1, null);
+      if (n === 0) { this.eof = true; return null; }
+      return this.buf[0];
+    } catch { this.eof = true; return null; }
   }
 
-  getFields(name: string): string[] {
-    return this.schemas.get(name)?.fields ?? [];
+  readChar(): string | null {
+    const b0 = this.readByte();
+    if (b0 === null) return null;
+    let bytes: number[];
+    if (b0 < 0x80) { bytes = [b0]; }
+    else if (b0 < 0xE0) { const b1 = this.readByte(); if (b1 === null) return String.fromCharCode(b0); bytes = [b0, b1]; }
+    else if (b0 < 0xF0) { const b1 = this.readByte(); if (b1 === null) return String.fromCharCode(b0); const b2 = this.readByte(); if (b2 === null) return String.fromCharCode(b0); bytes = [b0, b1, b2]; }
+    else { const b1 = this.readByte(); if (b1 === null) return String.fromCharCode(b0); const b2 = this.readByte(); if (b2 === null) return String.fromCharCode(b0); const b3 = this.readByte(); if (b3 === null) return String.fromCharCode(b0); bytes = [b0, b1, b2, b3]; }
+    return Buffer.from(bytes).toString('utf8') || null;
+  }
+
+  readLine(): string | null {
+    let line = '';
+    let gotAny = false;
+    while (true) {
+      const c = this.readChar();
+      if (c === null) return gotAny ? line : null;
+      gotAny = true;
+      if (c === '\n') return line;
+      if (c !== '\r') line += c;
+    }
+  }
+}
+
+// ─── Module Loader ────────────────────────────────────────────────────────────
+
+export class ModuleLoader {
+  private cache   = new Map<string, Map<string, any>>();
+  private loading = new Set<string>();
+  private builtins = new Map<string, { fns: RegistryFunction[]; types: RegistryType[] }>();
+
+  /**
+   * @param libDir   Directory for bare-name imports (e.g. "math" → libDir/math.pf)
+   * @param setup    Called on each sub-interpreter after construction, before
+   *                 running the module. Use this to register the stdlib.
+   */
+  constructor(
+    private libDir: string,
+    private setup: (interp: Interpreter) => void = () => {}
+  ) {}
+
+  /** Register a built-in module by name (e.g. 'io', 'file'). */
+  registerBuiltin(name: string, fns: RegistryFunction[], types: RegistryType[] = []): void {
+    this.builtins.set(name, { fns, types });
+  }
+
+  resolve(importPath: string, fromDir: string): string {
+    // Built-in module — use a special sentinel prefix
+    if (this.builtins.has(importPath)) return `__builtin__:${importPath}`;
+    const base = (importPath.startsWith('./') || importPath.startsWith('../'))
+      ? path.resolve(fromDir, importPath)
+      : path.resolve(this.libDir, importPath);
+    return base.endsWith('.pf') ? base : base + '.pf';
+  }
+
+  load(resolvedPath: string): Map<string, any> {
+    if (this.cache.has(resolvedPath)) return this.cache.get(resolvedPath)!;
+    // Built-in module
+    if (resolvedPath.startsWith('__builtin__:')) {
+      const name    = resolvedPath.slice('__builtin__:'.length);
+      const builtin = this.builtins.get(name)!;
+      const exports = new Map<string, any>();
+      for (const fn   of builtin.fns)   exports.set(fn.name,   { __builtinFn: fn });
+      for (const type of builtin.types) exports.set(type.name, { __registryType: type });
+      this.cache.set(resolvedPath, exports);
+      return exports;
+    }
+    if (this.loading.has(resolvedPath)) throw new Error(`Circular import detected: ${resolvedPath}`);
+    if (!fs.existsSync(resolvedPath)) throw new Error(`Module not found: ${resolvedPath}`);
+    this.loading.add(resolvedPath);
+    const source = fs.readFileSync(resolvedPath, 'utf-8');
+    const ast    = new Parser(new Lexer(source).lex()).parse();
+    const interp = new Interpreter(path.dirname(resolvedPath), this);
+    this.setup(interp);
+    interp.interpret(ast);
+    const exports = interp.getExports();
+    this.cache.set(resolvedPath, exports);
+    this.loading.delete(resolvedPath);
+    return exports;
   }
 }
 
 // ─── Interpreter ──────────────────────────────────────────────────────────────
 
 export class Interpreter {
-  private globals = new Environment();
-  private types = new TypeRegistry();
-  public inPureContext: boolean = false;
+  private globals  = new Environment();
+  public  types    = new TypeRegistry();
+  public  inPureContext: boolean = false;
+  private exports  = new Map<string, any>();
+  private baseDir:      string;
+  private moduleLoader: ModuleLoader;
 
-  constructor() {
-    this.registerBuiltins();
-    this.registerBuiltinTypes();
+  constructor(baseDir: string = process.cwd(), moduleLoader?: ModuleLoader) {
+    this.baseDir      = baseDir;
+    this.moduleLoader = moduleLoader ?? new ModuleLoader(path.join(baseDir, 'lib'));
   }
 
-  private registerBuiltinTypes() {
-    // Option is a built-in union type: Some { value } | None
-    this.types.registerUnion('Option', [
-      { name: 'Some', fields: ['value'] },
-      { name: 'None', fields: [] },
-    ], this.globals);
+  getExports(): Map<string, any> { return this.exports; }
+
+  // ─── Public Registry API ────────────────────────────────────────────────────
+
+  /** Register a single native function by name. */
+  registerFunction(entry: RegistryFunction): void {
+    this.globals.define(entry.name, new NativeFunction(entry.fn), false);
   }
 
-  private registerBuiltins() {
-    this.globals.define('head', new NativeFunction((args, interpreter) => {
-      const list = interpreter.force(args[0]);
-      if (list instanceof LazyList) {
-        const taken = interpreter.takeFrom(list, 1);
-        if (taken.length === 0) throw new Error("head requires a non-empty list.");
-        return taken[0];
-      }
-      if (!Array.isArray(list) || list.length === 0) throw new Error("head requires a non-empty list.");
-      return list[0];
-    }), false);
-
-    this.globals.define('tail', new NativeFunction((args, interpreter) => {
-      const list = interpreter.force(args[0]);
-      if (list instanceof LazyList) return new LazyList({ kind: 'drop', n: 1, source: list });
-      if (!Array.isArray(list)) throw new Error("tail requires a list.");
-      return list.slice(1);
-    }), false);
-
-    this.globals.define('cons', new NativeFunction((args, interpreter) => {
-      const head = interpreter.force(args[0]);
-      const tail = interpreter.force(args[1]);
-      // cons onto a lazy list produces a new lazy list descriptor
-      if (tail instanceof LazyList) return new LazyList({ kind: 'cons', head, tail });
-      if (!Array.isArray(tail)) throw new Error("cons requires a list as second argument.");
-      const newList = [head, ...tail];
-      this.enforceListType(newList);
-      return newList;
-    }), false);
-
-    this.globals.define('map', new NativeFunction((args, interpreter) => {
-      const fn = interpreter.force(args[0]);
-      const list = interpreter.force(args[1]);
-      // map over a lazy list produces a new lazy descriptor - no values computed yet
-      if (list instanceof LazyList) return new LazyList({ kind: 'map', f: fn, source: list });
-      const mapped = list.map((item: any) => interpreter.force(fn.execute([item], interpreter)));
-      this.enforceListType(mapped);
-      return mapped;
-    }), false);
-
-    this.globals.define('filter', new NativeFunction((args, interpreter) => {
-      const fn = interpreter.force(args[0]);
-      const list = interpreter.force(args[1]);
-      // filter over a lazy list produces a new lazy descriptor
-      if (list instanceof LazyList) return new LazyList({ kind: 'filter', f: fn, source: list });
-      return list.filter((item: any) => this.isTruthy(interpreter.force(fn.execute([item], interpreter))));
-    }), false);
-
-    this.globals.define('reduce', new NativeFunction((args, interpreter) => {
-      const fn = interpreter.force(args[0]);
-      let acc = interpreter.force(args[1]);
-      const list = interpreter.force(args[2]);
-      if (list instanceof LazyList) throw new Error("reduce cannot be used on an infinite list. Use take() first to get a finite list.");
-      for (const item of list) acc = interpreter.force(fn.execute([acc, item], interpreter));
-      return acc;
-    }), false);
-
-    // ─── Infinite List Constructors ───────────────────────────────────────────
-
-    this.globals.define('iterate', new NativeFunction((args, interpreter) => {
-      const f    = interpreter.force(args[0]);
-      const seed = interpreter.force(args[1]);
-      return new LazyList({ kind: 'iterate', f, seed });
-    }), false);
-
-    this.globals.define('repeat', new NativeFunction((args, interpreter) => {
-      const value = interpreter.force(args[0]);
-      return new LazyList({ kind: 'repeat', value });
-    }), false);
-
-    this.globals.define('cycle', new NativeFunction((args, interpreter) => {
-      const source = interpreter.force(args[0]);
-      return new LazyList({ kind: 'cycle', source });
-    }), false);
-
-    // ─── Materialization ──────────────────────────────────────────────────────
-
-    this.globals.define('take', new NativeFunction((args, interpreter) => {
-      const n    = interpreter.force(args[0]);
-      const list = interpreter.force(args[1]);
-      if (typeof n !== 'bigint') throw new Error("take requires an integer as first argument.");
-      const count = Number(n);
-      if (Array.isArray(list)) {
-        const result = list.slice(0, count);
-        this.enforceListType(result);
-        return result;
-      }
-      if (list instanceof LazyList) {
-        const result = interpreter.takeFrom(list, count);
-        this.enforceListType(result);
-        return result;
-      }
-      throw new Error("take requires a list as second argument.");
-    }), false);
-
-    // ─── Dictionary Operations ────────────────────────────────────────────────
-
-    this.globals.define('has', new NativeFunction((args, interpreter) => {
-      const dict = interpreter.force(args[0]);
-      const key  = interpreter.force(args[1]);
-      if (!(dict instanceof PfunDict)) throw new Error("has() requires a dict as first argument.");
-      return dict.entries.has(PfunDict.keyOf(key));
-    }), false);
-
-    this.globals.define('remove', new NativeFunction((args, interpreter) => {
-      const dict = interpreter.force(args[0]);
-      const key  = interpreter.force(args[1]);
-      if (!(dict instanceof PfunDict)) throw new Error("remove() requires a dict as first argument.");
-      dict.entries.delete(PfunDict.keyOf(key));
-      return dict;
-    }), false);
-
-    this.globals.define('keys', new NativeFunction((args, interpreter) => {
-      const dict = interpreter.force(args[0]);
-      if (!(dict instanceof PfunDict)) throw new Error("keys() requires a dict as first argument.");
-      return [...dict.entries.keys()].map(k => {
-        const prefix = k.slice(0, 2);
-        const raw = k.slice(2);
-        if (prefix === 's:') return raw;
-        if (prefix === 'i:') return BigInt(raw);
-        if (prefix === 'b:') return raw === 'true';
-        return raw;
-      });
-    }), false);
-
-    this.globals.define('values', new NativeFunction((args, interpreter) => {
-      const dict = interpreter.force(args[0]);
-      if (!(dict instanceof PfunDict)) throw new Error("values() requires a dict as first argument.");
-      return [...dict.entries.values()];
-    }), false);
-  }
-
-  private enforceListType(elements: any[]): void {
-    if (elements.length > 0) {
-      const firstType = getValueType(elements[0]);
-      for (let i = 1; i < elements.length; i++) {
-        const currentType = getValueType(elements[i]);
-        if (currentType !== firstType) {
-          throw new Error(`Type mismatch in list: expected ${firstType}, got ${currentType}.`);
-        }
-      }
+  /** Register a plain record type or discriminated union type. */
+  registerType(entry: RegistryType): void {
+    if (entry.kind === 'plain') {
+      this.types.registerPlain(entry.name, entry.fields);
+    } else {
+      this.types.registerUnion(entry.name, entry.variants, this.globals);
     }
   }
+
+  /** Register a full library — all functions and types in one call. */
+  registerLibrary(fns: RegistryFunction[], types: RegistryType[]): void {
+    for (const t of types) this.registerType(t);
+    for (const f of fns)   this.registerFunction(f);
+  }
+
+  // ─── Public Interpreter API ─────────────────────────────────────────────────
 
   interpret(statements: Stmt[]) {
     for (const stmt of statements) this.force(this.evaluateStmt(stmt, this.globals));
@@ -412,11 +345,11 @@ export class Interpreter {
 
   getGlobal(name: string): any { return this.force(this.globals.get(name)); }
 
+  // ─── Statement Evaluation ───────────────────────────────────────────────────
+
   evaluateStmt(stmt: Stmt, env: Environment): any {
     switch (stmt.type) {
       case 'LetStmt': {
-        // Eagerly check: if the initializer is a dict literal, disallow let
-        // (we must force to find out, so we peek at the AST node type)
         if (stmt.initializer.type === 'DictExpr') {
           throw new Error(`Dictionaries must be declared with 'var', not 'let'. Use: var ${stmt.name} = dict { ... }`);
         }
@@ -436,13 +369,68 @@ export class Interpreter {
         this.types.registerUnion(stmt.name, stmt.variants, this.globals);
         return;
       case 'ExprStmt': return this.evaluateExpr(stmt.expression, env);
-      case 'PrintStmt': {
-        if (this.inPureContext) throw new Error("Functions cannot use 'print': side effects are not allowed in pure functions. Use a procedure instead.");
-        const printVal = this.force(this.evaluateExpr(stmt.expression, env));
-        console.log(this.stringify(printVal));
-        return printVal;
-      }
       case 'EvalStmt': return this.force(this.evaluateExpr(stmt.expression, env));
+      case 'ExportStmt': {
+        this.evaluateStmt(stmt.declaration, env);
+        const decl = stmt.declaration;
+        if (decl.type === 'LetStmt' || decl.type === 'VarStmt') {
+          try { this.exports.set(decl.name, env.get(decl.name)); } catch {}
+        } else if (decl.type === 'FunctionStmt' || decl.type === 'ProcedureStmt') {
+          try { this.exports.set(decl.name, env.get(decl.name)); } catch {}
+        } else if (decl.type === 'TypeStmt') {
+          // Export as a RegistryType descriptor so the importer can re-register it
+          const descriptor: RegistryType = { kind: 'plain', name: decl.name, fields: decl.fields };
+          this.exports.set(decl.name, { __registryType: descriptor });
+        } else if (decl.type === 'UnionTypeStmt') {
+          const descriptor: RegistryType = { kind: 'union', name: decl.name, variants: decl.variants };
+          this.exports.set(decl.name, { __registryType: descriptor });
+          // Also export zero-field variant singletons (e.g. None)
+          for (const v of decl.variants) {
+            if (v.fields.length === 0) {
+              try { this.exports.set(v.name, env.get(v.name)); } catch {}
+            } else {
+              this.exports.set(v.name, { __registryType: { kind: 'plain', name: v.name, fields: v.fields } });
+            }
+          }
+        }
+        return;
+      }
+      case 'ImportStmt': {
+        const resolved = this.moduleLoader.resolve(stmt.path, this.baseDir);
+        const moduleExports = this.moduleLoader.load(resolved);
+
+        // Helper: bind one export entry into an environment
+        const bindExport = (name: string, val: any, targetEnv: Environment, alias?: string) => {
+          if (val && val.__builtinFn) {
+            this.registerFunction(val.__builtinFn);
+          } else if (val && val.__registryType) {
+            this.registerType(val.__registryType);
+          } else {
+            targetEnv.define(alias ?? name, val, false);
+          }
+        };
+
+        if (stmt.kind === 'star') {
+          // import * from 'path' — all exports directly into current scope
+          for (const [name, val] of moduleExports) bindExport(name, val, env);
+        } else if (stmt.kind === 'namespace') {
+          // import * as X from 'path' — all exports under alias object
+          const ns: any = {};
+          for (const [name, val] of moduleExports) {
+            if (val && val.__builtinFn) ns[name] = val.__builtinFn.fn;
+            else if (val && val.__registryType) { this.registerType(val.__registryType); }
+            else ns[name] = val;
+          }
+          env.define(stmt.alias, ns, false);
+        } else {
+          // import { a, b as c } from 'path'
+          for (const { name, alias } of stmt.names) {
+            if (!moduleExports.has(name)) throw new Error(`Module '${stmt.path}' does not export '${name}'.`);
+            bindExport(name, moduleExports.get(name), env, alias);
+          }
+        }
+        return;
+      }
       case 'BlockStmt': {
         const blockEnv = new Environment(env);
         let blockResult: any = undefined;
@@ -466,30 +454,35 @@ export class Interpreter {
     }
   }
 
+  // ─── Expression Evaluation ──────────────────────────────────────────────────
+
   evaluateExpr(expr: Expr, env: Environment): any {
     switch (expr.type) {
-      case 'IntExpr': return expr.value;
-      case 'BoolExpr': return expr.value;
-      case 'StrExpr': return expr.value;
+      case 'IntExpr':   return expr.value;
+      case 'BoolExpr':  return expr.value;
+      case 'StrExpr':   return expr.value;
+      case 'CharExpr':  return new PfunChar(expr.value);
       case 'IdentExpr': return env.get(expr.name);
       case 'GroupExpr': return this.evaluateExpr(expr.expression, env);
-      case 'AssignExpr': {
-        const assignVal = this.force(this.evaluateExpr(expr.value, env));
-        env.assign(expr.name, assignVal);
-        return assignVal;
-      }
       case 'UnaryExpr': {
-        const right = this.force(this.evaluateExpr(expr.right, env));
-        if (expr.operator === 'MinusToken') return -right;
-        if (expr.operator === 'BooleanNot') return !this.isTruthy(right);
+        const val = this.force(this.evaluateExpr(expr.right, env));
+        if (expr.operator === 'BooleanNot') return !val;
+        if (expr.operator === 'MinusToken') return -val;
         throw new Error(`Unknown unary operator ${expr.operator}`);
       }
       case 'BinaryExpr': return this.evaluateBinary(expr, env);
       case 'TernaryExpr': {
-        const ternaryCond = this.force(this.evaluateExpr(expr.condition, env));
-        if (this.isTruthy(ternaryCond)) return this.evaluateExpr(expr.thenBranch, env);
-        return this.evaluateExpr(expr.elseBranch, env);
+        const cond = this.force(this.evaluateExpr(expr.condition, env));
+        return this.isTruthy(cond)
+          ? this.evaluateExpr(expr.thenBranch, env)
+          : this.evaluateExpr(expr.elseBranch, env);
       }
+      case 'AssignExpr': {
+        const val = this.force(this.evaluateExpr(expr.value, env));
+        env.assign(expr.name, val);
+        return val;
+      }
+      case 'LambdaExpr': return new PfunFunction(null, expr.params, expr.body, env, 'function');
       case 'ListExpr': {
         const elements = expr.elements.map(e => this.force(this.evaluateExpr(e, env)));
         this.enforceListType(elements);
@@ -499,7 +492,6 @@ export class Interpreter {
         const results: any[] = [];
         const evalGenerators = (genIndex: number, scopeEnv: Environment) => {
           if (genIndex === expr.generators.length) {
-            // All generators exhausted - check guard then collect body
             if (expr.guard) {
               const guardVal = this.force(this.evaluateExpr(expr.guard, scopeEnv));
               if (!this.isTruthy(guardVal)) return;
@@ -509,18 +501,30 @@ export class Interpreter {
           }
           const gen = expr.generators[genIndex];
           const source = this.force(this.evaluateExpr(gen.source, scopeEnv));
-          if (!Array.isArray(source)) throw new Error(`Comprehension source must be a list, got ${typeof source}.`);
-          for (const item of source) {
+          let items: any[];
+          if (typeof source === 'string') {
+            items = source.split('').map(c => new PfunChar(c));
+          } else if (Array.isArray(source)) {
+            items = source;
+          } else if (source instanceof LazyList) {
+            throw new Error(`Comprehension source must be a finite list. Use take() to make a lazy list finite.`);
+          } else {
+            throw new Error(`Comprehension source must be a list, got ${typeof source}.`);
+          }
+          for (const item of items) {
             const innerEnv = new Environment(scopeEnv);
             innerEnv.define(gen.variable, item, false);
             evalGenerators(genIndex + 1, innerEnv);
           }
         };
         evalGenerators(0, env);
+        if (results.length > 0 && results.every((c: any) => c instanceof PfunChar)) {
+          return results.map((c: PfunChar) => c.value).join('');
+        }
         this.enforceListType(results);
         return results;
       }
-      case 'RecordExpr': return this.evaluateRecord(expr, env);
+      case 'RecordExpr':      return this.evaluateRecord(expr, env);
       case 'DictExpr': {
         const map = new Map<string, any>();
         for (const entry of expr.entries) {
@@ -557,23 +561,20 @@ export class Interpreter {
       }
       case 'GetExpr': {
         const obj = this.force(this.evaluateExpr(expr.object, env));
-        if (!(expr.name in obj)) throw new Error(`Undefined property '${expr.name}'.`);
-        return obj[expr.name];
+        if (obj && typeof obj === 'object' && expr.name in obj) return obj[expr.name];
+        throw new Error(`Property '${expr.name}' not found.`);
       }
-      case 'LambdaExpr': return new PfunFunction(null, expr.params, expr.body, env);
       case 'CallExpr': {
         const callee = this.force(this.evaluateExpr(expr.callee, env));
         if (!(callee instanceof PfunFunction) && !(callee instanceof NativeFunction)) {
           throw new Error("Can only call functions.");
         }
-        // Procedures cannot be called from inside a pure function
         if (this.inPureContext && callee instanceof PfunFunction && callee.kind === 'procedure') {
           const name = callee.name ? `'${callee.name}'` : 'anonymous';
           throw new Error(`Functions cannot call procedures: ${name} is a procedure. Move the call to a procedure, or convert ${name} to a function.`);
         }
         const args = expr.args.map(arg => new Thunk(arg, env));
         if (callee instanceof NativeFunction) return callee.execute(args, this);
-        // Procedures use strict evaluation: force all args immediately, skip memoization
         if (callee.kind === 'procedure') {
           const forcedArgs = args.map(a => this.force(a));
           return callee.execute(forcedArgs, this);
@@ -581,97 +582,60 @@ export class Interpreter {
         return new TailCall(callee, args);
       }
       case 'MatchExpr': return this.evaluateMatch(expr, env);
-    }
-  }
-
-  // ─── Record Construction ─────────────────────────────────────────────────
-
-  private evaluateRecord(expr: Extract<Expr, { type: 'RecordExpr' }>, env: Environment): any {
-    if (!this.types.hasType(expr.name)) throw new Error(`Unknown type '${expr.name}'.`);
-    const fields = this.types.getFields(expr.name);
-
-    let orderedValues: any[];
-    const isNamed = expr.fields.length > 0 && expr.fields[0].key !== null;
-
-    if (isNamed) {
-      // Named: Square { side = 10 } or Square(side = 10)
-      orderedValues = fields.map(f => {
-        const field = expr.fields.find(ef => ef.key === f);
-        if (!field) throw new Error(`Missing field '${f}' in ${expr.name}.`);
-        return this.force(this.evaluateExpr(field.value, env));
-      });
-    } else {
-      // Positional: Square { 10 }
-      orderedValues = expr.fields.map(f => this.force(this.evaluateExpr(f.value, env)));
-    }
-
-    return this.types.instantiate(expr.name, orderedValues);
-  }
-
-  // ─── Match Expression ─────────────────────────────────────────────────────
-
-  /**
-   * Evaluates a match expression against a value.
-   *
-   * Algorithm:
-   *   1. Force the subject to a concrete value.
-   *   2. Determine the union the subject's type belongs to (for exhaustiveness).
-   *   3. Walk arms in order:
-   *      a. Wildcard arm (variant === null): always matches.
-   *      b. Variant arm: matches if subject.__type === arm.variant.
-   *         - If the arm has a binding, define it in a new scope.
-   *         - If the arm has a guard, evaluate it; skip arm if falsy.
-   *      c. First matching arm's body expression is returned.
-   *   4. If no arm matched, check exhaustiveness and throw accordingly.
-   */
-  private evaluateMatch(expr: Extract<Expr, { type: 'MatchExpr' }>, env: Environment): any {
-    const subject = this.force(this.evaluateExpr(expr.subject, env));
-    const subjectVariant: string = subject?.__type ?? null;
-
-    // Determine the union this value belongs to, for exhaustiveness checking.
-    const unionName = subjectVariant ? this.types.unionOf(subjectVariant) : null;
-    const hasWildcard = expr.arms.some(a => a.variant === null);
-
-    // Exhaustiveness check: if no wildcard, every variant of the union must be covered.
-    if (!hasWildcard && unionName !== null) {
-      const allVariants = this.types.variantsOf(unionName)!;
-      const coveredVariants = new Set(expr.arms.map(a => a.variant).filter(Boolean));
-      const missing = [...allVariants].filter(v => !coveredVariants.has(v));
-      if (missing.length > 0) {
-        throw new Error(
-          `Non-exhaustive match on '${unionName}': missing arm(s) for ${missing.map(v => `'${v}'`).join(', ')}.`
-        );
+      case 'BlockExpr': {
+        const blockEnv = new Environment(env);
+        let result: any = undefined;
+        for (const s of expr.statements) result = this.evaluateStmt(s, blockEnv);
+        return result;
       }
+    }
+  }
+
+  // ─── Helpers ────────────────────────────────────────────────────────────────
+
+  private evaluateRecord(expr: any, env: Environment): any {
+    if (expr.fields.length > 0 && expr.fields[0].key !== null) {
+      const schema = this.types.getFields(expr.name);
+      if (schema.length === 0) throw new Error(`Unknown type '${expr.name}'.`);
+      const byKey: any = {};
+      for (const f of expr.fields) byKey[f.key] = this.force(this.evaluateExpr(f.value, env));
+      const ordered = schema.map(f => {
+        if (!(f in byKey)) throw new Error(`Missing field '${f}' in ${expr.name}.`);
+        return byKey[f];
+      });
+      return this.types.instantiate(expr.name, ordered);
+    }
+    if (this.types.hasType(expr.name)) {
+      const orderedValues = expr.fields.map((f: any) => this.force(this.evaluateExpr(f.value, env)));
+      return this.types.instantiate(expr.name, orderedValues);
+    }
+    throw new Error(`Unknown type '${expr.name}'.`);
+  }
+
+  private evaluateMatch(expr: any, env: Environment): any {
+    const subject     = this.force(this.evaluateExpr(expr.subject, env));
+    const subjectType = subject?.__type ?? null;
+    const unionName   = subjectType ? this.types.unionOf(subjectType) : null;
+    const hasWildcard = expr.arms.some((a: any) => a.variant === null);
+
+    if (!hasWildcard && unionName) {
+      const variants    = this.types.variantsOf(unionName)!;
+      const covered     = new Set(expr.arms.map((a: any) => a.variant).filter(Boolean));
+      const missing     = [...variants].filter(v => !covered.has(v));
+      if (missing.length > 0) throw new Error(`Non-exhaustive match on '${unionName}': missing arm(s) for ${missing.map(v => `'${v}'`).join(', ')}.`);
     }
 
     for (const arm of expr.arms) {
-      // Wildcard arm always matches
-      if (arm.variant === null) {
-        return this.evaluateExpr(arm.body, env);
-      }
-
-      // Variant arm: check type tag
-      if (subjectVariant !== arm.variant) continue;
-
-      // Build arm scope with optional binding
+      if (arm.variant !== null && arm.variant !== subjectType) continue;
       const armEnv = new Environment(env);
-      if (arm.binding !== null) {
-        armEnv.define(arm.binding, subject, false);
-      }
-
-      // Evaluate optional guard in arm scope
-      if (arm.guard !== undefined) {
+      if (arm.binding !== null) armEnv.define(arm.binding, subject, false);
+      if (arm.guard) {
         const guardVal = this.force(this.evaluateExpr(arm.guard, armEnv));
-        if (!this.isTruthy(guardVal)) continue; // guard failed, try next arm
+        if (!this.isTruthy(guardVal)) continue;
       }
-
       return this.evaluateExpr(arm.body, armEnv);
     }
-
-    // No arm matched (possible when using guards without a wildcard fallback on the same variant)
-    throw new Error(
-      `Non-exhaustive match: no arm matched value of type '${subjectVariant ?? 'unknown'}'.`
-    );
+    throw new Error(`Non-exhaustive match: no arm matched value of type '${subjectType ?? 'unknown'}'.`);
   }
 
   private evaluateBinary(expr: any, env: Environment): any {
@@ -685,103 +649,81 @@ export class Interpreter {
       if (this.isTruthy(left)) return true;
       return this.isTruthy(this.force(this.evaluateExpr(expr.right, env)));
     }
-
-    const left = this.force(this.evaluateExpr(expr.left, env));
+    const left  = this.force(this.evaluateExpr(expr.left, env));
     const right = this.force(this.evaluateExpr(expr.right, env));
 
+    if (expr.operator === 'PlusToken') {
+      const lStr = typeof left === 'string', rStr = typeof right === 'string';
+      const lChar = left instanceof PfunChar, rChar = right instanceof PfunChar;
+      const lCL = Array.isArray(left)  && left.every((c: any)  => c instanceof PfunChar);
+      const rCL = Array.isArray(right) && right.every((c: any) => c instanceof PfunChar);
+      if (lStr || lChar || lCL || rStr || rChar || rCL) return this.stringify(left) + this.stringify(right);
+      return left + right;
+    }
+
     switch (expr.operator) {
-      case 'PlusToken': return left + right;
-      case 'MinusToken': return left - right;
-      case 'StarToken': return left * right;
-      case 'SlashToken': return left / right;
-      case 'PercentToken': return left % right;
-      case 'EqualToken': return left === right;
-      case 'GreaterToken': return left > right;
-      case 'LessToken': return left < right;
+      case 'MinusToken':        return left - right;
+      case 'StarToken':         return left * right;
+      case 'SlashToken':        return left / right;
+      case 'PercentToken':      return left % right;
+      case 'EqualToken': {
+        if (left instanceof PfunChar && right instanceof PfunChar) return left.value === right.value;
+        if (left instanceof PfunChar || right instanceof PfunChar) return false;
+        return left === right;
+      }
+      case 'NotEqualToken': {
+        if (left instanceof PfunChar && right instanceof PfunChar) return left.value !== right.value;
+        if (left instanceof PfunChar || right instanceof PfunChar) return true;
+        return left !== right;
+      }
+      case 'GreaterToken':      return left > right;
+      case 'LessToken':         return left < right;
       case 'GreaterEqualToken': return left >= right;
-      case 'LessEqualToken': return left <= right;
-      case 'NotEqualToken': return left !== right;
+      case 'LessEqualToken':    return left <= right;
       default: throw new Error(`Unknown binary operator ${expr.operator}`);
     }
   }
 
-  /**
-   * THE FORCE ENGINE
-   * Resolves delayed computations (Thunks and TailCalls).
-   */
   force(value: any): any {
     let current = value;
     while (true) {
-      if (current instanceof Thunk) {
-        current = this.evaluateExpr(current.expr, current.env);
-      } else if (current instanceof TailCall) {
-        current = this.trampoline(current.fn, current.args);
-      } else {
-        return current;
-      }
+      if (current instanceof Thunk) current = this.evaluateExpr(current.expr, current.env);
+      else if (current instanceof TailCall) current = this.trampoline(current.fn, current.args);
+      else return current;
     }
   }
 
-  /**
-   * TRAMPOLINE & MEMOIZATION LOOP
-   */
   private trampoline(fn: PfunFunction, args: any[]): any {
-    let currentFn = fn;
+    let currentFn   = fn;
     let currentArgs = args.map(a => this.force(a));
-    const callStack: { fn: PfunFunction, args: any[], key: string }[] = [];
-    const prevPure = this.inPureContext;
+    const callStack: { fn: PfunFunction; args: any[]; key: string }[] = [];
+    const prevPure  = this.inPureContext;
     if (currentFn.kind === 'function') this.inPureContext = true;
-
     try {
       while (true) {
         const cacheKey = this.getCacheKey(currentFn, currentArgs);
-
         if (currentFn.cache.has(cacheKey)) {
-          let result = currentFn.cache.get(cacheKey);
-          while (callStack.length > 0) {
-            const prev = callStack.pop()!;
-            prev.fn.cache.set(prev.key, result);
-          }
+          const result = currentFn.cache.get(cacheKey);
+          while (callStack.length > 0) { const p = callStack.pop()!; p.fn.cache.set(p.key, result); }
           return result;
         }
-
         callStack.push({ fn: currentFn, args: currentArgs, key: cacheKey });
-        let result = currentFn.execute(currentArgs, this);
-
+        const result = currentFn.execute(currentArgs, this);
         if (result instanceof TailCall) {
           this.inPureContext = result.fn.kind === 'function';
-          currentFn = result.fn;
+          currentFn   = result.fn;
           currentArgs = result.args.map(a => this.force(a));
           continue;
         }
-
-        let finalResult = this.force(result);
-        while (callStack.length > 0) {
-          const prev = callStack.pop()!;
-          prev.fn.cache.set(prev.key, finalResult);
-        }
+        const finalResult = this.force(result);
+        while (callStack.length > 0) { const p = callStack.pop()!; p.fn.cache.set(p.key, finalResult); }
         return finalResult;
       }
-    } finally {
-      this.inPureContext = prevPure;
-    }
+    } finally { this.inPureContext = prevPure; }
   }
 
-  /**
-   * MATERIALIZATION ENGINE
-   *
-   * Pulls up to `n` values from a LazyList descriptor chain,
-   * returning a finite JavaScript array. For 'filter' descriptors,
-   * more than n source values may be consumed to find n passing ones.
-   *
-   * Each descriptor kind has a generator-style implementation that
-   * yields one value at a time without recursion.
-   */
   takeFrom(list: LazyList, n: number): any[] {
     const results: any[] = [];
-    // Use an explicit stack of iterators to avoid deep recursion on
-    // chained descriptors (e.g. map(filter(iterate(...)))).
-    // Each frame is a generator function over a descriptor.
     const gen = this.makeGenerator(list.descriptor);
     while (results.length < n) {
       const { value, done } = gen.next();
@@ -791,117 +733,116 @@ export class Interpreter {
     return results;
   }
 
-  private *makeGenerator(desc: LazyList['descriptor']): Generator<any> {
+  private *makeGenerator(desc: LazyListDescriptor): Generator<any> {
     switch (desc.kind) {
-      case 'iterate': {
-        let current = desc.seed;
-        while (true) {
-          yield current;
-          current = this.force(desc.f.execute([current], this));
-        }
-      }
-      case 'repeat': {
-        while (true) yield desc.value;
-      }
+      case 'iterate': { let cur = desc.seed; while (true) { yield cur; cur = this.force(desc.f.execute([cur], this)); } }
+      case 'repeat':  { while (true) yield desc.value; }
       case 'cycle': {
-        const source = desc.source;
-        if (Array.isArray(source)) {
-          if (source.length === 0) return;
-          let i = 0;
-          while (true) { yield source[i % source.length]; i++; }
-        } else if (source instanceof LazyList) {
-          // cycle of a lazy list: buffer values as we go, then cycle the buffer
-          const buffer: any[] = [];
-          const inner = this.makeGenerator(source.descriptor);
-          while (true) {
-            const { value, done } = inner.next();
-            if (done) break;
-            buffer.push(value);
-            yield value;
-          }
-          if (buffer.length === 0) return;
-          let i = 0;
-          while (true) { yield buffer[i % buffer.length]; i++; }
+        const src = desc.source;
+        if (Array.isArray(src)) {
+          if (src.length === 0) return;
+          let i = 0; while (true) { yield src[i % src.length]; i++; }
+        } else if (src instanceof LazyList) {
+          const buf: any[] = [];
+          const inner = this.makeGenerator(src.descriptor);
+          while (true) { const { value, done } = inner.next(); if (done) break; buf.push(value); yield value; }
+          if (buf.length === 0) return;
+          let i = 0; while (true) { yield buf[i % buf.length]; i++; }
         }
         break;
       }
       case 'map': {
         const inner = this.makeGenerator(desc.source.descriptor);
-        while (true) {
-          const { value, done } = inner.next();
-          if (done) break;
-          yield this.force(desc.f.execute([value], this));
-        }
+        while (true) { const { value, done } = inner.next(); if (done) break; yield this.force(desc.f.execute([value], this)); }
         break;
       }
       case 'filter': {
         const inner = this.makeGenerator(desc.source.descriptor);
-        while (true) {
-          const { value, done } = inner.next();
-          if (done) break;
-          if (this.isTruthy(this.force(desc.f.execute([value], this)))) yield value;
-        }
+        while (true) { const { value, done } = inner.next(); if (done) break; if (this.isTruthy(this.force(desc.f.execute([value], this)))) yield value; }
         break;
       }
       case 'cons': {
         yield desc.head;
-        const tailSrc = desc.tail;
-        if (tailSrc instanceof LazyList) {
-          yield* this.makeGenerator(tailSrc.descriptor);
-        } else if (Array.isArray(tailSrc)) {
-          yield* tailSrc;
-        }
+        const t = desc.tail;
+        if (t instanceof LazyList) yield* this.makeGenerator(t.descriptor);
+        else if (Array.isArray(t)) yield* t;
         break;
       }
       case 'drop': {
         const inner = this.makeGenerator(desc.source.descriptor);
         let skipped = 0;
-        while (skipped < desc.n) {
-          const { done } = inner.next();
-          if (done) return;
-          skipped++;
-        }
-        while (true) {
-          const { value, done } = inner.next();
-          if (done) break;
-          yield value;
-        }
+        while (skipped < desc.n) { const { done } = inner.next(); if (done) return; skipped++; }
+        while (true) { const { value, done } = inner.next(); if (done) break; yield value; }
         break;
       }
     }
   }
 
   private getCacheKey(fn: PfunFunction, args: any[]): string {
-    return JSON.stringify(args, (key, value) =>
-      typeof value === 'bigint' ? value.toString() + 'n' : value
-    );
+    return JSON.stringify(args, (_, v) => typeof v === 'bigint' ? v.toString() + 'n' : v);
   }
 
-  private isTruthy(value: any): boolean {
+  isTruthy(value: any): boolean {
     if (value === null || value === undefined) return false;
     if (typeof value === 'boolean') return value;
-    if (typeof value === 'number') return value !== 0;
-    if (typeof value === 'bigint') return value !== 0n;
-    if (typeof value === 'string') return value !== "";
+    if (typeof value === 'number')  return value !== 0;
+    if (typeof value === 'bigint')  return value !== 0n;
+    if (typeof value === 'string')  return value !== '';
     return true;
   }
 
-  private stringify(value: any): string {
+  stringify(value: any): string {
     if (value === null || value === undefined) return 'nil';
     if (typeof value === 'boolean') return value ? 'true' : 'false';
-    if (typeof value === 'bigint') return value.toString();
-    if (value instanceof LazyList) return '<lazylist>';
+    if (typeof value === 'bigint')  return value.toString();
+    if (value instanceof PfunChar)  return value.value;
+    if (value instanceof LazyList)  return '<lazylist>';
     if (value instanceof PfunDict) {
-      const entries = [...value.entries.entries()]
-        .map(([k, v]) => `${k.slice(2)} -> ${this.stringify(v)}`);
+      const entries = [...value.entries.entries()].map(([k, v]) => `${k.slice(2)} -> ${this.stringify(v)}`);
       return `dict { ${entries.join(', ')} }`;
     }
-    if (Array.isArray(value)) return `[${value.map(v => this.stringify(v)).join(', ')}]`;
+    if (Array.isArray(value)) {
+      if (value.length > 0 && value.every((c: any) => c instanceof PfunChar)) return value.map((c: PfunChar) => c.value).join('');
+      return `[${value.map((v: any) => this.stringify(v)).join(', ')}]`;
+    }
     if (value && value.__type) {
       const fields = Object.keys(value).filter(k => k !== '__type' && k !== '__union');
       if (fields.length === 0) return value.__type;
       return `${value.__type} { ${fields.map(f => this.stringify(value[f])).join(', ')} }`;
     }
     return String(value);
+  }
+
+  enforceListType(elements: any[]): void {
+    if (elements.length > 0) {
+      const firstType = getValueType(elements[0]);
+      for (let i = 1; i < elements.length; i++) {
+        const currentType = getValueType(elements[i]);
+        if (currentType !== firstType) throw new Error(`Type mismatch in list: expected ${firstType}, got ${currentType}.`);
+      }
+    }
+  }
+
+  toArray(value: any): any[] {
+    if (typeof value === 'string') return value.split('').map(c => new PfunChar(c));
+    if (Array.isArray(value)) return value;
+    if (value instanceof LazyList) throw new Error("find/findSlice cannot search an infinite list. Use take() first.");
+    throw new Error(`find/findSlice requires a list or string, got ${typeof value}.`);
+  }
+
+  valEqual(a: any, b: any): boolean {
+    a = this.force(a); b = this.force(b);
+    if (a instanceof PfunChar && b instanceof PfunChar) return a.value === b.value;
+    if (a instanceof PfunChar || b instanceof PfunChar) return false;
+    if (Array.isArray(a) && Array.isArray(b)) {
+      if (a.length !== b.length) return false;
+      return a.every((v, i) => this.valEqual(v, b[i]));
+    }
+    if (a && b && typeof a === 'object' && typeof b === 'object' && a.__type && b.__type) {
+      if (a.__type !== b.__type) return false;
+      const keys = Object.keys(a).filter(k => k !== '__type' && k !== '__union');
+      return keys.every(k => this.valEqual(a[k], b[k]));
+    }
+    return a === b;
   }
 }

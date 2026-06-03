@@ -28,13 +28,14 @@ export class Parser {
    */
   private parseStatement(): Stmt {
     if (this.match('SemiToken')) return this.parseStatement();
+    if (this.match('ImportToken')) return this.parseImportStatement();
+    if (this.match('ExportToken')) return this.parseExportStatement();
     if (this.match('FunctionToken')) return this.parseFunctionStatement();
     if (this.match('ProcToken')) return this.parseProcedureStatement();
     if (this.match('LetToken')) return this.parseLetStatement();
     if (this.match('VarToken')) return this.parseVarStatement();
     if (this.match('TypeToken')) return this.parseTypeStatement();
     if (this.match('ReturnToken')) return this.parseReturnStatement();
-    if (this.match('PrintToken')) return this.parsePrintStatement();
     if (this.match('EvalToken')) return this.parseEvalStatement();
     if (this.match('IfToken')) return this.parseIfStatement();
     if (this.match('LBraceToken')) return this.parseBlockStatement();
@@ -53,7 +54,7 @@ export class Parser {
 
     const statements: Stmt[] = [];
     if (this.match('LBraceToken')) {
-      while (!this.check('RBraceToken') && !this.isAtEnd()) statements.push(this.parseStatement());
+      while (!this.check('RBraceToken') && !this.isAtEnd()) { if (this.match('SemiToken')) continue; statements.push(this.parseStatement()); }
       this.consume('RBraceToken', "Expected '}' after block.");
     } else {
       while (!this.check('FunctionToken') && !this.isAtEnd()) statements.push(this.parseStatement());
@@ -69,7 +70,7 @@ export class Parser {
 
     const statements: Stmt[] = [];
     if (this.match('LBraceToken')) {
-      while (!this.check('RBraceToken') && !this.isAtEnd()) statements.push(this.parseStatement());
+      while (!this.check('RBraceToken') && !this.isAtEnd()) { if (this.match('SemiToken')) continue; statements.push(this.parseStatement()); }
       this.consume('RBraceToken', "Expected '}' after block.");
     } else {
       while (!this.check('ProcToken') && !this.isAtEnd()) statements.push(this.parseStatement());
@@ -159,10 +160,47 @@ export class Parser {
     return { type: 'TypeStmt', name, fields };
   }
 
-  private parsePrintStatement(): Stmt {
-    const expr = this.parseExpression();
+  private parseImportStatement(): Stmt {
+    // import * from "path"          — star: all exports into current scope
+    // import * as Name from "path"  — namespace: all exports under alias
+    if (this.match('StarToken')) {
+      if (this.match('AsToken')) {
+        const alias = (this.consume('IdentToken', "Expected namespace alias.") as any).value;
+        this.consume('FromToken', "Expected 'from' after alias.");
+        const path = (this.consume('StrToken', "Expected module path string.") as any).value;
+        this.match('SemiToken');
+        return { type: 'ImportStmt', kind: 'namespace', alias, path };
+      }
+      // bare star — no alias
+      this.consume('FromToken', "Expected 'from' after '*'.");
+      const path = (this.consume('StrToken', "Expected module path string.") as any).value;
+      this.match('SemiToken');
+      return { type: 'ImportStmt', kind: 'star', path };
+    }
+    // import { name, name as alias, ... } from "path"
+    this.consume('LBraceToken', "Expected '{', '*' after 'import'.");
+    const names: { name: string; alias?: string }[] = [];
+    if (!this.check('RBraceToken')) {
+      do {
+        const name = (this.consume('IdentToken', "Expected import name.") as any).value;
+        let alias: string | undefined;
+        if (this.match('AsToken')) {
+          alias = (this.consume('IdentToken', "Expected alias after 'as'.") as any).value;
+        }
+        names.push({ name, alias });
+      } while (this.match('CommaToken'));
+    }
+    this.consume('RBraceToken', "Expected '}' after import names.");
+    this.consume('FromToken', "Expected 'from' after import list.");
+    const path = (this.consume('StrToken', "Expected module path string.") as any).value;
     this.match('SemiToken');
-    return { type: 'PrintStmt', expression: expr };
+    return { type: 'ImportStmt', kind: 'named', names, path };
+  }
+
+  private parseExportStatement(): Stmt {
+    // export <let|var|function|proc|type stmt>
+    const declaration = this.parseStatement();
+    return { type: 'ExportStmt', declaration };
   }
 
   private parseEvalStatement(): Stmt {
@@ -187,9 +225,21 @@ export class Parser {
     return { type: 'IfStmt', condition, thenBranch, elseBranch };
   }
 
+  private parseBlockExpr(): Expr {
+    // Parses { stmt; stmt; expr } as a BlockExpr — evaluates stmts, returns last value.
+    this.advance(); // consume '{'
+    const statements: Stmt[] = [];
+    while (!this.check('RBraceToken') && !this.isAtEnd()) {
+      if (this.match('SemiToken')) continue;
+      statements.push(this.parseStatement());
+    }
+    this.consume('RBraceToken', "Expected '}' after block.");
+    return { type: 'BlockExpr', statements };
+  }
+
   private parseBlockStatement(): Stmt {
     const statements: Stmt[] = [];
-    while (!this.check('RBraceToken') && !this.isAtEnd()) statements.push(this.parseStatement());
+    while (!this.check('RBraceToken') && !this.isAtEnd()) { if (this.match('SemiToken')) continue; statements.push(this.parseStatement()); }
     this.consume('RBraceToken', "Expected '}' after block.");
     return { type: 'BlockStmt', statements };
   }
@@ -214,7 +264,13 @@ export class Parser {
       case 'IntToken': return { type: 'IntExpr', value: token.value };
       case 'BoolToken': return { type: 'BoolExpr', value: token.value };
       case 'StrToken': return { type: 'StrExpr', value: token.value };
+      case 'CharToken': return { type: 'CharExpr', value: token.value };
       case 'IdentToken':
+        // printf("...{name}...{name.field}...") desugars at parse time into
+        // a print() call with a string concatenation expression.
+        if (token.value === 'printf' && this.check('LParenToken')) {
+          return this.parsePrintf();
+        }
         // Positional / Named Record Constructor: Point { 1, 2 } or Point { x=1, y=2 }
         // Guard: do NOT treat '{ |' or '{ }' as a constructor — those are match bodies
         // or empty blocks, not record field lists.
@@ -321,7 +377,7 @@ export class Parser {
       if (this.check('WildcardToken')) {
         this.advance(); // consume '_'
         this.consume('ArrowRightToken', "Expected '->' after wildcard pattern.");
-        const body = this.parseExpression();
+        const body = this.check('LBraceToken') ? this.parseBlockExpr() : this.parseExpression();
         arms.push({ variant: null, binding: null, body });
         this.match('SemiToken');
         continue;
@@ -344,13 +400,66 @@ export class Parser {
       }
 
       this.consume('ArrowRightToken', "Expected '->' after match pattern.");
-      const body = this.parseExpression();
+      const body = this.check('LBraceToken') ? this.parseBlockExpr() : this.parseExpression();
       arms.push({ variant: variantName, binding, guard, body });
       this.match('SemiToken');
     }
 
     this.consume('RBraceToken', "Expected '}' after match arms.");
     return { type: 'MatchExpr', subject, arms };
+  }
+
+  /**
+   * Desugars printf("text {name} or {rec.field}\n") at parse time into
+   * a print() call with concatenated string + identifier/property expressions.
+   * Escape sequences: \n \t \\ \" \{ \}
+   */
+  private parsePrintf(): Expr {
+    this.advance(); // consume '('
+    const fmtToken = this.advance();
+    if (fmtToken.type !== 'StrToken') throw new Error("printf requires a string literal as its argument.");
+    this.consume('RParenToken', "Expected ')' after printf format string.");
+
+    const fmt = fmtToken.value;
+    const parts: Expr[] = [];
+    let i = 0;
+    let current = '';
+
+    while (i < fmt.length) {
+      const ch = fmt[i];
+      if (ch === '\uE000') { current += '{'; i++; continue; }  // sentinel for \{
+      if (ch === '\uE001') { current += '}'; i++; continue; }  // sentinel for \}
+      if (ch === '{') {
+        if (current.length > 0) { parts.push({ type: 'StrExpr', value: current }); current = ''; }
+        i++;
+        let interp = '';
+        while (i < fmt.length && fmt[i] !== '}') interp += fmt[i++];
+        if (i >= fmt.length) throw new Error("printf: unclosed '{' in format string.");
+        i++; // consume '}'
+        interp = interp.trim();
+        const dotIdx = interp.indexOf('.');
+        if (dotIdx === -1) {
+          parts.push({ type: 'IdentExpr', name: interp });
+        } else {
+          const objName = interp.slice(0, dotIdx);
+          const fieldName = interp.slice(dotIdx + 1);
+          parts.push({ type: 'GetExpr', object: { type: 'IdentExpr', name: objName }, name: fieldName });
+        }
+      } else {
+        current += ch;
+        i++;
+      }
+    }
+    if (current.length > 0) parts.push({ type: 'StrExpr', value: current });
+
+    if (parts.length === 0) {
+      return { type: 'CallExpr', callee: { type: 'IdentExpr', name: 'print' }, args: [{ type: 'StrExpr', value: '' }] };
+    }
+    let concat: Expr = parts[0];
+    for (let j = 1; j < parts.length; j++) {
+      concat = { type: 'BinaryExpr', left: concat, operator: 'PlusToken', right: parts[j] };
+    }
+    return { type: 'CallExpr', callee: { type: 'IdentExpr', name: 'print' }, args: [concat] };
   }
 
   private parseLambda(): Expr {
@@ -452,7 +561,7 @@ export class Parser {
   // --- Parser State Helpers ---
   private isExprStart(): boolean {
     const t = this.peek().type;
-    return ['IntToken', 'BoolToken', 'StrToken', 'IdentToken', 'BooleanNot', 'MinusToken',
+    return ['IntToken', 'BoolToken', 'StrToken', 'CharToken', 'IdentToken', 'BooleanNot', 'MinusToken',
             'LParenToken', 'LBracketToken', 'FnToken', 'MatchToken', 'DictToken'].includes(t);
   }
   private isAtEnd(): boolean { return this.peek().type === 'EOFToken'; }

@@ -1,0 +1,49 @@
+// mathutils.pf
+// A small math utility module demonstrating Pfun's module system.
+
+import * from "io";
+
+// Pure arithmetic functions
+export function add(x, y) {
+  return x + y;
+}
+
+export function subtract(x, y) {
+  return x - y;
+}
+
+export function multiply(x, y) {
+  return x * y;
+}
+
+// Tail-call optimized factorial
+export function factHelper(n, acc) {
+  if n <= 1 then return acc else factHelper(n - 1, n * acc);
+}
+
+export function fact(n) {
+  return factHelper(n, 1);
+}
+
+// Tail-call optimized countdown
+export function countdown(n) {
+  if n <= 0 then return "Liftoff!" else countdown(n - 1);
+}
+
+// Safe division returning Option
+export function safeDivide(a, b) {
+  return b == 0 ? None : Some { a / b };
+}
+
+// Clamp a value between lo and hi
+export function clamp(value, lo, hi) {
+  return value < lo ? lo : (value > hi ? hi : value);
+}
+
+// A useful constant
+export let tau = 6;
+
+// A proc for printing results (side-effectful, so proc not function)
+export proc printResult(label, value) {
+  println(label + ": " + value);
+}

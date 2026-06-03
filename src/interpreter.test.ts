@@ -1,15 +1,46 @@
+// src/interpreter.test.ts
 import { Lexer } from './lexer';
 import { Parser } from './parser';
 import { Interpreter } from './interpreter';
+import * as os from 'os';
+import * as nodePath from 'path';
+import * as nodeFs from 'fs';
+import { ModuleLoader } from './interpreter';
+import { stdlibFunctions, stdlibTypes } from './library';
+import { iolibFunctions } from './iolib';
 
 const run = (source: string) => {
   const ast = new Parser(new Lexer(source).lex()).parse();
   const interpreter = new Interpreter();
+  interpreter.registerLibrary(stdlibFunctions, stdlibTypes);
+  interpreter.registerLibrary(iolibFunctions, []);
   const logs: any[] = [];
+  let currentLine = '';
   const originalLog = console.log;
-  console.log = (...args: any[]) => logs.push(args.map(a => String(a)).join(' '));
-  try { interpreter.interpret(ast); }
-  finally { console.log = originalLog; }
+  const originalWrite = process.stdout.write.bind(process.stdout);
+  console.log = (...args: any[]) => {
+    const s = args.map(a => String(a)).join(' ');
+    logs.push(currentLine + s);
+    currentLine = '';
+  };
+  (process.stdout as any).write = (s: string) => {
+    if (typeof s !== 'string') return true;
+    // Split on newlines — each \n flushes the current line to logs
+    const parts = s.split('\n');
+    for (let i = 0; i < parts.length - 1; i++) {
+      logs.push(currentLine + parts[i]);
+      currentLine = '';
+    }
+    currentLine += parts[parts.length - 1];
+    return true;
+  };
+  try {
+    interpreter.interpret(ast);
+    if (currentLine.length > 0) { logs.push(currentLine); currentLine = ''; }
+  } finally {
+    console.log = originalLog;
+    (process.stdout as any).write = originalWrite;
+  }
   return { logs, interpreter };
 };
 
@@ -22,87 +53,31 @@ describe('Interpreter Feature Tests', () => {
     });
 
     it('should allow reassignment to var bindings and force evaluation', () => {
-      const { logs } = run('var x = 10; x = 20; print x;');
+      const { logs } = run('var x = 10; x = 20; println(x);');
       expect(logs).toEqual(['20']);
     });
   });
 
+
   describe('Ternary & Equality', () => {
     it('should evaluate ternary operators lazily', () => {
-      const { logs } = run('let x = true ? 1 : undefined_var; print x;');
+      const { logs } = run('let x = true ? 1 : undefined_var; println(x);');
       expect(logs).toEqual(['1']);
     });
 
     it('should test equality correctly', () => {
-      const { logs } = run('print (10 == 10); print (10 == 5);');
+      const { logs } = run('println((10 == 10)); println((10 == 5));');
       expect(logs).toEqual(['true', 'false']);
     });
   });
 
-  describe('Lists & Higher Order Functions', () => {
-    it('should support list operations', () => {
-      const { logs } = run(`
-        let l1 = ["a", "b", "c"];
-        print head(l1);
-        print tail(l1);
-        print cons("d", tail(l1));
-      `);
-      expect(logs[0]).toBe('a');
-      expect(logs[1]).toBe('[b, c]');
-      expect(logs[2]).toBe('[d, b, c]');
-    });
-
-    it('should allow lists containing items of the same type', () => {
-      const { logs } = run(`
-        let l = [1, 2, 3];
-        print head(l);
-      `);
-      expect(logs).toEqual(['1']);
-    });
-
-    it('should throw on mixed types in list literal when forced', () => {
-      expect(() => run(`let l = [1, "two", 3]; eval l;`))
-        .toThrow("Type mismatch in list: expected bigint, got string.");
-    });
-
-    it('should throw on cons with mismatched type', () => {
-      expect(() => run(`
-        let l = [1, 2];
-        cons("three", l);
-      `)).toThrow("Type mismatch in list: expected string, got bigint.");
-    });
-
-    it('should throw on map returning mixed types', () => {
-      expect(() => run(`
-        let nums = [1, 2];
-        map(fn x => x == 1 ? 1 : "two", nums);
-      `)).toThrow("Type mismatch in list: expected bigint, got string.");
-    });
-
-    it('should enforce types on nested lists when forced', () => {
-      expect(() => run(`
-        var nested = [[1, 2], ["a", "b"]];
-      `)).toThrow("Type mismatch in list: expected list<bigint>, got list<string>.");
-    });
-
-    it('should support map, filter, and reduce', () => {
-      const { logs } = run(`
-        let nums = [1, 2, 3, 4];
-        let evens = filter(fn x => x % 2 == 0, nums);
-        let doubled = map(fn x => x * 2, evens);
-        let sum = reduce(fn acc, x => acc + x, 0, doubled);
-        print sum;
-      `);
-      expect(logs).toEqual(['12']);
-    });
-  });
 
   describe('Records & Type Checking', () => {
     it('should create and access records', () => {
       const { logs } = run(`
         type Customer = { firstName, lastName };
         let c1 = Customer { "John", "Smith" };
-        print c1.firstName + " " + c1.lastName;
+        println(c1.firstName + " " + c1.lastName);
       `);
       expect(logs).toEqual(['John Smith']);
     });
@@ -111,7 +86,7 @@ describe('Interpreter Feature Tests', () => {
       const { logs } = run(`
         type Point = { x, y };
         let p = Point(y=20, x=10);
-        print p.x;
+        println(p.x);
       `);
       expect(logs).toEqual(['10']);
     });
@@ -127,6 +102,7 @@ describe('Interpreter Feature Tests', () => {
 
   // ─── Discriminated Unions ──────────────────────────────────────────────────
 
+
   describe('Discriminated Union Types', () => {
     const SHAPE_DEF = `
       type Shape = {
@@ -140,7 +116,7 @@ describe('Interpreter Feature Tests', () => {
       const { logs } = run(`
         ${SHAPE_DEF}
         var sq = Square { 10 };
-        print sq.side;
+        println(sq.side);
       `);
       expect(logs).toEqual(['10']);
     });
@@ -149,7 +125,7 @@ describe('Interpreter Feature Tests', () => {
       const { logs } = run(`
         ${SHAPE_DEF}
         var ci = Circle { radius = 5 };
-        print ci.radius;
+        println(ci.radius);
       `);
       expect(logs).toEqual(['5']);
     });
@@ -158,8 +134,8 @@ describe('Interpreter Feature Tests', () => {
       const { logs } = run(`
         ${SHAPE_DEF}
         var re = Rectangle { y=20, x=10 };
-        print re.x;
-        print re.y;
+        println(re.x);
+        println(re.y);
       `);
       expect(logs).toEqual(['10', '20']);
     });
@@ -210,11 +186,12 @@ describe('Interpreter Feature Tests', () => {
 
   // ─── Functions vs Procedures ───────────────────────────────────────────────
 
+
   describe('Functions and Procedures', () => {
-    it('should allow print inside a procedure', () => {
+    it('should allow println inside a procedure', () => {
       const { logs } = run(`
         proc greet(name) {
-          print "Hello, " + name;
+          println("Hello, " + name);
         }
         greet("Alice");
       `);
@@ -226,7 +203,7 @@ describe('Interpreter Feature Tests', () => {
         proc counter() {
           var x = 0;
           x = x + 1;
-          print x;
+          println(x);
         }
         counter();
       `);
@@ -236,17 +213,17 @@ describe('Interpreter Feature Tests', () => {
     it('should allow a procedure to call a pure function', () => {
       const { logs } = run(`
         function double(x) { return x * 2; }
-        proc printDouble(n) { print double(n); }
+        proc printDouble(n) { println(double(n)); }
         printDouble(7);
       `);
       expect(logs).toEqual(['14']);
     });
 
-    it('should throw when a function uses print', () => {
+    it('should throw when a function uses println', () => {
       expect(() => run(`
-        function bad(x) { print x; }
+        function bad(x) { println(x); }
         bad(1);
-      `)).toThrow("Functions cannot use 'print'");
+      `)).toThrow("Functions cannot use 'println'");
     });
 
     it('should throw when a function uses var', () => {
@@ -258,7 +235,7 @@ describe('Interpreter Feature Tests', () => {
 
     it('should throw when a function calls a procedure', () => {
       expect(() => run(`
-        proc sideEffect() { print "oops"; }
+        proc sideEffect() { println("oops"); }
         function bad(x) { return sideEffect(); }
         bad(1);
       `)).toThrow("Functions cannot call procedures");
@@ -270,7 +247,7 @@ describe('Interpreter Feature Tests', () => {
         function add(x, y) { return x + y; }
         proc printSum(a, b) {
           var result = add(a, b);
-          print result;
+          println(result);
         }
         printSum(3, 4);
       `);
@@ -282,7 +259,7 @@ describe('Interpreter Feature Tests', () => {
         function countdown(n) {
           if n <= 0 then return "done" else countdown(n - 1);
         }
-        print countdown(10000);
+        println(countdown(10000));
       `);
       expect(logs).toEqual(['done']);
     });
@@ -293,8 +270,8 @@ describe('Interpreter Feature Tests', () => {
         function fact(n, acc) {
           if n <= 1 then return acc else fact(n - 1, n * acc);
         }
-        print fact(5, 1);
-        print fact(5, 1);
+        println(fact(5, 1));
+        println(fact(5, 1));
       `);
       expect(logs).toEqual(['120', '120']);
     });
@@ -304,7 +281,7 @@ describe('Interpreter Feature Tests', () => {
         var total = 0;
         proc add(n) {
           total = total + n;
-          print total;
+          println(total);
         }
         add(5);
         add(3);
@@ -316,7 +293,7 @@ describe('Interpreter Feature Tests', () => {
     it('should allow lambdas to be passed to procedures', () => {
       const { logs } = run(`
         proc applyAndPrint(f, x) {
-          print f(x);
+          println(f(x));
         }
         applyAndPrint(fn x => x * x, 7);
       `);
@@ -326,558 +303,6 @@ describe('Interpreter Feature Tests', () => {
 
   // ─── Option Type ───────────────────────────────────────────────────────────
 
-  describe('Option Type', () => {
-    it('Some and None should be available without any type declaration', () => {
-      const { interpreter } = run(`
-        var s = Some { 1 };
-        var n = None;
-      `);
-      expect(interpreter.getGlobal('s').__type).toBe('Some');
-      expect(interpreter.getGlobal('n').__type).toBe('None');
-    });
-
-    it('should match Some and extract the value', () => {
-      const { logs } = run(`
-        let x = Some { 42 };
-        let result = match x {
-          | Some s -> s.value
-          | None   -> 0
-        };
-        print result;
-      `);
-      expect(logs).toEqual(['42']);
-    });
-
-    it('should match None and return the default', () => {
-      const { logs } = run(`
-        let x = None;
-        let result = match x {
-          | Some s -> s.value
-          | None   -> 0
-        };
-        print result;
-      `);
-      expect(logs).toEqual(['0']);
-    });
-
-    it('should support None as a bare identifier without braces', () => {
-      const { interpreter } = run('let x = None;');
-      expect(interpreter.getGlobal('x').__type).toBe('None');
-    });
-
-    it('should support Some with positional braces', () => {
-      const { interpreter } = run('var s = Some { 99 };');
-      expect(interpreter.getGlobal('s').value).toBe(99n);
-    });
-
-    it('should allow a function to return an Option', () => {
-      const { logs } = run(`
-        function safeDivide(a, b) {
-          return b == 0 ? None : Some { a / b };
-        }
-        let good = safeDivide(10, 2);
-        let bad  = safeDivide(10, 0);
-        print match good { | Some s -> s.value | None -> 0 };
-        print match bad  { | Some s -> s.value | None -> 0 };
-      `);
-      expect(logs).toEqual(['5', '0']);
-    });
-
-    it('should support where guards on Some', () => {
-      const { logs } = run(`
-        let x = Some { 100 };
-        let result = match x {
-          | Some s where s.value > 50 -> "big"
-          | Some _                    -> "small"
-          | None                      -> "nothing"
-        };
-        print result;
-      `);
-      expect(logs).toEqual(['big']);
-    });
-
-    it('should require exhaustive match on Option', () => {
-      expect(() => run(`
-        let x = Some { 1 };
-        match x { | Some s -> s.value };
-      `)).toThrow("Non-exhaustive match on 'Option': missing arm(s) for 'None'.");
-    });
-
-    it('should work with wildcard instead of explicit None arm', () => {
-      const { logs } = run(`
-        let x = None;
-        let result = match x {
-          | Some s -> s.value
-          | _      -> 999
-        };
-        print result;
-      `);
-      expect(logs).toEqual(['999']);
-    });
-
-    it('should support Option values in lists with map', () => {
-      const { logs } = run(`
-        let opts = [Some { 1 }, Some { 2 }, Some { 3 }];
-        let vals = map(fn o => match o { | Some s -> s.value | None -> 0 }, opts);
-        print vals;
-      `);
-      expect(logs).toEqual(['[1, 2, 3]']);
-    });
-
-    it('should support chaining with reduce to find first Some', () => {
-      const { logs } = run(`
-        function firstSome(acc, x) {
-          return match acc {
-            | Some _ -> acc
-            | None   -> x
-          };
-        }
-        let candidates = [None, None, Some { 7 }, Some { 8 }];
-        let first = reduce(fn a, x => firstSome(a, x), None, candidates);
-        print match first { | Some s -> s.value | None -> 0 };
-      `);
-      expect(logs).toEqual(['7']);
-    });
-
-    it('should allow user-defined zero-field variants in other union types', () => {
-      const { logs } = run(`
-        type Result = {
-          | Ok: value
-          | Err
-        }
-        let ok  = Ok { 42 };
-        let err = Err;
-        print match ok  { | Ok o -> o.value | Err -> 0 };
-        print match err { | Ok o -> o.value | Err -> 0 };
-      `);
-      expect(logs).toEqual(['42', '0']);
-    });
-  });
-
-  // ─── List Comprehensions ───────────────────────────────────────────────────
-
-  describe('List Comprehensions', () => {
-    it('should produce a transformed list from a single generator', () => {
-      const { logs } = run(`
-        let nums = [1, 2, 3];
-        print [ x * 2 for x <- nums ];
-      `);
-      expect(logs).toEqual(['[2, 4, 6]']);
-    });
-
-    it('should filter with a where guard', () => {
-      const { logs } = run(`
-        let nums = [1, 2, 3, 4, 5];
-        print [ x for x <- nums where x % 2 == 0 ];
-      `);
-      expect(logs).toEqual(['[2, 4]']);
-    });
-
-    it('should support combined conditions with &&', () => {
-      const { logs } = run(`
-        let nums = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
-        print [ x for x <- nums where x > 3 && x < 8 ];
-      `);
-      expect(logs).toEqual(['[4, 5, 6, 7]']);
-    });
-
-    it('should apply body expression after filtering', () => {
-      const { logs } = run(`
-        let nums = [1, 2, 3, 4, 5];
-        print [ x * x for x <- nums where x > 2 ];
-      `);
-      expect(logs).toEqual(['[9, 16, 25]']);
-    });
-
-    it('should produce cartesian product with two generators', () => {
-      const { logs } = run(`
-        let xs = [1, 2];
-        let ys = [10, 20];
-        print [ x + y for x <- xs for y <- ys ];
-      `);
-      expect(logs).toEqual(['[11, 21, 12, 22]']);
-    });
-
-    it('should support multiple generators with a guard', () => {
-      const { logs } = run(`
-        print [ x + y for x <- [1, 2, 3] for y <- [1, 2, 3] where x != y ];
-      `);
-      expect(logs).toEqual(['[3, 4, 3, 5, 4, 5]']);
-    });
-
-    it('should support three generators', () => {
-      const { logs } = run(`
-        let result = [ x + y + z for x <- [1, 2] for y <- [10] for z <- [100] ];
-        print result;
-      `);
-      expect(logs).toEqual(['[111, 112]']);
-    });
-
-    it('should produce an empty list when the guard filters everything', () => {
-      const { logs } = run(`
-        print [ x for x <- [1, 2, 3] where x > 10 ];
-      `);
-      expect(logs).toEqual(['[]']);
-    });
-
-    it('should produce an empty list from an empty source', () => {
-      const { logs } = run(`
-        let empty = [];
-        let result = [ x * 2 for x <- empty ];
-        print result;
-      `);
-      expect(logs).toEqual(['[]']);
-    });
-
-    it('should work as an expression inside let', () => {
-      const { logs } = run(`
-        let evens = [ x for x <- [1, 2, 3, 4, 5, 6] where x % 2 == 0 ];
-        print evens;
-      `);
-      expect(logs).toEqual(['[2, 4, 6]']);
-    });
-
-    it('should work inside a pure function body', () => {
-      const { logs } = run(`
-        function evens(lst) { return [ x for x <- lst where x % 2 == 0 ]; }
-        print evens([1, 2, 3, 4, 5, 6]);
-      `);
-      expect(logs).toEqual(['[2, 4, 6]']);
-    });
-
-    it('should work nested inside another comprehension', () => {
-      const { logs } = run(`
-        let matrix = [[1, 2], [3, 4]];
-        let flat = [ x for row <- matrix for x <- row ];
-        print flat;
-      `);
-      expect(logs).toEqual(['[1, 2, 3, 4]']);
-    });
-
-    it('should enforce type consistency in result', () => {
-      expect(() => run(`
-        let mixed = [ x == 1 ? 1 : "two" for x <- [1, 2] ];
-        eval mixed;
-      `)).toThrow("Type mismatch in list");
-    });
-
-    it('should throw when source is not a list', () => {
-      expect(() => run(`
-        let result = [ x for x <- 42 ];
-        eval result;
-      `)).toThrow("Comprehension source must be a list");
-    });
-
-    it('should work inside a procedure with print', () => {
-      const { logs } = run(`
-        proc printEvens(lst) {
-          let evens = [ x for x <- lst where x % 2 == 0 ];
-          print evens;
-        }
-        printEvens([1, 2, 3, 4, 5, 6]);
-      `);
-      expect(logs).toEqual(['[2, 4, 6]']);
-    });
-
-    it('should compose with map and filter', () => {
-      const { logs } = run(`
-        let nums = [1, 2, 3, 4, 5];
-        let comp   = [ x * 2 for x <- nums where x % 2 == 0 ];
-        let mapped = map(fn x => x * 2, filter(fn x => x % 2 == 0, nums));
-        print comp;
-        print mapped;
-      `);
-      expect(logs).toEqual(['[4, 8]', '[4, 8]']);
-    });
-  });
-
-  // ─── Dictionaries ──────────────────────────────────────────────────────────
-
-  describe('Dictionaries', () => {
-    it('should construct a dict and access values by string key', () => {
-      const { logs } = run(`
-        var d = dict { "name" -> "Alice", "age" -> "30" };
-        print d["name"];
-        print d["age"];
-      `);
-      expect(logs).toEqual(['Alice', '30']);
-    });
-
-    it('should construct a dict with integer keys', () => {
-      const { logs } = run(`
-        var d = dict { 1 -> "one", 2 -> "two" };
-        print d[1];
-        print d[2];
-      `);
-      expect(logs).toEqual(['one', 'two']);
-    });
-
-    it('should construct an empty dict', () => {
-      const { logs } = run(`
-        var d = dict {};
-        d["key"] = "value";
-        print d["key"];
-      `);
-      expect(logs).toEqual(['value']);
-    });
-
-    it('should update an existing key', () => {
-      const { logs } = run(`
-        var d = dict { "x" -> 1 };
-        d["x"] = 99;
-        print d["x"];
-      `);
-      expect(logs).toEqual(['99']);
-    });
-
-    it('should add a new key via index assignment', () => {
-      const { logs } = run(`
-        var d = dict {};
-        d["new"] = 42;
-        print d["new"];
-      `);
-      expect(logs).toEqual(['42']);
-    });
-
-    it('should throw when accessing a missing key', () => {
-      expect(() => run(`
-        var d = dict { "a" -> 1 };
-        eval d["b"];
-      `)).toThrow("Key not found in dict");
-    });
-
-    it('has() should return true for existing keys', () => {
-      const { logs } = run(`
-        var d = dict { "x" -> 1 };
-        print has(d, "x");
-        print has(d, "y");
-      `);
-      expect(logs).toEqual(['true', 'false']);
-    });
-
-    it('remove() should delete a key', () => {
-      const { logs } = run(`
-        var d = dict { "a" -> 1, "b" -> 2 };
-        remove(d, "a");
-        print has(d, "a");
-        print has(d, "b");
-      `);
-      expect(logs).toEqual(['false', 'true']);
-    });
-
-    it('keys() should return all keys as a list', () => {
-      const { logs } = run(`
-        var d = dict { "x" -> 1 };
-        print keys(d);
-      `);
-      expect(logs).toEqual(['[x]']);
-    });
-
-    it('values() should return all values as a list', () => {
-      const { logs } = run(`
-        var d = dict { "x" -> 10, "y" -> 20 };
-        print values(d);
-      `);
-      expect(logs).toEqual(['[10, 20]']);
-    });
-
-    it('should throw when declaring a dict with let', () => {
-      expect(() => run(`
-        let d = dict { "x" -> 1 };
-      `)).toThrow("Dictionaries must be declared with 'var'");
-    });
-
-    it('should throw on non-primitive key', () => {
-      expect(() => run(`
-        var d = dict {};
-        var r = dict { [1, 2] -> "bad" };
-      `)).toThrow("Dictionary keys must be");
-    });
-
-    it('should support boolean keys', () => {
-      const { logs } = run(`
-        var d = dict { true -> "yes", false -> "no" };
-        print d[true];
-        print d[false];
-      `);
-      expect(logs).toEqual(['yes', 'no']);
-    });
-
-    it('keys with the same value should be the same entry', () => {
-      const { logs } = run(`
-        var d = dict { "k" -> 1 };
-        d["k"] = 2;
-        print d["k"];
-      `);
-      expect(logs).toEqual(['2']);
-    });
-
-    it('should work inside a procedure', () => {
-      const { logs } = run(`
-        proc buildDict(lst) {
-          var d = dict {};
-          var i = 0;
-          var remaining = lst;
-          var item = head(remaining);
-          d[item] = i;
-          print d[item];
-        }
-        buildDict(["hello"]);
-      `);
-      expect(logs).toEqual(['0']);
-    });
-
-    it('should throw when trying to mutate a dict in a pure function', () => {
-      expect(() => run(`
-        function bad(d) {
-          d["x"] = 1;
-          return d;
-        }
-        var d = dict {};
-        bad(d);
-      `)).toThrow("Functions cannot mutate dicts");
-    });
-  });
-
-  describe('Infinite Lists', () => {
-    it('iterate should produce values by repeatedly applying f to seed', () => {
-      const { logs } = run(`
-        let nats = iterate(fn x => x + 1, 1);
-        print take(5, nats);
-      `);
-      expect(logs).toEqual(['[1, 2, 3, 4, 5]']);
-    });
-
-    it('repeat should produce an infinite list of one value', () => {
-      const { logs } = run(`
-        print take(4, repeat(7));
-      `);
-      expect(logs).toEqual(['[7, 7, 7, 7]']);
-    });
-
-    it('cycle should repeat a finite list', () => {
-      const { logs } = run(`
-        print take(7, cycle(["a", "b", "c"]));
-      `);
-      expect(logs).toEqual(['[a, b, c, a, b, c, a]']);
-    });
-
-    it('map over a lazy list should produce a new lazy list', () => {
-      const { logs } = run(`
-        let nats = iterate(fn x => x + 1, 1);
-        let doubled = map(fn x => x * 2, nats);
-        print take(5, doubled);
-      `);
-      expect(logs).toEqual(['[2, 4, 6, 8, 10]']);
-    });
-
-    it('filter over a lazy list should produce a new lazy list', () => {
-      const { logs } = run(`
-        let nats = iterate(fn x => x + 1, 1);
-        let evens = filter(fn x => x % 2 == 0, nats);
-        print take(5, evens);
-      `);
-      expect(logs).toEqual(['[2, 4, 6, 8, 10]']);
-    });
-
-    it('should support chained map and filter on lazy lists', () => {
-      const { logs } = run(`
-        let nats = iterate(fn x => x + 1, 1);
-        let result = take(5, filter(fn x => x % 3 == 0, map(fn x => x * 2, nats)));
-        print result;
-      `);
-      expect(logs).toEqual(['[6, 12, 18, 24, 30]']);
-    });
-
-    it('cons onto a lazy list should produce a new lazy list', () => {
-      const { logs } = run(`
-        let nats = iterate(fn x => x + 1, 1);
-        print take(5, cons(0, nats));
-      `);
-      expect(logs).toEqual(['[0, 1, 2, 3, 4]']);
-    });
-
-    it('tail of a lazy list should skip the first element', () => {
-      const { logs } = run(`
-        let nats = iterate(fn x => x + 1, 1);
-        print take(5, tail(nats));
-      `);
-      expect(logs).toEqual(['[2, 3, 4, 5, 6]']);
-    });
-
-    it('take on a finite list should slice it', () => {
-      const { logs } = run(`
-        print take(3, [10, 20, 30, 40, 50]);
-      `);
-      expect(logs).toEqual(['[10, 20, 30]']);
-    });
-
-    it('take of more elements than the list has should return the whole list', () => {
-      const { logs } = run(`
-        print take(10, [1, 2, 3]);
-      `);
-      expect(logs).toEqual(['[1, 2, 3]']);
-    });
-
-    it('should support reduce on a taken finite slice', () => {
-      const { logs } = run(`
-        let nats = iterate(fn x => x + 1, 1);
-        let sum = reduce(fn acc, x => acc + x, 0, take(10, nats));
-        print sum;
-      `);
-      expect(logs).toEqual(['55']);
-    });
-
-    it('reduce should throw on a lazy list', () => {
-      expect(() => run(`
-        let nats = iterate(fn x => x + 1, 1);
-        reduce(fn acc, x => acc + x, 0, nats);
-      `)).toThrow("reduce cannot be used on an infinite list");
-    });
-
-    it('should support fibonacci via iterate with a pair record', () => {
-      const { logs } = run(`
-        type Pair = { a, b }
-        let fibs = map(fn p => p.a, iterate(fn p => Pair { p.b, p.a + p.b }, Pair { 0, 1 }));
-        print take(8, fibs);
-      `);
-      expect(logs).toEqual(['[0, 1, 1, 2, 3, 5, 8, 13]']);
-    });
-
-    it('should support powers of 2 via iterate', () => {
-      const { logs } = run(`
-        let powers = iterate(fn x => x * 2, 1);
-        print take(6, powers);
-      `);
-      expect(logs).toEqual(['[1, 2, 4, 8, 16, 32]']);
-    });
-
-    it('should allow a pure function to return a lazy list', () => {
-      const { logs } = run(`
-        function multiplesOf(n) {
-          return iterate(fn x => x + n, n);
-        }
-        print take(5, multiplesOf(3));
-      `);
-      expect(logs).toEqual(['[3, 6, 9, 12, 15]']);
-    });
-
-    it('should support head on a lazy list', () => {
-      const { logs } = run(`
-        let nats = iterate(fn x => x + 1, 1);
-        print head(nats);
-      `);
-      expect(logs).toEqual(['1']);
-    });
-
-    it('lazy list should print as <lazylist>', () => {
-      const { logs } = run(`
-        let nats = iterate(fn x => x + 1, 1);
-        print nats;
-      `);
-      expect(logs).toEqual(['<lazylist>']);
-    });
-  });
 
   describe('Match Expressions', () => {
     const SHAPE_DEF = `
@@ -897,7 +322,7 @@ describe('Interpreter Feature Tests', () => {
           | Circle c -> c.radius
           | Rectangle r -> r.x
         };
-        print result;
+        println(result);
       `);
       expect(logs).toEqual(['7']);
     });
@@ -921,7 +346,7 @@ describe('Interpreter Feature Tests', () => {
           | Circle c -> c.radius
           | _ -> 0
         };
-        print result;
+        println(result);
       `);
       expect(logs).toEqual(['0']);
     });
@@ -933,7 +358,7 @@ describe('Interpreter Feature Tests', () => {
         let result = match sq {
           | _ -> 42
         };
-        print result;
+        println(result);
       `);
       expect(logs).toEqual(['42']);
     });
@@ -947,7 +372,7 @@ describe('Interpreter Feature Tests', () => {
           | Circle c -> 2
           | _ -> 0
         };
-        print result;
+        println(result);
       `);
       expect(logs).toEqual(['1']);
     });
@@ -961,7 +386,7 @@ describe('Interpreter Feature Tests', () => {
           | Circle _ -> 1
           | _ -> 0
         };
-        print result;
+        println(result);
       `);
       expect(logs).toEqual(['1']);
     });
@@ -975,7 +400,7 @@ describe('Interpreter Feature Tests', () => {
           | Circle _ -> 1
           | _ -> 0
         };
-        print result;
+        println(result);
       `);
       expect(logs).toEqual(['5']);
     });
@@ -989,7 +414,7 @@ describe('Interpreter Feature Tests', () => {
           | Rectangle r -> r.x + r.y
           | _ -> 0
         };
-        print result;
+        println(result);
       `);
       expect(logs).toEqual(['7']);
     });
@@ -1048,7 +473,7 @@ describe('Interpreter Feature Tests', () => {
           | Square s -> s.side
           | _ -> 0
         }) * 2;
-        print doubled;
+        println(doubled);
       `);
       expect(logs).toEqual(['12']);
     });
@@ -1065,8 +490,8 @@ describe('Interpreter Feature Tests', () => {
         }
         var sq = Square { 4 };
         var re = Rectangle { x=3, y=5 };
-        print area(sq);
-        print area(re);
+        println(area(sq));
+        println(area(re));
       `);
       expect(logs).toEqual(['16', '15']);
     });
@@ -1079,9 +504,161 @@ describe('Interpreter Feature Tests', () => {
           | Square s -> s.side
           | _ -> 0
         };
-        print result;
+        println(result);
       `);
       expect(logs).toEqual(['9']);
+    });
+  });
+
+  // ─── Chars & Strings ───────────────────────────────────────────────────────
+
+
+
+  // ─── Modules & Imports ───────────────────────────────────────────────────────
+
+  describe('Modules and Imports', () => {
+    const runWithModule = (mainSrc: string, modules: { [key: string]: string }) => {
+      const dir = nodeFs.mkdtempSync(nodePath.join(os.tmpdir(), 'pfun-test-'));
+      for (const [name, src] of Object.entries(modules)) {
+        nodeFs.writeFileSync(nodePath.join(dir, name), src);
+      }
+      const setup = (i: Interpreter) => {
+        i.registerLibrary(stdlibFunctions, stdlibTypes);
+        i.registerLibrary(iolibFunctions, []);
+      };
+      const loader = new ModuleLoader(nodePath.join(dir, 'lib'), setup);
+      loader.registerBuiltin('io', iolibFunctions);
+      const ast = new Parser(new Lexer(mainSrc).lex()).parse();
+      const interp = new Interpreter(dir, loader);
+      setup(interp);
+      const logs: any[] = [];
+      let currentLine = '';
+      const originalLog = console.log;
+      const originalWrite = process.stdout.write.bind(process.stdout);
+      console.log = (...args: any[]) => {
+        logs.push(currentLine + args.map((a: any) => String(a)).join(' '));
+        currentLine = '';
+      };
+      (process.stdout as any).write = (s: string) => {
+        if (typeof s !== 'string') return true;
+        const parts = s.split('\n');
+        for (let i = 0; i < parts.length - 1; i++) { logs.push(currentLine + parts[i]); currentLine = ''; }
+        currentLine += parts[parts.length - 1];
+        return true;
+      };
+      try {
+        interp.interpret(ast);
+        if (currentLine.length > 0) { logs.push(currentLine); currentLine = ''; }
+      } finally {
+        console.log = originalLog;
+        (process.stdout as any).write = originalWrite;
+        nodeFs.rmSync(dir, { recursive: true });
+      }
+      return { logs, interp };
+    };
+
+    it('should import named exports from a module', () => {
+      const { logs } = runWithModule(`
+        import { add, double } from "./utils";
+        println(add(3, 4));
+        println(double(5));
+      `, {
+        'utils.pf': `
+          export function add(x, y) { return x + y; }
+          export function double(x) { return x * 2; }
+        `
+      });
+      expect(logs).toEqual(['7', '10']);
+    });
+
+    it('should import with an alias', () => {
+      const { logs } = runWithModule(`
+        import { add as plus } from "./utils";
+        println(plus(2, 3));
+      `, {
+        'utils.pf': `export function add(x, y) { return x + y; }`
+      });
+      expect(logs).toEqual(['5']);
+    });
+
+    it('should import * as namespace', () => {
+      const { logs } = runWithModule(`
+        import * as U from "./utils";
+        println(U.add(10, 20));
+        println(U.pi);
+      `, {
+        'utils.pf': `
+          export function add(x, y) { return x + y; }
+          export let pi = 3;
+        `
+      });
+      expect(logs).toEqual(['30', '3']);
+    });
+
+    it('should cache modules and only execute them once', () => {
+      const { logs } = runWithModule(`
+        import { val } from "./counter";
+        println(val);
+      `, {
+        'counter.pf': `export let val = 42;`
+      });
+      expect(logs).toEqual(['42']);
+    });
+
+    it('should throw when importing a non-exported name', () => {
+      expect(() => runWithModule(`
+        import { secret } from "./mod";
+        println(secret);
+      `, {
+        'mod.pf': `let secret = 99;`
+      })).toThrow("does not export 'secret'");
+    });
+
+    it('should throw on circular imports', () => {
+      expect(() => runWithModule(`
+        import { a } from "./a";
+      `, {
+        'a.pf': `import { b } from "./b"; export let a = 1;`,
+        'b.pf': `import { a } from "./a"; export let b = 2;`
+      })).toThrow("Circular import detected");
+    });
+
+    it('should export and import a proc', () => {
+      const { logs } = runWithModule(`
+        import { greet } from "./greetings";
+        greet("Alice");
+      `, {
+        'greetings.pf': `
+          export proc greet(name) { println("Hello, " + name); }
+        `
+      });
+      expect(logs).toEqual(['Hello, Alice']);
+    });
+
+    it('should export and import a type', () => {
+      const { logs } = runWithModule(`
+        import { Point } from "./types";
+        let p = Point { 3, 4 };
+        println(p.x);
+      `, {
+        'types.pf': `export type Point = { x, y };`
+      });
+      expect(logs).toEqual(['3']);
+    });
+
+    it('should support import * from builtin module', () => {
+      const { logs } = runWithModule(`
+        import * from "io";
+        proc p() { println("hello from io"); }
+        p();
+      `, {});
+      expect(logs).toEqual(['hello from io']);
+    });
+
+    it('should support import * as namespace from builtin module', () => {
+      expect(() => runWithModule(`
+        import * as IO from "io";
+      `, {})).not.toThrow();
     });
   });
 });

@@ -1,40 +1,237 @@
-  let x = 5 * 2;
-  print x;
+// ============================================================================
+// script1.pf — Pfun feature showcase script
+// Run with: npm start script1.pf
+// ============================================================================
 
-  print x + 5;
+import * from "io";
 
-  print "foo";
+// ─── 1. Variables & Arithmetic ───────────────────────────────────────────────
 
-  print "foo" + "bar";
+let x = 5 * 2;
+println(x);           // 10
+println(x + 5);       // 15
+println("foo");       // foo
+println("foo" + "bar"); // foobar
+println(false);       // false
 
-  print false;
+let v = x && true;
+println(v);           // true
+println(v && false);  // false
+println(v || false);  // true
 
-  let v = x && true;
 
-  print v;
+// ─── 2. Functions & Tail Calls ───────────────────────────────────────────────
 
-  print v && false;
+function addone(n) {
+  return n + 1;
+}
+println(addone(5)); // 6
 
-  print v || false;
+function fact_a(n, acc) {
+  if n <= 1 then return acc else fact_a(n - 1, n * acc);
+}
 
-  function addone(n) {
-    return n+1;
-  }
-  print addone(5);
+function fact(n) {
+  return fact_a(n, 1);
+}
 
-  function fact_a(n, acc) {
-    if n <= 1 then return acc else fact_a(n - 1, n * acc);
-  }
+println(fact_a(5, 1)); // 120
+println(fact(5));      // 120
+println(fact(20));     // 2432902008176640000
 
-  function fact(n) {
-    return fact_a(n, 1)
-  }
 
-  print fact_a(5, 1);
+// ─── 3. Procedures & Output ──────────────────────────────────────────────────
 
-  print fact(5);
+proc banner(title) {
+  println("=== " + title + " ===");
+}
 
-  print fact(100);
+banner("Procedures");
 
-  print fact(100);
+// print without newline
+proc printRow(a, b, c) {
+  print(a + " | ");
+  print(b + " | ");
+  println(c);
+}
+printRow("Alice", "30", "engineer");
+printRow("Bob",   "25", "designer");
 
+
+// ─── 4. printf ───────────────────────────────────────────────────────────────
+
+banner("printf");
+
+let lang = "Pfun";
+let year = 2024;
+printf("Language: {lang}, Year: {year}\n");
+
+type Person = { name, age }
+let p = Person { "Carol", 28 };
+printf("Name: {p.name}, Age: {p.age}\n");
+printf("Use \{ and \} for literal braces\n");
+
+
+// ─── 5. Chars & Strings ──────────────────────────────────────────────────────
+
+banner("Chars & Strings");
+
+let c = 'A';
+println(c);           // A
+println(asc(c));      // 65
+println(chr(97));     // a
+
+// Strings are lists of chars
+let word = "hello";
+println(head(word));  // h
+println(tail(word));  // ello
+println(cons('H', tail(word))); // Hello
+
+// filter over a string
+let no_vowels = filter(fn c => c != 'a' && c != 'e' && c != 'i' && c != 'o' && c != 'u', "beautiful");
+println(no_vowels); // btfl
+
+// map over a string — shift each char up by 1
+function shiftChar(c) {
+  return chr(asc(c) + 1);
+}
+println(map(fn c => shiftChar(c), "abc")); // bcd
+
+// reduce over a string to count chars
+let len = reduce(fn acc, _ => acc + 1, 0, "hello world");
+println(len); // 11
+
+// Escape sequences
+println("Tab:\there");
+println("Quote: \"hello\"");
+println(asc('\n')); // 10
+
+
+// ─── 6. Slice, nth, isInfinite ───────────────────────────────────────────────
+
+banner("Slice & nth");
+
+let nums = [10, 20, 30, 40, 50];
+println(slice(1, 3, nums));   // [20, 30, 40]
+println(slice(0, 2, nums));   // [10, 20]
+println(nth(nums, 0));        // 10
+println(nth(nums, 4));        // 50
+println(nth(nums, 99));       // false
+
+// slice/nth on strings
+println(slice(1, 3, "hello")); // ell
+println(nth("hello", 1));      // e
+
+// isInfinite
+let nats = iterate(fn x => x + 1, 1);
+println(isInfinite(nats));        // true
+println(isInfinite([1, 2, 3]));   // false
+println(isInfinite("hello"));     // false
+
+
+// ─── 7. Infinite Lists ───────────────────────────────────────────────────────
+
+banner("Infinite Lists");
+
+println(take(5, nats));                            // [1, 2, 3, 4, 5]
+println(take(5, filter(fn x => x % 2 == 0, nats))); // [2, 4, 6, 8, 10]
+println(slice(10, 5, nats));                       // [11, 12, 13, 14, 15]
+println(nth(nats, 99));                            // 100
+
+// Powers of 2
+let powers = iterate(fn x => x * 2, 1);
+println(take(8, powers)); // [1, 2, 4, 8, 16, 32, 64, 128]
+
+// cycle
+let lights = cycle(["red", "amber", "green"]);
+println(take(7, lights)); // [red, amber, green, red, amber, green, red]
+
+
+// ─── 8. List Comprehensions ──────────────────────────────────────────────────
+
+banner("Comprehensions");
+
+println([ x * x for x <- [1,2,3,4,5] ]);           // [1, 4, 9, 16, 25]
+println([ x for x <- [1,2,3,4,5] where x % 2 != 0 ]); // [1, 3, 5]
+println([ x + y for x <- [1,2] for y <- [10,20] ]); // [11, 21, 12, 22]
+
+// Comprehension over a string
+println([ c for c <- "hello" where c != 'l' ]); // heo
+
+
+// ─── 9. Dictionaries ─────────────────────────────────────────────────────────
+
+banner("Dictionaries");
+
+var scores = dict { "Alice" -> 95, "Bob" -> 87 };
+println(scores["Alice"]); // 95
+scores["Bob"] = 90;
+println(scores["Bob"]);   // 90
+scores["Carol"] = 88;
+println(has(scores, "Carol"));  // true
+println(has(scores, "Dave"));   // false
+remove(scores, "Carol");
+println(has(scores, "Carol"));  // false
+println(keys(scores));          // [Alice, Bob]
+
+
+// ─── 10. Option Type ─────────────────────────────────────────────────────────
+
+banner("Option");
+
+function safeDivide(a, b) {
+  return b == 0 ? None : Some { a / b };
+}
+
+proc printOption(opt) {
+  println(match opt {
+    | Some s -> "Some(" + s.value + ")"
+    | None   -> "None"
+  });
+}
+
+printOption(safeDivide(10, 2)); // Some(5)
+printOption(safeDivide(10, 0)); // None
+
+
+// ─── 11. Pattern Matching ────────────────────────────────────────────────────
+
+banner("Pattern Matching");
+
+type Shape = {
+  | Square: side
+  | Circle: radius
+  | Triangle: base, height
+}
+
+function area(shape) {
+  return match shape {
+    | Square s   -> s.side * s.side
+    | Circle c   -> c.radius * c.radius
+    | Triangle t -> t.base * t.height / 2
+  };
+}
+
+proc printArea(shape) {
+  printf("Area: {area}\n");
+}
+
+let sq = Square { 4 };
+let ci = Circle { 3 };
+let tr = Triangle { base=6, height=4 };
+
+println(area(sq)); // 16
+println(area(ci)); // 9
+println(area(tr)); // 12
+
+println("Speak, friend, and enter");
+var inp = readln();
+let answer = match inp {
+  | Some s -> s.value
+  | None   -> "No input"
+};
+if answer == "friend" then {
+  println("Welcome!");
+} else {
+  println("None shall pass!");
+}

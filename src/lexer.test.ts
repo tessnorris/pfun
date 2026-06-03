@@ -5,10 +5,10 @@ const lex = (input: string): Token[] => new Lexer(input).lex();
 describe('Lexer Unit Tests', () => {
   describe('Comments', () => {
     it('should skip single-line comments', () => {
-      const tokens = lex('let x = 10; // this is a comment\nprint x;');
+      const tokens = lex('let x = 10; // this is a comment\nprintln(x);');
       expect(tokens.map(t => t.type)).toEqual([
         'LetToken', 'IdentToken', 'AssignToken', 'IntToken', 'SemiToken',
-        'PrintToken', 'IdentToken', 'SemiToken', 'EOFToken'
+        'IdentToken', 'LParenToken', 'IdentToken', 'RParenToken', 'SemiToken', 'EOFToken'
       ]);
     });
 
@@ -99,6 +99,74 @@ describe('Lexer Unit Tests', () => {
         'PipeToken', 'WildcardToken', 'ArrowRightToken', 'IntToken',
         'RBraceToken', 'EOFToken'
       ]);
+    });
+  });
+
+  describe('New Tokens: Char Literals', () => {
+    it('should tokenize a simple char literal', () => {
+      const token = lex("'a'")[0];
+      expect(token.type).toBe('CharToken');
+      expect((token as any).value).toBe('a');
+    });
+
+    it('should tokenize newline escape in char literal', () => {
+      const token = lex("'\\n'")[0];
+      expect(token.type).toBe('CharToken');
+      expect((token as any).value).toBe('\n');
+    });
+
+    it('should tokenize tab escape in char literal', () => {
+      const token = lex("'\\t'")[0];
+      expect(token.type).toBe('CharToken');
+      expect((token as any).value).toBe('\t');
+    });
+
+    it('should tokenize escaped single quote in char literal', () => {
+      const token = lex("'\\''")[0];
+      expect(token.type).toBe('CharToken');
+      expect((token as any).value).toBe("'");
+    });
+
+    it('should tokenize escape sequences in string literals', () => {
+      const token = lex('"He said \\"hi\\""')[0];
+      expect(token.type).toBe('StrToken');
+      expect((token as any).value).toBe('He said "hi"');
+    });
+
+    it('should tokenize \\n in string as actual newline', () => {
+      const token = lex('"line1\\nline2"')[0];
+      expect((token as any).value).toBe('line1\nline2');
+    });
+  });
+
+  describe('New Tokens: Comprehension & Dict', () => {
+    it('should tokenize for as ForToken', () => {
+      expect(lex('for')[0].type).toBe('ForToken');
+    });
+
+    it('should tokenize <- as ArrowLeftToken', () => {
+      expect(lex('<-')[0].type).toBe('ArrowLeftToken');
+    });
+
+    it('should distinguish <- from < and <=', () => {
+      const tokens = lex('x <- y x < y x <= y');
+      expect(tokens[1].type).toBe('ArrowLeftToken');
+      expect(tokens[4].type).toBe('LessToken');
+      expect(tokens[7].type).toBe('LessEqualToken');
+    });
+
+    it('should tokenize dict as DictToken', () => {
+      expect(lex('dict')[0].type).toBe('DictToken');
+    });
+
+    it('should tokenize proc as ProcToken', () => {
+      expect(lex('proc')[0].type).toBe('ProcToken');
+    });
+
+    it('should tokenize print and println as IdentTokens (not keywords)', () => {
+      expect(lex('print')[0].type).toBe('IdentToken');
+      expect(lex('println')[0].type).toBe('IdentToken');
+      expect(lex('printf')[0].type).toBe('IdentToken');
     });
   });
 });
