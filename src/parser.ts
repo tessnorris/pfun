@@ -58,6 +58,7 @@ export class Parser {
     if (this.match('LBraceToken')) {
       while (!this.check('RBraceToken') && !this.isAtEnd()) { if (this.match('SemiToken')) continue; statements.push(this.parseStatement()); }
       this.consume('RBraceToken', "Expected '}' after block.");
+      this.rejectSemiAfterBlock();
     } else {
       while (!this.check('FunctionToken') && !this.isAtEnd()) statements.push(this.parseStatement());
     }
@@ -75,6 +76,7 @@ export class Parser {
     if (this.match('LBraceToken')) {
       while (!this.check('RBraceToken') && !this.isAtEnd()) { if (this.match('SemiToken')) continue; statements.push(this.parseStatement()); }
       this.consume('RBraceToken', "Expected '}' after block.");
+      this.rejectSemiAfterBlock();
     } else {
       while (!this.check('ProcToken') && !this.isAtEnd()) statements.push(this.parseStatement());
     }
@@ -101,7 +103,7 @@ export class Parser {
     const name = (this.consume('IdentToken', "Expected variable name.") as any).value;
     this.consume('AssignToken', "Expected '=' after variable name.");
     const initializer = this.parseExpression();
-    this.match('SemiToken');
+    this.consume('SemiToken', "Expected ';' after let binding. Semicolons are required after 'let' and 'var' to avoid ambiguity with '{' on the following line.");
     return { type: 'LetStmt', name, initializer, pos: stmtPos };
   }
 
@@ -110,7 +112,7 @@ export class Parser {
     const name = (this.consume('IdentToken', "Expected variable name.") as any).value;
     this.consume('AssignToken', "Expected '=' after variable name.");
     const initializer = this.parseExpression();
-    this.match('SemiToken');
+    this.consume('SemiToken', "Expected ';' after var binding. Semicolons are required after 'let' and 'var' to avoid ambiguity with '{' on the following line.");
     return { type: 'VarStmt', name, initializer, pos: stmtPos };
   }
 
@@ -231,7 +233,9 @@ export class Parser {
     this.consume('ThenToken', "Expected 'then' after if condition.");
     const thenBranch = this.parseStatement();
     let elseBranch: Stmt | undefined = undefined;
-    if (this.match('ElseToken')) elseBranch = this.parseStatement();
+    if (this.match('ElseToken')) {
+      elseBranch = this.parseStatement();
+    }
     return { type: 'IfStmt', condition, thenBranch, elseBranch, pos: stmtPos };
   }
 
@@ -248,10 +252,25 @@ export class Parser {
     return { type: 'BlockExpr', statements, pos: exprPos };
   }
 
+  /**
+   * Semicolons after a closing '}' are a syntax error.
+   * They were never needed and this enforces the rule explicitly.
+   */
+  private rejectSemiAfterBlock(): void {
+    if (this.check('SemiToken')) {
+      const p = this.peek().pos;
+      throw Object.assign(
+        new Error("Unexpected ';' after '}'. Semicolons are not used after blocks, functions, procedures, or if/else branches."),
+        { pos: p }
+      );
+    }
+  }
+
   private parseBlockStatement(): Stmt {
     const statements: Stmt[] = [];
     while (!this.check('RBraceToken') && !this.isAtEnd()) { if (this.match('SemiToken')) continue; statements.push(this.parseStatement()); }
     this.consume('RBraceToken', "Expected '}' after block.");
+    this.rejectSemiAfterBlock();
     return { type: 'BlockStmt', statements };
   }
 
@@ -360,7 +379,7 @@ export class Parser {
         this.consume('RBracketToken', "Expected ']' after list elements.");
         return { type: 'ListExpr', elements, pos: exprPos };
       }
-      default: throw new Error(`Unexpected token in expression: ${token.type}`);
+      default: throw Object.assign(new Error(`Unexpected token in expression: ${token.type}`), { pos: token.pos });
     }
   }
 
@@ -377,11 +396,10 @@ export class Parser {
    * optional guard evaluates to truthy) wins.
    */
   private parseMatchExpression(): Expr {
-    // Parse at NONE so subjects like 'match foo.bar { ... }' work fully.
-    // The IdentToken prefix case is guarded against consuming '{ | ...' as a
-    // record constructor, so the opening brace of the arm block is safe.
+    // Parse subject at NONE precedence so 'match foo.bar with ...' works fully.
+    // Arms are delimited by leading '|' — no closing brace needed.
     const subject = this.parseExpression(Precedence.NONE);
-    this.consume('LBraceToken', "Expected '{' after match subject.");
+    this.consume('WithToken', "Expected 'with' after match subject.");
 
     const arms: MatchArm[] = [];
     while (this.match('PipeToken')) {
@@ -391,7 +409,6 @@ export class Parser {
         this.consume('ArrowRightToken', "Expected '->' after wildcard pattern.");
         const body = this.check('LBraceToken') ? this.parseBlockExpr() : this.parseExpression();
         arms.push({ variant: null, binding: null, body });
-        this.match('SemiToken');
         continue;
       }
 
@@ -414,10 +431,8 @@ export class Parser {
       this.consume('ArrowRightToken', "Expected '->' after match pattern.");
       const body = this.check('LBraceToken') ? this.parseBlockExpr() : this.parseExpression();
       arms.push({ variant: variantName, binding, guard, body });
-      this.match('SemiToken');
     }
 
-    this.consume('RBraceToken', "Expected '}' after match arms.");
     return { type: 'MatchExpr', subject, arms, pos: subject.pos };
   }
 
@@ -430,7 +445,7 @@ export class Parser {
     const printfPos = this.pos();
     this.advance(); // consume '('
     const fmtToken = this.advance();
-    if (fmtToken.type !== 'StrToken') throw new Error("printf requires a string literal as its argument.");
+    if (fmtToken.type !== 'StrToken') throw Object.assign(new Error("printf requires a string literal as its argument."), { pos: fmtToken.pos });
     this.consume('RParenToken', "Expected ')' after printf format string.");
 
     const fmt = fmtToken.value;
@@ -508,7 +523,7 @@ export class Parser {
       if (left.type === 'IndexExpr') {
         return { type: 'IndexAssignExpr', object: left.object, index: left.index, value: this.parseExpression(precedence - 1), pos: infixPos };
       }
-      if (left.type !== 'IdentExpr') throw new Error("Invalid assignment target.");
+      if (left.type !== 'IdentExpr') throw Object.assign(new Error("Invalid assignment target."), { pos: left.pos });
       return { type: 'AssignExpr', name: left.name, value: this.parseExpression(precedence - 1), pos: infixPos };
     }
 
@@ -593,6 +608,6 @@ export class Parser {
   private match(type: Token['type']): boolean { if (this.check(type)) { this.advance(); return true; } return false; }
   private consume(type: Token['type'], message: string): Token {
     if (this.check(type)) return this.advance();
-    throw new Error(message);
+    throw Object.assign(new Error(message), { pos: this.peek().pos });
   }
 }

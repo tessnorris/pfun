@@ -317,11 +317,10 @@ describe('Interpreter Feature Tests', () => {
       const { logs } = run(`
         ${SHAPE_DEF}
         var sq = Square { 7 };
-        let result = match sq {
+        let result = match sq with
           | Square s -> s.side
           | Circle c -> c.radius
-          | Rectangle r -> r.x
-        };
+          | Rectangle r -> r.x;
         println(result);
       `);
       expect(logs).toEqual(['7']);
@@ -331,10 +330,9 @@ describe('Interpreter Feature Tests', () => {
       expect(() => run(`
         ${SHAPE_DEF}
         var sq = Square { 7 };
-        match sq {
+        match sq with
           | Square s -> s = 99
           | _ -> 0
-        };
       `)).toThrow("Cannot assign to immutable variable 's'");
     });
 
@@ -342,10 +340,9 @@ describe('Interpreter Feature Tests', () => {
       const { logs } = run(`
         ${SHAPE_DEF}
         var sq = Square { 4 };
-        let result = match sq {
+        let result = match sq with
           | Circle c -> c.radius
-          | _ -> 0
-        };
+          | _ -> 0;
         println(result);
       `);
       expect(logs).toEqual(['0']);
@@ -355,9 +352,8 @@ describe('Interpreter Feature Tests', () => {
       const { logs } = run(`
         ${SHAPE_DEF}
         var sq = Square { 4 };
-        let result = match sq {
-          | _ -> 42
-        };
+        let result = match sq with
+          | _ -> 42;
         println(result);
       `);
       expect(logs).toEqual(['42']);
@@ -367,11 +363,10 @@ describe('Interpreter Feature Tests', () => {
       const { logs } = run(`
         ${SHAPE_DEF}
         var ci = Circle { 10 };
-        let result = match ci {
+        let result = match ci with
           | Circle c -> 1
           | Circle c -> 2
-          | _ -> 0
-        };
+          | _ -> 0;
         println(result);
       `);
       expect(logs).toEqual(['1']);
@@ -381,11 +376,10 @@ describe('Interpreter Feature Tests', () => {
       const { logs } = run(`
         ${SHAPE_DEF}
         var ci = Circle { 2 };
-        let result = match ci {
+        let result = match ci with
           | Circle c where c.radius > 3 -> 100
           | Circle _ -> 1
-          | _ -> 0
-        };
+          | _ -> 0;
         println(result);
       `);
       expect(logs).toEqual(['1']);
@@ -395,11 +389,10 @@ describe('Interpreter Feature Tests', () => {
       const { logs } = run(`
         ${SHAPE_DEF}
         var ci = Circle { 5 };
-        let result = match ci {
+        let result = match ci with
           | Circle c where c.radius > 3 -> c.radius
           | Circle _ -> 1
-          | _ -> 0
-        };
+          | _ -> 0;
         println(result);
       `);
       expect(logs).toEqual(['5']);
@@ -409,11 +402,10 @@ describe('Interpreter Feature Tests', () => {
       const { logs } = run(`
         ${SHAPE_DEF}
         var re = Rectangle { x=3, y=4 };
-        let result = match re {
+        let result = match re with
           | Rectangle r where r.x == r.y -> 0
           | Rectangle r -> r.x + r.y
-          | _ -> 0
-        };
+          | _ -> 0;
         println(result);
       `);
       expect(logs).toEqual(['7']);
@@ -423,10 +415,9 @@ describe('Interpreter Feature Tests', () => {
       expect(() => run(`
         ${SHAPE_DEF}
         var sq = Square { 4 };
-        match sq {
+        match sq with
           | Square s -> s.side
           | Circle c -> c.radius
-        };
       `)).toThrow("Non-exhaustive match on 'Shape': missing arm(s) for 'Rectangle'.");
     });
 
@@ -434,11 +425,10 @@ describe('Interpreter Feature Tests', () => {
       expect(() => run(`
         ${SHAPE_DEF}
         var sq = Square { 4 };
-        match sq {
+        match sq with
           | Square s -> s.side
           | Circle c -> c.radius
           | Rectangle r -> r.x
-        };
       `)).not.toThrow();
     });
 
@@ -446,10 +436,9 @@ describe('Interpreter Feature Tests', () => {
       expect(() => run(`
         ${SHAPE_DEF}
         var sq = Square { 4 };
-        match sq {
+        match sq with
           | Square s -> s.side
           | _ -> 0
-        };
       `)).not.toThrow();
     });
 
@@ -457,11 +446,10 @@ describe('Interpreter Feature Tests', () => {
       expect(() => run(`
         ${SHAPE_DEF}
         var ci = Circle { 1 };
-        match ci {
+        match ci with
           | Circle c where c.radius > 10 -> c.radius
           | Square s -> s.side
           | Rectangle r -> r.x
-        };
       `)).toThrow("Non-exhaustive match: no arm matched value of type 'Circle'.");
     });
 
@@ -469,10 +457,10 @@ describe('Interpreter Feature Tests', () => {
       const { logs } = run(`
         ${SHAPE_DEF}
         var sq = Square { 6 };
-        let doubled = (match sq {
+        let doubled = (match sq with
           | Square s -> s.side
           | _ -> 0
-        }) * 2;
+        ) * 2;
         println(doubled);
       `);
       expect(logs).toEqual(['12']);
@@ -482,11 +470,10 @@ describe('Interpreter Feature Tests', () => {
       const { logs } = run(`
         ${SHAPE_DEF}
         function area(shape) {
-          return match shape {
+          return match shape with
             | Square s -> s.side * s.side
             | Circle c -> c.radius * c.radius
             | Rectangle r -> r.x * r.y
-          };
         }
         var sq = Square { 4 };
         var re = Rectangle { x=3, y=5 };
@@ -500,10 +487,9 @@ describe('Interpreter Feature Tests', () => {
       const { logs } = run(`
         ${SHAPE_DEF}
         let sq = Square { 9 };
-        let result = match sq {
+        let result = match sq with
           | Square s -> s.side
-          | _ -> 0
-        };
+          | _ -> 0;
         println(result);
       `);
       expect(logs).toEqual(['9']);

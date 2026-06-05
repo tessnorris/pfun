@@ -1,5 +1,4 @@
-
-// src/datastructs.test.ts
+// src/datastructs.ts
 import { Lexer } from './lexer';
 import { Parser } from './parser';
 import { Interpreter } from './interpreter';
@@ -59,10 +58,8 @@ describe('Data Structure Tests', () => {
     it('should match Some and extract the value', () => {
       const { logs } = run(`
         let x = Some { 42 };
-        let result = match x {
-          | Some s -> s.value
-          | None   -> 0
-        };
+        let result = match x with | Some s -> s.value
+          | None   -> 0;
         println(result);
       `);
       expect(logs).toEqual(['42']);
@@ -71,10 +68,8 @@ describe('Data Structure Tests', () => {
     it('should match None and return the default', () => {
       const { logs } = run(`
         let x = None;
-        let result = match x {
-          | Some s -> s.value
-          | None   -> 0
-        };
+        let result = match x with | Some s -> s.value
+          | None   -> 0;
         println(result);
       `);
       expect(logs).toEqual(['0']);
@@ -97,8 +92,8 @@ describe('Data Structure Tests', () => {
         }
         let good = safeDivide(10, 2);
         let bad  = safeDivide(10, 0);
-        println(match good { | Some s -> s.value | None -> 0 });
-        println(match bad  { | Some s -> s.value | None -> 0 });
+        println(match good with | Some s -> s.value | None -> 0);
+        println(match bad  with | Some s -> s.value | None -> 0);
       `);
       expect(logs).toEqual(['5', '0']);
     });
@@ -106,11 +101,9 @@ describe('Data Structure Tests', () => {
     it('should support where guards on Some', () => {
       const { logs } = run(`
         let x = Some { 100 };
-        let result = match x {
-          | Some s where s.value > 50 -> "big"
+        let result = match x with | Some s where s.value > 50 -> "big"
           | Some _                    -> "small"
-          | None                      -> "nothing"
-        };
+          | None                      -> "nothing";
         println(result);
       `);
       expect(logs).toEqual(['big']);
@@ -119,17 +112,15 @@ describe('Data Structure Tests', () => {
     it('should require exhaustive match on Option', () => {
       expect(() => run(`
         let x = Some { 1 };
-        match x { | Some s -> s.value };
+        match x with | Some s -> s.value;
       `)).toThrow("Non-exhaustive match on 'Option': missing arm(s) for 'None'.");
     });
 
     it('should work with wildcard instead of explicit None arm', () => {
       const { logs } = run(`
         let x = None;
-        let result = match x {
-          | Some s -> s.value
-          | _      -> 999
-        };
+        let result = match x with | Some s -> s.value
+          | _      -> 999;
         println(result);
       `);
       expect(logs).toEqual(['999']);
@@ -138,7 +129,7 @@ describe('Data Structure Tests', () => {
     it('should support Option values in lists with map', () => {
       const { logs } = run(`
         let opts = [Some { 1 }, Some { 2 }, Some { 3 }];
-        let vals = map(fn o => match o { | Some s -> s.value | None -> 0 }, opts);
+        let vals = map(fn o => match o with | Some s -> s.value | None -> 0, opts);
         println(vals);
       `);
       expect(logs).toEqual(['[1, 2, 3]']);
@@ -147,14 +138,12 @@ describe('Data Structure Tests', () => {
     it('should support chaining with reduce to find first Some', () => {
       const { logs } = run(`
         function firstSome(acc, x) {
-          return match acc {
-            | Some _ -> acc
-            | None   -> x
-          };
+          return match acc with | Some _ -> acc
+            | None   -> x;
         }
         let candidates = [None, None, Some { 7 }, Some { 8 }];
         let first = reduce(fn a, x => firstSome(a, x), None, candidates);
-        println(match first { | Some s -> s.value | None -> 0 });
+        println(match first with | Some s -> s.value | None -> 0);
       `);
       expect(logs).toEqual(['7']);
     });
@@ -167,8 +156,8 @@ describe('Data Structure Tests', () => {
         }
         let ok  = Ok { 42 };
         let err = Err;
-        println(match ok  { | Ok o -> o.value | Err -> 0 });
-        println(match err { | Ok o -> o.value | Err -> 0 });
+        println(match ok  with | Ok o -> o.value | Err -> 0);
+        println(match err with | Ok o -> o.value | Err -> 0);
       `);
       expect(logs).toEqual(['42', '0']);
     });

@@ -324,9 +324,28 @@ export class Interpreter {
     this.moduleLoader = moduleLoader ?? new ModuleLoader(path.join(baseDir, 'lib'));
   }
 
-  /** Update the "currently executing" position for error reporting. */
+  /** Update the "currently executing" position for error reporting.
+   * Only tracks nodes that carry meaningful context — statements, calls,
+   * binary/assign expressions. Skips simple literals and identifiers so
+   * that sub-expression evaluation doesn't clobber a parent node's position.
+   */
   private trackPos(node: Expr | Stmt, env: Environment): void {
-    if (node.pos) {
+    if (!node.pos) return;
+    const t = node.type;
+    // Always track statements
+    const isStmt = t === 'LetStmt' || t === 'VarStmt' || t === 'ExprStmt' ||
+                   t === 'EvalStmt' || t === 'IfStmt' || t === 'ReturnStmt' ||
+                   t === 'BlockStmt' || t === 'FunctionStmt' || t === 'ProcedureStmt' ||
+                   t === 'ImportStmt' || t === 'ExportStmt' || t === 'TypeStmt' ||
+                   t === 'UnionTypeStmt';
+    // Track compound expressions but NOT simple terminals
+    const isCompoundExpr = t === 'CallExpr' || t === 'BinaryExpr' || t === 'AssignExpr' ||
+                           t === 'IndexAssignExpr' || t === 'UnaryExpr' || t === 'TernaryExpr' ||
+                           t === 'MatchExpr' || t === 'ComprehensionExpr' || t === 'GetExpr' ||
+                           t === 'IndexExpr' || t === 'BlockExpr';
+    // Skip: IntExpr, BoolExpr, StrExpr, CharExpr, IdentExpr, LiteralExpr, ListExpr,
+    //        RecordExpr, DictExpr, LambdaExpr, GroupExpr
+    if (isStmt || isCompoundExpr) {
       this._currentPos  = node.pos;
       this._currentNode = node;
       this._currentEnv  = env;
@@ -342,7 +361,10 @@ export class Interpreter {
     if (err instanceof PfunError) return err;
     const raw = err instanceof Error ? err : new Error(String(err));
     const envLookup = (name: string) => {
-      try { return this._currentEnv ? this._currentEnv.get(name) : undefined; }
+      try {
+        const v = this._currentEnv ? this._currentEnv.get(name) : undefined;
+        return v !== undefined ? this.force(v) : undefined;
+      }
       catch { return undefined; }
     };
     return buildPfunError(raw, this.sourceText, this._currentPos, this._currentNode, envLookup, this);
@@ -619,11 +641,9 @@ export class Interpreter {
         }
         const args = expr.args.map(arg => new Thunk(arg, env));
         if (callee instanceof NativeFunction) return callee.execute(args, this);
-        if (callee.kind === 'procedure') {
-          const forcedArgs = args.map(a => this.force(a));
-          return callee.execute(forcedArgs, this);
-        }
-        return new TailCall(callee, args);
+        // Procedures receive thunks just like functions — forcing happens
+        // only when a value is actually needed (arithmetic, output, etc.)
+        return callee.execute(args, this);
       }
       case 'MatchExpr': return this.evaluateMatch(expr, env);
       case 'BlockExpr': {
@@ -735,7 +755,18 @@ export class Interpreter {
   force(value: any): any {
     let current = value;
     while (true) {
-      if (current instanceof Thunk) current = this.evaluateExpr(current.expr, current.env);
+      if (current instanceof Thunk) {
+        // Save and restore position tracking around thunk evaluation so that
+        // lazily forcing a 'let' binding doesn't clobber the position of
+        // the expression that triggered the force.
+        const savedPos  = this._currentPos;
+        const savedNode = this._currentNode;
+        const savedEnv  = this._currentEnv;
+        current = this.evaluateExpr(current.expr, current.env);
+        this._currentPos  = savedPos;
+        this._currentNode = savedNode;
+        this._currentEnv  = savedEnv;
+      }
       else if (current instanceof TailCall) current = this.trampoline(current.fn, current.args);
       else return current;
     }

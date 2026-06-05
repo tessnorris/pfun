@@ -43,6 +43,7 @@ export type Token =
   | { type: 'QuestionToken'; pos?: SourcePos } | { type: 'DotToken'; pos?: SourcePos }
   | { type: 'PipeToken'; pos?: SourcePos }
   | { type: 'MatchToken'; pos?: SourcePos }
+  | { type: 'WithToken'; pos?: SourcePos }       // 'with' keyword (opens match arms)
   | { type: 'WhereToken'; pos?: SourcePos }
   | { type: 'WildcardToken'; pos?: SourcePos }
   | { type: 'SemiToken'; pos?: SourcePos } | { type: 'EOFToken'; pos?: SourcePos };
@@ -260,6 +261,7 @@ export class Lexer {
       case 'as':       return { type: 'AsToken' };
       case 'from':     return { type: 'FromToken' };
       case 'match':    return { type: 'MatchToken' };
+      case 'with':     return { type: 'WithToken' };
       case 'where':    return { type: 'WhereToken' };
       default:         return { type: 'IdentToken', value: s };
     }

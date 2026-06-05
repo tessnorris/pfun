@@ -114,10 +114,9 @@ describe('Parser Unit Tests', () => {
   describe('Match Expressions', () => {
     it('should parse a basic match with variant arms and wildcard', () => {
       const ast = parse(`
-        let result = match sq {
+        let result = match sq with
           | Square s -> s.side
-          | _ -> 0
-        };
+          | _ -> 0;
       `);
       const expr = (ast[0] as any).initializer;
       expect(expr.type).toBe('MatchExpr');
@@ -126,10 +125,9 @@ describe('Parser Unit Tests', () => {
 
     it('should parse a match arm with a named binding', () => {
       const ast = parse(`
-        let result = match sq {
+        let result = match sq with
           | Square s -> s.side
-          | _ -> 0
-        };
+          | _ -> 0;
       `);
       const expr = (ast[0] as any).initializer;
       const firstArm = expr.arms[0];
@@ -140,24 +138,22 @@ describe('Parser Unit Tests', () => {
 
     it('should parse a wildcard arm', () => {
       const ast = parse(`
-        let result = match sq {
+        let result = match sq with
           | Square s -> s.side
-          | _ -> 0
-        };
+          | _ -> 0;
       `);
       const expr = (ast[0] as any).initializer;
       const wildcard = expr.arms[1];
       expect(wildcard.variant).toBeNull();
       expect(wildcard.binding).toBeNull();
-      expect(wildcard.body).toEqual({ type: 'IntExpr', value: 0n });
+      expect(wildcard.body).toEqual(expect.objectContaining({ type: 'IntExpr', value: 0n }));
     });
 
     it('should parse a match arm with a wildcard binding _', () => {
       const ast = parse(`
-        let result = match sq {
+        let result = match sq with
           | Circle _ -> 1
-          | _ -> 0
-        };
+          | _ -> 0;
       `);
       const expr = (ast[0] as any).initializer;
       const arm = expr.arms[0];
@@ -167,10 +163,9 @@ describe('Parser Unit Tests', () => {
 
     it('should parse a match arm with a where guard', () => {
       const ast = parse(`
-        let result = match shape {
+        let result = match shape with
           | Circle c where c.radius > 3 -> c.radius
-          | _ -> 0
-        };
+          | _ -> 0;
       `);
       const expr = (ast[0] as any).initializer;
       const arm = expr.arms[0];
@@ -183,11 +178,10 @@ describe('Parser Unit Tests', () => {
 
     it('should parse multiple arms for the same variant (guarded then fallback)', () => {
       const ast = parse(`
-        let result = match shape {
+        let result = match shape with
           | Circle c where c.radius > 3 -> c.radius
           | Circle _ -> 1
-          | _ -> 0
-        };
+          | _ -> 0;
       `);
       const expr = (ast[0] as any).initializer;
       expect(expr.arms).toHaveLength(3);
@@ -199,10 +193,9 @@ describe('Parser Unit Tests', () => {
 
     it('should parse a match as an expression statement', () => {
       const ast = parse(`
-        match sq {
+        match sq with
           | Square s -> s.side
           | _ -> 0
-        };
       `);
       expect((ast[0] as any).type).toBe('ExprStmt');
       expect((ast[0] as any).expression.type).toBe('MatchExpr');
@@ -240,7 +233,7 @@ describe('Parser Unit Tests', () => {
       const ast = parse('var d = dict { "x" -> 1 };');
       const expr = (ast[0] as any).initializer;
       expect(expr.type).toBe('DictExpr');
-      expect(expr.entries[0].key).toEqual({ type: 'StrExpr', value: 'x' });
+      expect(expr.entries[0].key).toEqual(expect.objectContaining({ type: 'StrExpr', value: 'x' }));
     });
 
     it('should parse an empty dict literal', () => {
@@ -254,14 +247,14 @@ describe('Parser Unit Tests', () => {
       const ast = parse('d["key"];');
       const expr = (ast[0] as any).expression;
       expect(expr.type).toBe('IndexExpr');
-      expect(expr.index).toEqual({ type: 'StrExpr', value: 'key' });
+      expect(expr.index).toEqual(expect.objectContaining({ type: 'StrExpr', value: 'key' }));
     });
 
     it('should parse index assignment', () => {
       const ast = parse('d["key"] = 99;');
       const expr = (ast[0] as any).expression;
       expect(expr.type).toBe('IndexAssignExpr');
-      expect(expr.value).toEqual({ type: 'IntExpr', value: 99n });
+      expect(expr.value).toEqual(expect.objectContaining({ type: 'IntExpr', value: 99n }));
     });
   });
 
@@ -306,7 +299,7 @@ describe('Parser Unit Tests', () => {
       const ast = parse('printf("hello {name}\\n");');
       const expr = (ast[0] as any).expression;
       expect(expr.type).toBe('CallExpr');
-      expect(expr.callee).toEqual({ type: 'IdentExpr', name: 'print' });
+      expect(expr.callee).toEqual(expect.objectContaining({ type: 'IdentExpr', name: 'print' }));
     });
 
     it('should desugar {name.field} into a GetExpr', () => {

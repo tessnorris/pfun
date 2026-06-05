@@ -5,8 +5,9 @@
     "start": "ts-node src/main.ts",
     "build": "tsc",
     "start:compiled": "node dist/main.js",
-    "test": "jest",
-    "test:coverage": "jest --coverage"
+    "test": "node --require ./jest.bigint-patch.js node_modules/.bin/jest",
+    "test:coverage": "node --require ./jest.bigint-patch.js node_modules/.bin/jest --coverage",
+    "repl": "ts-node src/repl.ts"
   },
   "devDependencies": {
     "@types/jest": "^29.5.0",

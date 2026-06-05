@@ -56,10 +56,8 @@ const tempPath = () =>
 // unwrapSome(x) extracts x.value from Some, or "none"
 const UNWRAP = `
   function unwrapSome(opt) {
-    return match opt {
-      | Some s -> s.value
-      | None   -> "none"
-    };
+    return match opt with | Some s -> s.value
+      | None   -> "none";
   }
 `;
 
@@ -134,7 +132,7 @@ describe('File Library Tests', () => {
         const { logs } = run(`
           proc p() {
             var h = fileOpen("${path}", "r");
-            println(match h { | Some _ -> "opened" | None -> "failed" });
+            println(match h with | Some _ -> "opened" | None -> "failed");
           }
           p();
         `);
@@ -146,7 +144,7 @@ describe('File Library Tests', () => {
       const { logs } = run(`
         proc p() {
           var h = fileOpen("/no/such/file.txt", "r");
-          println(match h { | Some _ -> "opened" | None -> "none" });
+          println(match h with | Some _ -> "opened" | None -> "none");
         }
         p();
       `);
@@ -159,9 +157,9 @@ describe('File Library Tests', () => {
         const { logs } = run(`
           proc p() {
             var h = fileOpen("${path}", "w");
-            let tag = match h { | Some s -> s.value.__type | None -> "failed" };
+            let tag = match h with | Some s -> s.value.__type | None -> "failed";
             println(tag);
-            match h { | Some s -> fileClose(s.value) | None -> 0 };
+            match h with | Some s -> fileClose(s.value) | None -> 0;
           }
           p();
         `);
@@ -174,9 +172,9 @@ describe('File Library Tests', () => {
         const { logs } = run(`
           proc p() {
             var h = fileOpen("${path}", "r");
-            let tag = match h { | Some s -> s.value.__type | None -> "failed" };
+            let tag = match h with | Some s -> s.value.__type | None -> "failed";
             println(tag);
-            match h { | Some s -> fileClose(s.value) | None -> 0 };
+            match h with | Some s -> fileClose(s.value) | None -> 0;
           }
           p();
         `);
@@ -193,21 +191,20 @@ describe('File Library Tests', () => {
         const { logs } = run(`
           proc p() {
             var h = fileOpen("${path}", "r");
-            match h {
+            match h with
               | Some s -> {
                   var handle = s.value;
                   var c1 = readChar(handle);
                   var c2 = readChar(handle);
                   var c3 = readChar(handle);
                   var c4 = readChar(handle);
-                  println(match c1 { | Some x -> x.value | None -> "eof" });
-                  println(match c2 { | Some x -> x.value | None -> "eof" });
-                  println(match c3 { | Some x -> x.value | None -> "eof" });
-                  println(match c4 { | Some _ -> "got"   | None -> "eof" });
+                  println(match c1 with | Some x -> x.value | None -> "eof");
+                  println(match c2 with | Some x -> x.value | None -> "eof");
+                  println(match c3 with | Some x -> x.value | None -> "eof");
+                  println(match c4 with | Some _ -> "got"   | None -> "eof");
                   fileClose(handle);
                 }
               | None -> println("failed")
-            };
           }
           p();
         `);
@@ -220,21 +217,20 @@ describe('File Library Tests', () => {
         const { logs } = run(`
           proc p() {
             var h = fileOpen("${path}", "r");
-            match h {
+            match h with
               | Some s -> {
                   var handle = s.value;
                   var l1 = readLine(handle);
                   var l2 = readLine(handle);
                   var l3 = readLine(handle);
                   var l4 = readLine(handle);
-                  println(match l1 { | Some x -> x.value | None -> "eof" });
-                  println(match l2 { | Some x -> x.value | None -> "eof" });
-                  println(match l3 { | Some x -> x.value | None -> "eof" });
-                  println(match l4 { | Some _ -> "got"   | None -> "eof" });
+                  println(match l1 with | Some x -> x.value | None -> "eof");
+                  println(match l2 with | Some x -> x.value | None -> "eof");
+                  println(match l3 with | Some x -> x.value | None -> "eof");
+                  println(match l4 with | Some _ -> "got"   | None -> "eof");
                   fileClose(handle);
                 }
               | None -> println("failed")
-            };
           }
           p();
         `);
@@ -248,10 +244,8 @@ describe('File Library Tests', () => {
         expect(() => run(`
           proc p() {
             var h = fileOpen("${path}", "w");
-            match h {
-              | Some s -> readChar(s.value)
-              | None   -> 0
-            };
+            match h with | Some s -> readChar(s.value)
+              | None   -> 0;
           }
           p();
         `)).toThrow("requires a ReadHandle");
@@ -268,7 +262,7 @@ describe('File Library Tests', () => {
         run(`
           proc p() {
             var h = fileOpen("${path}", "w");
-            match h {
+            match h with
               | Some s -> {
                   var handle = s.value;
                   writeChar(handle, 'h');
@@ -276,7 +270,6 @@ describe('File Library Tests', () => {
                   fileClose(handle);
                 }
               | None -> 0
-            };
           }
           p();
         `);
@@ -290,7 +283,7 @@ describe('File Library Tests', () => {
         run(`
           proc p() {
             var h = fileOpen("${path}", "w");
-            match h {
+            match h with
               | Some s -> {
                   var handle = s.value;
                   writeLine(handle, "first");
@@ -298,7 +291,6 @@ describe('File Library Tests', () => {
                   fileClose(handle);
                 }
               | None -> 0
-            };
           }
           p();
         `);
@@ -311,10 +303,8 @@ describe('File Library Tests', () => {
         expect(() => run(`
           proc p() {
             var h = fileOpen("${path}", "r");
-            match h {
-              | Some s -> writeChar(s.value, 'x')
-              | None   -> 0
-            };
+            match h with | Some s -> writeChar(s.value, 'x')
+              | None   -> 0;
           }
           p();
         `)).toThrow("requires a WriteHandle");
@@ -328,12 +318,10 @@ describe('File Library Tests', () => {
           ${UNWRAP}
           proc p() {
             var h = fileOpen("${path}", "w");
-            let n = match h {
-              | Some s -> unwrapSome(writeLine(s.value, "hello"))
-              | None   -> "failed"
-            };
+            let n = match h with | Some s -> unwrapSome(writeLine(s.value, "hello"))
+              | None   -> "failed";
             println(n);
-            match h { | Some s -> fileClose(s.value) | None -> 0 };
+            match h with | Some s -> fileClose(s.value) | None -> 0;
           }
           p();
         `);
@@ -374,20 +362,18 @@ describe('File Library Tests', () => {
       withTempFile('data', path => {
         const { logs } = run(`
           function describeHandle(h) {
-            return match h {
-              | ReadHandle  _ -> "read"
-              | WriteHandle _ -> "write"
-            };
+            return match h with | ReadHandle  _ -> "read"
+              | WriteHandle _ -> "write";
           }
           proc p() {
             let rh = fileOpen("${path}", "r");
-            let tag = match rh { | Some s -> describeHandle(s.value) | None -> "failed" };
+            let tag = match rh with | Some s -> describeHandle(s.value) | None -> "failed";
             println(tag);
-            match rh { | Some s -> fileClose(s.value) | None -> 0 };
+            match rh with | Some s -> fileClose(s.value) | None -> 0;
             let wh = fileOpen("${path}", "w");
-            let wtag = match wh { | Some s -> describeHandle(s.value) | None -> "failed" };
+            let wtag = match wh with | Some s -> describeHandle(s.value) | None -> "failed";
             println(wtag);
-            match wh { | Some s -> fileClose(s.value) | None -> 0 };
+            match wh with | Some s -> fileClose(s.value) | None -> 0;
           }
           p();
         `);

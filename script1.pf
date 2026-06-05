@@ -184,10 +184,10 @@ function safeDivide(a, b) {
 }
 
 proc printOption(opt) {
-  println(match opt {
+  println(match opt with
     | Some s -> "Some(" + s.value + ")"
     | None   -> "None"
-  });
+  );
 }
 
 printOption(safeDivide(10, 2)); // Some(5)
@@ -205,11 +205,10 @@ type Shape = {
 }
 
 function area(shape) {
-  return match shape {
+  return match shape with
     | Square s   -> s.side * s.side
     | Circle c   -> c.radius * c.radius
-    | Triangle t -> t.base * t.height / 2
-  };
+    | Triangle t -> t.base * t.height / 2;
 }
 
 proc printArea(shape) {
@@ -224,3 +223,13 @@ println(area(sq)); // 16
 println(area(ci)); // 9
 println(area(tr)); // 12
 
+println("Speak, friend, and enter");
+var inp = readln();
+let answer = match inp with
+  | Some s -> s.value
+  | None   -> "No input";
+if answer == "friend" then {
+  println("Welcome!");
+} else {
+  println("None shall pass!");
+}

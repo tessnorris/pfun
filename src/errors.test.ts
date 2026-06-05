@@ -286,12 +286,14 @@ describe('PfunError format', () => {
     expect(err.pfunMessage).toContain("Cannot assign to immutable variable 'x'");
   });
 
-  it('is itself an Error subclass that toThrow() can match on substrings', () => {
-    // Existing tests use .toThrow("substring") — this verifies they still work
-    expect(() => runExpectError(`
+  it('is itself an Error subclass whose message contains the original error', () => {
+    // PfunError.message always contains the original raw message as a substring,
+    // so existing .toThrow("substring") assertions still work on re-thrown PfunErrors
+    const err = runExpectError(`
       let x = 10;
       x = 20;
-    `)).toThrow("Cannot assign to immutable variable 'x'");
+    `);
+    expect(err.message).toContain("Cannot assign to immutable variable 'x'");
   });
 });
 
@@ -519,10 +521,8 @@ describe('[Exhaustiveness] errors', () => {
     const err = runExpectError(`
       type Shape = { | Square: side | Circle: radius | Rectangle: x, y }
       var sq = Square { 4 };
-      match sq {
-        | Square s -> s.side
-        | Circle c -> c.radius
-      };
+      match sq with | Square s -> s.side
+        | Circle c -> c.radius;
     `);
     expect(err.kind).toBe('Exhaustiveness');
     assertContains(err, "[Exhaustiveness]");
@@ -533,11 +533,9 @@ describe('[Exhaustiveness] errors', () => {
     const err = runExpectError(`
       type Shape = { | Square: side | Circle: radius | Rectangle: x, y }
       var ci = Circle { 1 };
-      match ci {
-        | Circle c where c.radius > 10 -> c.radius
+      match ci with | Circle c where c.radius > 10 -> c.radius
         | Square s -> s.side
-        | Rectangle r -> r.x
-      };
+        | Rectangle r -> r.x;
     `);
     expect(err.kind).toBe('Exhaustiveness');
     assertContains(err, "[Exhaustiveness]");
@@ -547,7 +545,7 @@ describe('[Exhaustiveness] errors', () => {
   it('non-exhaustive Option match', () => {
     const err = runExpectError(`
       let x = Some { 1 };
-      match x { | Some s -> s.value };
+      match x with | Some s -> s.value;
     `);
     expect(err.kind).toBe('Exhaustiveness');
     assertContains(err, "[Exhaustiveness]");
@@ -824,11 +822,11 @@ describe('[Syntax] errors', () => {
   it('missing then in if statement', () => {
     let threw = false;
     try {
-      new Parser(new Lexer('if x { println(1); }').lex()).parse();
+      new Parser(new Lexer('if true println(1);').lex()).parse();
     } catch (e) {
       threw = true;
       const raw = e instanceof Error ? e : new Error(String(e));
-      const pfunErr = buildPfunError(raw, 'if x { println(1); }', undefined, null, () => undefined, { stringify: String });
+      const pfunErr = buildPfunError(raw, 'if true println(1);', undefined, null, () => undefined, { stringify: String });
       expect(pfunErr.kind).toBe('Syntax');
       assertContains(pfunErr, "[Syntax]");
       assertContains(pfunErr, "'then'");

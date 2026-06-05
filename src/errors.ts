@@ -56,21 +56,28 @@ export function classifyError(message: string): ErrorKind {
       m.includes("char literal must contain"))
     return 'Lexical';
 
-  if (m.includes("expected") || m.includes("unexpected token") ||
-      m.includes("'}'") || m.includes("')'") || m.includes("'{'") ||
-      m.includes("'then'") || m.includes("'->'") || m.includes("'=>'"))
-    return 'Syntax';
+  if (m.includes("type mismatch") || m.includes("expected bigint") ||
+      m.includes("expected string") || m.includes("expected list") ||
+      m.includes("requires a char") || m.includes("requires a string") ||
+      m.includes("requires an integer") || m.includes("requires a list") ||
+      m.includes("requires a dict") || m.includes("must be a string") ||
+      m.includes("must be an integer") || m.includes("keys must be"))
+    return 'Type';
 
   if (m.includes("undefined variable") || m.includes("unknown type") ||
       m.includes("cannot assign to immutable") || m.includes("property '") ||
       m.includes("not found") && !m.includes("key not found") && !m.includes("module not found"))
     return 'Name';
 
-  if (m.includes("type mismatch") || m.includes("expected bigint") ||
-      m.includes("expected string") || m.includes("expected list") ||
-      m.includes("requires a") || m.includes("must be a string") ||
-      m.includes("must be an integer") || m.includes("keys must be"))
-    return 'Type';
+  if (m.includes("expected '") || m.includes("unexpected token") ||
+      m.includes("expected function") || m.includes("expected procedure") ||
+      m.includes("expected variable") || m.includes("expected type") ||
+      m.includes("expected parameter") || m.includes("expected module") ||
+      m.includes("expected import") || m.includes("expected variant") ||
+      m.includes("expected namespace") || m.includes("expected alias") ||
+      m.includes("'then'") || m.includes("'->'") || m.includes("'=>'") ||
+      m.includes("'with'"))
+    return 'Syntax';
 
   if (m.includes("key not found") || m.includes("missing field") ||
       m.includes("index") && m.includes("out of bounds"))

@@ -181,11 +181,10 @@ println(re.y);       // 4
   The `match` expression dispatches on the runtime variant of a value.
 
   Syntax:
-    match <expr> {
+    match <expr> with
       | <VariantName> <binding> [where <guard>] -> <result-expr>
       | <VariantName> _                         -> <result-expr>   // discard binding
       | _                                       -> <result-expr>   // wildcard
-    }
 
   Rules:
     - Arms are tried in ORDER. The FIRST matching arm wins.
@@ -204,52 +203,47 @@ println(re.y);       // 4
 println("--- 9. Pattern Matching ---");
 
 // Basic dispatch
-let area = match sq {
+let area = match sq with
   | Square s    -> s.side * s.side
   | Circle c    -> c.radius * c.radius
-  | Rectangle r -> r.x * r.y
-};
+  | Rectangle r -> r.x * r.y;
 println(area); // 100  (10 * 10)
 
 // Wildcard binding _ discards the value
-let kind = match ci {
+let kind = match ci with
   | Square _    -> "square"
   | Circle _    -> "circle"
-  | Rectangle _ -> "rectangle"
-};
+  | Rectangle _ -> "rectangle";
 println(kind); // circle
 
 // where guard: guarded arm is skipped when guard is false
-let classify = match ci {
+let classify = match ci with
   | Circle c where c.radius > 10 -> "big circle"
   | Circle c where c.radius > 2  -> "medium circle"
   | Circle _                     -> "small circle"
   | Square s                     -> "square"
-  | Rectangle r                  -> "rectangle"
-};
+  | Rectangle r                  -> "rectangle";
 println(classify); // medium circle
 
 // Wildcard arm as a catch-all (also satisfies exhaustiveness)
-let fallback = match re {
+let fallback = match re with
   | Square s -> s.side
-  | _ -> 0
-};
+  | _ -> 0;
 println(fallback); // 0  (re is a Rectangle, falls through to wildcard)
 
 // Match as a nested expression
-let doubled_area = (match sq {
+let doubled_area = (match sq with
   | Square s -> s.side * s.side
   | _ -> 0
-}) * 2;
+) * 2;
 println(doubled_area); // 200
 
 // Match inside a pure function — fine, no side effects
 function describe(shape) {
-  return match shape {
+  return match shape with
     | Square s    -> "Square with side " + s.side
     | Circle c    -> "Circle with radius " + c.radius
-    | Rectangle r -> "Rectangle " + r.x + "x" + r.y
-  };
+    | Rectangle r -> "Rectangle " + r.x + "x" + r.y;
 }
 
 // Procedures can call pure functions and print results
@@ -489,7 +483,7 @@ proc countWords(words) {
     counts[word] = counts[word] + 1;
   } else {
     counts[word] = 1;
-  };
+  }
   println(counts[word]);
 }
 countWords(["hello", "world", "hello"]);  // 1 then 1
@@ -515,16 +509,14 @@ let present = Some { 42 };
 let absent = None;
 
 // Basic unwrapping with match
-let result = match present {
+let result = match present with
   | Some s -> s.value
-  | None   -> 0
-};
+  | None   -> 0;
 println(result); // 42
 
-let missing = match absent {
+let missing = match absent with
   | Some s -> s.value
-  | None   -> 0
-};
+  | None   -> 0;
 println(missing); // 0
 
 // A pure function returning an Option — safe division
@@ -535,43 +527,41 @@ function safeDivide(a, b) {
 let good = safeDivide(10, 2);
 let bad  = safeDivide(10, 0);
 
-println(match good {
+println(match good with
   | Some s -> "Result: " + s.value
   | None   -> "Division by zero"
-});  // Result: 5
+);  // Result: 5
 
-println(match bad {
+println(match bad with
   | Some s -> "Result: " + s.value
   | None   -> "Division by zero"
-});  // Division by zero
+);  // Division by zero
 
 // where guard on Some — only match large values
 let big = Some { 100 };
-let classify_opt = match big {
+let classify_opt = match big with
   | Some s where s.value > 50 -> "big"
   | Some _                    -> "small"
-  | None                      -> "nothing"
-};
+  | None                      -> "nothing";
 println(classify_opt); // big
 
 // Option in a list — filter out None values with a procedure
 let opts = [Some { 1 }, Some { 2 }, Some { 3 }];
-let values = map(fn o => match o { | Some s -> s.value | None -> 0 }, opts);
+let values = map(fn o => match o with | Some s -> s.value | None -> 0, opts);
 println(values); // [1, 2, 3]
 
 // Chaining: find first Some in a list using reduce
 function firstSome(acc, x) {
-  return match acc {
+  return match acc with
     | Some _ -> acc
-    | None   -> x
-  };
+    | None   -> x;
 }
 let candidates = [None, None, Some { 7 }, Some { 8 }];
 let first = reduce(fn a, x => firstSome(a, x), None, candidates);
-println(match first {
+println(match first with
   | Some s -> s.value
   | None   -> 0
-}); // 7
+); // 7
 
 
 /*
@@ -759,41 +749,35 @@ println(findByX(pts, 3));  // 1
 
     proc echoLoop() {
       var line = readln();
-      match line {
+      match line with
         | Some s -> {
             println("Got: " + s.value);
             echoLoop();
-          }
         | None -> println("EOF")
-      };
-    }
 
   Example — single prompt:
 
     proc greet() {
       print("Enter your name: ");
       var input = readln();
-      let name = match input {
+      let name = match input with
         | Some s -> s.value
         | None   -> "stranger"
-      };
       printf("Hello, {name}!\n");
-    }
 
   Example — gate check (the Mines of Moria):
 
     proc gate() {
       println("Speak, friend, and enter");
       var inp = readln();
-      let answer = match inp {
+      let answer = match inp with
         | Some s -> s.value
         | None   -> ""
-      };
       if answer == "friend" then {
         println("Welcome!");
       } else {
         println("None shall pass!");
-      };
+      }
     }
 
   Note: these examples are commented out to avoid hanging when example.pf
@@ -806,15 +790,14 @@ println(findByX(pts, 3));  // 1
 proc gate() {
   println("Speak, friend, and enter");
   var inp = readln();
-  let answer = match inp {
+  let answer = match inp with
     | Some s -> s.value
-    | None   -> ""
-  };
+    | None   -> "";
   if answer == "friend" then {
     println("Welcome!");
   } else {
     println("None shall pass!");
-  };
+  }
 }
 gate();
 
@@ -856,10 +839,10 @@ printResult("fact(5)", fact(5));  // fact(5): 120
 
 // Option result from safeDivide
 let divided = safeDivide(20, 4);
-println(match divided {
+println(match divided with
   | Some s -> "Result: " + s.value
   | None   -> "Division by zero"
-});  // Result: 5
+);  // Result: 5
 
 // Namespace import — all exports under one name
 import * as Math from "./mathutils";
@@ -870,13 +853,12 @@ println(Math.tau);              // 6
 Math.printResult("countdown", Math.countdown(3));  // countdown: Liftoff!
 
 
-var src = "./testsrc.txt"
-var dst = "./testdst.txt"
+var src = "./testsrc.txt";
+var dst = "./testdst.txt";
 
 proc copyFile(src, dst) {
   let content = readFile(src);
-  match content {
+  match content with
     | Some s -> writeFile(dst, s.value)
-    | None   -> println("Could not read source file")
-  };
+    | None   -> println("Could not read source file");
 }
