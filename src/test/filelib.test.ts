@@ -1,13 +1,13 @@
 // src/filelib.test.ts
-import { Lexer } from './lexer';
-import { Parser } from './parser';
-import { Interpreter, ModuleLoader } from './interpreter';
+import { Lexer } from '../lexer';
+import { Parser } from '../parser';
+import { Interpreter, ModuleLoader } from '../interpreter';
 import * as os from 'os';
 import * as nodePath from 'path';
 import * as nodeFs from 'fs';
-import { stdlibFunctions, stdlibTypes } from './library';
-import { iolibFunctions } from './iolib';
-import { filelibFunctions, filelibTypes } from './filelib';
+import { stdlibFunctions, stdlibTypes } from '../library';
+import { iolibFunctions } from '../iolib';
+import { filelibFunctions, filelibTypes } from '../filelib';
 
 // ─── Test helpers ─────────────────────────────────────────────────────────────
 

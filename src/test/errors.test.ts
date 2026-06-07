@@ -8,13 +8,13 @@
 //   - Relevant identifier bindings are shown with correct formatted values
 //   - The original error detail message is present
 
-import { Lexer } from './lexer';
-import { Parser } from './parser';
-import { Interpreter } from './interpreter';
-import { ModuleLoader } from './interpreter';
-import { stdlibFunctions, stdlibTypes } from './library';
-import { iolibFunctions } from './iolib';
-import { PfunError, classifyError, formatValue, buildPfunError } from './errors';
+import { Lexer } from '../lexer';
+import { Parser } from '../parser';
+import { Interpreter } from '../interpreter';
+import { ModuleLoader } from '../interpreter';
+import { stdlibFunctions, stdlibTypes } from '../library';
+import { iolibFunctions } from '../iolib';
+import { PfunError, classifyError, formatValue, buildPfunError } from '../errors';
 import * as os from 'os';
 import * as nodePath from 'path';
 import * as nodeFs from 'fs';
@@ -193,19 +193,19 @@ describe('formatValue()', () => {
   });
 
   it('formats a named PfunFunction as "fun name"', () => {
-    const { PfunFunction, Environment } = require('./interpreter');
+    const { PfunFunction, Environment } = require('../interpreter');
     const fn = new PfunFunction('myFunc', ['x'], [], new Environment(), 'function');
     expect(formatValue(fn, mockInterp)).toBe('fun myFunc');
   });
 
   it('formats a named PfunFunction procedure as "proc name"', () => {
-    const { PfunFunction, Environment } = require('./interpreter');
+    const { PfunFunction, Environment } = require('../interpreter');
     const fn = new PfunFunction('myProc', ['x'], [], new Environment(), 'procedure');
     expect(formatValue(fn, mockInterp)).toBe('proc myProc');
   });
 
   it('formats a simple lambda as "fn params => body"', () => {
-    const { PfunFunction, Environment } = require('./interpreter');
+    const { PfunFunction, Environment } = require('../interpreter');
     // Lambda: fn x => x * 2
     const body = { type: 'BinaryExpr', left: { type: 'IdentExpr', name: 'x' }, operator: 'StarToken', right: { type: 'IntExpr', value: 2n } };
     const fn = new PfunFunction(null, ['x'], body, new Environment(), 'function');
@@ -214,7 +214,7 @@ describe('formatValue()', () => {
   });
 
   it('formats a multi-param lambda', () => {
-    const { PfunFunction, Environment } = require('./interpreter');
+    const { PfunFunction, Environment } = require('../interpreter');
     const body = { type: 'BinaryExpr', left: { type: 'IdentExpr', name: 'x' }, operator: 'PlusToken', right: { type: 'IdentExpr', name: 'y' } };
     const fn = new PfunFunction(null, ['x', 'y'], body, new Environment(), 'function');
     expect(formatValue(fn, mockInterp)).toBe('fn x, y => x + y');
@@ -236,17 +236,17 @@ describe('formatValue()', () => {
   });
 
   it('formats PfunChar', () => {
-    const { PfunChar } = require('./interpreter');
+    const { PfunChar } = require('../interpreter');
     expect(formatValue(new PfunChar('A'), mockInterp)).toBe("'A'");
   });
 
   it('formats LazyList', () => {
-    const { LazyList } = require('./interpreter');
+    const { LazyList } = require('../interpreter');
     expect(formatValue(new LazyList({ kind: 'repeat', value: 1n }), mockInterp)).toBe('<lazylist>');
   });
 
   it('formats PfunDict', () => {
-    const { PfunDict } = require('./interpreter');
+    const { PfunDict } = require('../interpreter');
     expect(formatValue(new PfunDict(new Map()), mockInterp)).toBe('dict { ... }');
   });
 });

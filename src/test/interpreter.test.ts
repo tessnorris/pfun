@@ -1,13 +1,13 @@
 // src/interpreter.test.ts
-import { Lexer } from './lexer';
-import { Parser } from './parser';
-import { Interpreter } from './interpreter';
+import { Lexer } from '../lexer';
+import { Parser } from '../parser';
+import { Interpreter } from '../interpreter';
 import * as os from 'os';
 import * as nodePath from 'path';
 import * as nodeFs from 'fs';
-import { ModuleLoader } from './interpreter';
-import { stdlibFunctions, stdlibTypes } from './library';
-import { iolibFunctions } from './iolib';
+import { ModuleLoader } from '../interpreter';
+import { stdlibFunctions, stdlibTypes } from '../library';
+import { iolibFunctions } from '../iolib';
 
 const run = (source: string) => {
   const ast = new Parser(new Lexer(source).lex()).parse();

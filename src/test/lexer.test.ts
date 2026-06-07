@@ -1,4 +1,4 @@
-import { Lexer, Token } from './lexer';
+import { Lexer, Token } from '../lexer';
 
 const lex = (input: string): Token[] => new Lexer(input).lex();
 

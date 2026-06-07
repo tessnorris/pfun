@@ -1,6 +1,6 @@
-import { Lexer } from './lexer';
-import { Parser } from './parser';
-import { Stmt, Expr } from './ast';
+import { Lexer } from '../lexer';
+import { Parser } from '../parser';
+import { Stmt, Expr } from '../ast';
 
 const parse = (input: string): Stmt[] => {
   return new Parser(new Lexer(input).lex()).parse();

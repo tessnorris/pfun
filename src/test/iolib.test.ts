@@ -1,9 +1,9 @@
 // src/iolib.test.ts
-import { Lexer } from './lexer';
-import { Parser } from './parser';
-import { Interpreter } from './interpreter';
-import { stdlibFunctions, stdlibTypes } from './library';
-import { iolibFunctions } from './iolib';
+import { Lexer } from '../lexer';
+import { Parser } from '../parser';
+import { Interpreter } from '../interpreter';
+import { stdlibFunctions, stdlibTypes } from '../library';
+import { iolibFunctions } from '../iolib';
 
 const run = (source: string) => {
   const ast = new Parser(new Lexer(source).lex()).parse();

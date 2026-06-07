@@ -127,14 +127,23 @@ export class PfunFunction {
     if (Array.isArray(this.body)) {
       try {
         let result: any = undefined;
-        for (const stmt of this.body) result = interpreter.evaluateStmt(stmt, env);
+        for (let i = 0; i < this.body.length; i++) {
+          const isLast = i === this.body.length - 1;
+          if (isLast && this.kind === 'function') interpreter.inTailPosition = true;
+          result = interpreter.evaluateStmt(this.body[i], env);
+          interpreter.inTailPosition = false;
+        }
         return result;
       } catch (e) {
+        interpreter.inTailPosition = false;
         if (e instanceof ReturnValue) return e.value;
         throw e;
       }
     } else {
-      return interpreter.evaluateExpr(this.body, env);
+      if (this.kind === 'function') interpreter.inTailPosition = true;
+      const result = interpreter.evaluateExpr(this.body, env);
+      interpreter.inTailPosition = false;
+      return result;
     }
   }
 }
@@ -306,6 +315,7 @@ export class Interpreter {
   private globals  = new Environment();
   public  types    = new TypeRegistry();
   public  inPureContext: boolean = false;
+  public  inTailPosition: boolean = false;
   private exports  = new Map<string, any>();
   private baseDir:      string;
   private moduleLoader: ModuleLoader;
@@ -639,10 +649,39 @@ export class Interpreter {
           const name = callee.name ? `'${callee.name}'` : 'anonymous';
           throw new Error(`Functions cannot call procedures: ${name} is a procedure. Move the call to a procedure, or convert ${name} to a function.`);
         }
-        const args = expr.args.map(arg => new Thunk(arg, env));
-        if (callee instanceof NativeFunction) return callee.execute(args, this);
-        // Procedures receive thunks just like functions — forcing happens
-        // only when a value is actually needed (arithmetic, output, etc.)
+        // Force args in the *caller's* purity context before entering the
+        // function body. This means side-effectful expressions passed as
+        // arguments (e.g. readFile(...) passed to a pure function) are
+        // evaluated where the call site is, not inside the pure body.
+        const args = callee instanceof PfunFunction && callee.kind === 'function'
+          ? expr.args.map(arg => this.force(this.evaluateExpr(arg, env)))
+          : expr.args.map(arg => new Thunk(arg, env));
+        if (callee instanceof NativeFunction) {
+          this.inTailPosition = false;
+          return callee.execute(args, this);
+        }
+        // Emit a TailCall when in tail position — the trampoline will loop
+        // instead of growing the JS call stack.
+        if (this.inTailPosition && callee.kind === 'function') {
+          this.inTailPosition = false;
+          return new TailCall(callee, args);
+        }
+        this.inTailPosition = false;
+        // Set inPureContext so purity checks (var, println, file I/O, dict
+        // mutation) fire inside the function body. Procedures inherit the
+        // caller's context.
+        if (callee.kind === 'function') {
+          const prevPure = this.inPureContext;
+          this.inPureContext = true;
+          try {
+            const result = callee.execute(args, this);
+            // If the body itself returned a TailCall, trampoline it here.
+            if (result instanceof TailCall) return this.trampoline(result.fn, result.args.map((a: any) => this.force(a)));
+            return result;
+          } finally {
+            this.inPureContext = prevPure;
+          }
+        }
         return callee.execute(args, this);
       }
       case 'MatchExpr': return this.evaluateMatch(expr, env);
@@ -772,7 +811,7 @@ export class Interpreter {
     }
   }
 
-  private trampoline(fn: PfunFunction, args: any[]): any {
+  trampoline(fn: PfunFunction, args: any[]): any {
     let currentFn   = fn;
     let currentArgs = args.map(a => this.force(a));
     const callStack: { fn: PfunFunction; args: any[]; key: string }[] = [];
