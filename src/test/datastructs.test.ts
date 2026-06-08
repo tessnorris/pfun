@@ -409,6 +409,62 @@ describe('Data Structure Tests', () => {
     });
   });
 
+  // ─── Empty list type compatibility ────────────────────────────────────────
+
+  describe('Empty list [] type compatibility', () => {
+    it('[] should be compatible as a record field previously typed as list<T>', () => {
+      const { logs } = run(`
+        type Box = { items }
+        let a = Box { [1, 2, 3] };
+        let b = Box { [] };
+        println(a.items);
+        println(b.items);
+      `);
+      expect(logs).toEqual(['[1, 2, 3]', '[]']);
+    });
+
+    it('[] should be compatible as a record field typed list<T> in any order', () => {
+      const { logs } = run(`
+        type Box = { items }
+        let a = Box { [] };
+        let b = Box { [1, 2, 3] };
+        println(a.items);
+        println(b.items);
+      `);
+      expect(logs).toEqual(['[]', '[1, 2, 3]']);
+    });
+
+    it('[] should be compatible as a union variant field previously typed as list<T>', () => {
+      const { logs } = run(`
+        type Wrap = {
+          | Full: items
+          | Empty: items
+        }
+        let a = Full { [1, 2, 3] };
+        let b = Empty { [] };
+        println(a.items);
+        println(b.items);
+      `);
+      expect(logs).toEqual(['[1, 2, 3]', '[]']);
+    });
+
+    it('cons of typed list onto [] should work', () => {
+      const { logs } = run(`
+        let xs = cons([1, 2], []);
+        println(xs);
+      `);
+      expect(logs).toEqual(['[[1, 2]]']);
+    });
+
+    it('a list containing [] and typed lists should be compatible', () => {
+      const { logs } = run(`
+        let matrix = [[1, 2], [], [3, 4]];
+        println(matrix);
+      `);
+      expect(logs).toEqual(['[[1, 2], [], [3, 4]]']);
+    });
+  });
+
   // ─── Output Functions ──────────────────────────────────────────────────────
 
 

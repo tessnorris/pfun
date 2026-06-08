@@ -299,6 +299,41 @@ describe('Interpreter Feature Tests', () => {
       `);
       expect(logs).toEqual(['49']);
     });
+
+    it('should allow lambdas with block bodies', () => {
+      const { logs } = run(`
+        let g = fn (y) => {
+          let z = y * y;
+          z + 2;
+        };
+        println(g(5));
+      `);
+      expect(logs).toEqual(['27']);
+    });
+
+    it('should allow block body lambdas bound with let', () => {
+      const { logs } = run(`
+        let addSquares = fn (a, b) => {
+          let sa = a * a;
+          let sb = b * b;
+          sa + sb;
+        };
+        println(addSquares(3, 4));
+      `);
+      expect(logs).toEqual(['25']);
+    });
+
+    it('should allow block body lambdas passed inline', () => {
+      const { logs } = run(`
+        let nums = [1, 2, 3, 4, 5];
+        let result = map(fn x => {
+          let doubled = x * 2;
+          doubled + 1;
+        }, nums);
+        println(result);
+      `);
+      expect(logs).toEqual(['[3, 5, 7, 9, 11]']);
+    });
   });
 
   // ─── Option Type ───────────────────────────────────────────────────────────

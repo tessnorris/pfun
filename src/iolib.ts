@@ -26,6 +26,14 @@ export const iolibFunctions: RegistryFunction[] = [
     return val;
   }},
 
+  { name: 'flushStdout', fn: (_args, interp) => {
+    if (interp.inPureContext) throw new Error("Functions cannot use 'flushStdout': side effects are not allowed in pure functions.");
+    // Node's stdout is synchronous when writing to a TTY, but flush via
+    // a zero-byte write to ensure any buffered output is sent before reading
+    try { (process.stdout as any)._handle?.flush?.(); } catch {}
+    return true;
+  }},
+
   // ─── Input ────────────────────────────────────────────────────────────────
 
   { name: 'readChar', fn: (_args, interp) => {

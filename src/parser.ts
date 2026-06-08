@@ -507,7 +507,7 @@ export class Parser {
       } while (this.match('CommaToken'));
     }
     this.consume('ArrowToken', "Expected '=>' after lambda parameters.");
-    const body = this.parseExpression();
+    const body = this.check('LBraceToken') ? this.parseBlockExpr() : this.parseExpression();
     return { type: 'LambdaExpr', params, body, pos: exprPos };
   }
 

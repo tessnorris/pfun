@@ -120,29 +120,39 @@ export class PfunFunction {
   ) {}
 
   execute(args: any[], interpreter: Interpreter): any {
-    const env = new Environment(this.closure);
-    for (let i = 0; i < this.params.length; i++) {
-      env.define(this.params[i], args[i], false);
-    }
-    if (Array.isArray(this.body)) {
-      try {
-        let result: any = undefined;
-        for (let i = 0; i < this.body.length; i++) {
-          const isLast = i === this.body.length - 1;
-          if (isLast && this.kind === 'function') interpreter.inTailPosition = true;
-          result = interpreter.evaluateStmt(this.body[i], env);
-          interpreter.inTailPosition = false;
-        }
-        return result;
-      } catch (e) {
-        interpreter.inTailPosition = false;
-        if (e instanceof ReturnValue) return e.value;
-        throw e;
+    let currentArgs = args;
+    // eslint-disable-next-line @typescript-eslint/no-this-alias
+    let currentFn: PfunFunction = this;
+    while (true) {
+      const env = new Environment(currentFn.closure);
+      for (let i = 0; i < currentFn.params.length; i++) {
+        env.define(currentFn.params[i], currentArgs[i], false);
       }
-    } else {
-      if (this.kind === 'function') interpreter.inTailPosition = true;
-      const result = interpreter.evaluateExpr(this.body, env);
-      interpreter.inTailPosition = false;
+      let result: any;
+      if (Array.isArray(currentFn.body)) {
+        try {
+          result = undefined;
+          const stmts = currentFn.body;
+          for (let i = 0; i < stmts.length; i++) {
+            interpreter.inTailPosition = (i === stmts.length - 1);
+            result = interpreter.evaluateStmt(stmts[i], env);
+          }
+          interpreter.inTailPosition = false;
+        } catch (e) {
+          interpreter.inTailPosition = false;
+          if (e instanceof ReturnValue) result = e.value;
+          else throw e;
+        }
+      } else {
+        interpreter.inTailPosition = true;
+        result = interpreter.evaluateExpr(currentFn.body, env);
+        interpreter.inTailPosition = false;
+      }
+      if (result instanceof TailCall) {
+        currentFn   = result.fn;
+        currentArgs = result.args;
+        continue;
+      }
       return result;
     }
   }
@@ -190,8 +200,17 @@ export class TypeRegistry {
       schema.inferredTypes = currentTypes;
     } else {
       for (let i = 0; i < schema.fields.length; i++) {
-        if (schema.inferredTypes[i] !== currentTypes[i]) {
-          throw new Error(`Type mismatch in ${name}: field '${schema.fields[i]}' expected ${schema.inferredTypes[i]}, got ${currentTypes[i]}.`);
+        const expected = schema.inferredTypes[i];
+        const actual   = currentTypes[i];
+        // An empty list [] is compatible with any list<T>
+        if (actual === 'list' && expected.startsWith('list')) continue;
+        if (expected === 'list' && actual.startsWith('list')) {
+          // Upgrade the inferred type now that we have a typed list
+          schema.inferredTypes[i] = actual;
+          continue;
+        }
+        if (expected !== actual) {
+          throw new Error(`Type mismatch in ${name}: field '${schema.fields[i]}' expected ${expected}, got ${actual}.`);
         }
       }
     }
@@ -509,11 +528,18 @@ export class Interpreter {
       case 'BlockStmt': {
         const blockEnv = new Environment(env);
         let blockResult: any = undefined;
-        for (const s of stmt.statements) blockResult = this.evaluateStmt(s, blockEnv);
+        const stmts = stmt.statements;
+        for (let i = 0; i < stmts.length; i++) {
+          if (i < stmts.length - 1) this.inTailPosition = false;
+          blockResult = this.evaluateStmt(stmts[i], blockEnv);
+        }
         return blockResult;
       }
       case 'IfStmt': {
+        const prevTail = this.inTailPosition;
+        this.inTailPosition = false;
         const cond = this.force(this.evaluateExpr(stmt.condition, env));
+        this.inTailPosition = prevTail;
         if (this.isTruthy(cond)) return this.evaluateStmt(stmt.thenBranch, env);
         else if (stmt.elseBranch) return this.evaluateStmt(stmt.elseBranch, env);
         return;
@@ -541,25 +567,31 @@ export class Interpreter {
       case 'IdentExpr': return env.get(expr.name);
       case 'GroupExpr': return this.evaluateExpr(expr.expression, env);
       case 'UnaryExpr': {
+        this.inTailPosition = false;
         const val = this.force(this.evaluateExpr(expr.right, env));
         if (expr.operator === 'BooleanNot') return !val;
         if (expr.operator === 'MinusToken') return -val;
         throw new Error(`Unknown unary operator ${expr.operator}`);
       }
-      case 'BinaryExpr': return this.evaluateBinary(expr, env);
+      case 'BinaryExpr': { this.inTailPosition = false; return this.evaluateBinary(expr, env); }
       case 'TernaryExpr': {
+        const prevTailTern = this.inTailPosition;
+        this.inTailPosition = false;
         const cond = this.force(this.evaluateExpr(expr.condition, env));
+        this.inTailPosition = prevTailTern;
         return this.isTruthy(cond)
           ? this.evaluateExpr(expr.thenBranch, env)
           : this.evaluateExpr(expr.elseBranch, env);
       }
       case 'AssignExpr': {
+        this.inTailPosition = false;
         const val = this.force(this.evaluateExpr(expr.value, env));
         env.assign(expr.name, val);
         return val;
       }
-      case 'LambdaExpr': return new PfunFunction(null, expr.params, expr.body, env, 'function');
+      case 'LambdaExpr': { this.inTailPosition = false; return new PfunFunction(null, expr.params, expr.body, env, 'function'); }
       case 'ListExpr': {
+        this.inTailPosition = false;
         const elements = expr.elements.map(e => this.force(this.evaluateExpr(e, env)));
         this.enforceListType(elements);
         return elements;
@@ -649,46 +681,42 @@ export class Interpreter {
           const name = callee.name ? `'${callee.name}'` : 'anonymous';
           throw new Error(`Functions cannot call procedures: ${name} is a procedure. Move the call to a procedure, or convert ${name} to a function.`);
         }
-        // Force args in the *caller's* purity context before entering the
-        // function body. This means side-effectful expressions passed as
-        // arguments (e.g. readFile(...) passed to a pure function) are
-        // evaluated where the call site is, not inside the pure body.
-        const args = callee instanceof PfunFunction && callee.kind === 'function'
-          ? expr.args.map(arg => this.force(this.evaluateExpr(arg, env)))
-          : expr.args.map(arg => new Thunk(arg, env));
-        if (callee instanceof NativeFunction) {
-          this.inTailPosition = false;
-          return callee.execute(args, this);
-        }
-        // Emit a TailCall when in tail position — the trampoline will loop
-        // instead of growing the JS call stack.
-        if (this.inTailPosition && callee.kind === 'function') {
-          this.inTailPosition = false;
-          return new TailCall(callee, args);
-        }
-        this.inTailPosition = false;
-        // Set inPureContext so purity checks (var, println, file I/O, dict
-        // mutation) fire inside the function body. Procedures inherit the
-        // caller's context.
+        const args = expr.args.map(arg => new Thunk(arg, env));
+        if (callee instanceof NativeFunction) return callee.execute(args, this);
         if (callee.kind === 'function') {
+          // Only use TailCall (iterative TCO) when this call is in tail position
+          if (this.inPureContext && this.inTailPosition) {
+            this.inTailPosition = false;
+            return new TailCall(callee, args.map(a => this.force(a)));
+          }
           const prevPure = this.inPureContext;
+          const prevTail = this.inTailPosition;
+          this.inTailPosition = false;
+          const forcedArgs = args.map(a => this.force(a));
+          const cacheKey = this.getCacheKey(callee, forcedArgs);
+          if (callee.cache.has(cacheKey)) { this.inTailPosition = prevTail; return callee.cache.get(cacheKey); }
           this.inPureContext = true;
           try {
-            const result = callee.execute(args, this);
-            // If the body itself returned a TailCall, trampoline it here.
-            if (result instanceof TailCall) return this.trampoline(result.fn, result.args.map((a: any) => this.force(a)));
+            const result = this.force(callee.execute(forcedArgs, this));
+            callee.cache.set(cacheKey, result);
             return result;
           } finally {
             this.inPureContext = prevPure;
+            this.inTailPosition = prevTail;
           }
         }
+        this.inTailPosition = false;
         return callee.execute(args, this);
       }
       case 'MatchExpr': return this.evaluateMatch(expr, env);
       case 'BlockExpr': {
         const blockEnv = new Environment(env);
         let result: any = undefined;
-        for (const s of expr.statements) result = this.evaluateStmt(s, blockEnv);
+        const stmts = expr.statements;
+        for (let i = 0; i < stmts.length; i++) {
+          if (i < stmts.length - 1) this.inTailPosition = false;
+          result = this.evaluateStmt(stmts[i], blockEnv);
+        }
         return result;
       }
     }
@@ -716,6 +744,8 @@ export class Interpreter {
   }
 
   private evaluateMatch(expr: any, env: Environment): any {
+    const prevTail     = this.inTailPosition;
+    this.inTailPosition = false;
     const subject     = this.force(this.evaluateExpr(expr.subject, env));
     const subjectType = subject?.__type ?? null;
     const unionName   = subjectType ? this.types.unionOf(subjectType) : null;
@@ -733,9 +763,11 @@ export class Interpreter {
       const armEnv = new Environment(env);
       if (arm.binding !== null) armEnv.define(arm.binding, subject, false);
       if (arm.guard) {
+        this.inTailPosition = false;
         const guardVal = this.force(this.evaluateExpr(arm.guard, armEnv));
         if (!this.isTruthy(guardVal)) continue;
       }
+      this.inTailPosition = prevTail;
       return this.evaluateExpr(arm.body, armEnv);
     }
     throw new Error(`Non-exhaustive match: no arm matched value of type '${subjectType ?? 'unknown'}'.`);
@@ -811,7 +843,7 @@ export class Interpreter {
     }
   }
 
-  trampoline(fn: PfunFunction, args: any[]): any {
+  private trampoline(fn: PfunFunction, args: any[]): any {
     let currentFn   = fn;
     let currentArgs = args.map(a => this.force(a));
     const callStack: { fn: PfunFunction; args: any[]; key: string }[] = [];
@@ -936,7 +968,11 @@ export class Interpreter {
       const firstType = getValueType(elements[0]);
       for (let i = 1; i < elements.length; i++) {
         const currentType = getValueType(elements[i]);
-        if (currentType !== firstType) throw new Error(`Type mismatch in list: expected ${firstType}, got ${currentType}.`);
+        if (currentType === firstType) continue;
+        // An empty list [] is compatible with any list<T>
+        if (currentType === 'list' && firstType.startsWith('list')) continue;
+        if (firstType === 'list' && currentType.startsWith('list')) continue;
+        throw new Error(`Type mismatch in list: expected ${firstType}, got ${currentType}.`);
       }
     }
   }

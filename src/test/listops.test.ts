@@ -382,5 +382,74 @@ describe('List Operations Tests', () => {
     });
   });
 
+  // ─── reverse ──────────────────────────────────────────────────────────────
+
+  describe('reverse', () => {
+    it('should reverse a list of integers', () => {
+      const { logs } = run(`println(reverse([1, 2, 3, 4, 5]));`);
+      expect(logs).toEqual(['[5, 4, 3, 2, 1]']);
+    });
+
+    it('should reverse a list of strings', () => {
+      const { logs } = run(`println(reverse(["a", "b", "c"]));`);
+      expect(logs).toEqual(['[c, b, a]']);
+    });
+
+    it('should return an empty list unchanged', () => {
+      const { logs } = run(`println(reverse([]));`);
+      expect(logs).toEqual(['[]']);
+    });
+
+    it('should return a single-element list unchanged', () => {
+      const { logs } = run(`println(reverse([42]));`);
+      expect(logs).toEqual(['[42]']);
+    });
+
+    it('should reverse a string', () => {
+      const { logs } = run(`println(reverse("hello"));`);
+      expect(logs).toEqual(['olleh']);
+    });
+
+    it('should reverse an empty string', () => {
+      const { logs } = run(`println(reverse(""));`);
+      expect(logs).toEqual(['']);
+    });
+
+    it('should be its own inverse', () => {
+      const { logs } = run(`println(reverse(reverse([1, 2, 3])));`);
+      expect(logs).toEqual(['[1, 2, 3]']);
+    });
+
+    it('should work inside a pure function', () => {
+      const { logs } = run(`
+        function rev(lst) { return reverse(lst); }
+        println(rev([10, 20, 30]));
+      `);
+      expect(logs).toEqual(['[30, 20, 10]']);
+    });
+
+    it('should work on the result of map', () => {
+      const { logs } = run(`
+        let doubled = map(fn x => x * 2, [1, 2, 3]);
+        println(reverse(doubled));
+      `);
+      expect(logs).toEqual(['[6, 4, 2]']);
+    });
+
+    it('should work on the result of filter', () => {
+      const { logs } = run(`
+        let evens = filter(fn x => x % 2 == 0, [1, 2, 3, 4, 5, 6]);
+        println(reverse(evens));
+      `);
+      expect(logs).toEqual(['[6, 4, 2]']);
+    });
+
+    it('should throw on a lazy list', () => {
+      expect(() => run(`
+        let nats = iterate(fn x => x + 1, 1);
+        reverse(nats);
+      `)).toThrow("reverse cannot be used on an infinite list");
+    });
+  });
 
 });

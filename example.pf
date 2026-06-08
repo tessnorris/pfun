@@ -73,10 +73,16 @@ proc printResult(label, value) {
     println(label + ": " + value);
 }
 
+let g = fn (y) => {
+  let z = y * y;
+  z + 2;
+};
+
 println("--- 4. Functions & Procedures ---");
 println(add(15, 5));               // 20
 println(multiply(4, 5));           // 20
 printResult("sum", add(3, 4));  // sum: 7
+println(g(10));
 
 
 /*
@@ -736,7 +742,57 @@ println(findByX(pts, 3));  // 1
 
 
 /*
-  17. INPUT — readChar & readln
+  17. REVERSE & LENGTH
+  ============================================================================
+  reverse(list)  — returns a new list or string in reversed order
+  length(list)   — returns the number of elements in a list or string
+
+  Both work uniformly on strings and finite lists.
+  reverse throws on infinite (lazy) lists — use take() first.
+*/
+
+println("--- 17. reverse & length ---");
+
+// reverse a list
+println(reverse([1, 2, 3, 4, 5]));   // [5, 4, 3, 2, 1]
+println(reverse(["a", "b", "c"]));   // [c, b, a]
+
+// reverse a string
+println(reverse("hello"));           // olleh
+println(reverse(""));                // (empty string)
+
+// reverse is its own inverse
+let original = [10, 20, 30];
+println(reverse(reverse(original))); // [10, 20, 30]
+
+// length of a list
+println(length([1, 2, 3, 4, 5]));    // 5
+println(length([]));                  // 0
+
+// length of a string
+println(length("hello"));            // 5
+println(length(""));                  // 0
+
+// useful together — last element of a list
+function last(lst) {
+  return nth(lst, length(lst) - 1);
+}
+println(last([10, 20, 30, 40]));     // 40
+
+// palindrome check
+function isPalindrome(s) {
+  return s == reverse(s);
+}
+println(isPalindrome("racecar"));    // true
+println(isPalindrome("hello"));      // false
+
+// reverse works on the result of map and filter
+let evensRev = reverse(filter(fn x => x % 2 == 0, [1, 2, 3, 4, 5, 6]));
+println(evensRev);                   // [6, 4, 2]
+
+
+/*
+  18. INPUT — readChar & readln
   ============================================================================
   readChar()  — reads one character from stdin, returns Some { value } or None
   readln()    — reads one line from stdin (newline stripped), returns
@@ -759,16 +815,19 @@ println(findByX(pts, 3));  // 1
 
     proc greet() {
       print("Enter your name: ");
+      flushStdout();
       var input = readln();
       let name = match input with
         | Some s -> s.value
         | None   -> "stranger"
       printf("Hello, {name}!\n");
+    }
 
   Example — gate check (the Mines of Moria):
 
     proc gate() {
-      println("Speak, friend, and enter");
+      print("Speak, friend, and enter: ");
+      flushStdout();
       var inp = readln();
       let answer = match inp with
         | Some s -> s.value
@@ -787,8 +846,23 @@ println(findByX(pts, 3));  // 1
 // Note: this section reads from stdin. Run interactively or pipe input:
 //   echo "friend" | npm start example.pf
 
+// flushStdout() ensures print() output appears before readln() blocks.
+// Without it, the prompt may not display until after the user types input.
+
+proc greet() {
+  print("Enter your name: ");
+  flushStdout();
+  var input = readln();
+  let name = match input with
+    | Some s -> s.value
+    | None   -> "stranger";
+  printf("Hello, {name}!\n");
+}
+greet();
+
 proc gate() {
-  println("Speak, friend, and enter");
+  print("Speak, friend, and enter: ");
+  flushStdout();
   var inp = readln();
   let answer = match inp with
     | Some s -> s.value
@@ -803,7 +877,7 @@ gate();
 
 
 /*
-  18. MODULES & IMPORTS
+  19. MODULES & IMPORTS
   ============================================================================
   Pfun supports TypeScript-style imports for multi-file projects.
 
@@ -826,7 +900,7 @@ gate();
   - Only explicitly exported names are importable.
 */
 
-println("--- 18. Modules & Imports ---");
+println("--- 19. Modules & Imports ---");
 
 // Named imports from ./mathutils.pf
 import { add, fact, safeDivide, clamp, printResult } from "./mathutils";

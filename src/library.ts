@@ -156,7 +156,23 @@ export const stdlibFunctions: RegistryFunction[] = [
     throw new Error("nth() requires a list, string, or lazy list.");
   }},
 
+  { name: 'reverse', fn: (args, interp) => {
+    const list = interp.force(args[0]);
+    if (list instanceof LazyList) throw new Error("reverse cannot be used on an infinite list. Use take() first.");
+    if (typeof list === 'string') return list.split('').reverse().join('');
+    if (!Array.isArray(list)) throw new Error("reverse requires a list or string.");
+    return [...list].reverse();
+  }},
+
   // ─── Char / String ────────────────────────────────────────────────────────
+
+  { name: 'length', fn: (args, interp) => {
+    const s = interp.force(args[0]);
+    if (typeof s === 'string') return BigInt(s.length);
+    if (Array.isArray(s)) return BigInt(s.length);
+    if (s instanceof LazyList) throw new Error("length cannot be used on an infinite list. Use take() first.");
+    throw new Error("length() requires a list or string.");
+  }},
 
   { name: 'asc', fn: (args, interp) => {
     const c = interp.force(args[0]);

@@ -1,0 +1,377 @@
+// ============================================================================
+// tiny-lisp.pf — A tiny Lisp interpreter written in Pfun
+// ============================================================================
+// Supports: integers, booleans, symbols, (quote x), (if c t f),
+//           (lambda (p) body), (define name val), (+ - * / = < >),
+//           (and x y), (or x y), (not x), (list x...), (car x), (cdr x)
+//
+// Run with:  npm start tiny-lisp.pf
+// ============================================================================
+
+import * from "io";
+
+// ── Token types ──────────────────────────────────────────────────────────────
+
+type Token = {
+  | TLParen
+  | TRParen
+  | TAtom: value
+}
+
+// ── AST node types ───────────────────────────────────────────────────────────
+
+type LispVal = {
+  | LInt:    n
+  | LBool:   b
+  | LSym:    name
+  | LList:   items
+  | LLambda: params, body, env
+  | LNil
+  | LDefine: defname, defval
+}
+
+// ── Tokeniser ────────────────────────────────────────────────────────────────
+
+function isDigit(c) {
+  return asc(c) >= asc('0') && asc(c) <= asc('9');
+}
+
+function isSpace(c) {
+  return c == ' ' || c == '\n' || c == '\t';
+}
+
+function isAtomChar(c) {
+  return !isSpace(c) && c != '(' && c != ')';
+}
+
+function tokeniseFrom(src, i, acc) {
+  if i >= len(src) then return acc
+  else {
+    let c = nth(src, i);
+    if isSpace(c) then tokeniseFrom(src, i + 1, acc)
+    else if c == '(' then tokeniseFrom(src, i + 1, cons(TLParen, acc))
+    else if c == ')' then tokeniseFrom(src, i + 1, cons(TRParen, acc))
+    else collectAtom(src, i, i, acc);
+  }
+}
+
+function collectAtom(src, start, i, acc) {
+  if i >= len(src) || !isAtomChar(nth(src, i))
+    then tokeniseFrom(src, i, cons(TAtom { sliceStr(src, start, i) }, acc))
+    else collectAtom(src, start, i + 1, acc);
+}
+
+function tokenise(src) {
+  return reverse(tokeniseFrom(src, 0, []));
+}
+
+// ParseResult holds the parsed node and the new cursor position (integer)
+type ParseResult = { node, pos }
+
+// ── Parser ───────────────────────────────────────────────────────────────────
+
+function parseAtom(s) {
+  if s == "true"  then LBool { true }
+  else if s == "false" then LBool { false }
+  else if s == "nil"   then LNil
+  else if isDigit(nth(s, 0)) then LInt { parseInt(s) }
+  else LSym { s };
+}
+
+function parseTokens(tokens, i) {
+  if i >= length(tokens) then ParseResult { LNil, i }
+  else {
+    let tok = nth(tokens, i);
+    match tok with
+      | TAtom a   -> ParseResult { parseAtom(a.value), i + 1 }
+      | TLParen _ -> parseList(tokens, i + 1, [])
+      | TRParen _ -> ParseResult { LNil, i + 1 }
+      | _         -> ParseResult { LNil, i + 1 }
+  }
+}
+
+function parseList(tokens, i, acc) {
+  if i >= length(tokens) then ParseResult { LList { reverse(acc) }, i }
+  else {
+    let tok = nth(tokens, i);
+    match tok with
+      | TRParen _ -> ParseResult { LList { reverse(acc) }, i + 1 }
+      | _ -> {
+          let result = parseTokens(tokens, i);
+          parseList(tokens, result.pos, cons(result.node, acc));
+        }
+  }
+}
+
+function parse(src) {
+  let tokens = tokenise(src);
+  let result = parseTokens(tokens, 0);
+  return result.node;
+}
+
+// ── Environment (association list of EnvPair records) ────────────────────────
+
+type EnvPair = { key, val }
+
+function envLookup(env, name) {
+  if length(env) == 0 then LSym { "ERROR:unbound:" + name }
+  else {
+    let pair = head(env);
+    if pair.key == name then pair.val
+    else envLookup(tail(env), name);
+  }
+}
+
+function envExtend(env, name, val) {
+  return cons(EnvPair { name, val }, env);
+}
+
+// ── Built-in arithmetic / comparison helpers ─────────────────────────────────
+
+function lispArith(op, a, b) {
+  if op == "+" then LInt  { a.n + b.n }
+  else if op == "-" then LInt  { a.n - b.n }
+  else if op == "*" then LInt  { a.n * b.n }
+  else if op == "/" then LInt  { a.n / b.n }
+  else if op == "=" then LBool { a.n == b.n }
+  else if op == "<" then LBool { a.n < b.n }
+  else if op == ">" then LBool { a.n > b.n }
+  else LSym { "ERROR:bad-arith" };
+}
+
+// ── Evaluator ────────────────────────────────────────────────────────────────
+
+function evalLisp(expr, env) {
+  match expr with
+    | LInt  _ -> expr
+    | LBool _ -> expr
+    | LNil  _ -> expr
+    | LDefine _ -> expr
+
+    | LSym s -> envLookup(env, s.name)
+
+    | LList lst -> evalList(lst.items, env)
+
+    | _ -> LSym { "ERROR:unknown" }
+}
+
+function evalList(items, env) {
+  if length(items) == 0 then LNil
+  else {
+    let h = head(items);
+    let args = tail(items);
+    match h with
+      | LSym s -> evalSpecialOrCall(s.name, args, env)
+      | _ -> {
+          let fn_val  = evalLisp(h, env);
+          let ev_args = map(fn a => evalLisp(a, env), args);
+          applyLisp(fn_val, ev_args, env);
+        }
+  }
+}
+
+function evalSpecialOrCall(name, args, env) {
+  if name == "quote" then
+    head(args)
+
+  else if name == "if" then {
+    let cond   = evalLisp(nth(args, 0), env);
+    let truthy = match cond with
+      | LBool b -> b.b
+      | LNil _  -> false
+      | _       -> true;
+    if truthy
+      then evalLisp(nth(args, 1), env)
+      else evalLisp(nth(args, 2), env);
+  }
+
+  else if name == "lambda" then {
+    let paramList = nth(args, 0);
+    let body      = nth(args, 1);
+    let params    = match paramList with
+      | LList pl -> map(fn p => match p with | LSym ps -> ps.name | _ -> "?", pl.items)
+      | _        -> [];
+    LLambda { params, body, env };
+  }
+
+  else if name == "define" then
+    LDefine { nameOf(nth(args, 0)), evalLisp(nth(args, 1), env) }
+
+  else if name == "and" then {
+    let va = evalLisp(nth(args, 0), env);
+    let vb = evalLisp(nth(args, 1), env);
+    LBool { isTruthy(va) && isTruthy(vb) };
+  }
+
+  else if name == "or" then {
+    let va = evalLisp(nth(args, 0), env);
+    let vb = evalLisp(nth(args, 1), env);
+    LBool { isTruthy(va) || isTruthy(vb) };
+  }
+
+  else if name == "not" then
+    LBool { !isTruthy(evalLisp(nth(args, 0), env)) }
+
+  else if name == "list" then
+    LList { map(fn a => evalLisp(a, env), args) }
+
+  else if name == "car" then {
+    let v = evalLisp(nth(args, 0), env);
+    match v with
+      | LList l -> head(l.items)
+      | _       -> LSym { "ERROR:car-non-list" };
+  }
+
+  else if name == "cdr" then {
+    let v = evalLisp(nth(args, 0), env);
+    match v with
+      | LList l -> LList { tail(l.items) }
+      | _       -> LSym { "ERROR:cdr-non-list" };
+  }
+
+  else {
+    let fn_val  = envLookup(env, name);
+    let ev_args = map(fn a => evalLisp(a, env), args);
+    applyLisp(fn_val, ev_args, env);
+  }
+}
+
+function applyLisp(fn_val, ev_args, env) {
+  match fn_val with
+    | LSym s -> {
+        if length(ev_args) > 0 && length(tail(ev_args)) > 0
+          then lispArith(s.name, nth(ev_args, 0), nth(ev_args, 1))
+          else LSym { "ERROR:bad-call:" + s.name };
+      }
+    | LLambda lam -> {
+        let extended = bindArgs(lam.env, lam.params, ev_args);
+        evalLisp(lam.body, extended);
+      }
+    | _ -> LSym { "ERROR:not-a-function" }
+}
+
+function bindArgsAcc(env, params, args) {
+  if length(params) == 0 then env
+  else bindArgsAcc(envExtend(env, head(params), head(args)),
+                   tail(params),
+                   tail(args));
+}
+
+function bindArgs(env, params, args) {
+  return bindArgsAcc(env, params, args);
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+function nameOf(expr) {
+  match expr with
+    | LSym s -> s.name
+    | _      -> "?"
+}
+
+function isTruthy(v) {
+  match v with
+    | LBool b -> b.b
+    | LNil _  -> false
+    | _       -> true
+}
+
+function lispStr(val) {
+  match val with
+    | LInt  n   -> n.n + ""
+    | LBool b   -> b.b ? "true" : "false"
+    | LSym  s   -> s.name
+    | LNil  _   -> "nil"
+    | LList l   -> "(" + joinStr(map(lispStr, l.items), " ") + ")"
+    | LLambda _ -> "<lambda>"
+    | LDefine d -> d.defname + " defined."
+    | _         -> "?"
+}
+
+function joinStr(strs, sep) {
+  if length(strs) == 0 then ""
+  else if length(tail(strs)) == 0 then head(strs)
+  else head(strs) + sep + joinStr(tail(strs), sep);
+}
+
+function len(s) {
+  return length(s);
+}
+
+function sliceStr(s, lo, hi) {
+  return slice(lo, hi - lo, s);
+}
+
+function parseInt(s) {
+  return reduce(fn acc, c => acc * 10 + (asc(c) - asc('0')), 0, s);
+}
+
+function rangeList(lo, hi) {
+  if lo >= hi then [] else cons(lo, rangeList(lo + 1, hi));
+}
+
+// ── Base environment ─────────────────────────────────────────────────────────
+
+let baseEnv = [
+  EnvPair { "+",     LSym { "+" } },
+  EnvPair { "-",     LSym { "-" } },
+  EnvPair { "*",     LSym { "*" } },
+  EnvPair { "/",     LSym { "/" } },
+  EnvPair { "=",     LSym { "=" } },
+  EnvPair { "<",     LSym { "<" } },
+  EnvPair { ">",     LSym { ">" } },
+  EnvPair { "true",  LBool { true } },
+  EnvPair { "false", LBool { false } },
+  EnvPair { "nil",   LNil }
+];
+
+// ── Helper: snapshot dict into an association list ────────────────────────────
+
+function dictToEnv(base, pairs) {
+  return reduce(fn acc, pair => envExtend(acc, pair.key, pair.val),
+                base, pairs);
+}
+
+// ── REPL loop ────────────────────────────────────────────────────────────────
+
+proc replLoop() {
+  var userEnv = dict {};
+
+  proc loop() {
+    print("lisp> ");
+    flushStdout();
+    var line = match readln() with
+      | Some s -> s.value
+      | None   -> "exit";
+    if line == "exit" || line == "quit" then {
+      println("Bye.");
+    } else {
+      let envPairs = map(fn k => EnvPair { k, userEnv[k] }, keys(userEnv));
+      let fullEnv  = dictToEnv(baseEnv, envPairs);
+      let result   = evalLisp(parse(line), fullEnv);
+
+      match result with
+        | LDefine d -> {
+            userEnv[d.defname] = d.defval;
+            println(d.defname + " defined.");
+            loop();
+          }
+        | _ -> {
+            println(lispStr(result));
+            loop();
+          }
+    }
+  }
+
+  loop();
+}
+
+proc main() {
+  println("Tiny Lisp in Pfun — type (expr) to evaluate, exit to quit.");
+  println("Try: (+ 1 2)  (define x 10)  (if (> x 5) true false)");
+  println("     (define square (lambda (n) (* n n)))  (square 9)");
+  println("");
+  replLoop();
+}
+
+main();
