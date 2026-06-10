@@ -62,7 +62,7 @@ export const stdlibFunctions: RegistryFunction[] = [
     return list.slice(1);
   }},
 
-  { name: 'cons', fn: (args, interp) => {
+  { name: 'cons', arity: 2, fn: (args, interp) => {
     const head = interp.force(args[0]);
     const tail = interp.force(args[1]);
     if (tail instanceof LazyList) return new LazyList({ kind: 'cons', head, tail });
@@ -75,7 +75,7 @@ export const stdlibFunctions: RegistryFunction[] = [
     return result;
   }},
 
-  { name: 'map', fn: (args, interp) => {
+  { name: 'map', arity: 2, fn: (args, interp) => {
     const fn   = interp.force(args[0]);
     const list = interp.force(args[1]);
     if (list instanceof LazyList) return new LazyList({ kind: 'map', f: fn, source: list });
@@ -86,7 +86,7 @@ export const stdlibFunctions: RegistryFunction[] = [
     return result;
   }},
 
-  { name: 'filter', fn: (args, interp) => {
+  { name: 'filter', arity: 2, fn: (args, interp) => {
     const fn   = interp.force(args[0]);
     const list = interp.force(args[1]);
     if (list instanceof LazyList) return new LazyList({ kind: 'filter', f: fn, source: list });
@@ -95,7 +95,7 @@ export const stdlibFunctions: RegistryFunction[] = [
     return maybeJoin(filtered);
   }},
 
-  { name: 'reduce', fn: (args, interp) => {
+  { name: 'reduce', arity: 3, fn: (args, interp) => {
     const fn   = interp.force(args[0]);
     let   acc  = interp.force(args[1]);
     const list = interp.force(args[2]);
@@ -107,7 +107,7 @@ export const stdlibFunctions: RegistryFunction[] = [
 
   // ─── Infinite Lists ────────────────────────────────────────────────────────
 
-  { name: 'iterate', fn: (args, interp) =>
+  { name: 'iterate', arity: 2, fn: (args, interp) =>
     new LazyList({ kind: 'iterate', f: interp.force(args[0]), seed: interp.force(args[1]) })
   },
 
@@ -119,7 +119,7 @@ export const stdlibFunctions: RegistryFunction[] = [
     new LazyList({ kind: 'cycle', source: interp.force(args[0]) })
   },
 
-  { name: 'take', fn: (args, interp) => {
+  { name: 'take', arity: 2, fn: (args, interp) => {
     const n    = interp.force(args[0]);
     const list = interp.force(args[1]);
     if (typeof n !== 'bigint') throw new Error("take requires an integer as first argument.");
@@ -130,7 +130,7 @@ export const stdlibFunctions: RegistryFunction[] = [
     throw new Error("take requires a list as second argument.");
   }},
 
-  { name: 'slice', fn: (args, interp) => {
+  { name: 'slice', arity: 3, fn: (args, interp) => {
     const start = Number(interp.force(args[0]));
     const count = Number(interp.force(args[1]));
     const list  = interp.force(args[2]);
@@ -142,7 +142,7 @@ export const stdlibFunctions: RegistryFunction[] = [
 
   { name: 'isInfinite', fn: (args, interp) => interp.force(args[0]) instanceof LazyList },
 
-  { name: 'nth', fn: (args, interp) => {
+  { name: 'nth', arity: 2, fn: (args, interp) => {
     const list = interp.force(args[0]);
     const n    = interp.force(args[1]);
     if (typeof n !== 'bigint') throw new Error("nth() requires an integer as second argument.");
@@ -189,14 +189,14 @@ export const stdlibFunctions: RegistryFunction[] = [
 
   // ─── Dictionary Operations ─────────────────────────────────────────────────
 
-  { name: 'has', fn: (args, interp) => {
+  { name: 'has', arity: 2, fn: (args, interp) => {
     const dict = interp.force(args[0]);
     const key  = interp.force(args[1]);
     if (!(dict instanceof PfunDict)) throw new Error("has() requires a dict as first argument.");
     return dict.entries.has(PfunDict.keyOf(key));
   }},
 
-  { name: 'remove', fn: (args, interp) => {
+  { name: 'remove', arity: 2, fn: (args, interp) => {
     const dict = interp.force(args[0]);
     const key  = interp.force(args[1]);
     if (!(dict instanceof PfunDict)) throw new Error("remove() requires a dict as first argument.");
@@ -230,7 +230,7 @@ export const stdlibFunctions: RegistryFunction[] = [
     return interp.stringify(val);
   }},
 
-  { name: 'split', fn: (args, interp) => {
+  { name: 'split', arity: 2, fn: (args, interp) => {
     const str = interp.force(args[0]);
     const delim = interp.force(args[1]);
     if (typeof str !== 'string') throw new Error("split() requires a string as first argument.");
@@ -239,7 +239,7 @@ export const stdlibFunctions: RegistryFunction[] = [
     return str.split(delim);
   }},
 
-  { name: 'join', fn: (args, interp) => {
+  { name: 'join', arity: 2, fn: (args, interp) => {
     const list = interp.force(args[0]);
     const delim = interp.force(args[1]);
     if (!Array.isArray(list)) throw new Error("join() requires a list as first argument.");
@@ -249,14 +249,14 @@ export const stdlibFunctions: RegistryFunction[] = [
 
   // ─── Find ─────────────────────────────────────────────────────────────────
 
-  { name: 'find', fn: (args, interp) => {
+  { name: 'find', arity: 2, fn: (args, interp) => {
     const arr  = interp.toArray(interp.force(args[0]));
     const item = interp.force(args[1]);
     for (let i = 0; i < arr.length; i++) { if (interp.valEqual(arr[i], item)) return { __type: 'Some', __union: 'Option', value: BigInt(i) }; }
     return { __type: 'None', __union: 'Option' };
   }},
 
-  { name: 'findSlice', fn: (args, interp) => {
+  { name: 'findSlice', arity: 2, fn: (args, interp) => {
     const arr = interp.toArray(interp.force(args[0]));
     const pat = interp.toArray(interp.force(args[1]));
     if (pat.length === 0) return { __type: 'Some', __union: 'Option', value: 0n };

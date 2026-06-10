@@ -15,6 +15,7 @@ import { Parser } from './parser';
  */
 export type RegistryFunction = {
   name: string;
+  arity?: number;  // required for currying native functions; omit for non-curriable
   fn: (args: any[], interpreter: Interpreter) => any;
 };
 
@@ -122,7 +123,10 @@ export type LazyListDescriptor =
   | { kind: 'drop';    n: number; source: LazyList };
 
 export class NativeFunction {
-  constructor(public fn: (args: any[], interpreter: Interpreter) => any) {}
+  constructor(
+    public fn: (args: any[], interpreter: Interpreter) => any,
+    public arity: number = 0
+  ) {}
   execute(args: any[], interpreter: Interpreter) { return this.fn(args, interpreter); }
 }
 
@@ -133,7 +137,8 @@ export class PfunFunction {
     public params: string[],
     public body: Stmt[] | Expr,
     public closure: Environment,
-    public kind: 'function' | 'procedure' = 'function'
+    public kind: 'function' | 'procedure' = 'function',
+    public memo: boolean = false
   ) {}
 
   execute(args: any[], interpreter: Interpreter): any {
@@ -466,7 +471,7 @@ export class Interpreter {
 
   /** Register a single native function by name. */
   registerFunction(entry: RegistryFunction): void {
-    this.globals.define(entry.name, new NativeFunction(entry.fn), false);
+    this.globals.define(entry.name, new NativeFunction(entry.fn, entry.arity ?? 0), false);
   }
 
   /** Register a plain record type or discriminated union type. */
@@ -609,7 +614,7 @@ export class Interpreter {
         return;
       }
       case 'FunctionStmt':
-        env.define(stmt.name, new PfunFunction(stmt.name, stmt.params, stmt.body, env, 'function'), false);
+        env.define(stmt.name, new PfunFunction(stmt.name, stmt.params, stmt.body, env, 'function', stmt.memo), false);
         return;
       case 'ProcedureStmt':
         env.define(stmt.name, new PfunFunction(stmt.name, stmt.params, stmt.body, env, 'procedure'), false);
@@ -774,8 +779,40 @@ export class Interpreter {
           const name = callee.name ? `'${callee.name}'` : 'anonymous';
           throw new Error(`Functions cannot call procedures: ${name} is a procedure. Move the call to a procedure, or convert ${name} to a function.`);
         }
+
+        // ── Currying: fewer args than expected → return a partial closure ──────
+        if (callee instanceof PfunFunction) {
+          const suppliedCount = expr.args.length;
+          const expectedCount = callee.params.length;
+          if (suppliedCount < expectedCount) {
+            // Bind supplied args, return a new function expecting the rest
+            const suppliedArgs = expr.args.map(arg => this.force(this.evaluateExpr(arg, env)));
+            const remainingParams = callee.params.slice(suppliedCount);
+            const capturedParams  = callee.params.slice(0, suppliedCount);
+            const partialEnv = new Environment(callee.closure);
+            capturedParams.forEach((p, i) => partialEnv.define(p, suppliedArgs[i], false));
+            return new PfunFunction(callee.name, remainingParams, callee.body, partialEnv, callee.kind, callee.memo);
+          }
+        }
+
+        if (callee instanceof NativeFunction && callee.arity > 0) {
+          const suppliedCount = expr.args.length;
+          if (suppliedCount < callee.arity) {
+            // Wrap native in a PfunFunction closure carrying the supplied args
+            const suppliedArgs = expr.args.map(arg => this.force(this.evaluateExpr(arg, env)));
+            const nativeFn = callee;
+            const remainingParams = Array.from({ length: callee.arity - suppliedCount }, (_, i) => `__a${i}`);
+            // Build a NativeFunction that prepends captured args before calling original
+            const partialNative = new NativeFunction((newArgs, interp) => {
+              return nativeFn.execute([...suppliedArgs, ...newArgs], interp);
+            }, callee.arity - suppliedCount);
+            return partialNative;
+          }
+        }
+
         const args = expr.args.map(arg => new Thunk(arg, env));
         if (callee instanceof NativeFunction) return callee.execute(args, this);
+
         if (callee.kind === 'function') {
           // Only use TailCall (iterative TCO) when this call is in tail position
           if (this.inPureContext && this.inTailPosition) {
@@ -786,16 +823,26 @@ export class Interpreter {
           const prevTail = this.inTailPosition;
           this.inTailPosition = false;
           const forcedArgs = args.map(a => this.force(a));
-          const cacheKey = this.getCacheKey(callee, forcedArgs);
-          if (callee.cache.has(cacheKey)) { this.inTailPosition = prevTail; return callee.cache.get(cacheKey); }
-          this.inPureContext = true;
-          try {
-            const result = this.force(callee.execute(forcedArgs, this));
-            callee.cache.set(cacheKey, result);
-            return result;
-          } finally {
-            this.inPureContext = prevPure;
-            this.inTailPosition = prevTail;
+          if (callee.memo) {
+            const cacheKey = this.getCacheKey(callee, forcedArgs);
+            if (callee.cache.has(cacheKey)) { this.inTailPosition = prevTail; return callee.cache.get(cacheKey); }
+            this.inPureContext = true;
+            try {
+              const result = this.force(callee.execute(forcedArgs, this));
+              callee.cache.set(cacheKey, result);
+              return result;
+            } finally {
+              this.inPureContext = prevPure;
+              this.inTailPosition = prevTail;
+            }
+          } else {
+            this.inPureContext = true;
+            try {
+              return this.force(callee.execute(forcedArgs, this));
+            } finally {
+              this.inPureContext = prevPure;
+              this.inTailPosition = prevTail;
+            }
           }
         }
         this.inTailPosition = false;
@@ -946,13 +993,15 @@ export class Interpreter {
     if (currentFn.kind === 'function') this.inPureContext = true;
     try {
       while (true) {
-        const cacheKey = this.getCacheKey(currentFn, currentArgs);
-        if (currentFn.cache.has(cacheKey)) {
-          const result = currentFn.cache.get(cacheKey);
-          while (callStack.length > 0) { const p = callStack.pop()!; p.fn.cache.set(p.key, result); }
-          return result;
+        if (currentFn.memo) {
+          const cacheKey = this.getCacheKey(currentFn, currentArgs);
+          if (currentFn.cache.has(cacheKey)) {
+            const result = currentFn.cache.get(cacheKey);
+            while (callStack.length > 0) { const p = callStack.pop()!; if (p.fn.memo) p.fn.cache.set(p.key, result); }
+            return result;
+          }
+          callStack.push({ fn: currentFn, args: currentArgs, key: cacheKey });
         }
-        callStack.push({ fn: currentFn, args: currentArgs, key: cacheKey });
         const result = currentFn.execute(currentArgs, this);
         if (result instanceof TailCall) {
           this.inPureContext = result.fn.kind === 'function';
@@ -961,7 +1010,7 @@ export class Interpreter {
           continue;
         }
         const finalResult = this.force(result);
-        while (callStack.length > 0) { const p = callStack.pop()!; p.fn.cache.set(p.key, finalResult); }
+        while (callStack.length > 0) { const p = callStack.pop()!; if (p.fn.memo) p.fn.cache.set(p.key, finalResult); }
         return finalResult;
       }
     } finally { this.inPureContext = prevPure; }

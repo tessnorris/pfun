@@ -55,11 +55,13 @@ if a < b then {
 /*
   4. FUNCTIONS, LAMBDAS & PROCEDURES
 
-  - `function` defines a PURE function: no side effects, lazy args, memoized.
+  - `function` defines a PURE function: no side effects, lazy args.
     Functions cannot use `print`, `var`, or call procedures.
+  - `memo function` is like `function` but memoizes results — repeated calls
+    with the same arguments return the cached value immediately.
   - `fn` defines an anonymous pure lambda (always pure by construction).
   - `proc` defines a PROCEDURE: side effects allowed, strict evaluation,
-    not memoized. Procedures can call functions, but functions cannot call
+    never memoized. Procedures can call functions, but functions cannot call
     procedures.
 */
 
@@ -86,20 +88,69 @@ println(g(10));
 
 
 /*
-  5. TAIL-CALL OPTIMIZATION (TCO) & MEMOIZATION
+  5. TAIL-CALL OPTIMIZATION (TCO), MEMOIZATION & CURRYING
+  ============================================================================
+  TCO — Pfun eliminates tail calls so deep recursion doesn't stack-overflow.
+
+  Memoization — prefix a function with `memo` to cache its results.
+  Repeated calls with the same arguments skip recomputation entirely.
+  Use memo for expensive pure computations; omit it for simple helpers.
+
+  Currying — calling a function with fewer arguments than it expects returns
+  a new function waiting for the rest. This works for both user-defined
+  functions and built-in native functions.
 */
 
+// TCO: countdown can recurse 10 000 deep without overflowing
 function countdown(n) {
     if n <= 0 then return "Liftoff!" else countdown(n - 1);
 }
 
+// Without memo: plain recursive factorial (fine for small n)
 function fact(n, acc) {
     if n <= 1 then return acc else fact(n - 1, n * acc);
 }
 
-println("--- 5. TCO & Memoization ---");
+// With memo: naive Fibonacci is exponential without caching; memo fixes that
+memo function fib(n) {
+    if n <= 1 then n else fib(n - 1) + fib(n - 2);
+}
+
+println("--- 5. TCO, Memoization & Currying ---");
 println(countdown(10000)); // Liftoff!
 println(fact(5, 1));       // 120
+println(fib(10));          // 55
+println(fib(20));          // 6765
+
+// Currying — partial application by supplying fewer arguments
+function clamp(lo, hi, x) {
+    return x < lo ? lo : (x > hi ? hi : x);
+}
+
+let clamp0to100 = clamp(0)(100);   // bind lo=0, hi=100
+println(clamp0to100(42));   // 42
+println(clamp0to100(-5));   //  0
+println(clamp0to100(150));  // 100
+
+// Partial application with native functions
+let double    = map(fn x => x * 2);     // map with just the function
+let evens     = filter(fn x => x % 2 == 0);
+let addAll    = reduce(fn a, x => a + x, 0); // reduce with f and seed
+
+println(double([1, 2, 3, 4, 5]));       // [2, 4, 6, 8, 10]
+println(evens([1, 2, 3, 4, 5, 6]));     // [2, 4, 6]
+println(addAll([10, 20, 30]));          // 60
+
+// Curried user function passed to map
+function scale(factor, x) { return x * factor; }
+let triple = scale(3);
+println(map(triple, [1, 2, 3, 4]));     // [3, 6, 9, 12]
+
+// Curried take for reuse
+let first5 = take(5);
+let nats   = iterate(fn x => x + 1, 1);
+println(first5(nats));                  // [1, 2, 3, 4, 5]
+println(first5([10, 20, 30, 40, 50, 60])); // [10, 20, 30, 40, 50]
 
 
 /*

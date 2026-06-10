@@ -55,7 +55,7 @@ export type Stmt =
   | { type: 'ExprStmt'; expression: Expr; pos?: SourcePos }
   | { type: 'BlockStmt'; statements: Stmt[]; pos?: SourcePos }
   | { type: 'IfStmt'; condition: Expr; thenBranch: Stmt; elseBranch?: Stmt; pos?: SourcePos }
-  | { type: 'FunctionStmt'; name: string; params: string[]; body: Stmt[]; pos?: SourcePos }
+  | { type: 'FunctionStmt'; name: string; params: string[]; body: Stmt[]; memo: boolean; pos?: SourcePos }
   | { type: 'ProcedureStmt'; name: string; params: string[]; body: Stmt[]; pos?: SourcePos }
   | { type: 'ReturnStmt'; value?: Expr; pos?: SourcePos }
   | { type: 'EvalStmt'; expression: Expr; pos?: SourcePos }

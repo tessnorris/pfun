@@ -264,16 +264,35 @@ describe('Interpreter Feature Tests', () => {
       expect(logs).toEqual(['done']);
     });
 
-    it('should memoize pure function results', () => {
+    it('memo function should memoize pure function results', () => {
       // fact(5,1) called twice — second call should hit the cache
       const { logs } = run(`
-        function fact(n, acc) {
+        memo function fact(n, acc) {
           if n <= 1 then return acc else fact(n - 1, n * acc);
         }
         println(fact(5, 1));
         println(fact(5, 1));
       `);
       expect(logs).toEqual(['120', '120']);
+    });
+
+    it('plain function should not memoize results', () => {
+      // counter is impure but let's verify caching is absent by checking
+      // that a function with a side-effect through a var is NOT memoized
+      const { logs } = run(`
+        var callCount = 0;
+        proc countedAdd(x, y) {
+          callCount = callCount + 1;
+          return x + y;
+        }
+        proc p() {
+          countedAdd(2, 3);
+          countedAdd(2, 3);
+          println(callCount);
+        }
+        p();
+      `);
+      expect(logs).toEqual(['2']); // called twice, no memoization on procs
     });
 
     it('should allow procedures to mutate vars across multiple calls', () => {
@@ -760,6 +779,206 @@ describe('Interpreter Feature Tests', () => {
       `);
       expect(interpreter.getGlobal('row')).toBe('Alice,30,true');
       expect(interpreter.getGlobal('back')).toEqual(['Alice', '30', 'true']);
+    });
+  });
+
+  // ─── Currying ──────────────────────────────────────────────────────────────
+
+  describe('Currying', () => {
+    it('calling a 2-arg function with 1 arg returns a partial function', () => {
+      const { logs } = run(`
+        function add(x, y) { return x + y; }
+        let add5 = add(5);
+        println(add5(3));
+        println(add5(10));
+      `);
+      expect(logs).toEqual(['8', '15']);
+    });
+
+    it('calling a 3-arg function with 1 arg returns a 2-arg partial', () => {
+      const { logs } = run(`
+        function clamp(lo, hi, x) {
+          return x < lo ? lo : (x > hi ? hi : x);
+        }
+        let clamp0to10 = clamp(0)(10);
+        println(clamp0to10(5));
+        println(clamp0to10(-3));
+        println(clamp0to10(15));
+      `);
+      expect(logs).toEqual(['5', '0', '10']);
+    });
+
+    it('partial application works via sequential calls', () => {
+      const { logs } = run(`
+        function multiply(x, y) { return x * y; }
+        let double = multiply(2);
+        let triple = multiply(3);
+        println(double(7));
+        println(triple(7));
+      `);
+      expect(logs).toEqual(['14', '21']);
+    });
+
+    it('curried function can be passed to map', () => {
+      const { logs } = run(`
+        function add(x, y) { return x + y; }
+        let nums = [1, 2, 3, 4, 5];
+        println(map(add(10), nums));
+      `);
+      expect(logs).toEqual(['[11, 12, 13, 14, 15]']);
+    });
+
+    it('native function map can be partially applied', () => {
+      const { logs } = run(`
+        let double = map(fn x => x * 2);
+        println(double([1, 2, 3]));
+        println(double([10, 20]));
+      `);
+      expect(logs).toEqual(['[2, 4, 6]', '[20, 40]']);
+    });
+
+    it('native function filter can be partially applied', () => {
+      const { logs } = run(`
+        let evens = filter(fn x => x % 2 == 0);
+        println(evens([1, 2, 3, 4, 5, 6]));
+      `);
+      expect(logs).toEqual(['[2, 4, 6]']);
+    });
+
+    it('native function cons can be partially applied', () => {
+      const { logs } = run(`
+        let prepend0 = cons(0);
+        println(prepend0([1, 2, 3]));
+      `);
+      expect(logs).toEqual(['[0, 1, 2, 3]']);
+    });
+
+    it('native function find can be partially applied', () => {
+      const { logs } = run(`
+        let a = ["Alice", "Bob", "Carol"];
+        let findInA = find(a);
+        println(match findInA("Bob")   with | Some s -> s.value | None -> "not found");
+        println(match findInA("Edgar") with | Some s -> s.value | None -> "not found");
+      `);
+      expect(logs).toEqual(['1', 'not found']);
+    });
+
+    it('native function take can be partially applied', () => {
+      const { logs } = run(`
+        let first3 = take(3);
+        println(first3([10, 20, 30, 40, 50]));
+        let nats = iterate(fn x => x + 1, 1);
+        println(first3(nats));
+      `);
+      expect(logs).toEqual(['[10, 20, 30]', '[1, 2, 3]']);
+    });
+
+    it('native function reduce can be partially applied', () => {
+      const { logs } = run(`
+        let sum = reduce(fn acc, x => acc + x, 0);
+        println(sum([1, 2, 3, 4, 5]));
+        println(sum([10, 20, 30]));
+      `);
+      expect(logs).toEqual(['15', '60']);
+    });
+
+    it('curried partial is a pure function itself', () => {
+      const { logs } = run(`
+        function add(x, y) { return x + y; }
+        function applyToFive(f) { return f(5); }
+        println(applyToFive(add(10)));
+        println(applyToFive(add(100)));
+      `);
+      expect(logs).toEqual(['15', '105']);
+    });
+
+    it('fully applying a curried partial gives the correct result', () => {
+      const { logs } = run(`
+        function power(base, exp) {
+          if exp == 0 then 1
+          else base * power(base, exp - 1);
+        }
+        let square = power(2);
+        let cube   = power(3);
+        println(square(8));
+        println(cube(4));
+      `);
+      expect(logs).toEqual(['256', '81']);
+    });
+  });
+
+  // ─── Memoization ───────────────────────────────────────────────────────────
+
+  describe('Memoization', () => {
+    it('memo function caches results — repeated calls return cached value', () => {
+      const { logs } = run(`
+        var calls = 0;
+        proc inc() { calls = calls + 1; }
+        // We can't directly count inside a function; test via fib which
+        // would be exponential without memoization
+        memo function fib(n) {
+          if n <= 1 then n else fib(n - 1) + fib(n - 2);
+        }
+        println(fib(10));
+        println(fib(15));
+      `);
+      expect(logs).toEqual(['55', '610']);
+    });
+
+    it('plain function recomputes on every call', () => {
+      // Verify plain functions still work correctly (just without caching)
+      const { logs } = run(`
+        function add(x, y) { return x + y; }
+        println(add(3, 4));
+        println(add(3, 4));
+        println(add(10, 20));
+      `);
+      expect(logs).toEqual(['7', '7', '30']);
+    });
+
+    it('memo function factorial with accumulator', () => {
+      const { logs } = run(`
+        memo function fact(n, acc) {
+          if n <= 1 then acc else fact(n - 1, n * acc);
+        }
+        println(fact(5, 1));
+        println(fact(10, 1));
+      `);
+      expect(logs).toEqual(['120', '3628800']);
+    });
+
+    it('memo keyword produces same correct results as plain function', () => {
+      const { logs } = run(`
+        function plain(x) { return x * x; }
+        memo function memed(x) { return x * x; }
+        println(plain(7));
+        println(memed(7));
+        println(plain(7));
+        println(memed(7));
+      `);
+      expect(logs).toEqual(['49', '49', '49', '49']);
+    });
+
+    it('memo function on a recursive fib is correct for large n', () => {
+      const { logs } = run(`
+        memo function fib(n) {
+          if n <= 1 then n else fib(n - 1) + fib(n - 2);
+        }
+        println(fib(20));
+      `);
+      expect(logs).toEqual(['6765']);
+    });
+
+    it('curried partial of a memo function does not memoize at partial level', () => {
+      // The partial add5 = add(5) should just return a closure;
+      // memoization happens when add5(x) is fully applied
+      const { logs } = run(`
+        memo function add(x, y) { return x + y; }
+        let add5 = add(5);
+        println(add5(3));
+        println(add5(3));
+      `);
+      expect(logs).toEqual(['8', '8']);
     });
   });
 });

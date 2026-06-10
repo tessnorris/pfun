@@ -34,6 +34,7 @@ export type Token =
   | { type: 'ArrowLeftToken'; pos?: SourcePos }
   | { type: 'DictToken'; pos?: SourcePos }
   | { type: 'ArrayToken'; pos?: SourcePos }
+  | { type: 'MemoToken'; pos?: SourcePos }
   | { type: 'ImportToken'; pos?: SourcePos }
   | { type: 'ExportToken'; pos?: SourcePos }
   | { type: 'AsToken'; pos?: SourcePos }
@@ -276,6 +277,7 @@ export class Lexer {
       case 'for':      return { type: 'ForToken' };
       case 'dict':     return { type: 'DictToken' };
       case 'array':    return { type: 'ArrayToken' };
+      case 'memo':     return { type: 'MemoToken' };
       case 'import':   return { type: 'ImportToken' };
       case 'export':   return { type: 'ExportToken' };
       case 'as':       return { type: 'AsToken' };

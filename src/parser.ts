@@ -30,7 +30,11 @@ export class Parser {
     if (this.match('SemiToken')) return this.parseStatement();
     if (this.match('ImportToken')) return this.parseImportStatement();
     if (this.match('ExportToken')) return this.parseExportStatement();
-    if (this.match('FunctionToken')) return this.parseFunctionStatement();
+    if (this.match('MemoToken')) {
+      this.consume('FunctionToken', "Expected 'function' after 'memo'.");
+      return this.parseFunctionStatement(true);
+    }
+    if (this.match('FunctionToken')) return this.parseFunctionStatement(false);
     if (this.match('ProcToken')) return this.parseProcedureStatement();
     if (this.match('LetToken')) return this.parseLetStatement();
     if (this.match('VarToken')) return this.parseVarStatement();
@@ -47,7 +51,7 @@ export class Parser {
     return { type: 'ExprStmt', expression: expr, pos: exprStmtPos };
   }
 
-  private parseFunctionStatement(): Stmt {
+  private parseFunctionStatement(memo: boolean = false): Stmt {
     const stmtPos = this.pos();
     const name = (this.consume('IdentToken', "Expected function name.") as any).value;
     this.consume('LParenToken', "Expected '(' after function name.");
@@ -60,9 +64,9 @@ export class Parser {
       this.consume('RBraceToken', "Expected '}' after block.");
       this.rejectSemiAfterBlock();
     } else {
-      while (!this.check('FunctionToken') && !this.isAtEnd()) statements.push(this.parseStatement());
+      while (!this.check('FunctionToken') && !this.check('MemoToken') && !this.isAtEnd()) statements.push(this.parseStatement());
     }
-    return { type: 'FunctionStmt', name, params, body: statements, pos: stmtPos };
+    return { type: 'FunctionStmt', name, params, body: statements, memo, pos: stmtPos };
   }
 
   private parseProcedureStatement(): Stmt {
