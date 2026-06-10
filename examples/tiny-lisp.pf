@@ -44,25 +44,25 @@ function isAtomChar(c) {
   return !isSpace(c) && c != '(' && c != ')';
 }
 
-function tokeniseFrom(src, i, acc) {
+function tokenizeFrom(src, i, acc) {
   if i >= len(src) then return acc
   else {
     let c = nth(src, i);
-    if isSpace(c) then tokeniseFrom(src, i + 1, acc)
-    else if c == '(' then tokeniseFrom(src, i + 1, cons(TLParen, acc))
-    else if c == ')' then tokeniseFrom(src, i + 1, cons(TRParen, acc))
+    if isSpace(c) then tokenizeFrom(src, i + 1, acc)
+    else if c == '(' then tokenizeFrom(src, i + 1, cons(TLParen, acc))
+    else if c == ')' then tokenizeFrom(src, i + 1, cons(TRParen, acc))
     else collectAtom(src, i, i, acc);
   }
 }
 
 function collectAtom(src, start, i, acc) {
   if i >= len(src) || !isAtomChar(nth(src, i))
-    then tokeniseFrom(src, i, cons(TAtom { sliceStr(src, start, i) }, acc))
+    then tokenizeFrom(src, i, cons(TAtom { sliceStr(src, start, i) }, acc))
     else collectAtom(src, start, i + 1, acc);
 }
 
-function tokenise(src) {
-  return reverse(tokeniseFrom(src, 0, []));
+function tokenize(src) {
+  return reverse(tokenizeFrom(src, 0, []));
 }
 
 // ParseResult holds the parsed node and the new cursor position (integer)
@@ -104,7 +104,7 @@ function parseList(tokens, i, acc) {
 }
 
 function parse(src) {
-  let tokens = tokenise(src);
+  let tokens = tokenize(src);
   let result = parseTokens(tokens, 0);
   return result.node;
 }
