@@ -33,6 +33,7 @@ export type Token =
   | { type: 'ForToken'; pos?: SourcePos }
   | { type: 'ArrowLeftToken'; pos?: SourcePos }
   | { type: 'DictToken'; pos?: SourcePos }
+  | { type: 'ArrayToken'; pos?: SourcePos }
   | { type: 'ImportToken'; pos?: SourcePos }
   | { type: 'ExportToken'; pos?: SourcePos }
   | { type: 'AsToken'; pos?: SourcePos }
@@ -274,6 +275,7 @@ export class Lexer {
       case 'fn':       return { type: 'FnToken' };
       case 'for':      return { type: 'ForToken' };
       case 'dict':     return { type: 'DictToken' };
+      case 'array':    return { type: 'ArrayToken' };
       case 'import':   return { type: 'ImportToken' };
       case 'export':   return { type: 'ExportToken' };
       case 'as':       return { type: 'AsToken' };

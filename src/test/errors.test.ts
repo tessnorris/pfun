@@ -89,7 +89,7 @@ describe('classifyError()', () => {
     expect(classifyError("Functions cannot use 'println': side effects are not allowed in pure functions.")).toBe('Purity');
     expect(classifyError("Functions cannot use 'var': side-effectful mutation is not allowed in pure functions.")).toBe('Purity');
     expect(classifyError("Functions cannot call procedures: 'foo' is a procedure.")).toBe('Purity');
-    expect(classifyError("Functions cannot mutate dicts: side-effectful mutation is not allowed.")).toBe('Purity');
+    expect(classifyError("Functions cannot mutate arrays or dicts: side-effectful mutation is not allowed.")).toBe('Purity');
   });
 
   it('classifies lexical errors', () => {
@@ -510,7 +510,7 @@ describe('[Purity] errors', () => {
     `);
     expect(err.kind).toBe('Purity');
     assertContains(err, "[Purity]");
-    assertContains(err, "Functions cannot mutate dicts");
+    assertContains(err, "Functions cannot mutate arrays or dicts");
   });
 });
 

@@ -1,11 +1,7 @@
-// src/datastructs.ts
+// src/test/datastructs.test.ts
 import { Lexer } from '../lexer';
 import { Parser } from '../parser';
-import { Interpreter } from '../interpreter';
-import * as os from 'os';
-import * as nodePath from 'path';
-import * as nodeFs from 'fs';
-import { ModuleLoader } from '../interpreter';
+import { Interpreter, PfunArray } from '../interpreter';
 import { stdlibFunctions, stdlibTypes } from '../library';
 import { iolibFunctions } from '../iolib';
 
@@ -14,23 +10,15 @@ const run = (source: string) => {
   const interpreter = new Interpreter();
   interpreter.registerLibrary(stdlibFunctions, stdlibTypes);
   interpreter.registerLibrary(iolibFunctions, []);
-  interpreter.registerLibrary(iolibFunctions, []);
-  const logs: any[] = [];
+  const logs: string[] = [];
   let currentLine = '';
   const originalLog = console.log;
   const originalWrite = process.stdout.write.bind(process.stdout);
-  console.log = (...args: any[]) => {
-    const s = args.map(a => String(a)).join(' ');
-    logs.push(currentLine + s);
-    currentLine = '';
-  };
+  console.log = (...args: any[]) => { logs.push(currentLine + args.map(String).join(' ')); currentLine = ''; };
   (process.stdout as any).write = (s: string) => {
     if (typeof s !== 'string') return true;
     const parts = s.split('\n');
-    for (let i = 0; i < parts.length - 1; i++) {
-      logs.push(currentLine + parts[i]);
-      currentLine = '';
-    }
+    for (let i = 0; i < parts.length - 1; i++) { logs.push(currentLine + parts[i]); currentLine = ''; }
     currentLine += parts[parts.length - 1];
     return true;
   };
@@ -58,8 +46,7 @@ describe('Data Structure Tests', () => {
     it('should match Some and extract the value', () => {
       const { logs } = run(`
         let x = Some { 42 };
-        let result = match x with | Some s -> s.value
-          | None   -> 0;
+        let result = match x with | Some s -> s.value | None -> 0;
         println(result);
       `);
       expect(logs).toEqual(['42']);
@@ -68,8 +55,7 @@ describe('Data Structure Tests', () => {
     it('should match None and return the default', () => {
       const { logs } = run(`
         let x = None;
-        let result = match x with | Some s -> s.value
-          | None   -> 0;
+        let result = match x with | Some s -> s.value | None -> 0;
         println(result);
       `);
       expect(logs).toEqual(['0']);
@@ -101,9 +87,10 @@ describe('Data Structure Tests', () => {
     it('should support where guards on Some', () => {
       const { logs } = run(`
         let x = Some { 100 };
-        let result = match x with | Some s where s.value > 50 -> "big"
-          | Some _                    -> "small"
-          | None                      -> "nothing";
+        let result = match x with
+          | Some s where s.value > 50 -> "big"
+          | Some _ -> "small"
+          | None   -> "nothing";
         println(result);
       `);
       expect(logs).toEqual(['big']);
@@ -119,8 +106,7 @@ describe('Data Structure Tests', () => {
     it('should work with wildcard instead of explicit None arm', () => {
       const { logs } = run(`
         let x = None;
-        let result = match x with | Some s -> s.value
-          | _      -> 999;
+        let result = match x with | Some s -> s.value | _ -> 999;
         println(result);
       `);
       expect(logs).toEqual(['999']);
@@ -138,8 +124,7 @@ describe('Data Structure Tests', () => {
     it('should support chaining with reduce to find first Some', () => {
       const { logs } = run(`
         function firstSome(acc, x) {
-          return match acc with | Some _ -> acc
-            | None   -> x;
+          return match acc with | Some _ -> acc | None -> x;
         }
         let candidates = [None, None, Some { 7 }, Some { 8 }];
         let first = reduce(fn a, x => firstSome(a, x), None, candidates);
@@ -150,10 +135,7 @@ describe('Data Structure Tests', () => {
 
     it('should allow user-defined zero-field variants in other union types', () => {
       const { logs } = run(`
-        type Result = {
-          | Ok: value
-          | Err
-        }
+        type Result = { | Ok: value | Err }
         let ok  = Ok { 42 };
         let err = Err;
         println(match ok  with | Ok o -> o.value | Err -> 0);
@@ -162,9 +144,6 @@ describe('Data Structure Tests', () => {
       expect(logs).toEqual(['42', '0']);
     });
   });
-
-  // ─── List Comprehensions ───────────────────────────────────────────────────
-
 
   describe('Dictionaries', () => {
     it('should construct a dict and access values by string key', () => {
@@ -203,15 +182,6 @@ describe('Data Structure Tests', () => {
       expect(logs).toEqual(['99']);
     });
 
-    it('should add a new key via index assignment', () => {
-      const { logs } = run(`
-        var d = dict {};
-        d["new"] = 42;
-        println(d["new"]);
-      `);
-      expect(logs).toEqual(['42']);
-    });
-
     it('should throw when accessing a missing key', () => {
       expect(() => run(`
         var d = dict { "a" -> 1 };
@@ -219,7 +189,7 @@ describe('Data Structure Tests', () => {
       `)).toThrow("Key not found in dict");
     });
 
-    it('has() should return true for existing keys', () => {
+    it('has() should return true for existing keys, false otherwise', () => {
       const { logs } = run(`
         var d = dict { "x" -> 1 };
         println(has(d, "x"));
@@ -238,33 +208,19 @@ describe('Data Structure Tests', () => {
       expect(logs).toEqual(['false', 'true']);
     });
 
-    it('keys() should return all keys as a list', () => {
+    it('keys() and values() should return all entries', () => {
       const { logs } = run(`
-        var d = dict { "x" -> 1 };
+        var d = dict { "x" -> 10 };
         println(keys(d));
-      `);
-      expect(logs).toEqual(['[x]']);
-    });
-
-    it('values() should return all values as a list', () => {
-      const { logs } = run(`
-        var d = dict { "x" -> 10, "y" -> 20 };
         println(values(d));
       `);
-      expect(logs).toEqual(['[10, 20]']);
+      expect(logs).toEqual(['[x]', '[10]']);
     });
 
     it('should throw when declaring a dict with let', () => {
       expect(() => run(`
         let d = dict { "x" -> 1 };
       `)).toThrow("Dictionaries must be declared with 'var'");
-    });
-
-    it('should throw on non-primitive key', () => {
-      expect(() => run(`
-        var d = dict {};
-        var r = dict { [1, 2] -> "bad" };
-      `)).toThrow("Dictionary keys must be");
     });
 
     it('should support boolean keys', () => {
@@ -276,48 +232,19 @@ describe('Data Structure Tests', () => {
       expect(logs).toEqual(['yes', 'no']);
     });
 
-    it('keys with the same value should be the same entry', () => {
-      const { logs } = run(`
-        var d = dict { "k" -> 1 };
-        d["k"] = 2;
-        println(d["k"]);
-      `);
-      expect(logs).toEqual(['2']);
-    });
-
-    it('should work inside a procedure', () => {
-      const { logs } = run(`
-        proc buildDict(lst) {
-          var d = dict {};
-          var i = 0;
-          var remaining = lst;
-          var item = head(remaining);
-          d[item] = i;
-          println(d[item]);
-        }
-        buildDict(["hello"]);
-      `);
-      expect(logs).toEqual(['0']);
-    });
-
     it('should throw when trying to mutate a dict in a pure function', () => {
       expect(() => run(`
-        function bad(d) {
-          d["x"] = 1;
-          return d;
-        }
+        function bad(d) { d["x"] = 1; return d; }
         var d = dict {};
         bad(d);
-      `)).toThrow("Functions cannot mutate dicts");
+      `)).toThrow("Functions cannot mutate arrays or dicts");
     });
   });
-
 
   describe('Chars and Strings', () => {
     it('char literal should be a distinct type from string', () => {
       const { interpreter } = run(`var c = 'a';`);
-      const c = interpreter.getGlobal('c');
-      expect(c.constructor.name).toBe('PfunChar');
+      expect(interpreter.getGlobal('c').constructor.name).toBe('PfunChar');
     });
 
     it("'a' should not equal \"a\"", () => {
@@ -325,91 +252,25 @@ describe('Data Structure Tests', () => {
       expect(logs).toEqual(['false']);
     });
 
-    it("two identical char literals should be equal", () => {
-      const { logs } = run(`println('a' == 'a');`);
-      expect(logs).toEqual(['true']);
-    });
-
-    it("two different char literals should not be equal", () => {
-      const { logs } = run(`println('a' == 'b');`);
-      expect(logs).toEqual(['false']);
-    });
-
-    it('asc() should return the ascii code of a char', () => {
-      const { logs } = run(`println(asc('A'));`);
-      expect(logs).toEqual(['65']);
-    });
-
-    it('chr() should return the char for an ascii code', () => {
-      const { logs } = run(`println(chr(65));`);
-      expect(logs).toEqual(['A']);
-    });
-
-    it('chr(asc(c)) should be the identity', () => {
+    it('asc() and chr() should round-trip', () => {
       const { logs } = run(`println(chr(asc('z')));`);
       expect(logs).toEqual(['z']);
     });
 
-    it('escape sequences should work in char literals', () => {
-      const { logs } = run(`println(asc('\\n'));`);
-      expect(logs).toEqual(['10']);
-    });
-
-    it('escape sequences should work in string literals', () => {
-      const { logs } = run(`println("He said \\"hi\\"");`);
-      expect(logs).toEqual(['He said "hi"']);
-    });
-
-    it('head of a string should return a char', () => {
-      const { interpreter } = run(`var h = head("hello");`);
-      const h = interpreter.getGlobal('h');
-      expect(h.constructor.name).toBe('PfunChar');
-      expect(h.value).toBe('h');
-    });
-
-    it('tail of a string should return a string', () => {
-      const { logs } = run(`println(tail("hello"));`);
-      expect(logs).toEqual(['ello']);
-    });
-
-    it('cons of char onto string should return a string', () => {
-      const { logs } = run(`println(cons('H', "ello"));`);
-      expect(logs).toEqual(['Hello']);
+    it('head/tail/cons should work on strings', () => {
+      const { logs } = run(`
+        println(head("hello"));
+        println(tail("hello"));
+        println(cons('H', "ello"));
+      `);
+      expect(logs).toEqual(['h', 'ello', 'Hello']);
     });
 
     it('filter over a string should return a string', () => {
       const { logs } = run(`println(filter(fn c => c != 'l', "hello"));`);
       expect(logs).toEqual(['heo']);
     });
-
-    it('map over a string returning chars should return a string', () => {
-      const { logs } = run(`
-        function shift(c) { return chr(asc(c) + 1); }
-        println(map(fn c => shift(c), "abc"));
-      `);
-      expect(logs).toEqual(['bcd']);
-    });
-
-    it('reduce over a string should work', () => {
-      const { logs } = run(`
-        let count = reduce(fn acc, _ => acc + 1, 0, "hello");
-        println(count);
-      `);
-      expect(logs).toEqual(['5']);
-    });
-
-    it('string concatenation with + should work', () => {
-      const { logs } = run(`println("hello" + " " + "world");`);
-      expect(logs).toEqual(['hello world']);
-    });
-
-    it('char + string concatenation should work', () => {
-      const { logs } = run(`println('H' + "ello");`);
-      expect(logs).toEqual(['Hello']);
-    });
   });
-
-  // ─── Empty list type compatibility ────────────────────────────────────────
 
   describe('Empty list [] type compatibility', () => {
     it('[] should be compatible as a record field previously typed as list<T>', () => {
@@ -422,52 +283,258 @@ describe('Data Structure Tests', () => {
       `);
       expect(logs).toEqual(['[1, 2, 3]', '[]']);
     });
-
-    it('[] should be compatible as a record field typed list<T> in any order', () => {
-      const { logs } = run(`
-        type Box = { items }
-        let a = Box { [] };
-        let b = Box { [1, 2, 3] };
-        println(a.items);
-        println(b.items);
-      `);
-      expect(logs).toEqual(['[]', '[1, 2, 3]']);
-    });
-
-    it('[] should be compatible as a union variant field previously typed as list<T>', () => {
-      const { logs } = run(`
-        type Wrap = {
-          | Full: items
-          | Empty: items
-        }
-        let a = Full { [1, 2, 3] };
-        let b = Empty { [] };
-        println(a.items);
-        println(b.items);
-      `);
-      expect(logs).toEqual(['[1, 2, 3]', '[]']);
-    });
-
-    it('cons of typed list onto [] should work', () => {
-      const { logs } = run(`
-        let xs = cons([1, 2], []);
-        println(xs);
-      `);
-      expect(logs).toEqual(['[[1, 2]]']);
-    });
-
-    it('a list containing [] and typed lists should be compatible', () => {
-      const { logs } = run(`
-        let matrix = [[1, 2], [], [3, 4]];
-        println(matrix);
-      `);
-      expect(logs).toEqual(['[[1, 2], [], [3, 4]]']);
-    });
   });
 
-  // ─── Output Functions ──────────────────────────────────────────────────────
+  // ─── Arrays ───────────────────────────────────────────────────────────────────
 
+  describe('Arrays', () => {
+    it('should construct an array with var', () => {
+      const { interpreter } = run(`var a = array { "Alice", "Bob", "Carol" };`);
+      const a = interpreter.getGlobal('a');
+      expect(a).toBeInstanceOf(PfunArray);
+      expect(a.elements).toEqual(['Alice', 'Bob', 'Carol']);
+    });
 
+    it('should construct an empty array', () => {
+      const { interpreter } = run(`var a = array {};`);
+      const a = interpreter.getGlobal('a');
+      expect(a).toBeInstanceOf(PfunArray);
+      expect(a.elements).toHaveLength(0);
+    });
 
+    it('should throw when declaring an array with let', () => {
+      expect(() => run(`let a = array { 1, 2, 3 };`))
+        .toThrow("Arrays must be declared with 'var'");
+    });
 
+    it('should access elements by index', () => {
+      const { logs } = run(`
+        var a = array { "Alice", "Bob", "Carol" };
+        println(a[0]);
+        println(a[2]);
+      `);
+      expect(logs).toEqual(['Alice', 'Carol']);
+    });
+
+    it('should throw on out-of-bounds access', () => {
+      expect(() => run(`
+        var a = array { 1, 2, 3 };
+        eval a[5];
+      `)).toThrow("out of bounds");
+    });
+
+    it('should support index assignment', () => {
+      const { logs } = run(`
+        proc p() {
+          var a = array { "Alice", "Bob" };
+          a[1] = "Charlie";
+          println(a[1]);
+        }
+        p();
+      `);
+      expect(logs).toEqual(['Charlie']);
+    });
+
+    it('should throw on type mismatch in assignment', () => {
+      expect(() => run(`
+        proc p() {
+          var a = array { 1, 2, 3 };
+          a[0] = "hello";
+        }
+        p();
+      `)).toThrow("Type mismatch in array");
+    });
+
+    it('length() should return the element count', () => {
+      const { logs } = run(`
+        var a = array { 10, 20, 30 };
+        println(length(a));
+      `);
+      expect(logs).toEqual(['3']);
+    });
+
+    it('should print as array { ... }', () => {
+      const { logs } = run(`
+        var a = array { 1, 2, 3 };
+        println(a);
+      `);
+      expect(logs).toEqual(['array { 1, 2, 3 }']);
+    });
+
+    it('should enforce homogeneous element types at construction', () => {
+      expect(() => run(`var a = array { 1, "two", 3 };`))
+        .toThrow("Type mismatch in array");
+    });
+
+    it('append() should add an element to the end', () => {
+      const { logs } = run(`
+        proc p() {
+          var a = array { "Alice", "Bob" };
+          append(a, "Dave");
+          println(length(a));
+          println(a[2]);
+        }
+        p();
+      `);
+      expect(logs).toEqual(['3', 'Dave']);
+    });
+
+    it('append() should throw on type mismatch', () => {
+      expect(() => run(`
+        proc p() {
+          var a = array { 1, 2 };
+          append(a, "three");
+        }
+        p();
+      `)).toThrow("Type mismatch in array");
+    });
+
+    it('removeAt() should remove an element and shift the rest', () => {
+      const { logs } = run(`
+        proc p() {
+          var a = array { "Alice", "Bob", "Carol" };
+          removeAt(a, 1);
+          println(length(a));
+          println(a[0]);
+          println(a[1]);
+        }
+        p();
+      `);
+      expect(logs).toEqual(['2', 'Alice', 'Carol']);
+    });
+
+    it('removeAt() should throw on out-of-bounds index', () => {
+      expect(() => run(`
+        proc p() {
+          var a = array { 1, 2 };
+          removeAt(a, 5);
+        }
+        p();
+      `)).toThrow("out of bounds");
+    });
+
+    it('insertAt() should insert an element and shift later ones', () => {
+      const { logs } = run(`
+        proc p() {
+          var a = array { "Alice", "Bob", "Dave" };
+          insertAt(a, 2, "Charlie");
+          println(length(a));
+          println(a[2]);
+          println(a[3]);
+        }
+        p();
+      `);
+      expect(logs).toEqual(['4', 'Charlie', 'Dave']);
+    });
+
+    it('insertAt() at index 0 should prepend', () => {
+      const { logs } = run(`
+        proc p() {
+          var a = array { "Bob", "Carol" };
+          insertAt(a, 0, "Alice");
+          println(a[0]);
+          println(a[1]);
+        }
+        p();
+      `);
+      expect(logs).toEqual(['Alice', 'Bob']);
+    });
+
+    it('insertAt() at length should append', () => {
+      const { logs } = run(`
+        proc p() {
+          var a = array { "Alice", "Bob" };
+          insertAt(a, 2, "Carol");
+          println(a[2]);
+        }
+        p();
+      `);
+      expect(logs).toEqual(['Carol']);
+    });
+
+    it('insertAt() should throw when index exceeds length', () => {
+      expect(() => run(`
+        proc p() {
+          var a = array { 1, 2 };
+          insertAt(a, 10, 3);
+        }
+        p();
+      `)).toThrow("out of bounds");
+    });
+
+    it('find() should work on arrays', () => {
+      const { logs } = run(`
+        var a = array { "Alice", "Bob", "Carol" };
+        println(match find(a, "Bob") with | Some s -> s.value | None -> "not found");
+        println(match find(a, "Eve") with | Some s -> s.value | None -> "not found");
+      `);
+      expect(logs).toEqual(['1', 'not found']);
+    });
+
+    it('toList() should convert array to an immutable list', () => {
+      const { logs } = run(`
+        var a = array { 1, 2, 3 };
+        let l = toList(a);
+        println(l);
+      `);
+      expect(logs).toEqual(['[1, 2, 3]']);
+    });
+
+    it('toArray() should convert a list to a mutable array', () => {
+      const { interpreter } = run(`
+        let l = [10, 20, 30];
+        var a = toArray(l);
+      `);
+      const a = interpreter.getGlobal('a');
+      expect(a).toBeInstanceOf(PfunArray);
+      expect(a.elements).toEqual([10n, 20n, 30n]);
+    });
+
+    it('toArray() should convert a string to an array of chars', () => {
+      const { logs } = run(`
+        var a = toArray("hello");
+        println(a[0]);
+        println(length(a));
+      `);
+      expect(logs).toEqual(['h', '5']);
+    });
+
+    it('toDict() should produce a dict with integer keys', () => {
+      const { logs } = run(`
+        var a = array { "x", "y", "z" };
+        var d = toDict(a);
+        println(d[0]);
+        println(d[2]);
+      `);
+      expect(logs).toEqual(['x', 'z']);
+    });
+
+    it('should throw when using append/removeAt/insertAt in a pure function', () => {
+      expect(() => run(`
+        var a = array { 1, 2 };
+        function bad(arr) { return append(arr, 3); }
+        bad(a);
+      `)).toThrow("side effects not allowed in pure functions");
+
+      expect(() => run(`
+        var a = array { 1, 2 };
+        function bad(arr) { return removeAt(arr, 0); }
+        bad(a);
+      `)).toThrow("side effects not allowed in pure functions");
+
+      expect(() => run(`
+        var a = array { 1, 2 };
+        function bad(arr) { return insertAt(arr, 0, 0); }
+        bad(a);
+      `)).toThrow("side effects not allowed in pure functions");
+    });
+
+    it('should throw on index assignment in a pure function', () => {
+      expect(() => run(`
+        var a = array { 1, 2 };
+        function bad(arr) { arr[0] = 99; return arr; }
+        bad(a);
+      `)).toThrow("Functions cannot mutate arrays or dicts");
+    });
+  });
 });

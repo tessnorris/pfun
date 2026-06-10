@@ -32,6 +32,7 @@ function getValueType(v: any): string {
   if (v === null || v === undefined) return 'nil';
   if (v instanceof LazyList) return 'lazylist';
   if (v instanceof PfunDict) return 'dict';
+  if (v instanceof PfunArray) return v.elementType ? `array<${v.elementType}>` : 'array';
   if (v instanceof PfunChar) return 'char';
   if (Array.isArray(v)) {
     if (v.length === 0) return 'list';
@@ -90,6 +91,17 @@ export class PfunDict {
     if (typeof k === 'boolean') return `b:${k}`;
     throw new Error(`Dictionary keys must be strings, integers, or booleans, got ${typeof k}.`);
   }
+}
+
+/**
+ * PfunArray — mutable, zero-indexed, contiguous, homogeneous array.
+ * A distinct class from JS arrays so Array.isArray() keeps identifying
+ * Pfun lists without ambiguity.
+ */
+export class PfunArray {
+  public elements: any[];
+  public elementType: string | null = null;
+  constructor(elements: any[]) { this.elements = elements; }
 }
 
 export class PfunChar {
@@ -496,6 +508,9 @@ export class Interpreter {
         if (stmt.initializer.type === 'DictExpr') {
           throw new Error(`Dictionaries must be declared with 'var', not 'let'. Use: var ${stmt.name} = dict { ... }`);
         }
+        if (stmt.initializer.type === 'ArrayExpr') {
+          throw new Error(`Arrays must be declared with 'var', not 'let'. Use: var ${stmt.name} = array { ... }`);
+        }
         env.define(stmt.name, new Thunk(stmt.initializer, env), false);
         return;
       }
@@ -691,6 +706,19 @@ export class Interpreter {
         }
         return new PfunDict(map);
       }
+      case 'ArrayExpr': {
+        const elements = expr.elements.map((e: any) => this.force(this.evaluateExpr(e, env)));
+        const arr = new PfunArray(elements);
+        if (elements.length > 0) {
+          const firstType = getValueType(elements[0]);
+          for (let i = 1; i < elements.length; i++) {
+            const t = getValueType(elements[i]);
+            if (t !== firstType) throw new Error(`Type mismatch in array: expected ${firstType}, got ${t}.`);
+          }
+          arr.elementType = firstType;
+        }
+        return arr;
+      }
       case 'IndexExpr': {
         const obj = this.force(this.evaluateExpr(expr.object, env));
         const idx = this.force(this.evaluateExpr(expr.index, env));
@@ -699,18 +727,34 @@ export class Interpreter {
           if (!obj.entries.has(key)) throw new Error(`Key not found in dict: ${this.stringify(idx)}`);
           return obj.entries.get(key);
         }
+        if (obj instanceof PfunArray) {
+          if (typeof idx !== 'bigint') throw new Error("Array index must be an integer.");
+          const i = Number(idx);
+          if (i < 0 || i >= obj.elements.length) throw new Error(`Array index ${i} out of bounds (length ${obj.elements.length}).`);
+          return obj.elements[i];
+        }
         if (Array.isArray(obj)) {
           if (typeof idx !== 'bigint') throw new Error("List index must be an integer.");
           const i = Number(idx);
           if (i < 0 || i >= obj.length) throw new Error(`List index ${i} out of bounds (length ${obj.length}).`);
           return obj[i];
         }
-        throw new Error("Index operator requires a dict or list.");
+        throw new Error("Index operator requires a dict, array, or list.");
       }
       case 'IndexAssignExpr': {
-        if (this.inPureContext) throw new Error("Functions cannot mutate dicts: side-effectful mutation is not allowed in pure functions. Use a procedure instead.");
+        if (this.inPureContext) throw new Error("Functions cannot mutate arrays or dicts: side-effectful mutation is not allowed in pure functions. Use a procedure instead.");
         const obj = this.force(this.evaluateExpr(expr.object, env));
-        if (!(obj instanceof PfunDict)) throw new Error("Index assignment is only supported on dicts.");
+        if (obj instanceof PfunArray) {
+          const idx = this.force(this.evaluateExpr(expr.index, env));
+          if (typeof idx !== 'bigint') throw new Error("Array index must be an integer.");
+          const i = Number(idx);
+          if (i < 0 || i >= obj.elements.length) throw new Error(`Array index ${i} out of bounds (length ${obj.elements.length}).`);
+          const val = this.force(this.evaluateExpr(expr.value, env));
+          this.enforceArrayType(obj, val);
+          obj.elements[i] = val;
+          return val;
+        }
+        if (!(obj instanceof PfunDict)) throw new Error("Index assignment is only supported on dicts and arrays.");
         const idx = this.force(this.evaluateExpr(expr.index, env));
         const val = this.force(this.evaluateExpr(expr.value, env));
         obj.entries.set(PfunDict.keyOf(idx), val);
@@ -1002,6 +1046,9 @@ export class Interpreter {
       const entries = [...value.entries.entries()].map(([k, v]) => `${k.slice(2)} -> ${this.stringify(v)}`);
       return `dict { ${entries.join(', ')} }`;
     }
+    if (value instanceof PfunArray) {
+      return `array { ${value.elements.map((v: any) => this.stringify(v)).join(', ')} }`;
+    }
     if (Array.isArray(value)) {
       if (value.length > 0 && value.every((c: any) => c instanceof PfunChar)) return value.map((c: PfunChar) => c.value).join('');
       return `[${value.map((v: any) => this.stringify(v)).join(', ')}]`;
@@ -1012,6 +1059,15 @@ export class Interpreter {
       return `${value.__type} { ${fields.map(f => this.stringify(value[f])).join(', ')} }`;
     }
     return String(value);
+  }
+
+  enforceArrayType(arr: PfunArray, value: any): void {
+    const t = getValueType(value);
+    if (arr.elementType === null) {
+      arr.elementType = t;
+    } else if (t !== arr.elementType) {
+      throw new Error(`Type mismatch in array: expected ${arr.elementType}, got ${t}.`);
+    }
   }
 
   enforceListType(elements: any[]): void {
@@ -1031,8 +1087,9 @@ export class Interpreter {
   toArray(value: any): any[] {
     if (typeof value === 'string') return value.split('').map(c => new PfunChar(c));
     if (Array.isArray(value)) return value;
+    if (value instanceof PfunArray) return value.elements;
     if (value instanceof LazyList) throw new Error("find/findSlice cannot search an infinite list. Use take() first.");
-    throw new Error(`find/findSlice requires a list or string, got ${typeof value}.`);
+    throw new Error(`find/findSlice requires a list, array, or string, got ${typeof value}.`);
   }
 
   valEqual(a: any, b: any): boolean {

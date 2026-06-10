@@ -341,6 +341,17 @@ export class Parser {
         this.consume('RBraceToken', "Expected '}' after dict entries.");
         return { type: 'DictExpr', entries, pos: exprPos };
       }
+      case 'ArrayToken': {
+        this.consume('LBraceToken', "Expected '{' after 'array'.");
+        const elements: Expr[] = [];
+        if (!this.check('RBraceToken')) {
+          do {
+            elements.push(this.parseExpression());
+          } while (this.match('CommaToken'));
+        }
+        this.consume('RBraceToken', "Expected '}' after array elements.");
+        return { type: 'ArrayExpr', elements, pos: exprPos };
+      }
       case 'LParenToken': {
         const expr = this.parseExpression();
         this.consume('RParenToken', "Expected ')' after expression.");
@@ -600,7 +611,7 @@ export class Parser {
   private isExprStart(): boolean {
     const t = this.peek().type;
     return ['IntToken', 'BoolToken', 'StrToken', 'CharToken', 'RawStrToken', 'DollarToken', 'IdentToken', 'BooleanNot', 'MinusToken',
-            'LParenToken', 'LBracketToken', 'FnToken', 'MatchToken', 'DictToken'].includes(t);
+            'LParenToken', 'LBracketToken', 'FnToken', 'MatchToken', 'DictToken', 'ArrayToken'].includes(t);
   }
   private isAtEnd(): boolean { return this.peek().type === 'EOFToken'; }
   private peek(): Token { return this.tokens[this.current]; }

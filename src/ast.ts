@@ -35,6 +35,7 @@ export type Expr =
   | { type: 'MatchExpr'; subject: Expr; arms: MatchArm[]; pos?: SourcePos }
   | { type: 'ComprehensionExpr'; body: Expr; generators: { variable: string; source: Expr }[]; guard?: Expr; pos?: SourcePos }
   | { type: 'DictExpr'; entries: { key: Expr; value: Expr }[]; pos?: SourcePos }
+  | { type: 'ArrayExpr'; elements: Expr[]; pos?: SourcePos }
   | { type: 'IndexExpr'; object: Expr; index: Expr; pos?: SourcePos }
   | { type: 'IndexAssignExpr'; object: Expr; index: Expr; value: Expr; pos?: SourcePos }
   | { type: 'BlockExpr'; statements: Stmt[]; pos?: SourcePos };

@@ -1195,3 +1195,107 @@ readAllLines(tmpPath);
 
 // ── Clean up ──────────────────────────────────────────────────────────────────
 writeFile(tmpPath, "");
+
+
+/*
+  24. ARRAYS
+  ============================================================================
+  Arrays are mutable, zero-indexed, contiguous sequences. Unlike lists they
+  are always strictly evaluated and support in-place mutation.
+
+  Arrays are homogeneous — all elements must share the same type, enforced
+  at construction and on every mutation.
+
+  Arrays must always be declared with `var` (they are mutable by nature).
+
+  Syntax:
+    var a = array { val1, val2, val3 }
+    var empty = array {}
+
+  Access:   a[i]           — zero-based; throws on out-of-bounds
+  Assign:   a[i] = value   — throws on type mismatch or out-of-bounds
+
+  Mutating functions (proc/top-level only):
+    append(a, value)          — add to end
+    removeAt(a, index)        — remove at index, shift later elements down
+    insertAt(a, index, value) — insert before index, shift later elements up
+                                index must be in [0, length(a)]
+
+  Non-mutating functions (usable anywhere):
+    length(a)     — element count
+    find(a, item) — Some { index } or None (deep equality)
+    toList(a)     — copy to an immutable Pfun list
+    toArray(list) — copy a list or string into a new mutable array
+    toDict(a)     — copy to a dict with integer keys 0, 1, 2, ...
+*/
+
+println("--- 24. Arrays ---");
+
+// ── Construction and access ───────────────────────────────────────────────────
+
+proc p() {
+  var employees = array { "Alice", "Bob", "Carol" };
+  println(employees[0]);              // Alice
+  println(length(employees));         // 3
+
+  // ── append ───────────────────────────────────────────────────────────────────
+
+  append(employees, "Dave");
+  println(length(employees));         // 4
+  println(employees[3]);              // Dave
+
+  // ── removeAt — shifts elements down ──────────────────────────────────────────
+
+  removeAt(employees, 1);             // removes "Bob"
+  println(length(employees));         // 3
+  println(employees[1]);              // Carol (was index 2)
+
+  // ── insertAt — shifts elements up ────────────────────────────────────────────
+
+  insertAt(employees, 2, "Charlie");  // inserts before Dave
+  println(employees[2]);              // Charlie
+  println(employees[3]);              // Dave
+  println(length(employees));         // 4
+
+  // insertAt at end is equivalent to append
+  insertAt(employees, length(employees), "Edgar");
+  println(employees[4]);              // Edgar
+
+  // insertAt beyond length throws — no gap-filling
+  // insertAt(employees, 99, "X");   // would throw: index out of bounds
+
+  // ── Index assignment ──────────────────────────────────────────────────────────
+
+  employees[0] = "Alicia";
+  println(employees[0]);              // Alicia
+
+  // ── find ─────────────────────────────────────────────────────────────────────
+
+  println(match find(employees, "Charlie") with | Some s -> s.value | None -> "not found");  // 2
+  println(match find(employees, "nobody")  with | Some s -> s.value | None -> "not found");  // not found
+
+  // ── Integer array ─────────────────────────────────────────────────────────────
+
+  var scores = array { 95, 87, 92 };
+  append(scores, 88);
+  println(scores[3]);                 // 88
+
+  // ── Conversions ───────────────────────────────────────────────────────────────
+
+  // toList — snapshot as immutable list
+  let snap = toList(employees);
+  println(snap);                      // [Alicia, Carol, Charlie, Dave, Edgar]
+
+  // toArray — list to mutable array
+  let nums = [10, 20, 30];
+  var numArr = toArray(nums);
+  append(numArr, 40);
+  println(length(numArr));            // 4
+
+  // toDict — integer-keyed dict
+  var small = array { "x", "y", "z" };
+  var d = toDict(small);
+  println(d[0]);                      // x
+  println(d[2]);                      // z
+}
+p();

@@ -5,7 +5,7 @@
 
 import {
   Interpreter, NativeFunction, RegistryFunction, RegistryType,
-  PfunChar, PfunDict, LazyList
+  PfunChar, PfunDict, PfunArray, LazyList
 } from './interpreter';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -170,8 +170,9 @@ export const stdlibFunctions: RegistryFunction[] = [
     const s = interp.force(args[0]);
     if (typeof s === 'string') return BigInt(s.length);
     if (Array.isArray(s)) return BigInt(s.length);
+    if (s instanceof PfunArray) return BigInt(s.elements.length);
     if (s instanceof LazyList) throw new Error("length cannot be used on an infinite list. Use take() first.");
-    throw new Error("length() requires a list or string.");
+    throw new Error("length() requires a list, array, or string.");
   }},
 
   { name: 'asc', fn: (args, interp) => {
@@ -224,7 +225,6 @@ export const stdlibFunctions: RegistryFunction[] = [
   // ─── String Utilities ─────────────────────────────────────────────────────
 
   // __str__ is the internal coercion function used by $"..." interpolation.
-  // It converts any value to its string representation and is pure-safe.
   { name: '__str__', fn: (args, interp) => {
     const val = interp.force(args[0]);
     return interp.stringify(val);
@@ -265,5 +265,91 @@ export const stdlibFunctions: RegistryFunction[] = [
       return { __type: 'Some', __union: 'Option', value: BigInt(i) };
     }
     return { __type: 'None', __union: 'Option' };
+  }},
+
+  // ─── Array Operations ──────────────────────────────────────────────────────
+
+  // append(arr, value) — adds value to the end of the array. Mutates in place.
+  { name: 'append', fn: (args, interp) => {
+    if (interp.inPureContext) throw new Error("Functions cannot use 'append': side effects not allowed in pure functions.");
+    const arr = interp.force(args[0]);
+    if (!(arr instanceof PfunArray)) throw new Error("append() requires an array as first argument.");
+    const val = interp.force(args[1]);
+    interp.enforceArrayType(arr, val);
+    arr.elements.push(val);
+    return arr;
+  }},
+
+  // removeAt(arr, index) — removes the element at index, shifting later elements down.
+  { name: 'removeAt', fn: (args, interp) => {
+    if (interp.inPureContext) throw new Error("Functions cannot use 'removeAt': side effects not allowed in pure functions.");
+    const arr = interp.force(args[0]);
+    if (!(arr instanceof PfunArray)) throw new Error("removeAt() requires an array as first argument.");
+    const idx = interp.force(args[1]);
+    if (typeof idx !== 'bigint') throw new Error("removeAt() requires an integer index.");
+    const i = Number(idx);
+    if (i < 0 || i >= arr.elements.length) throw new Error(`removeAt() index ${i} out of bounds (length ${arr.elements.length}).`);
+    arr.elements.splice(i, 1);
+    return arr;
+  }},
+
+  // insertAt(arr, index, value) — inserts value before index, shifting later elements up.
+  // index must be in [0, length] — appending at end is allowed, gaps are not.
+  { name: 'insertAt', fn: (args, interp) => {
+    if (interp.inPureContext) throw new Error("Functions cannot use 'insertAt': side effects not allowed in pure functions.");
+    const arr = interp.force(args[0]);
+    if (!(arr instanceof PfunArray)) throw new Error("insertAt() requires an array as first argument.");
+    const idx = interp.force(args[1]);
+    if (typeof idx !== 'bigint') throw new Error("insertAt() requires an integer index.");
+    const i = Number(idx);
+    if (i < 0 || i > arr.elements.length) throw new Error(`insertAt() index ${i} out of bounds (length ${arr.elements.length}). Use an index in [0, length].`);
+    const val = interp.force(args[2]);
+    interp.enforceArrayType(arr, val);
+    arr.elements.splice(i, 0, val);
+    return arr;
+  }},
+
+  // toList(arr) — converts a PfunArray to a Pfun list (immutable).
+  { name: 'toList', fn: (args, interp) => {
+    const arr = interp.force(args[0]);
+    if (!(arr instanceof PfunArray)) throw new Error("toList() requires an array.");
+    return [...arr.elements];
+  }},
+
+  // toArray(list) — converts a Pfun list or string to a mutable PfunArray.
+  { name: 'toArray', fn: (args, interp) => {
+    const val = interp.force(args[0]);
+    if (val instanceof PfunArray) return new PfunArray([...val.elements]);
+    if (typeof val === 'string') {
+      const elements = val.split('').map((c: string) => c);
+      const arr = new PfunArray(elements);
+      if (elements.length > 0) arr.elementType = 'char';
+      return arr;
+    }
+    if (Array.isArray(val)) {
+      const arr = new PfunArray([...val]);
+      if (val.length > 0) {
+        // Infer element type from first element using stringify-based detection
+        const first = interp.force(val[0]);
+        if (first instanceof PfunChar) arr.elementType = 'char';
+        else if (typeof first === 'bigint') arr.elementType = 'bigint';
+        else if (typeof first === 'boolean') arr.elementType = 'boolean';
+        else if (typeof first === 'string') arr.elementType = 'string';
+        else if (Array.isArray(first)) arr.elementType = first.length === 0 ? 'list' : `list<${typeof interp.force(first[0])}>`;
+        else if (first && first.__union) arr.elementType = first.__union;
+        else if (first && first.__type) arr.elementType = first.__type;
+      }
+      return arr;
+    }
+    throw new Error("toArray() requires a list, array, or string.");
+  }},
+
+  // toDict(arr) — converts a PfunArray to a dict with integer keys 0, 1, 2, ...
+  { name: 'toDict', fn: (args, interp) => {
+    const arr = interp.force(args[0]);
+    if (!(arr instanceof PfunArray)) throw new Error("toDict() requires an array.");
+    const map = new Map<string, any>();
+    arr.elements.forEach((v: any, i: number) => map.set(`i:${i}`, v));
+    return new PfunDict(map);
   }},
 ];
