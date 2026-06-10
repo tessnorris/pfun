@@ -235,10 +235,7 @@ export const stdlibFunctions: RegistryFunction[] = [
     const delim = interp.force(args[1]);
     if (typeof str !== 'string') throw new Error("split() requires a string as first argument.");
     if (typeof delim !== 'string') throw new Error("split() requires a string delimiter as second argument.");
-    if (delim === '') {
-      // Split into individual characters
-      return str.split('').map((c: string) => c);
-    }
+    if (delim === '') return str.split('').map((c: string) => c);
     return str.split(delim);
   }},
 
@@ -255,18 +252,18 @@ export const stdlibFunctions: RegistryFunction[] = [
   { name: 'find', fn: (args, interp) => {
     const arr  = interp.toArray(interp.force(args[0]));
     const item = interp.force(args[1]);
-    for (let i = 0; i < arr.length; i++) { if (interp.valEqual(arr[i], item)) return BigInt(i); }
-    return -1n;
+    for (let i = 0; i < arr.length; i++) { if (interp.valEqual(arr[i], item)) return { __type: 'Some', __union: 'Option', value: BigInt(i) }; }
+    return { __type: 'None', __union: 'Option' };
   }},
 
   { name: 'findSlice', fn: (args, interp) => {
     const arr = interp.toArray(interp.force(args[0]));
     const pat = interp.toArray(interp.force(args[1]));
-    if (pat.length === 0) return 0n;
+    if (pat.length === 0) return { __type: 'Some', __union: 'Option', value: 0n };
     outer: for (let i = 0; i <= arr.length - pat.length; i++) {
       for (let j = 0; j < pat.length; j++) { if (!interp.valEqual(arr[i + j], pat[j])) continue outer; }
-      return BigInt(i);
+      return { __type: 'Some', __union: 'Option', value: BigInt(i) };
     }
-    return -1n;
+    return { __type: 'None', __union: 'Option' };
   }},
 ];

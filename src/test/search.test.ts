@@ -116,67 +116,111 @@ describe('Search and Access Tests', () => {
 
 
   describe('find and findSlice', () => {
-    it('find should return the index of an existing item', () => {
-      const { logs } = run(`println(find([10, 20, 30], 20));`);
+    it('find should return Some { index } when item is present', () => {
+      const { logs } = run(`
+        let r = find([10, 20, 30], 20);
+        println(match r with | Some s -> s.value | None -> "not found");
+      `);
       expect(logs).toEqual(['1']);
     });
 
-    it('find should return -1 when item is not present', () => {
-      const { logs } = run(`println(find([10, 20, 30], 99));`);
-      expect(logs).toEqual(['-1']);
+    it('find should return None when item is not present', () => {
+      const { logs } = run(`
+        let r = find([10, 20, 30], 99);
+        println(match r with | Some s -> s.value | None -> "not found");
+      `);
+      expect(logs).toEqual(['not found']);
     });
 
-    it('find should return the first matching index', () => {
-      const { logs } = run(`println(find([1, 2, 1, 3], 1));`);
+    it('find should return Some { 0 } for the first of multiple matches', () => {
+      const { logs } = run(`
+        let r = find([1, 2, 1, 3], 1);
+        println(match r with | Some s -> s.value | None -> "not found");
+      `);
       expect(logs).toEqual(['0']);
     });
 
     it('find should work on strings (char search)', () => {
-      const { logs } = run(`println(find("hello", 'l'));`);
+      const { logs } = run(`
+        let r = find("hello", 'l');
+        println(match r with | Some s -> s.value | None -> "not found");
+      `);
       expect(logs).toEqual(['2']);
     });
 
-    it('find should return -1 for missing char in string', () => {
-      const { logs } = run(`println(find("hello", 'z'));`);
-      expect(logs).toEqual(['-1']);
+    it('find should return None for missing char in string', () => {
+      const { logs } = run(`
+        let r = find("hello", 'z');
+        println(match r with | Some s -> s.value | None -> "not found");
+      `);
+      expect(logs).toEqual(['not found']);
     });
 
     it('find should compare by value not reference', () => {
       const { logs } = run(`
         type Point = { x, y }
         let pts = [Point { 1, 2 }, Point { 3, 4 }, Point { 5, 6 }];
-        println(find(pts, Point { 3, 4 }));
+        let r = find(pts, Point { 3, 4 });
+        println(match r with | Some s -> s.value | None -> "not found");
       `);
       expect(logs).toEqual(['1']);
     });
 
-    it('findSlice should return the start index of a matching sublist', () => {
-      const { logs } = run(`println(findSlice([1, 2, 3, 4, 5], [2, 3, 4]));`);
+    it('find result is an Option variant', () => {
+      const { interpreter } = run(`
+        var hit  = find([1, 2, 3], 2);
+        var miss = find([1, 2, 3], 9);
+      `);
+      expect(interpreter.getGlobal('hit').__type).toBe('Some');
+      expect(interpreter.getGlobal('hit').value).toBe(1n);
+      expect(interpreter.getGlobal('miss').__type).toBe('None');
+    });
+
+    it('findSlice should return Some { index } for a matching sublist', () => {
+      const { logs } = run(`
+        let r = findSlice([1, 2, 3, 4, 5], [2, 3, 4]);
+        println(match r with | Some s -> s.value | None -> "not found");
+      `);
       expect(logs).toEqual(['1']);
     });
 
-    it('findSlice should return -1 when slice is not present', () => {
-      const { logs } = run(`println(findSlice([1, 2, 3], [4, 5]));`);
-      expect(logs).toEqual(['-1']);
+    it('findSlice should return None when slice is not present', () => {
+      const { logs } = run(`
+        let r = findSlice([1, 2, 3], [4, 5]);
+        println(match r with | Some s -> s.value | None -> "not found");
+      `);
+      expect(logs).toEqual(['not found']);
     });
 
-    it('findSlice should return 0 for an empty slice', () => {
-      const { logs } = run(`println(findSlice([1, 2, 3], []));`);
+    it('findSlice should return Some { 0 } for an empty slice', () => {
+      const { logs } = run(`
+        let r = findSlice([1, 2, 3], []);
+        println(match r with | Some s -> s.value | None -> "not found");
+      `);
       expect(logs).toEqual(['0']);
     });
 
     it('findSlice should work on strings (substring search)', () => {
-      const { logs } = run(`println(findSlice("hello world", "world"));`);
+      const { logs } = run(`
+        let r = findSlice("hello world", "world");
+        println(match r with | Some s -> s.value | None -> "not found");
+      `);
       expect(logs).toEqual(['6']);
     });
 
-    it('findSlice should return -1 for missing substring', () => {
-      const { logs } = run(`println(findSlice("hello", "xyz"));`);
-      expect(logs).toEqual(['-1']);
+    it('findSlice should return None for missing substring', () => {
+      const { logs } = run(`
+        let r = findSlice("hello", "xyz");
+        println(match r with | Some s -> s.value | None -> "not found");
+      `);
+      expect(logs).toEqual(['not found']);
     });
 
     it('findSlice should find the first of multiple matches', () => {
-      const { logs } = run(`println(findSlice([1, 2, 1, 2, 3], [1, 2]));`);
+      const { logs } = run(`
+        let r = findSlice([1, 2, 1, 2, 3], [1, 2]);
+        println(match r with | Some s -> s.value | None -> "not found");
+      `);
       expect(logs).toEqual(['0']);
     });
 

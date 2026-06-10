@@ -695,8 +695,10 @@ println(isInfinite("hello"));    // false
 /*
   16. FIND & FINDSLICE
   ============================================================================
-  find(list, item)        — returns index of first matching item, or -1
-  findSlice(list, slice)  — returns index of first matching sublist, or -1
+  find(list, item)        — returns Some { value } with the index of the
+                            first matching item, or None if not found
+  findSlice(list, slice)  — returns Some { value } with the start index of
+                            the first matching sublist, or None if not found
 
   Both use deep value equality (not reference equality), work on strings,
   finite lists, and records. Require a finite list — use take() first on
@@ -707,38 +709,41 @@ println("--- 16. find & findSlice ---");
 
 // find on a list
 let nums = [10, 20, 30, 40, 50];
-println(find(nums, 30));   // 2
-println(find(nums, 99));   // -1
+println(match find(nums, 30) with | Some s -> s.value | None -> "not found");   // 2
+println(match find(nums, 99) with | Some s -> s.value | None -> "not found");   // not found
 
 // find returns first match
-println(find([1, 2, 1, 3], 1));  // 0
+println(match find([1, 2, 1, 3], 1) with | Some s -> s.value | None -> "not found");  // 0
 
 // find on a string (char search)
-println(find("hello", 'l'));   // 2
-println(find("hello", 'z'));   // -1
+println(match find("hello", 'l') with | Some s -> s.value | None -> "not found");   // 2
+println(match find("hello", 'z') with | Some s -> s.value | None -> "not found");   // not found
 
 // find with records — value equality
 type Point = { x, y }
 let pts = [Point { 1, 2 }, Point { 3, 4 }, Point { 5, 6 }];
-println(find(pts, Point { 3, 4 }));  // 1
+println(match find(pts, Point { 3, 4 }) with | Some s -> s.value | None -> "not found");  // 1
 
 // findSlice on a list
-println(findSlice([1, 2, 3, 4, 5], [2, 3, 4]));  // 1
-println(findSlice([1, 2, 3], [4, 5]));            // -1
-println(findSlice([1, 2, 3], []));                // 0
+println(match findSlice([1, 2, 3, 4, 5], [2, 3, 4]) with | Some s -> s.value | None -> "not found");  // 1
+println(match findSlice([1, 2, 3], [4, 5])           with | Some s -> s.value | None -> "not found");  // not found
+println(match findSlice([1, 2, 3], [])               with | Some s -> s.value | None -> "not found");  // 0
 
 // findSlice on a string (substring search)
-println(findSlice("hello world", "world"));  // 6
-println(findSlice("hello world", "xyz"));    // -1
+println(match findSlice("hello world", "world") with | Some s -> s.value | None -> "not found");  // 6
+println(match findSlice("hello world", "xyz")   with | Some s -> s.value | None -> "not found");  // not found
 
 // findSlice finds the first of multiple matches
-println(findSlice([1, 2, 1, 2, 3], [1, 2]));  // 0
+println(match findSlice([1, 2, 1, 2, 3], [1, 2]) with | Some s -> s.value | None -> "not found");  // 0
 
-// Practical: find a record in a list returned from a function
+// Practical: safe index lookup with Option
 function findByX(pts, targetX) {
-  return find(pts, nth([ p for p <- pts where p.x == targetX ], 0));
+  let matches = [ p for p <- pts where p.x == targetX ];
+  if length(matches) == 0 then None
+  else find(pts, nth(matches, 0));
 }
-println(findByX(pts, 3));  // 1
+println(match findByX(pts, 3) with | Some s -> s.value | None -> "not found");  // 1
+println(match findByX(pts, 9) with | Some s -> s.value | None -> "not found");  // not found
 
 
 /*
