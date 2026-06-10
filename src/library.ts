@@ -221,6 +221,35 @@ export const stdlibFunctions: RegistryFunction[] = [
     return [...dict.entries.values()];
   }},
 
+  // ─── String Utilities ─────────────────────────────────────────────────────
+
+  // __str__ is the internal coercion function used by $"..." interpolation.
+  // It converts any value to its string representation and is pure-safe.
+  { name: '__str__', fn: (args, interp) => {
+    const val = interp.force(args[0]);
+    return interp.stringify(val);
+  }},
+
+  { name: 'split', fn: (args, interp) => {
+    const str = interp.force(args[0]);
+    const delim = interp.force(args[1]);
+    if (typeof str !== 'string') throw new Error("split() requires a string as first argument.");
+    if (typeof delim !== 'string') throw new Error("split() requires a string delimiter as second argument.");
+    if (delim === '') {
+      // Split into individual characters
+      return str.split('').map((c: string) => c);
+    }
+    return str.split(delim);
+  }},
+
+  { name: 'join', fn: (args, interp) => {
+    const list = interp.force(args[0]);
+    const delim = interp.force(args[1]);
+    if (!Array.isArray(list)) throw new Error("join() requires a list as first argument.");
+    if (typeof delim !== 'string') throw new Error("join() requires a string delimiter as second argument.");
+    return list.map((v: any) => interp.stringify(interp.force(v))).join(delim);
+  }},
+
   // ─── Find ─────────────────────────────────────────────────────────────────
 
   { name: 'find', fn: (args, interp) => {

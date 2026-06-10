@@ -640,17 +640,17 @@ proc printWithoutNewline() {
 }
 printWithoutNewline();  // one two three
 
-// printf interpolation
+// string interpolation
 let name = "Alice";
 let age = 30;
-printf("Name: {name}, Age: {age}\n");  // Name: Alice, Age: 30
+print($"Name: {name}, Age: {age}\n");  // Name: Alice, Age: 30
 
 type Rect = { w, l }
 var r = Rect { 3, 4 };
-printf("Dimensions: {r.w} by {r.l}\n");  // Dimensions: 3 by 4
+print($"Dimensions: {r.w} by {r.l}\n");  // Dimensions: 3 by 4
 
-// Escaped braces in printf
-printf("Use \{ and \} for literal braces\n");
+// Escaped braces in string interpolation
+print($"Use \{ and \} for literal braces\n");
 
 
 /*
@@ -820,7 +820,7 @@ println(evensRev);                   // [6, 4, 2]
       let name = match input with
         | Some s -> s.value
         | None   -> "stranger"
-      printf("Hello, {name}!\n");
+      print($"Hello, {name}!\n");
     }
 
   Example — gate check (the Mines of Moria):
@@ -856,7 +856,7 @@ proc greet() {
   let name = match input with
     | Some s -> s.value
     | None   -> "stranger";
-  printf("Hello, {name}!\n");
+  print($"Hello, {name}!\n");
 }
 greet();
 
@@ -936,3 +936,149 @@ proc copyFile(src, dst) {
     | Some s -> writeFile(dst, s.value)
     | None   -> println("Could not read source file");
 }
+
+
+/*
+  20. $ FORMAT STRINGS
+  ============================================================================
+  The $ operator formats a string in place by interpolating {expression}
+  holes into the surrounding text.  It is syntactic sugar for string
+  concatenation with automatic value-to-string conversion — no printing
+  is implied.  Because $ is a pure operation it can be used freely inside
+  `function` definitions.
+
+  Syntax:
+    $"literal text {varName} more text {rec.field} etc."
+
+  Rules:
+  - {name}      — interpolates the value of `name`, auto-converted to string
+  - {rec.field} — interpolates a record field
+  - \{  \}      — literal brace characters (not interpolation holes)
+  - All other escape sequences (\n \t \\ \") work as in normal strings
+  - The result is an ordinary string value
+
+  print($"x1 = {x1}\n") replaces the old printf("x1 = {x1}\n") pattern.
+*/
+
+println("--- 20. $ Format Strings ---");
+
+let x1 = 3;
+let x2 = 7;
+function square(x) { return x * x; }
+
+// Pure usage — works inside a function
+function fmtPoint(label, x, y) {
+  return $"{label} = ({x}, {y})";
+}
+let y1 = square(x1);
+let y2 = square(x2);
+println(fmtPoint("p1", x1, y1));  // p1 = (3, 9)
+println(fmtPoint("p2", x2, y2));  // p2 = (7, 49)
+
+// Replaces the old printf pattern:
+proc printPoints(a, b) {
+  let fa = square(a);
+  let fb = square(b);
+  print($"p1 = ({a}, {fa}), p2 = ({b}, {fb})\n");
+}
+printPoints(x1, x2);  // p1 = (3, 9), p2 = (7, 49)
+
+// Record field interpolation
+type Vec = { x, y, z }
+let v = Vec { 1, 2, 3 };
+let desc = $"Vec({v.x}, {v.y}, {v.z})";
+println(desc);  // Vec(1, 2, 3)
+
+// Literal braces using \{ and \}
+let tmpl = $"template: \{value\}";
+println(tmpl);  // template: {value}
+
+
+/*
+  21. @ RAW STRING LITERALS
+  ============================================================================
+  The @ prefix produces a raw string literal in which backslash sequences
+  are NOT processed — every character is taken at face value.  This is
+  useful for regular expressions, file paths, help text, and any string
+  where you want to write \n to mean the two characters '\' and 'n' rather
+  than a newline.
+
+  Syntax:
+    @"text with \n treated as backslash-n"
+
+  The result is an ordinary string value with no escape processing applied.
+*/
+
+println("--- 21. @ Raw String Literals ---");
+
+let help = @"Options:
+  -n   do not output the trailing \n
+  -e   enable interpretation of \\n as newline";
+println(help);
+
+// Windows-style path — no need to escape every backslash
+let winPath = @"C:\Users\Alice\Documents\notes.txt";
+println(winPath);  // C:\Users\Alice\Documents\notes.txt
+
+// Regex pattern stored as-is
+let pattern = @"\d+\.\d+";
+println(pattern);  // \d+\.\d+
+
+// Contrast with a regular string
+let normal = "newline: \n";   // contains an actual newline
+let raw    = @"newline: \n";  // contains the two characters \ and n
+println(length(normal));  // 10 (newline is one char)
+println(length(raw));     // 11 (\n is two chars)
+
+
+/*
+  22. SPLIT & JOIN
+  ============================================================================
+  split(str, delimiter)  — splits a string on a delimiter, returning a list
+                           of strings.  Empty delimiter splits into chars.
+  join(list, delimiter)  — joins a list into a string, inserting delimiter
+                           between each element.  Values are auto-converted
+                           to strings.
+
+  Both work in pure functions.
+*/
+
+println("--- 22. split & join ---");
+
+// Basic split
+let words = split("one two three", " ");
+println(words);                      // [one, two, three]
+println(length(words));              // 3
+
+// CSV parsing
+let csv = split("Alice,30,true", ",");
+println(csv);                        // [Alice, 30, true]
+
+// Split on empty string → individual characters
+let chars = split("hello", "");
+println(chars);                      // [h, e, l, l, o]
+
+// Basic join
+println(join(["a", "b", "c"], "-")); // a-b-c
+println(join([1, 2, 3], ", "));      // 1, 2, 3
+
+// Round-trip: split then rejoin
+let sentence = "the quick brown fox";
+let ws = split(sentence, " ");
+let rejoined = join(ws, "_");
+println(rejoined);                   // the_quick_brown_fox
+
+// Pure function using split and join
+function capitalize(s) {
+  let parts = split(s, " ");
+  return join([map(fn w => {
+    let first = slice(0, 1, w);
+    let rest  = slice(1, length(w) - 1, w);
+    first + rest;
+  }, parts)][0], " ");
+}
+
+// Combine $ and join for neat output
+let nums = [10, 20, 30];
+println($"numbers: {join(nums, \", \")}");  // numbers: 10, 20, 30
+

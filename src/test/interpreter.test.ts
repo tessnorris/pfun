@@ -682,4 +682,84 @@ describe('Interpreter Feature Tests', () => {
       `, {})).not.toThrow();
     });
   });
+
+  // ─── split & join ─────────────────────────────────────────────────────────
+
+  describe('split and join', () => {
+    it('split should split a string on a delimiter', () => {
+      const { interpreter } = run(`
+        let parts = split("a,b,c", ",");
+      `);
+      const parts = interpreter.getGlobal('parts');
+      expect(parts).toEqual(['a', 'b', 'c']);
+    });
+
+    it('split should handle a multi-char delimiter', () => {
+      const { interpreter } = run(`
+        let parts = split("one::two::three", "::");
+      `);
+      const parts = interpreter.getGlobal('parts');
+      expect(parts).toEqual(['one', 'two', 'three']);
+    });
+
+    it('split on empty string yields individual characters', () => {
+      const { interpreter } = run(`
+        let parts = split("abc", "");
+      `);
+      const parts = interpreter.getGlobal('parts');
+      expect(parts).toEqual(['a', 'b', 'c']);
+    });
+
+    it('split on absent delimiter yields a single-element list', () => {
+      const { interpreter } = run(`
+        let parts = split("hello", ",");
+      `);
+      const parts = interpreter.getGlobal('parts');
+      expect(parts).toEqual(['hello']);
+    });
+
+    it('join should join a list of strings with a delimiter', () => {
+      const { interpreter } = run(`
+        let s = join(["a", "b", "c"], ",");
+      `);
+      expect(interpreter.getGlobal('s')).toBe('a,b,c');
+    });
+
+    it('join should auto-convert numbers to strings', () => {
+      const { interpreter } = run(`
+        let s = join([1, 2, 3], " - ");
+      `);
+      expect(interpreter.getGlobal('s')).toBe('1 - 2 - 3');
+    });
+
+    it('join with empty delimiter concatenates', () => {
+      const { interpreter } = run(`
+        let s = join(["x", "y", "z"], "");
+      `);
+      expect(interpreter.getGlobal('s')).toBe('xyz');
+    });
+
+    it('split then join round-trips', () => {
+      const { interpreter } = run(`
+        let original = "one two three";
+        let s = join(split(original, " "), "-");
+      `);
+      expect(interpreter.getGlobal('s')).toBe('one-two-three');
+    });
+
+    it('split and join should work in pure functions', () => {
+      const { interpreter } = run(`
+        function csvRow(items) {
+          return join(items, ",");
+        }
+        function parseRow(row) {
+          return split(row, ",");
+        }
+        let row = csvRow(["Alice", "30", "true"]);
+        let back = parseRow(row);
+      `);
+      expect(interpreter.getGlobal('row')).toBe('Alice,30,true');
+      expect(interpreter.getGlobal('back')).toEqual(['Alice', '30', 'true']);
+    });
+  });
 });

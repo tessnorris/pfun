@@ -464,7 +464,7 @@ export function buildPfunError(
     'head', 'tail', 'cons', 'map', 'filter', 'reduce',
     'take', 'iterate', 'repeat', 'cycle', 'slice', 'nth', 'isInfinite',
     'find', 'findSlice', 'asc', 'chr', 'has', 'remove', 'keys', 'values',
-    'print', 'println', 'printf', 'readChar', 'readln',
+    'print', 'println', '__str__', 'readChar', 'readln',
     'readFile', 'writeFile', 'fileOpen', 'fileClose', 'readLine', 'writeLine', 'writeChar',
     'Some', 'None', 'true', 'false',
   ]);

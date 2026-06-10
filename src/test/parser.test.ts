@@ -294,23 +294,55 @@ describe('Parser Unit Tests', () => {
     });
   });
 
-  describe('printf', () => {
-    it('should desugar printf into a print CallExpr', () => {
-      const ast = parse('printf("hello {name}\\n");');
-      const expr = (ast[0] as any).expression;
-      expect(expr.type).toBe('CallExpr');
-      expect(expr.callee).toEqual(expect.objectContaining({ type: 'IdentExpr', name: 'print' }));
+  describe('$ format strings', () => {
+    it('should desugar $"..." into a string concatenation expression', () => {
+      const ast = parse('let s = $"hello {name}";');
+      const expr = (ast[0] as any).initializer;
+      // Should be a BinaryExpr (concatenation) at the top level, not a CallExpr
+      expect(expr.type).toBe('BinaryExpr');
+      expect(expr.operator).toBe('PlusToken');
     });
 
-    it('should desugar {name.field} into a GetExpr', () => {
-      const ast = parse('printf("x is {pt.x}\\n");');
-      const expr = (ast[0] as any).expression;
+    it('should produce a StrExpr for a literal-only $ string', () => {
+      const ast = parse('let s = $"no interpolation here";');
+      const expr = (ast[0] as any).initializer;
+      expect(expr.type).toBe('StrExpr');
+      expect(expr.value).toBe('no interpolation here');
+    });
+
+    it('should desugar {name.field} interpolation into a GetExpr', () => {
+      const ast = parse('let s = $"x is {pt.x}";');
+      const expr = (ast[0] as any).initializer;
       const findGetExpr = (e: any): boolean => {
         if (!e || typeof e !== 'object') return false;
         if (e.type === 'GetExpr' && e.name === 'x') return true;
-        return findGetExpr(e.left) || findGetExpr(e.right) || findGetExpr(e.args?.[0]);
+        return findGetExpr(e.left) || findGetExpr(e.right) || findGetExpr(e.callee) || findGetExpr(e.args?.[0]);
       };
       expect(findGetExpr(expr)).toBe(true);
+    });
+
+    it('should wrap interpolated values in __str__ coercion calls', () => {
+      const ast = parse('let s = $"n = {n}";');
+      const expr = (ast[0] as any).initializer;
+      const findStrCall = (e: any): boolean => {
+        if (!e || typeof e !== 'object') return false;
+        if (e.type === 'CallExpr' && e.callee?.name === '__str__') return true;
+        return findStrCall(e.left) || findStrCall(e.right) || findStrCall(e.callee);
+      };
+      expect(findStrCall(expr)).toBe(true);
+    });
+
+    it('should produce a pure expression usable in a let binding', () => {
+      // $ string in a let (pure context) — no CallExpr to print
+      const ast = parse('let s = $"value: {x}";');
+      const stmt = ast[0] as any;
+      expect(stmt.type).toBe('LetStmt');
+      const findPrintCall = (e: any): boolean => {
+        if (!e || typeof e !== 'object') return false;
+        if (e.type === 'CallExpr' && (e.callee?.name === 'print' || e.callee?.name === 'println')) return true;
+        return findPrintCall(e.left) || findPrintCall(e.right) || findPrintCall(e.callee);
+      };
+      expect(findPrintCall(stmt.initializer)).toBe(false);
     });
   });
 

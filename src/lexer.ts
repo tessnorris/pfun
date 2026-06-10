@@ -46,6 +46,8 @@ export type Token =
   | { type: 'WithToken'; pos?: SourcePos }       // 'with' keyword (opens match arms)
   | { type: 'WhereToken'; pos?: SourcePos }
   | { type: 'WildcardToken'; pos?: SourcePos }
+  | { type: 'DollarToken'; pos?: SourcePos }     // $ prefix for interpolated strings
+  | { type: 'RawStrToken'; value: string; pos?: SourcePos } // @"..." raw string literal
   | { type: 'SemiToken'; pos?: SourcePos } | { type: 'EOFToken'; pos?: SourcePos };
 
 export class Lexer {
@@ -80,6 +82,9 @@ export class Lexer {
       if (this.isDigit(char)) { tokens.push({ ...this.readNumber(), pos: tokPos }); continue; }
       if (char === '"') { tokens.push({ ...this.readString(), pos: tokPos }); continue; }
       if (char === "'") { tokens.push({ ...this.readChar(), pos: tokPos }); continue; }
+      if (char === '@' && this.pos + 1 < this.input.length && this.input[this.pos + 1] === '"') {
+        tokens.push({ ...this.readRawString(), pos: tokPos }); continue;
+      }
       if (this.isAlpha(char)) { tokens.push({ ...this.readIdentifierOrKeyword(), pos: tokPos }); continue; }
 
       // Handle single and multi-character operators
@@ -108,6 +113,7 @@ export class Lexer {
         case ':': tokens.push({ type: 'ColonToken', pos: tokPos }); break;
         case '?': tokens.push({ type: 'QuestionToken', pos: tokPos }); break;
         case '.': tokens.push({ type: 'DotToken', pos: tokPos }); break;
+        case '$': tokens.push({ type: 'DollarToken', pos: tokPos }); break;
         // '|' is now a pipe token for union variants and match arms.
         // '||' is still supported for boolean or.
         case '|':
@@ -184,6 +190,18 @@ export class Lexer {
     while (!this.isAtEnd() && this.isDigit(this.peek())) s += this.advance();
     // The language exclusively uses BigInt for numerical precision
     return { type: 'IntToken', value: BigInt(s) };
+  }
+
+  private readRawString(): Token {
+    this.advance(); // Consume '@'
+    this.advance(); // Consume opening "
+    let s = '';
+    while (!this.isAtEnd() && this.peek() !== '"') {
+      s += this.advance();
+    }
+    if (this.isAtEnd()) throw new Error("Unterminated raw string.");
+    this.advance(); // Consume closing "
+    return { type: 'RawStrToken', value: s };
   }
 
   private readString(): Token {

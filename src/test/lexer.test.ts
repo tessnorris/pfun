@@ -166,7 +166,37 @@ describe('Lexer Unit Tests', () => {
     it('should tokenize print and println as IdentTokens (not keywords)', () => {
       expect(lex('print')[0].type).toBe('IdentToken');
       expect(lex('println')[0].type).toBe('IdentToken');
-      expect(lex('printf')[0].type).toBe('IdentToken');
+    });
+  });
+
+  describe('$ and @ string operators', () => {
+    it('should tokenize $ as DollarToken', () => {
+      expect(lex('$')[0].type).toBe('DollarToken');
+    });
+
+    it('should tokenize $"..." as DollarToken then StrToken', () => {
+      const tokens = lex('$"hello {name}"');
+      expect(tokens[0].type).toBe('DollarToken');
+      expect(tokens[1].type).toBe('StrToken');
+      expect((tokens[1] as any).value).toBe('hello {name}');
+    });
+
+    it('should tokenize @"..." as RawStrToken with backslashes preserved', () => {
+      const token = lex('@"Use \\n as literal"')[0];
+      expect(token.type).toBe('RawStrToken');
+      expect((token as any).value).toBe('Use \\n as literal');
+    });
+
+    it('@"..." should preserve \\t and \\\\ literally', () => {
+      const token = lex('@"tab\\there"')[0];
+      expect(token.type).toBe('RawStrToken');
+      expect((token as any).value).toBe('tab\\there');
+    });
+
+    it('regular string should still process \\n as newline', () => {
+      const token = lex('"line1\\nline2"')[0];
+      expect(token.type).toBe('StrToken');
+      expect((token as any).value).toBe('line1\nline2');
     });
   });
 });

@@ -296,12 +296,9 @@ export class Parser {
       case 'BoolToken': return { type: 'BoolExpr', value: token.value, pos: token.pos ?? exprPos };
       case 'StrToken': return { type: 'StrExpr', value: token.value, pos: token.pos ?? exprPos };
       case 'CharToken': return { type: 'CharExpr', value: token.value, pos: token.pos ?? exprPos };
+      case 'RawStrToken': return { type: 'StrExpr', value: token.value, pos: token.pos ?? exprPos };
+      case 'DollarToken': return this.parseFormatString(token.pos ?? exprPos);
       case 'IdentToken':
-        // printf("...{name}...{name.field}...") desugars at parse time into
-        // a print() call with a string concatenation expression.
-        if (token.value === 'printf' && this.check('LParenToken')) {
-          return this.parsePrintf();
-        }
         // Positional / Named Record Constructor: Point { 1, 2 } or Point { x=1, y=2 }
         // Guard: do NOT treat '{ |' or '{ }' as a constructor — those are match bodies
         // or empty blocks, not record field lists.
@@ -437,16 +434,16 @@ export class Parser {
   }
 
   /**
-   * Desugars printf("text {name} or {rec.field}\n") at parse time into
-   * a print() call with concatenated string + identifier/property expressions.
-   * Escape sequences: \n \t \\ \" \{ \}
+   * Desugars $"text {name} or {rec.field}\n" at parse time into a string
+   * concatenation expression (pure — does NOT wrap in a print() call).
+   * Escape sequences in the format string are already processed by the lexer.
+   * Sentinels \uE000 and \uE001 represent literal { and }.
    */
-  private parsePrintf(): Expr {
-    const printfPos = this.pos();
-    this.advance(); // consume '('
+  private parseFormatString(dollarPos: import('./lexer').SourcePos | undefined): Expr {
     const fmtToken = this.advance();
-    if (fmtToken.type !== 'StrToken') throw Object.assign(new Error("printf requires a string literal as its argument."), { pos: fmtToken.pos });
-    this.consume('RParenToken', "Expected ')' after printf format string.");
+    if (fmtToken.type !== 'StrToken') {
+      throw Object.assign(new Error("'$' must be followed by a string literal."), { pos: fmtToken.pos });
+    }
 
     const fmt = fmtToken.value;
     const parts: Expr[] = [];
@@ -462,7 +459,7 @@ export class Parser {
         i++;
         let interp = '';
         while (i < fmt.length && fmt[i] !== '}') interp += fmt[i++];
-        if (i >= fmt.length) throw new Error("printf: unclosed '{' in format string.");
+        if (i >= fmt.length) throw new Error("$-string: unclosed '{' in format string.");
         i++; // consume '}'
         interp = interp.trim();
         const dotIdx = interp.indexOf('.');
@@ -480,14 +477,19 @@ export class Parser {
     }
     if (current.length > 0) parts.push({ type: 'StrExpr', value: current });
 
-    if (parts.length === 0) {
-      return { type: 'CallExpr', callee: { type: 'IdentExpr', name: 'print' }, args: [{ type: 'StrExpr', value: '' }], pos: printfPos };
-    }
-    let concat: Expr = parts[0];
+    if (parts.length === 0) return { type: 'StrExpr', value: '', pos: dollarPos };
+
+    // Wrap each non-string part in a stringify call so values auto-convert
+    const coerce = (e: Expr): Expr => {
+      if (e.type === 'StrExpr') return e;
+      return { type: 'CallExpr', callee: { type: 'IdentExpr', name: '__str__' }, args: [e], pos: e.pos };
+    };
+
+    let concat: Expr = coerce(parts[0]);
     for (let j = 1; j < parts.length; j++) {
-      concat = { type: 'BinaryExpr', left: concat, operator: 'PlusToken', right: parts[j] };
+      concat = { type: 'BinaryExpr', left: concat, operator: 'PlusToken', right: coerce(parts[j]), pos: dollarPos };
     }
-    return { type: 'CallExpr', callee: { type: 'IdentExpr', name: 'print' }, args: [concat], pos: printfPos };
+    return concat;
   }
 
   private parseLambda(): Expr {
@@ -597,7 +599,7 @@ export class Parser {
 
   private isExprStart(): boolean {
     const t = this.peek().type;
-    return ['IntToken', 'BoolToken', 'StrToken', 'CharToken', 'IdentToken', 'BooleanNot', 'MinusToken',
+    return ['IntToken', 'BoolToken', 'StrToken', 'CharToken', 'RawStrToken', 'DollarToken', 'IdentToken', 'BooleanNot', 'MinusToken',
             'LParenToken', 'LBracketToken', 'FnToken', 'MatchToken', 'DictToken'].includes(t);
   }
   private isAtEnd(): boolean { return this.peek().type === 'EOFToken'; }
