@@ -50,6 +50,11 @@ export class Environment {
     this.values.set(name, { value, mutable });
   }
 
+  isDefined(name: string): boolean {
+    if (this.values.has(name)) return true;
+    return this.parent ? this.parent.isDefined(name) : false;
+  }
+
   get(name: string): any {
     if (this.values.has(name)) return this.values.get(name)!.value;
     if (this.parent) return this.parent.get(name);
@@ -168,29 +173,66 @@ interface TypeSchema {
   unionName: string | null;
 }
 
+/**
+ * TypeRegistry supports shared variant names across different union types.
+ * For example, both Result and ReadResult can define Ok, Err variants —
+ * they are disambiguated at runtime by the value's __union tag.
+ *
+ * schemas maps variantName -> list of schemas (one per union that defines it).
+ * Lookup by variant name alone returns the first schema (for plain types and
+ * unambiguous variants). Lookup by (variantName, unionName) is used when the
+ * union context is known (construction, match arm resolution).
+ */
 export class TypeRegistry {
-  private schemas = new Map<string, TypeSchema>();
+  // variant name -> one schema per union that defines that variant name
+  private schemas = new Map<string, TypeSchema[]>();
   private unions   = new Map<string, Set<string>>();
 
   registerPlain(name: string, fields: string[]) {
-    this.schemas.set(name, { fields, inferredTypes: null, unionName: null });
+    const existing = this.schemas.get(name) ?? [];
+    existing.push({ fields, inferredTypes: null, unionName: null });
+    this.schemas.set(name, existing);
   }
 
   registerUnion(unionName: string, variants: { name: string; fields: string[] }[], globals?: Environment) {
     const variantNames = new Set<string>();
     for (const v of variants) {
-      if (this.schemas.has(v.name)) throw new Error(`Variant '${v.name}' is already defined.`);
-      this.schemas.set(v.name, { fields: v.fields, inferredTypes: null, unionName });
+      const existing = this.schemas.get(v.name) ?? [];
+      // Allow shared variant names across different unions — only reject
+      // redefinition within the same union.
+      if (existing.some(s => s.unionName === unionName)) {
+        throw new Error(`Variant '${v.name}' is already defined in union '${unionName}'.`);
+      }
+      existing.push({ fields: v.fields, inferredTypes: null, unionName });
+      this.schemas.set(v.name, existing);
       variantNames.add(v.name);
       if (v.fields.length === 0 && globals) {
-        globals.define(v.name, { __type: v.name, __union: unionName }, false);
+        // Zero-field variants that share a name across unions should only be
+        // registered as globals once — first registration wins. Callers that
+        // need a specific union's zero-field variant should construct explicitly.
+        if (!globals.isDefined(v.name)) {
+          globals.define(v.name, { __type: v.name, __union: unionName }, false);
+        }
       }
     }
     this.unions.set(unionName, variantNames);
   }
 
-  instantiate(name: string, orderedValues: any[]): any {
-    const schema = this.schemas.get(name);
+  /** Find the schema for (variantName, unionName). Falls back to first schema if unionName is null. */
+  private getSchema(name: string, unionName: string | null): TypeSchema | undefined {
+    const list = this.schemas.get(name);
+    if (!list || list.length === 0) return undefined;
+    if (unionName === null) return list[0];
+    return list.find(s => s.unionName === unionName) ?? list[0];
+  }
+
+  /**
+   * Construct a value of variant `name`. If the same variant name exists in
+   * multiple unions, `unionHint` (the __union tag of the containing value or
+   * the explicit union name) disambiguates which schema to use.
+   */
+  instantiate(name: string, orderedValues: any[], unionHint?: string): any {
+    const schema = this.getSchema(name, unionHint ?? null);
     if (!schema) throw new Error(`Unknown type '${name}'.`);
     if (orderedValues.length !== schema.fields.length) {
       throw new Error(`'${name}' expects ${schema.fields.length} field(s), got ${orderedValues.length}.`);
@@ -202,10 +244,8 @@ export class TypeRegistry {
       for (let i = 0; i < schema.fields.length; i++) {
         const expected = schema.inferredTypes[i];
         const actual   = currentTypes[i];
-        // An empty list [] is compatible with any list<T>
         if (actual === 'list' && expected.startsWith('list')) continue;
         if (expected === 'list' && actual.startsWith('list')) {
-          // Upgrade the inferred type now that we have a typed list
           schema.inferredTypes[i] = actual;
           continue;
         }
@@ -219,8 +259,14 @@ export class TypeRegistry {
     return obj;
   }
 
-  unionOf(variantName: string): string | null {
-    return this.schemas.get(variantName)?.unionName ?? null;
+  /**
+   * Given a variant name and a union context (from a runtime value's __union),
+   * return the union name. When a variant name is shared, the unionContext
+   * disambiguates which union it belongs to for exhaustiveness checking.
+   */
+  unionOf(variantName: string, unionContext?: string): string | null {
+    const schema = this.getSchema(variantName, unionContext ?? null);
+    return schema?.unionName ?? null;
   }
 
   variantsOf(unionName: string): Set<string> | null {
@@ -228,7 +274,10 @@ export class TypeRegistry {
   }
 
   hasType(name: string): boolean { return this.schemas.has(name); }
-  getFields(name: string): string[] { return this.schemas.get(name)?.fields ?? []; }
+
+  getFields(name: string, unionHint?: string): string[] {
+    return this.getSchema(name, unionHint ?? null)?.fields ?? [];
+  }
 }
 
 // ─── Stdin Buffer ─────────────────────────────────────────────────────────────
@@ -748,7 +797,9 @@ export class Interpreter {
     this.inTailPosition = false;
     const subject     = this.force(this.evaluateExpr(expr.subject, env));
     const subjectType = subject?.__type ?? null;
-    const unionName   = subjectType ? this.types.unionOf(subjectType) : null;
+    const subjectUnion = subject?.__union ?? null;
+    // Use the subject's __union to disambiguate when variant names are shared
+    const unionName   = subjectType ? this.types.unionOf(subjectType, subjectUnion) : null;
     const hasWildcard = expr.arms.some((a: any) => a.variant === null);
 
     if (!hasWildcard && unionName) {

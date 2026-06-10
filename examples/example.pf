@@ -695,10 +695,10 @@ println(isInfinite("hello"));    // false
 /*
   16. FIND & FINDSLICE
   ============================================================================
-  find(list, item)        — returns Some { value } with the index of the
-                            first matching item, or None if not found
-  findSlice(list, slice)  — returns Some { value } with the start index of
-                            the first matching sublist, or None if not found
+  find(list, item)        — returns Some { index } of first matching item,
+                            or None if not found
+  findSlice(list, slice)  — returns Some { index } of first matching sublist,
+                            or None if not found
 
   Both use deep value equality (not reference equality), work on strings,
   finite lists, and records. Require a finite list — use take() first on
@@ -720,9 +720,10 @@ println(match find("hello", 'l') with | Some s -> s.value | None -> "not found")
 println(match find("hello", 'z') with | Some s -> s.value | None -> "not found");   // not found
 
 // find with records — value equality
-type Point = { x, y }
-let pts = [Point { 1, 2 }, Point { 3, 4 }, Point { 5, 6 }];
-println(match find(pts, Point { 3, 4 }) with | Some s -> s.value | None -> "not found");  // 1
+// (Use SearchPt to avoid conflict with the 3-field Point defined earlier)
+type SearchPt = { x, y }
+let pts = [SearchPt { 1, 2 }, SearchPt { 3, 4 }, SearchPt { 5, 6 }];
+println(match find(pts, SearchPt { 3, 4 }) with | Some s -> s.value | None -> "not found");  // 1
 
 // findSlice on a list
 println(match findSlice([1, 2, 3, 4, 5], [2, 3, 4]) with | Some s -> s.value | None -> "not found");  // 1
@@ -936,10 +937,11 @@ var src = "./testsrc.txt";
 var dst = "./testdst.txt";
 
 proc copyFile(src, dst) {
-  let content = readFile(src);
-  match content with
-    | Some s -> writeFile(dst, s.value)
-    | None   -> println("Could not read source file");
+  match readFile(src) with
+    | Ok o  -> match writeFile(dst, o.value) with
+        | Ok _  -> 0
+        | Err e -> println("Write failed: " + e.message)
+    | Err e -> println("Read failed: " + e.message);
 }
 
 
@@ -1085,5 +1087,111 @@ function capitalize(s) {
 
 // Combine $ and join for neat output
 let nums = [10, 20, 30];
-println($"numbers: {join(nums, \", \")}");  // numbers: 10, 20, 30
+let numsStr = join(nums, ", ");
+println($"numbers: {numsStr}");  // numbers: 10, 20, 30
 
+
+/*
+  23. FILE I/O
+  ============================================================================
+  File operations are in the "file" built-in module (imported at the top).
+
+  FileMode — controls how fileOpen opens the file:
+    Read   — open for reading; file must exist
+    Write  — open for writing; creates or overwrites
+    Append — open for writing; creates or appends to end
+
+  Result type — returned by all non-read file operations:
+    Ok  { value }   — success; value is the result (string, int, handle...)
+    Err { message } — failure; message describes the OS error
+
+  ReadResult type — returned by readChar and readLine:
+    Ok  { value }   — success; a char or string was read
+    Eof             — end of file reached cleanly
+    Err { message } — I/O error
+
+  Both Ok and Err appear in both Result and ReadResult. The match expression
+  resolves which variants are required from the type of the subject value —
+  so matching a Result only requires Ok | Err, while matching a ReadResult
+  requires Ok | Eof | Err.
+
+  Convenience functions (no handle management):
+    readFile(path)            -> Result
+    writeFile(path, content)  -> Result
+
+  Handle-based functions (explicit open/close):
+    fileOpen(path, mode)      -> Result { handle }
+    fileClose(handle)         -> Result
+    readChar(handle)          -> ReadResult
+    readLine(handle)          -> ReadResult
+    writeChar(handle, char)   -> Result
+    writeLine(handle, string) -> Result
+
+  All file functions are impure — proc/top-level only.
+*/
+
+println("--- 23. File I/O ---");
+
+let tmpPath = "./pfun-example-tmp.txt";
+
+// ── readFile / writeFile ──────────────────────────────────────────────────────
+
+proc demonstrateReadWrite() {
+  // Write a file; Ok carries the character count
+  match writeFile(tmpPath, "Hello from Pfun!\nLine two.") with
+    | Ok o  -> println($"Wrote {o.value} chars")    // Wrote 26 chars
+    | Err e -> println("Write error: " + e.message);
+
+  // Read it back
+  match readFile(tmpPath) with
+    | Ok o  -> println(o.value)
+    | Err e -> println("Read error: " + e.message);
+
+  // Missing file — Err carries a descriptive OS message
+  match readFile("./does-not-exist.txt") with
+    | Ok  _ -> println("unexpected success")
+    | Err e -> println("Caught missing file: " + e.message);
+}
+demonstrateReadWrite();
+
+// ── FileMode: Write vs Append ─────────────────────────────────────────────────
+
+proc demonstrateModes() {
+  // Write — creates or overwrites
+  match fileOpen(tmpPath, Write) with
+    | Ok o  -> { writeLine(o.value, "overwritten"); fileClose(o.value); }
+    | Err e -> println("Open error: " + e.message);
+
+  // Append — adds to end without truncating
+  match fileOpen(tmpPath, Append) with
+    | Ok o  -> { writeLine(o.value, "appended line"); fileClose(o.value); }
+    | Err e -> println("Append error: " + e.message);
+
+  // Read back both lines
+  match readFile(tmpPath) with
+    | Ok o  -> println(o.value)    // overwritten\nappended line
+    | Err e -> println("Read error: " + e.message);
+}
+demonstrateModes();
+
+// ── Handle-based reading with ReadResult ─────────────────────────────────────
+
+proc readAllLines(path) {
+  match fileOpen(path, Read) with
+    | Err e -> println("Could not open " + path + ": " + e.message)
+    | Ok o  -> {
+        var handle = o.value;
+        proc readLoop(lineNum) {
+          match readLine(handle) with
+            | Ok  l -> { println($"  {lineNum}: {l.value}"); readLoop(lineNum + 1); }
+            | Eof _ -> 0
+            | Err e -> println("Read error: " + e.message);
+        }
+        readLoop(1);
+        fileClose(handle);
+      }
+}
+readAllLines(tmpPath);
+
+// ── Clean up ──────────────────────────────────────────────────────────────────
+writeFile(tmpPath, "");
