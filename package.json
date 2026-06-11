@@ -3,12 +3,11 @@
   "version": "1.0.0",
   "scripts": {
     "start": "ts-node src/main.ts",
+    "start:interactive": "ts-node src/main.ts -i",
     "build": "tsc",
     "run": "node dist/main.js",
-    "start:compiled": "node dist/main.js",
     "test": "node --require ./jest.bigint-patch.js node_modules/.bin/jest",
-    "test:coverage": "node --require ./jest.bigint-patch.js node_modules/.bin/jest --coverage",
-    "repl": "ts-node src/repl.ts"
+    "test:coverage": "node --require ./jest.bigint-patch.js node_modules/.bin/jest --coverage"
   },
   "devDependencies": {
     "@types/jest": "^29.5.0",

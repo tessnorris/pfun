@@ -51,6 +51,178 @@ if a < b then {
     println("a is greater than or equal to b");
 }
 
+/*
+ *  14. STRINGS, CHARS & OUTPUT
+ *  ============================================================================
+ *  Chars ('a') are a distinct type from strings ("a").
+ *  Semantically, a string is a list of chars — head/tail/cons/map/filter
+ *  all work on strings the same way they work on lists.
+ *
+ *  Char literals:  'a'  '\n'  '\t'  '\\'  '\''
+ *  String escapes: \"  \\  \n  \t
+ *
+ *  Output:
+ *    println(x)  — prints x with a newline
+ *    print(x)    — prints x without a newline
+ *    printf("text {name} or {rec.field}\n")  — interpolated print (no newline)
+ *
+ *  Char/string builtins:
+ *    asc('a')    — char -> integer (ascii code)
+ *    chr(97)     — integer -> char
+ *    head("str") — first char
+ *    tail("str") — rest of string
+ *    cons('c', "str") — prepend char to string
+ *
+ *  List builtins that work on strings and lists:
+ *    slice(n, k, list)  — k items starting at index n (0-based)
+ *    nth(list, n)       — item at index n, or false if out of bounds
+ *    isInfinite(x)      — true if x is a lazy list
+ */
+
+println("--- 14. Strings, Chars & Output ---");
+
+// Char literals are distinct from strings
+let c = 'A';
+println(c);             // A
+println(asc(c));        // 65
+println(chr(65));       // A
+
+// Escape sequences
+let newline = '\n';
+println(asc(newline));  // 10
+let tab = '\t';
+println(asc(tab));      // 9
+
+// String escapes
+println("He said \"hello\"");   // He said "hello"
+
+// Strings as lists of chars
+let greeting = "hello";
+println(head(greeting));         // h
+println(tail(greeting));         // ello
+println(cons('H', tail(greeting))); // Hello
+
+// map over a string returns a string (when fn returns chars)
+function toUpper(c) {
+  return chr(asc(c) - 32);
+}
+// map each char: 'h' -> 'H', etc.
+// (only works for lowercase ascii in this example)
+
+// filter over a string returns a string
+let no_l = filter(fn c => c != 'l', "hello");
+println(no_l);  // heo
+
+// println vs print
+proc printWithoutNewline() {
+  print("one ");
+  print("two ");
+  println("three");
+}
+printWithoutNewline();  // one two three
+
+// string interpolation
+let name = "Alice";
+let age = 30;
+print($"Name: {name}, Age: {age}\n");  // Name: Alice, Age: 30
+
+type Rect = { w, l }
+var r = Rect { 3, 4 };
+print($"Dimensions: {r.w} by {r.l}\n");  // Dimensions: 3 by 4
+
+// Escaped braces in string interpolation
+print($"Use \{ and \} for literal braces\n");
+
+
+/*
+ *  21. @ RAW STRING LITERALS
+ *  ============================================================================
+ *  The @ prefix produces a raw string literal in which backslash sequences
+ *  are NOT processed — every character is taken at face value.  This is
+ *  useful for regular expressions, file paths, help text, and any string
+ *  where you want to write \n to mean the two characters '\' and 'n' rather
+ *  than a newline.
+ *
+ *  Syntax:
+ *    @"text with \n treated as backslash-n"
+ *
+ *  The result is an ordinary string value with no escape processing applied.
+ */
+
+println("--- 21. @ Raw String Literals ---");
+
+let help = @"Options:
+-n   do not output the trailing \n
+-e   enable interpretation of \\n as newline";
+println(help);
+
+// Windows-style path — no need to escape every backslash
+let winPath = @"C:\Users\Alice\Documents\notes.txt";
+println(winPath);  // C:\Users\Alice\Documents\notes.txt
+
+// Regex pattern stored as-is
+let pattern = @"\d+\.\d+";
+println(pattern);  // \d+\.\d+
+
+// Contrast with a regular string
+let normal = "newline: \n";   // contains an actual newline
+let raw    = @"newline: \n";  // contains the two characters \ and n
+println(length(normal));  // 10 (newline is one char)
+println(length(raw));     // 11 (\n is two chars)
+
+
+/*
+ *  22. SPLIT & JOIN
+ *  ============================================================================
+ *  split(str, delimiter)  — splits a string on a delimiter, returning a list
+ *                           of strings.  Empty delimiter splits into chars.
+ *  join(list, delimiter)  — joins a list into a string, inserting delimiter
+ *                           between each element.  Values are auto-converted
+ *                           to strings.
+ *
+ *  Both work in pure functions.
+ */
+
+println("--- 22. split & join ---");
+
+// Basic split
+let words = split("one two three", " ");
+println(words);                      // [one, two, three]
+println(length(words));              // 3
+
+// CSV parsing
+let csv = split("Alice,30,true", ",");
+println(csv);                        // [Alice, 30, true]
+
+// Split on empty string → individual characters
+let chars = split("hello", "");
+println(chars);                      // [h, e, l, l, o]
+
+// Basic join
+println(join(["a", "b", "c"], "-")); // a-b-c
+println(join([1, 2, 3], ", "));      // 1, 2, 3
+
+// Round-trip: split then rejoin
+let sentence = "the quick brown fox";
+let ws = split(sentence, " ");
+let rejoined = join(ws, "_");
+println(rejoined);                   // the_quick_brown_fox
+
+// Pure function using split and join
+function capitalize(s) {
+  let parts = split(s, " ");
+  return join([map(fn w => {
+    let first = slice(0, 1, w);
+    let rest  = slice(1, length(w) - 1, w);
+    first + rest;
+  }, parts)][0], " ");
+}
+
+// Combine $ and join for neat output
+let nums = [10, 20, 30];
+let numsStr = join(nums, ", ");
+println($"numbers: {numsStr}");  // numbers: 10, 20, 30
+
 
 /*
   4. FUNCTIONS, LAMBDAS & PROCEDURES
@@ -164,12 +336,303 @@ println(head(numbers));                // 1
 println(tail(numbers));                // [2, 3, 4, 5]
 println(cons(0, numbers));             // [0, 1, 2, 3, 4, 5]
 
-let evens = filter(fn x => x % 2 == 0, numbers);
-let doubled = map(fn x => x * 2, evens);
+let filteredEvens = filter(fn x => x % 2 == 0, numbers);
+let doubled = map(fn x => x * 2, filteredEvens);
 let sum = reduce(fn acc, x => acc + x, 0, doubled);
 
 println(doubled); // [4, 8]
 println(sum);     // 12
+
+
+/*
+ *  15. SLICE, NTH & ISINFINITE
+ *  ============================================================================
+ *  slice(n, k, list)  — returns k items starting at index n (0-based)
+ *                       works on strings, finite lists, and lazy lists
+ *  nth(list, n)       — item at index n, or false if out of bounds
+ *  isInfinite(x)      — true if x is a LazyList descriptor
+ */
+
+println("--- 15. Slice, nth & isInfinite ---");
+
+let nums2 = [10, 20, 30, 40, 50];
+println(slice(1, 3, nums2));   // [20, 30, 40]
+println(slice(0, 2, nums2));   // [10, 20]
+
+// slice on a string
+println(slice(1, 3, "hello"));  // ell
+
+// slice on an infinite list
+let sliceNats = iterate(fn x => x + 1, 1);
+println(slice(5, 3, sliceNats));   // [6, 7, 8]
+
+// nth
+println(nth(nums2, 0));   // 10
+println(nth(nums2, 2));   // 30
+println(nth(nums2, 99));  // false
+
+// nth on a string
+println(nth("hello", 1));  // e
+
+// nth on a lazy list
+println(nth(nats, 9));  // 10
+
+// isInfinite
+println(isInfinite(nats));       // true
+println(isInfinite([1, 2, 3]));  // false
+println(isInfinite("hello"));    // false
+
+
+/*
+ *  16. FIND & FINDSLICE
+ *  ============================================================================
+ *  find(list, item)        — returns Some { index } of first matching item,
+ *                            or None if not found
+ *  findSlice(list, slice)  — returns Some { index } of first matching sublist,
+ *                            or None if not found
+ *
+ *  Both use deep value equality (not reference equality), work on strings,
+ *  finite lists, and records. Require a finite list — use take() first on
+ *  lazy lists.
+ */
+
+println("--- 16. find & findSlice ---");
+
+// find on a list
+let nums3 = [10, 20, 30, 40, 50];
+println(match find(nums, 30) with | Some s -> s.value | None -> "not found");   // 2
+println(match find(nums, 99) with | Some s -> s.value | None -> "not found");   // not found
+
+// find returns first match
+println(match find([1, 2, 1, 3], 1) with | Some s -> s.value | None -> "not found");  // 0
+
+// find on a string (char search)
+println(match find("hello", 'l') with | Some s -> s.value | None -> "not found");   // 2
+println(match find("hello", 'z') with | Some s -> s.value | None -> "not found");   // not found
+
+// find with records — value equality
+// (Use SearchPt to avoid conflict with the 3-field Point defined earlier)
+type SearchPt = { x, y }
+let pts = [SearchPt { 1, 2 }, SearchPt { 3, 4 }, SearchPt { 5, 6 }];
+println(match find(pts, SearchPt { 3, 4 }) with | Some s -> s.value | None -> "not found");  // 1
+
+// findSlice on a list
+println(match findSlice([1, 2, 3, 4, 5], [2, 3, 4]) with | Some s -> s.value | None -> "not found");  // 1
+println(match findSlice([1, 2, 3], [4, 5])           with | Some s -> s.value | None -> "not found");  // not found
+println(match findSlice([1, 2, 3], [])               with | Some s -> s.value | None -> "not found");  // 0
+
+// findSlice on a string (substring search)
+println(match findSlice("hello world", "world") with | Some s -> s.value | None -> "not found");  // 6
+println(match findSlice("hello world", "xyz")   with | Some s -> s.value | None -> "not found");  // not found
+
+// findSlice finds the first of multiple matches
+println(match findSlice([1, 2, 1, 2, 3], [1, 2]) with | Some s -> s.value | None -> "not found");  // 0
+
+// Practical: safe index lookup with Option
+function findByX(pts, targetX) {
+  let matches = [ p for p <- pts where p.x == targetX ];
+  if length(matches) == 0 then None
+    else find(pts, nth(matches, 0));
+}
+println(match findByX(pts, 3) with | Some s -> s.value | None -> "not found");  // 1
+println(match findByX(pts, 9) with | Some s -> s.value | None -> "not found");  // not found
+
+
+/*
+ *  17. REVERSE & LENGTH
+ *  ============================================================================
+ *  reverse(list)  — returns a new list or string in reversed order
+ *  length(list)   — returns the number of elements in a list or string
+ *
+ *  Both work uniformly on strings and finite lists.
+ *  reverse throws on infinite (lazy) lists — use take() first.
+ */
+
+println("--- 17. reverse & length ---");
+
+// reverse a list
+println(reverse([1, 2, 3, 4, 5]));   // [5, 4, 3, 2, 1]
+println(reverse(["a", "b", "c"]));   // [c, b, a]
+
+// reverse a string
+println(reverse("hello"));           // olleh
+println(reverse(""));                // (empty string)
+
+// reverse is its own inverse
+let original = [10, 20, 30];
+println(reverse(reverse(original))); // [10, 20, 30]
+
+// length of a list
+println(length([1, 2, 3, 4, 5]));    // 5
+println(length([]));                  // 0
+
+// length of a string
+println(length("hello"));            // 5
+println(length(""));                  // 0
+
+// useful together — last element of a list
+function last(lst) {
+  return nth(lst, length(lst) - 1);
+}
+println(last([10, 20, 30, 40]));     // 40
+
+// palindrome check
+function isPalindrome(s) {
+  return s == reverse(s);
+}
+println(isPalindrome("racecar"));    // true
+println(isPalindrome("hello"));      // false
+
+// reverse works on the result of map and filter
+let evensRev = reverse(filter(fn x => x % 2 == 0, [1, 2, 3, 4, 5, 6]));
+println(evensRev);                   // [6, 4, 2]
+
+
+/*
+ *  11. LIST COMPREHENSIONS
+ *  ============================================================================
+ *  List comprehensions provide a concise way to build lists from other lists.
+ *
+ *  Syntax:
+ *    [ <body> for <var> <- <source> [for <var2> <- <source2>] [where <guard>] ]
+ *
+ *  - `for x <- list`  binds each element of list to x in turn (generator)
+ *  - Multiple `for` clauses produce the cartesian product of the sources
+ *  - `where <expr>`   filters elements — only items where the guard is true
+ *    are included. The guard is a normal boolean expression, so use &&
+ *    to combine multiple conditions.
+ *  - The body expression is evaluated for each passing element.
+ *  - Comprehensions are pure expressions and can appear anywhere a list can.
+ */
+
+println("--- 11. List Comprehensions ---");
+
+// Basic: double every number
+let nums4 = [1, 2, 3, 4, 5];
+let doubled2 = [ x * 2 for x <- nums ];
+println(doubled); // [2, 4, 6, 8, 10]
+
+// With a where guard: only even numbers, doubled
+let even_doubled = [ x * 2 for x <- nums where x % 2 == 0 ];
+println(even_doubled); // [4, 8]
+
+// Combined conditions with &&
+let range = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+let mid = [ x for x <- range where x > 3 && x < 8 ];
+println(mid); // [4, 5, 6, 7]
+
+// String transformation
+let words2 = ["hello", "world", "pfun"];
+let lengths = [ w + "!" for w <- words ];
+println(lengths); // [hello!, world!, pfun!]
+
+// Multiple generators — cartesian product
+let xs = [1, 2, 3];
+let ys = [10, 20];
+let pairs_sum = [ x + y for x <- xs for y <- ys ];
+println(pairs_sum); // [11, 21, 12, 22, 13, 23]
+
+// Multiple generators with a guard
+let coords = [ x + y for x <- [1, 2, 3] for y <- [1, 2, 3] where x != y ];
+println(coords); // [3, 4, 3, 5, 4, 5]
+
+// Comprehension over a computed list
+let squares = [ x * x for x <- nums ];
+let big_squares = [ s for s <- squares where s > 9 ];
+println(big_squares); // [16, 25]
+
+// Comprehension inside a pure function
+function evens2(lst) {
+  return [ x for x <- lst where x % 2 == 0 ];
+}
+println(evens([1, 2, 3, 4, 5, 6])); // [2, 4, 6]
+
+// Nested comprehension — flatten one level using multiple generators
+let matrix = [[1, 2], [3, 4], [5, 6]];
+let flat = [ x for row <- matrix for x <- row ];
+println(flat); // [1, 2, 3, 4, 5, 6]
+
+
+/*
+ *  12. INFINITE LISTS
+ *  ============================================================================
+ *  Infinite lists are represented as lazy descriptors — no values are computed
+ *  until take() materializes them into a finite array.
+ *
+ *  Constructors:
+ *    iterate(f, seed)  — [seed, f(seed), f(f(seed)), ...]
+ *    repeat(x)         — [x, x, x, ...]
+ *    cycle(list)       — [a, b, c, a, b, c, ...] cycling any list
+ *
+ *  Operations (return new lazy descriptors, still infinite):
+ *    map(f, lazyList)
+ *    filter(f, lazyList)
+ *    cons(x, lazyList)
+ *    tail(lazyList)
+ *
+ *  Materialization:
+ *    take(n, list)  — returns the first n elements as a finite array.
+ *                     Works on both finite and infinite lists.
+ *
+ *  Note: reduce requires a finite list — use take() first.
+ */
+
+println("--- 12. Infinite Lists ---");
+
+// Natural numbers starting from 1
+let nats3 = iterate(fn x => x + 1, 1);
+println(take(5, nats)); // [1, 2, 3, 4, 5]
+
+// Powers of 2
+let powers = iterate(fn x => x * 2, 1);
+println(take(8, powers)); // [1, 2, 4, 8, 16, 32, 64, 128]
+
+// All even numbers via filter
+let lazyEvens2 = filter(fn x => x % 2 == 0, nats);
+println(take(5, lazyEvens2)); // [2, 4, 6, 8, 10]
+
+// All even numbers via map — more efficient
+let doubledNats = map(fn x => x * 2, nats);
+println(take(5, doubledNats)); // [2, 4, 6, 8, 10]
+
+// repeat: infinite list of one value
+let ones = repeat(1);
+println(take(4, ones)); // [1, 1, 1, 1]
+
+// Sum of first 10 naturals using take then reduce
+let sum2 = reduce(fn acc, x => acc + x, 0, take(10, nats));
+println(sum); // 55
+
+// cycle: repeat a finite list forever
+let traffic = cycle(["red", "green", "blue"]);
+println(take(7, traffic)); // [red, green, blue, red, green, blue, red]
+
+// Chaining: map then filter then take
+let result = take(5, filter(fn x => x % 3 == 0, map(fn x => x * 2, nats)));
+println(result); // [6, 12, 18, 24, 30]
+
+// cons onto an infinite list
+let from0 = cons(0, nats);
+println(take(5, from0)); // [0, 1, 2, 3, 4]
+
+// tail of an infinite list
+let from2 = tail(nats);
+println(take(5, from2)); // [2, 3, 4, 5, 6]
+
+// take on a finite list just slices it
+let short = take(3, [10, 20, 30, 40, 50]);
+println(short); // [10, 20, 30]
+
+// Fibonacci using iterate with a pair encoded as a record
+type Pair = { a, b }
+let fibs = map(fn p => p.a, iterate(fn p => Pair { p.b, p.a + p.b }, Pair { 0, 1 }));
+println(take(10, fibs)); // [0, 1, 1, 2, 3, 5, 8, 13, 21, 34]
+
+// Pure function returning an infinite list — fine, no side effects
+function multiplesOf(n) {
+  return iterate(fn x => x + n, n);
+}
+println(take(5, multiplesOf(7))); // [7, 14, 21, 28, 35]
 
 
 /*
@@ -326,154 +789,144 @@ printDescriptions(sq, ci, re);
 //   // Missing Rectangle arm → ERROR: Non-exhaustive match on 'Shape': missing arm(s) for 'Rectangle'.
 // };
 
-println("--- Execution Complete ---");
 
 
 /*
-  11. LIST COMPREHENSIONS
-  ============================================================================
-  List comprehensions provide a concise way to build lists from other lists.
+ *  10. OPTION TYPE
+ *  ============================================================================
+ *  Option is a built-in union type representing a value that may or may not
+ *  exist. It has two variants:
+ *
+ *    Some { value }   — wraps a value
+ *    None             — represents absence (bare identifier, no braces)
+ *
+ *  Use `match` to safely unwrap Option values. Because Option is built-in,
+ *  Some and None are always available without any type declaration.
+ */
 
-  Syntax:
-    [ <body> for <var> <- <source> [for <var2> <- <source2>] [where <guard>] ]
+println("--- 10. Option Type ---");
 
-  - `for x <- list`  binds each element of list to x in turn (generator)
-  - Multiple `for` clauses produce the cartesian product of the sources
-  - `where <expr>`   filters elements — only items where the guard is true
-    are included. The guard is a normal boolean expression, so use &&
-    to combine multiple conditions.
-  - The body expression is evaluated for each passing element.
-  - Comprehensions are pure expressions and can appear anywhere a list can.
-*/
+// Constructing Option values
+let present = Some { 42 };
+let absent = None;
 
-println("--- 11. List Comprehensions ---");
+// Basic unwrapping with match
+let result2 = match present with
+| Some s -> s.value
+| None   -> 0;
+println(result); // 42
 
-// Basic: double every number
-let nums = [1, 2, 3, 4, 5];
-let doubled = [ x * 2 for x <- nums ];
-println(doubled); // [2, 4, 6, 8, 10]
+let missing = match absent with
+| Some s -> s.value
+| None   -> 0;
+println(missing); // 0
 
-// With a where guard: only even numbers, doubled
-let even_doubled = [ x * 2 for x <- nums where x % 2 == 0 ];
-println(even_doubled); // [4, 8]
-
-// Combined conditions with &&
-let range = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
-let mid = [ x for x <- range where x > 3 && x < 8 ];
-println(mid); // [4, 5, 6, 7]
-
-// String transformation
-let words = ["hello", "world", "pfun"];
-let lengths = [ w + "!" for w <- words ];
-println(lengths); // [hello!, world!, pfun!]
-
-// Multiple generators — cartesian product
-let xs = [1, 2, 3];
-let ys = [10, 20];
-let pairs_sum = [ x + y for x <- xs for y <- ys ];
-println(pairs_sum); // [11, 21, 12, 22, 13, 23]
-
-// Multiple generators with a guard
-let coords = [ x + y for x <- [1, 2, 3] for y <- [1, 2, 3] where x != y ];
-println(coords); // [3, 4, 3, 5, 4, 5]
-
-// Comprehension over a computed list
-let squares = [ x * x for x <- nums ];
-let big_squares = [ s for s <- squares where s > 9 ];
-println(big_squares); // [16, 25]
-
-// Comprehension inside a pure function
-function evens(lst) {
-  return [ x for x <- lst where x % 2 == 0 ];
+// A pure function returning an Option — safe division
+function safeDivide(a, b) {
+  return b == 0 ? None : Some { a / b };
 }
-println(evens([1, 2, 3, 4, 5, 6])); // [2, 4, 6]
 
-// Nested comprehension — flatten one level using multiple generators
-let matrix = [[1, 2], [3, 4], [5, 6]];
-let flat = [ x for row <- matrix for x <- row ];
-println(flat); // [1, 2, 3, 4, 5, 6]
+let good = safeDivide(10, 2);
+let bad  = safeDivide(10, 0);
+
+println(match good with
+| Some s -> "Result: " + s.value
+| None   -> "Division by zero"
+);  // Result: 5
+
+println(match bad with
+| Some s -> "Result: " + s.value
+| None   -> "Division by zero"
+);  // Division by zero
+
+// where guard on Some — only match large values
+let big = Some { 100 };
+let classify_opt = match big with
+| Some s where s.value > 50 -> "big"
+| Some _                    -> "small"
+| None                      -> "nothing";
+println(classify_opt); // big
+
+// Option in a list — filter out None values with a procedure
+let opts = [Some { 1 }, Some { 2 }, Some { 3 }];
+let unwrapped = map(fn o => match o with | Some s -> s.value | None -> 0, opts);
+println(unwrapped); // [1, 2, 3]
+
+// Chaining: find first Some in a list using reduce
+function firstSome(acc, x) {
+  return match acc with
+  | Some _ -> acc
+  | None   -> x;
+}
+let candidates = [None, None, Some { 7 }, Some { 8 }];
+let first2 = reduce(fn a, x => firstSome(a, x), None, candidates);
+println(match first2 with
+| Some s -> s.value
+| None   -> 0
+); // 7
 
 
 /*
-  12. INFINITE LISTS
-  ============================================================================
-  Infinite lists are represented as lazy descriptors — no values are computed
-  until take() materializes them into a finite array.
+ *  19. MODULES & IMPORTS
+ *  ============================================================================
+ *  Pfun supports TypeScript-style imports for multi-file projects.
+ *
+ *  Named import:
+ *    import { add, multiply } from "./mathutils";
+ *
+ *  Namespace import:
+ *    import * as Math from "./mathutils";
+ *
+ *  Export (in the module file):
+ *    export function add(x, y) { return x + y; }
+ *    export let tau = 6;
+ *    export proc printResult(label, val) { println(label + ": " + val); }
+ *
+ *  Rules:
+ *  - Paths starting with ./ or ../ are relative to the importing file.
+ *  - Bare names (no ./) are resolved from a lib/ subdirectory.
+ *  - Modules are executed once and cached.
+ *  - Circular imports are detected and throw an error.
+ *  - Only explicitly exported names are importable.
+ */
 
-  Constructors:
-    iterate(f, seed)  — [seed, f(seed), f(f(seed)), ...]
-    repeat(x)         — [x, x, x, ...]
-    cycle(list)       — [a, b, c, a, b, c, ...] cycling any list
+println("--- 19. Modules & Imports ---");
 
-  Operations (return new lazy descriptors, still infinite):
-    map(f, lazyList)
-    filter(f, lazyList)
-    cons(x, lazyList)
-    tail(lazyList)
+// Named imports from ./mathutils.pf
+import { add as mathAdd, fact as mathFact, safeDivide as mathSafeDivide, clamp as mathClamp, printResult as mathPrintResult } from "./mathutils";
 
-  Materialization:
-    take(n, list)  — returns the first n elements as a finite array.
-                     Works on both finite and infinite lists.
+println(mathAdd(10, 5));                       // 15
+println(mathFact(6));                          // 720
+println(mathClamp(15, 0, 10));                 // 10
+println(mathClamp(5, 0, 10));                  // 5
+mathPrintResult("fact(5)", mathFact(5));       // fact(5): 120
 
-  Note: reduce requires a finite list — use take() first.
-*/
+// Option result from safeDivide
+let divided = mathSafeDivide(20, 4);
+println(match divided with
+| Some s -> "Result: " + s.value
+| None   -> "Division by zero"
+);  // Result: 5
 
-println("--- 12. Infinite Lists ---");
+// Namespace import — all exports under one name
+import * as Math from "./mathutils";
 
-// Natural numbers starting from 1
-let nats = iterate(fn x => x + 1, 1);
-println(take(5, nats)); // [1, 2, 3, 4, 5]
+println(Math.multiply(6, 7));   // 42
+println(Math.subtract(10, 3));  // 7
+println(Math.tau);              // 6
+Math.printResult("countdown", Math.countdown(3));  // countdown: Liftoff!
 
-// Powers of 2
-let powers = iterate(fn x => x * 2, 1);
-println(take(8, powers)); // [1, 2, 4, 8, 16, 32, 64, 128]
 
-// All even numbers via filter
-let evens = filter(fn x => x % 2 == 0, nats);
-println(take(5, evens)); // [2, 4, 6, 8, 10]
+var src = "./testsrc.txt";
+var dst = "./testdst.txt";
 
-// All even numbers via map — more efficient
-let evens2 = map(fn x => x * 2, nats);
-println(take(5, evens2)); // [2, 4, 6, 8, 10]
-
-// repeat: infinite list of one value
-let ones = repeat(1);
-println(take(4, ones)); // [1, 1, 1, 1]
-
-// Sum of first 10 naturals using take then reduce
-let sum = reduce(fn acc, x => acc + x, 0, take(10, nats));
-println(sum); // 55
-
-// cycle: repeat a finite list forever
-let traffic = cycle(["red", "green", "blue"]);
-println(take(7, traffic)); // [red, green, blue, red, green, blue, red]
-
-// Chaining: map then filter then take
-let result = take(5, filter(fn x => x % 3 == 0, map(fn x => x * 2, nats)));
-println(result); // [6, 12, 18, 24, 30]
-
-// cons onto an infinite list
-let from0 = cons(0, nats);
-println(take(5, from0)); // [0, 1, 2, 3, 4]
-
-// tail of an infinite list
-let from2 = tail(nats);
-println(take(5, from2)); // [2, 3, 4, 5, 6]
-
-// take on a finite list just slices it
-let short = take(3, [10, 20, 30, 40, 50]);
-println(short); // [10, 20, 30]
-
-// Fibonacci using iterate with a pair encoded as a record
-type Pair = { a, b }
-let fibs = map(fn p => p.a, iterate(fn p => Pair { p.b, p.a + p.b }, Pair { 0, 1 }));
-println(take(10, fibs)); // [0, 1, 1, 2, 3, 5, 8, 13, 21, 34]
-
-// Pure function returning an infinite list — fine, no side effects
-function multiplesOf(n) {
-  return iterate(fn x => x + n, n);
+proc copyFile(src, dst) {
+  match readFile(src) with
+  | Ok o  -> match writeFile(dst, o.value) with
+  | Ok _  -> 0
+  | Err e -> println("Write failed: " + e.message)
+  | Err e -> println("Read failed: " + e.message);
 }
-println(take(5, multiplesOf(7))); // [7, 14, 21, 28, 35]
 
 
 /*
@@ -547,308 +1000,6 @@ countWords(["hello", "world", "hello"]);  // 1 then 1
 
 
 /*
-  10. OPTION TYPE
-  ============================================================================
-  Option is a built-in union type representing a value that may or may not
-  exist. It has two variants:
-
-    Some { value }   — wraps a value
-    None             — represents absence (bare identifier, no braces)
-
-  Use `match` to safely unwrap Option values. Because Option is built-in,
-  Some and None are always available without any type declaration.
-*/
-
-println("--- 10. Option Type ---");
-
-// Constructing Option values
-let present = Some { 42 };
-let absent = None;
-
-// Basic unwrapping with match
-let result = match present with
-  | Some s -> s.value
-  | None   -> 0;
-println(result); // 42
-
-let missing = match absent with
-  | Some s -> s.value
-  | None   -> 0;
-println(missing); // 0
-
-// A pure function returning an Option — safe division
-function safeDivide(a, b) {
-  return b == 0 ? None : Some { a / b };
-}
-
-let good = safeDivide(10, 2);
-let bad  = safeDivide(10, 0);
-
-println(match good with
-  | Some s -> "Result: " + s.value
-  | None   -> "Division by zero"
-);  // Result: 5
-
-println(match bad with
-  | Some s -> "Result: " + s.value
-  | None   -> "Division by zero"
-);  // Division by zero
-
-// where guard on Some — only match large values
-let big = Some { 100 };
-let classify_opt = match big with
-  | Some s where s.value > 50 -> "big"
-  | Some _                    -> "small"
-  | None                      -> "nothing";
-println(classify_opt); // big
-
-// Option in a list — filter out None values with a procedure
-let opts = [Some { 1 }, Some { 2 }, Some { 3 }];
-let values = map(fn o => match o with | Some s -> s.value | None -> 0, opts);
-println(values); // [1, 2, 3]
-
-// Chaining: find first Some in a list using reduce
-function firstSome(acc, x) {
-  return match acc with
-    | Some _ -> acc
-    | None   -> x;
-}
-let candidates = [None, None, Some { 7 }, Some { 8 }];
-let first = reduce(fn a, x => firstSome(a, x), None, candidates);
-println(match first with
-  | Some s -> s.value
-  | None   -> 0
-); // 7
-
-
-/*
-  14. STRINGS, CHARS & OUTPUT
-  ============================================================================
-  Chars ('a') are a distinct type from strings ("a").
-  Semantically, a string is a list of chars — head/tail/cons/map/filter
-  all work on strings the same way they work on lists.
-
-  Char literals:  'a'  '\n'  '\t'  '\\'  '\''
-  String escapes: \"  \\  \n  \t
-
-  Output:
-    println(x)  — prints x with a newline
-    print(x)    — prints x without a newline
-    printf("text {name} or {rec.field}\n")  — interpolated print (no newline)
-
-  Char/string builtins:
-    asc('a')    — char -> integer (ascii code)
-    chr(97)     — integer -> char
-    head("str") — first char
-    tail("str") — rest of string
-    cons('c', "str") — prepend char to string
-
-  List builtins that work on strings and lists:
-    slice(n, k, list)  — k items starting at index n (0-based)
-    nth(list, n)       — item at index n, or false if out of bounds
-    isInfinite(x)      — true if x is a lazy list
-*/
-
-println("--- 14. Strings, Chars & Output ---");
-
-// Char literals are distinct from strings
-let c = 'A';
-println(c);             // A
-println(asc(c));        // 65
-println(chr(65));       // A
-
-// Escape sequences
-let newline = '\n';
-println(asc(newline));  // 10
-let tab = '\t';
-println(asc(tab));      // 9
-
-// String escapes
-println("He said \"hello\"");   // He said "hello"
-
-// Strings as lists of chars
-let greeting = "hello";
-println(head(greeting));         // h
-println(tail(greeting));         // ello
-println(cons('H', tail(greeting))); // Hello
-
-// map over a string returns a string (when fn returns chars)
-function toUpper(c) {
-  return chr(asc(c) - 32);
-}
-// map each char: 'h' -> 'H', etc.
-// (only works for lowercase ascii in this example)
-
-// filter over a string returns a string
-let no_l = filter(fn c => c != 'l', "hello");
-println(no_l);  // heo
-
-// println vs print
-proc printWithoutNewline() {
-  print("one ");
-  print("two ");
-  println("three");
-}
-printWithoutNewline();  // one two three
-
-// string interpolation
-let name = "Alice";
-let age = 30;
-print($"Name: {name}, Age: {age}\n");  // Name: Alice, Age: 30
-
-type Rect = { w, l }
-var r = Rect { 3, 4 };
-print($"Dimensions: {r.w} by {r.l}\n");  // Dimensions: 3 by 4
-
-// Escaped braces in string interpolation
-print($"Use \{ and \} for literal braces\n");
-
-
-/*
-  15. SLICE, NTH & ISINFINITE
-  ============================================================================
-  slice(n, k, list)  — returns k items starting at index n (0-based)
-                       works on strings, finite lists, and lazy lists
-  nth(list, n)       — item at index n, or false if out of bounds
-  isInfinite(x)      — true if x is a LazyList descriptor
-*/
-
-println("--- 15. Slice, nth & isInfinite ---");
-
-let nums = [10, 20, 30, 40, 50];
-println(slice(1, 3, nums));   // [20, 30, 40]
-println(slice(0, 2, nums));   // [10, 20]
-
-// slice on a string
-println(slice(1, 3, "hello"));  // ell
-
-// slice on an infinite list
-let nats = iterate(fn x => x + 1, 1);
-println(slice(5, 3, nats));   // [6, 7, 8]
-
-// nth
-println(nth(nums, 0));   // 10
-println(nth(nums, 2));   // 30
-println(nth(nums, 99));  // false
-
-// nth on a string
-println(nth("hello", 1));  // e
-
-// nth on a lazy list
-println(nth(nats, 9));  // 10
-
-// isInfinite
-println(isInfinite(nats));       // true
-println(isInfinite([1, 2, 3]));  // false
-println(isInfinite("hello"));    // false
-
-
-/*
-  16. FIND & FINDSLICE
-  ============================================================================
-  find(list, item)        — returns Some { index } of first matching item,
-                            or None if not found
-  findSlice(list, slice)  — returns Some { index } of first matching sublist,
-                            or None if not found
-
-  Both use deep value equality (not reference equality), work on strings,
-  finite lists, and records. Require a finite list — use take() first on
-  lazy lists.
-*/
-
-println("--- 16. find & findSlice ---");
-
-// find on a list
-let nums = [10, 20, 30, 40, 50];
-println(match find(nums, 30) with | Some s -> s.value | None -> "not found");   // 2
-println(match find(nums, 99) with | Some s -> s.value | None -> "not found");   // not found
-
-// find returns first match
-println(match find([1, 2, 1, 3], 1) with | Some s -> s.value | None -> "not found");  // 0
-
-// find on a string (char search)
-println(match find("hello", 'l') with | Some s -> s.value | None -> "not found");   // 2
-println(match find("hello", 'z') with | Some s -> s.value | None -> "not found");   // not found
-
-// find with records — value equality
-// (Use SearchPt to avoid conflict with the 3-field Point defined earlier)
-type SearchPt = { x, y }
-let pts = [SearchPt { 1, 2 }, SearchPt { 3, 4 }, SearchPt { 5, 6 }];
-println(match find(pts, SearchPt { 3, 4 }) with | Some s -> s.value | None -> "not found");  // 1
-
-// findSlice on a list
-println(match findSlice([1, 2, 3, 4, 5], [2, 3, 4]) with | Some s -> s.value | None -> "not found");  // 1
-println(match findSlice([1, 2, 3], [4, 5])           with | Some s -> s.value | None -> "not found");  // not found
-println(match findSlice([1, 2, 3], [])               with | Some s -> s.value | None -> "not found");  // 0
-
-// findSlice on a string (substring search)
-println(match findSlice("hello world", "world") with | Some s -> s.value | None -> "not found");  // 6
-println(match findSlice("hello world", "xyz")   with | Some s -> s.value | None -> "not found");  // not found
-
-// findSlice finds the first of multiple matches
-println(match findSlice([1, 2, 1, 2, 3], [1, 2]) with | Some s -> s.value | None -> "not found");  // 0
-
-// Practical: safe index lookup with Option
-function findByX(pts, targetX) {
-  let matches = [ p for p <- pts where p.x == targetX ];
-  if length(matches) == 0 then None
-  else find(pts, nth(matches, 0));
-}
-println(match findByX(pts, 3) with | Some s -> s.value | None -> "not found");  // 1
-println(match findByX(pts, 9) with | Some s -> s.value | None -> "not found");  // not found
-
-
-/*
-  17. REVERSE & LENGTH
-  ============================================================================
-  reverse(list)  — returns a new list or string in reversed order
-  length(list)   — returns the number of elements in a list or string
-
-  Both work uniformly on strings and finite lists.
-  reverse throws on infinite (lazy) lists — use take() first.
-*/
-
-println("--- 17. reverse & length ---");
-
-// reverse a list
-println(reverse([1, 2, 3, 4, 5]));   // [5, 4, 3, 2, 1]
-println(reverse(["a", "b", "c"]));   // [c, b, a]
-
-// reverse a string
-println(reverse("hello"));           // olleh
-println(reverse(""));                // (empty string)
-
-// reverse is its own inverse
-let original = [10, 20, 30];
-println(reverse(reverse(original))); // [10, 20, 30]
-
-// length of a list
-println(length([1, 2, 3, 4, 5]));    // 5
-println(length([]));                  // 0
-
-// length of a string
-println(length("hello"));            // 5
-println(length(""));                  // 0
-
-// useful together — last element of a list
-function last(lst) {
-  return nth(lst, length(lst) - 1);
-}
-println(last([10, 20, 30, 40]));     // 40
-
-// palindrome check
-function isPalindrome(s) {
-  return s == reverse(s);
-}
-println(isPalindrome("racecar"));    // true
-println(isPalindrome("hello"));      // false
-
-// reverse works on the result of map and filter
-let evensRev = reverse(filter(fn x => x % 2 == 0, [1, 2, 3, 4, 5, 6]));
-println(evensRev);                   // [6, 4, 2]
-
-
-/*
   18. INPUT — readChar & readln
   ============================================================================
   readChar()  — reads one character from stdin, returns Some { value } or None
@@ -874,10 +1025,10 @@ println(evensRev);                   // [6, 4, 2]
       print("Enter your name: ");
       flushStdout();
       var input = readln();
-      let name = match input with
+      let userName = match input with
         | Some s -> s.value
         | None   -> "stranger"
-      print($"Hello, {name}!\n");
+      print($"Hello, {userName}!\n");
     }
 
   Example — gate check (the Mines of Moria):
@@ -906,94 +1057,31 @@ println(evensRev);                   // [6, 4, 2]
 // flushStdout() ensures print() output appears before readln() blocks.
 // Without it, the prompt may not display until after the user types input.
 
-proc greet() {
+proc greet2() {
   print("Enter your name: ");
   flushStdout();
   var input = readln();
-  let name = match input with
+  let name2 = match input with
     | Some s -> s.value
     | None   -> "stranger";
-  print($"Hello, {name}!\n");
+  print($"Hello, {name2}!\n");
 }
-greet();
+greet2();
 
-proc gate() {
+proc gate2() {
   print("Speak, friend, and enter: ");
   flushStdout();
   var inp = readln();
-  let answer = match inp with
+  let answer2 = match inp with
     | Some s -> s.value
     | None   -> "";
-  if answer == "friend" then {
+  if answer2 == "friend" then {
     println("Welcome!");
   } else {
     println("None shall pass!");
   }
 }
-gate();
-
-
-/*
-  19. MODULES & IMPORTS
-  ============================================================================
-  Pfun supports TypeScript-style imports for multi-file projects.
-
-  Named import:
-    import { add, multiply } from "./mathutils";
-
-  Namespace import:
-    import * as Math from "./mathutils";
-
-  Export (in the module file):
-    export function add(x, y) { return x + y; }
-    export let tau = 6;
-    export proc printResult(label, val) { println(label + ": " + val); }
-
-  Rules:
-  - Paths starting with ./ or ../ are relative to the importing file.
-  - Bare names (no ./) are resolved from a lib/ subdirectory.
-  - Modules are executed once and cached.
-  - Circular imports are detected and throw an error.
-  - Only explicitly exported names are importable.
-*/
-
-println("--- 19. Modules & Imports ---");
-
-// Named imports from ./mathutils.pf
-import { add, fact, safeDivide, clamp, printResult } from "./mathutils";
-
-println(add(10, 5));        // 15
-println(fact(6));           // 720
-println(clamp(15, 0, 10));  // 10
-println(clamp(5, 0, 10));   // 5
-printResult("fact(5)", fact(5));  // fact(5): 120
-
-// Option result from safeDivide
-let divided = safeDivide(20, 4);
-println(match divided with
-  | Some s -> "Result: " + s.value
-  | None   -> "Division by zero"
-);  // Result: 5
-
-// Namespace import — all exports under one name
-import * as Math from "./mathutils";
-
-println(Math.multiply(6, 7));   // 42
-println(Math.subtract(10, 3));  // 7
-println(Math.tau);              // 6
-Math.printResult("countdown", Math.countdown(3));  // countdown: Liftoff!
-
-
-var src = "./testsrc.txt";
-var dst = "./testdst.txt";
-
-proc copyFile(src, dst) {
-  match readFile(src) with
-    | Ok o  -> match writeFile(dst, o.value) with
-        | Ok _  -> 0
-        | Err e -> println("Write failed: " + e.message)
-    | Err e -> println("Read failed: " + e.message);
-}
+gate2();
 
 
 /*
@@ -1050,96 +1138,6 @@ println(desc);  // Vec(1, 2, 3)
 // Literal braces using \{ and \}
 let tmpl = $"template: \{value\}";
 println(tmpl);  // template: {value}
-
-
-/*
-  21. @ RAW STRING LITERALS
-  ============================================================================
-  The @ prefix produces a raw string literal in which backslash sequences
-  are NOT processed — every character is taken at face value.  This is
-  useful for regular expressions, file paths, help text, and any string
-  where you want to write \n to mean the two characters '\' and 'n' rather
-  than a newline.
-
-  Syntax:
-    @"text with \n treated as backslash-n"
-
-  The result is an ordinary string value with no escape processing applied.
-*/
-
-println("--- 21. @ Raw String Literals ---");
-
-let help = @"Options:
-  -n   do not output the trailing \n
-  -e   enable interpretation of \\n as newline";
-println(help);
-
-// Windows-style path — no need to escape every backslash
-let winPath = @"C:\Users\Alice\Documents\notes.txt";
-println(winPath);  // C:\Users\Alice\Documents\notes.txt
-
-// Regex pattern stored as-is
-let pattern = @"\d+\.\d+";
-println(pattern);  // \d+\.\d+
-
-// Contrast with a regular string
-let normal = "newline: \n";   // contains an actual newline
-let raw    = @"newline: \n";  // contains the two characters \ and n
-println(length(normal));  // 10 (newline is one char)
-println(length(raw));     // 11 (\n is two chars)
-
-
-/*
-  22. SPLIT & JOIN
-  ============================================================================
-  split(str, delimiter)  — splits a string on a delimiter, returning a list
-                           of strings.  Empty delimiter splits into chars.
-  join(list, delimiter)  — joins a list into a string, inserting delimiter
-                           between each element.  Values are auto-converted
-                           to strings.
-
-  Both work in pure functions.
-*/
-
-println("--- 22. split & join ---");
-
-// Basic split
-let words = split("one two three", " ");
-println(words);                      // [one, two, three]
-println(length(words));              // 3
-
-// CSV parsing
-let csv = split("Alice,30,true", ",");
-println(csv);                        // [Alice, 30, true]
-
-// Split on empty string → individual characters
-let chars = split("hello", "");
-println(chars);                      // [h, e, l, l, o]
-
-// Basic join
-println(join(["a", "b", "c"], "-")); // a-b-c
-println(join([1, 2, 3], ", "));      // 1, 2, 3
-
-// Round-trip: split then rejoin
-let sentence = "the quick brown fox";
-let ws = split(sentence, " ");
-let rejoined = join(ws, "_");
-println(rejoined);                   // the_quick_brown_fox
-
-// Pure function using split and join
-function capitalize(s) {
-  let parts = split(s, " ");
-  return join([map(fn w => {
-    let first = slice(0, 1, w);
-    let rest  = slice(1, length(w) - 1, w);
-    first + rest;
-  }, parts)][0], " ");
-}
-
-// Combine $ and join for neat output
-let nums = [10, 20, 30];
-let numsStr = join(nums, ", ");
-println($"numbers: {numsStr}");  // numbers: 10, 20, 30
 
 
 /*
@@ -1327,9 +1325,9 @@ proc p() {
 
   // ── Integer array ─────────────────────────────────────────────────────────────
 
-  var scores = array { 95, 87, 92 };
-  append(scores, 88);
-  println(scores[3]);                 // 88
+  var scoreArr = array { 95, 87, 92 };
+  append(scoreArr, 88);
+  println(scoreArr[3]);                 // 88
 
   // ── Conversions ───────────────────────────────────────────────────────────────
 
@@ -1338,15 +1336,15 @@ proc p() {
   println(snap);                      // [Alicia, Carol, Charlie, Dave, Edgar]
 
   // toArray — list to mutable array
-  let nums = [10, 20, 30];
-  var numArr = toArray(nums);
+  let numList = [10, 20, 30];
+  var numArr = toArray(numList);
   append(numArr, 40);
   println(length(numArr));            // 4
 
   // toDict — integer-keyed dict
-  var small = array { "x", "y", "z" };
-  var d = toDict(small);
-  println(d[0]);                      // x
-  println(d[2]);                      // z
+  var smallArr = array { "x", "y", "z" };
+  var d2 = toDict(smallArr);
+  println(d2[0]);                      // x
+  println(d2[2]);                      // z
 }
 p();

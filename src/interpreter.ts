@@ -57,6 +57,17 @@ export class Environment {
     return this.parent ? this.parent.isDefined(name) : false;
   }
 
+  /** True if name is defined in THIS environment frame (not a parent). */
+  isDefinedLocally(name: string): boolean {
+    return this.values.has(name);
+  }
+
+  /** True if name resolves to a NativeFunction anywhere in the chain. */
+  isNative(name: string): boolean {
+    if (this.values.has(name)) return this.values.get(name)!.value instanceof NativeFunction;
+    return this.parent ? this.parent.isNative(name) : false;
+  }
+
   get(name: string): any {
     if (this.values.has(name)) return this.values.get(name)!.value;
     if (this.parent) return this.parent.get(name);
@@ -467,6 +478,32 @@ export class Interpreter {
 
   getExports(): Map<string, any> { return this.exports; }
 
+  /**
+   * Check that `name` can be defined in `env` under the current rules:
+   * - Never shadow a NativeFunction (anywhere in the chain, any scope).
+   * - At global scope: never redefine an existing user name (let/var/function/proc).
+   *   Exception: the REPL sets `allowGlobalRedef = true` to permit iteration.
+   * - At local scope (inside a function/proc): shadowing user names is fine.
+   */
+  public allowGlobalRedef = false;
+
+  private checkNameAvailable(name: string, env: Environment, kind: string): void {
+    // Rule 1: never shadow a native function, anywhere
+    if (env.isNative(name)) {
+      throw new Error(
+        `[Name] '${name}' is a built-in function and cannot be redefined. ` +
+        `If you imported a module that defines '${name}', use a namespace import instead: ` +
+        `import * as ModuleName from "module".`
+      );
+    }
+    // Rule 2: at global scope, no redefinition of user names (unless REPL mode)
+    if (env === this.globals && !this.allowGlobalRedef) {
+      if (env.isDefinedLocally(name)) {
+        throw new Error(`[Name] '${name}' is already defined in this scope and cannot be redefined.`);
+      }
+    }
+  }
+
   // ─── Public Registry API ────────────────────────────────────────────────────
 
   /** Register a single native function by name. */
@@ -516,11 +553,13 @@ export class Interpreter {
         if (stmt.initializer.type === 'ArrayExpr') {
           throw new Error(`Arrays must be declared with 'var', not 'let'. Use: var ${stmt.name} = array { ... }`);
         }
+        this.checkNameAvailable(stmt.name, env, 'let');
         env.define(stmt.name, new Thunk(stmt.initializer, env), false);
         return;
       }
       case 'VarStmt': {
         if (this.inPureContext) throw new Error("Functions cannot use 'var': side-effectful mutation is not allowed in pure functions. Use 'let' or convert to a procedure.");
+        this.checkNameAvailable(stmt.name, env, 'var');
         const val = this.force(this.evaluateExpr(stmt.initializer, env));
         env.define(stmt.name, val, true);
         return;
@@ -564,12 +603,26 @@ export class Interpreter {
 
         // Helper: bind one export entry into an environment
         const bindExport = (name: string, val: any, targetEnv: Environment, alias?: string) => {
+          const bindName = alias ?? name;
           if (val && val.__builtinFn) {
-            this.registerFunction(val.__builtinFn);
+            // Re-registering an already-registered native is idempotent (e.g. import * from "io"
+            // after iolibFunctions were already registered directly). Only error if a *different*
+            // native or user value occupies the name.
+            if (targetEnv.isNative(bindName)) {
+              // Already a native with this name — skip silently (idempotent re-import)
+            } else if (targetEnv.isDefined(bindName)) {
+              throw new Error(
+                `[Name] '${bindName}' is already defined. ` +
+                `Use a namespace import to avoid collisions: import * as ModuleName from "${stmt.path}".`
+              );
+            } else {
+              this.registerFunction(val.__builtinFn);
+            }
           } else if (val && val.__registryType) {
             this.registerType(val.__registryType);
           } else {
-            targetEnv.define(alias ?? name, val, false);
+            this.checkNameAvailable(bindName, targetEnv, 'import');
+            targetEnv.define(bindName, val, false);
           }
         };
 
@@ -614,9 +667,11 @@ export class Interpreter {
         return;
       }
       case 'FunctionStmt':
+        this.checkNameAvailable(stmt.name, env, 'function');
         env.define(stmt.name, new PfunFunction(stmt.name, stmt.params, stmt.body, env, 'function', stmt.memo), false);
         return;
       case 'ProcedureStmt':
+        this.checkNameAvailable(stmt.name, env, 'proc');
         env.define(stmt.name, new PfunFunction(stmt.name, stmt.params, stmt.body, env, 'procedure'), false);
         return;
       case 'ReturnStmt':

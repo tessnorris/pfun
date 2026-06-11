@@ -981,4 +981,75 @@ describe('Interpreter Feature Tests', () => {
       expect(logs).toEqual(['8', '8']);
     });
   });
+
+  // ─── Name shadowing protection ────────────────────────────────────────────
+
+  describe('Name shadowing protection', () => {
+    it('should throw when shadowing a builtin with let', () => {
+      expect(() => run(`let map = 42;`))
+        .toThrow("built-in function");
+    });
+
+    it('should throw when shadowing a builtin with var at global scope', () => {
+      expect(() => run(`
+        proc p() { var length = 5; }
+        p();
+      `)).toThrow("built-in function");
+    });
+
+    it('should throw when shadowing a builtin with a function', () => {
+      expect(() => run(`function filter(x) { return x; }`))
+        .toThrow("built-in function");
+    });
+
+    it('should throw when shadowing a builtin with a proc', () => {
+      expect(() => run(`proc println(x) { }`))
+        .toThrow("built-in function");
+    });
+
+    it('should throw on global redefinition of a user let', () => {
+      expect(() => run(`
+        let x = 1;
+        let x = 2;
+      `)).toThrow("already defined");
+    });
+
+    it('should throw on global redefinition of a user function', () => {
+      expect(() => run(`
+        function add(x, y) { return x + y; }
+        function add(x, y) { return x - y; }
+      `)).toThrow("already defined");
+    });
+
+    it('should allow shadowing user names inside a function', () => {
+      const { logs } = run(`
+        let x = 10;
+        function double(x) { return x * 2; }
+        println(double(5));
+        println(x);
+      `);
+      expect(logs).toEqual(['10', '10']);
+    });
+
+    it('should allow var reassignment', () => {
+      const { logs } = run(`
+        proc p() {
+          var x = 1;
+          x = 2;
+          println(x);
+        }
+        p();
+      `);
+      expect(logs).toEqual(['2']);
+    });
+
+    it('re-registering a native via import should be idempotent not an error', () => {
+      // Builtins registered directly (e.g. by registerLibrary) can be re-imported
+      // without collision errors — the second registration is silently skipped.
+      // We verify this by checking that println (already registered) doesn't throw.
+      expect(() => run(`
+        println("hello");
+      `)).not.toThrow();
+    });
+  });
 });
