@@ -4,6 +4,7 @@
   "scripts": {
     "start": "ts-node src/main.ts",
     "build": "tsc",
+    "run": "node dist/main.js",
     "start:compiled": "node dist/main.js",
     "test": "node --require ./jest.bigint-patch.js node_modules/.bin/jest",
     "test:coverage": "node --require ./jest.bigint-patch.js node_modules/.bin/jest --coverage",
