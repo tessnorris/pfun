@@ -50,7 +50,7 @@ export type Expr =
 export type Stmt =
   | { type: 'LetStmt'; name: string; initializer: Expr; pos?: SourcePos }
   | { type: 'VarStmt'; name: string; initializer: Expr; pos?: SourcePos }
-  | { type: 'TypeStmt'; name: string; fields: string[]; pos?: SourcePos }
+  | { type: 'TypeStmt'; name: string; fields: string[]; generic?: boolean; pos?: SourcePos }
   | { type: 'UnionTypeStmt'; name: string; variants: { name: string; fields: string[] }[]; pos?: SourcePos }
   | { type: 'ExprStmt'; expression: Expr; pos?: SourcePos }
   | { type: 'BlockStmt'; statements: Stmt[]; pos?: SourcePos }

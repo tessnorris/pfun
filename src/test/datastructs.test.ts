@@ -537,4 +537,290 @@ describe('Data Structure Tests', () => {
       `)).toThrow("Functions cannot mutate arrays or dicts");
     });
   });
+}
+  // ─── Pair ─────────────────────────────────────────────────────────────────────
+
+  describe('Pair', () => {
+    it('is available without a type declaration', () => {
+      const { interpreter } = run(`var p = Pair { "a", 1 };`);
+      expect(interpreter.getGlobal('p').__type).toBe('Pair');
+    });
+
+    it('can be constructed positionally', () => {
+      const { logs } = run(`
+        let p = Pair { "hello", 42 };
+        println(p.key);
+        println(p.value);
+      `);
+      expect(logs).toEqual(['hello', '42']);
+    });
+
+    it('can be constructed with named fields', () => {
+      const { logs } = run(`
+        let p = Pair(key="lang", value="Pfun");
+        println(p.key);
+        println(p.value);
+      `);
+      expect(logs).toEqual(['lang', 'Pfun']);
+    });
+
+    it('can hold integer values', () => {
+      const { logs } = run(`
+        let p = Pair { 1, 99 };
+        println(p.key);
+        println(p.value);
+      `);
+      expect(logs).toEqual(['1', '99']);
+    });
+
+    it('can hold boolean values', () => {
+      const { logs } = run(`
+        let p = Pair(key="active", value=true);
+        println(p.key);
+        println(p.value);
+      `);
+      expect(logs).toEqual(['active', 'true']);
+    });
+
+    it('can hold record values', () => {
+      const { logs } = run(`
+        type Point = { x, y };
+        let p = Pair(key="origin", value=Point { 0, 0 });
+        println(p.key);
+        println(p.value.x);
+      `);
+      expect(logs).toEqual(['origin', '0']);
+    });
+
+    it('works in a list', () => {
+      const { logs } = run(`
+        let pairs = [Pair { "a", 1 }, Pair { "b", 2 }, Pair { "c", 3 }];
+        println(length(pairs));
+        println(head(pairs).key);
+        println(head(tail(pairs)).value);
+      `);
+      expect(logs).toEqual(['3', 'a', '2']);
+    });
+
+    it('works with map', () => {
+      const { logs } = run(`
+        let pairs = [Pair { "x", 10 }, Pair { "y", 20 }];
+        let vals = map(fn p => p.value, pairs);
+        println(vals);
+      `);
+      expect(logs).toEqual(['[10, 20]']);
+    });
+
+    it('works with filter', () => {
+      const { logs } = run(`
+        let pairs = [Pair { "a", 1 }, Pair { "b", 2 }, Pair { "c", 3 }];
+        let big = filter(fn p => p.value > 1, pairs);
+        println(length(big));
+        println(head(big).key);
+      `);
+      expect(logs).toEqual(['2', 'b']);
+    });
+
+    it('can be used in a pure function', () => {
+      const { logs } = run(`
+        function swap(p) { return Pair(key=p.value, value=p.key); }
+        let p = Pair(key="hello", value="world");
+        let s = swap(p);
+        println(s.key);
+        println(s.value);
+      `);
+      expect(logs).toEqual(['world', 'hello']);
+    });
+  });
+
+  // ─── dictToList ───────────────────────────────────────────────────────────────
+
+  describe('dictToList', () => {
+    it('converts a string-keyed dict to a list of Pairs', () => {
+      const { logs } = run(`
+        proc p() {
+          var d = dict { "a" -> 1, "b" -> 2 };
+          let pairs = dictToList(d);
+          println(length(pairs));
+        }
+        p();
+      `);
+      expect(logs).toEqual(['2']);
+    });
+
+    it('each element is a Pair with correct key and value', () => {
+      const { logs } = run(`
+        proc p() {
+          var d = dict { "name" -> "Alice" };
+          let pairs = dictToList(d);
+          let pair = head(pairs);
+          println(pair.key);
+          println(pair.value);
+        }
+        p();
+      `);
+      expect(logs).toEqual(['name', 'Alice']);
+    });
+
+    it('restores integer keys as integers', () => {
+      const { logs } = run(`
+        proc p() {
+          var d = dict { 1 -> "one", 2 -> "two" };
+          let pairs = dictToList(d);
+          let pair = head(pairs);
+          println(pair.key);
+          println(pair.value);
+        }
+        p();
+      `);
+      expect(logs).toEqual(['1', 'one']);
+    });
+
+    it('restores boolean keys as booleans', () => {
+      const { logs } = run(`
+        proc p() {
+          var d = dict { true -> "yes", false -> "no" };
+          let pairs = dictToList(d);
+          let trueEntry = head(filter(fn p => p.key == true, pairs));
+          println(trueEntry.value);
+        }
+        p();
+      `);
+      expect(logs).toEqual(['yes']);
+    });
+
+    it('returns an empty list for an empty dict', () => {
+      const { logs } = run(`
+        proc p() {
+          var d = dict {};
+          let pairs = dictToList(d);
+          println(length(pairs));
+        }
+        p();
+      `);
+      expect(logs).toEqual(['0']);
+    });
+
+    it('pairs can be mapped over', () => {
+      const { logs } = run(`
+        proc p() {
+          var d = dict { "x" -> 10, "y" -> 20, "z" -> 30 };
+          let pairs = dictToList(d);
+          let vals = map(fn p => p.value, pairs);
+          let total = reduce(fn acc, v => acc + v, 0, vals);
+          println(total);
+        }
+        p();
+      `);
+      expect(logs).toEqual(['60']);
+    });
+
+    it('pairs can be filtered', () => {
+      const { logs } = run(`
+        proc p() {
+          var d = dict { "a" -> 1, "b" -> 2, "c" -> 3 };
+          let pairs = dictToList(d);
+          let big = filter(fn p => p.value > 1, pairs);
+          println(length(big));
+        }
+        p();
+      `);
+      expect(logs).toEqual(['2']);
+    });
+
+    it('throws on non-dict argument', () => {
+      expect(() => run(`eval dictToList([1, 2, 3]);`)).toThrow();
+    });
+  });
+}
+  // ─── listToDict ───────────────────────────────────────────────────────────────
+
+  describe('listToDict', () => {
+    it('converts a list of string-keyed Pairs to a dict', () => {
+      const { logs } = run(`
+        proc p() {
+          let pairs = [Pair { "a", 1 }, Pair { "b", 2 }];
+          var d = listToDict(pairs);
+          println(d["a"]);
+          println(d["b"]);
+        }
+        p();
+      `);
+      expect(logs).toEqual(['1', '2']);
+    });
+
+    it('converts a list of integer-keyed Pairs to a dict', () => {
+      const { logs } = run(`
+        proc p() {
+          let pairs = [Pair { 1, "one" }, Pair { 2, "two" }];
+          var d = listToDict(pairs);
+          println(d[1]);
+          println(d[2]);
+        }
+        p();
+      `);
+      expect(logs).toEqual(['one', 'two']);
+    });
+
+    it('converts a list of boolean-keyed Pairs to a dict', () => {
+      const { logs } = run(`
+        proc p() {
+          let pairs = [Pair { true, "yes" }, Pair { false, "no" }];
+          var d = listToDict(pairs);
+          println(d[true]);
+          println(d[false]);
+        }
+        p();
+      `);
+      expect(logs).toEqual(['yes', 'no']);
+    });
+
+    it('round-trips with dictToList', () => {
+      const { logs } = run(`
+        proc p() {
+          var d = dict { "x" -> 10, "y" -> 20, "z" -> 30 };
+          var d2 = listToDict(dictToList(d));
+          println(d2["x"]);
+          println(d2["y"]);
+          println(d2["z"]);
+        }
+        p();
+      `);
+      expect(logs).toEqual(['10', '20', '30']);
+    });
+
+    it('empty list produces empty dict', () => {
+      const { logs } = run(`
+        proc p() {
+          var d = listToDict([]);
+          println(has(d, "a"));
+        }
+        p();
+      `);
+      expect(logs).toEqual(['false']);
+    });
+
+    it('later pairs overwrite earlier pairs with the same key', () => {
+      const { logs } = run(`
+        proc p() {
+          let pairs = [Pair { "k", 1 }, Pair { "k", 2 }];
+          var d = listToDict(pairs);
+          println(d["k"]);
+        }
+        p();
+      `);
+      expect(logs).toEqual(['2']);
+    });
+
+    it('throws on non-list argument', () => {
+      expect(() => run(`eval listToDict("not a list");`)).toThrow();
+    });
+
+    it('throws on list containing non-Pair records', () => {
+      expect(() => run(`
+        type Foo = { x };
+        eval listToDict([Foo { 1 }]);
+      `)).toThrow();
+    });
+  });
 });

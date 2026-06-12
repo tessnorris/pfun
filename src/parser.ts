@@ -38,7 +38,11 @@ export class Parser {
     if (this.match('ProcToken')) return this.parseProcedureStatement();
     if (this.match('LetToken')) return this.parseLetStatement();
     if (this.match('VarToken')) return this.parseVarStatement();
-    if (this.match('TypeToken')) return this.parseTypeStatement();
+    if (this.match('TypeToken')) return this.parseTypeStatement(false);
+    if (this.match('GenericToken')) {
+      this.consume('TypeToken', "Expected 'type' after 'generic'.");
+      return this.parseTypeStatement(true);
+    }
     if (this.match('ReturnToken')) return this.parseReturnStatement();
     if (this.match('EvalToken')) return this.parseEvalStatement();
     if (this.match('IfToken')) return this.parseIfStatement();
@@ -133,7 +137,7 @@ export class Parser {
    *     | Rectangle: x, y
    *   }
    */
-  private parseTypeStatement(): Stmt {
+  private parseTypeStatement(generic: boolean = false): Stmt {
     const stmtPos = this.pos();
     const name = (this.consume('IdentToken', "Expected type name.") as any).value;
     this.consume('AssignToken', "Expected '=' after type name.");
@@ -169,7 +173,7 @@ export class Parser {
     }
     this.consume('RBraceToken', "Expected '}' after type fields.");
     this.match('SemiToken');
-    return { type: 'TypeStmt', name, fields, pos: stmtPos };
+    return { type: 'TypeStmt', name, fields, generic, pos: stmtPos };
   }
 
   private parseImportStatement(): Stmt {

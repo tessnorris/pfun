@@ -608,4 +608,64 @@ describe('File Library Tests', () => {
       `)).toThrow("side effects not allowed in pure functions");
     });
   });
+}
+  describe('fileExists', () => {
+    it('returns true for a file that exists', () => {
+      withTempFile('hello', path => {
+        const { logs } = run(`
+          proc p() {
+            println(fileExists("${path}"));
+          }
+          p();
+        `.replace('${path}', path));
+        expect(logs).toEqual(['true']);
+      });
+    });
+
+    it('returns false for a path that does not exist', () => {
+      const { logs } = run(`
+        proc p() {
+          println(fileExists("/no/such/file.txt"));
+        }
+        p();
+      `);
+      expect(logs).toEqual(['false']);
+    });
+
+    it('can guard a readFile call', () => {
+      withTempFile('content', path => {
+        const { logs } = run(`
+          proc p() {
+            let exists = fileExists("${path}");
+            let result = exists
+              ? (match readFile("${path}") with | Ok o -> o.value | Err _ -> "read failed")
+              : "not found";
+            println(result);
+          }
+          p();
+        `.replace(/\${path}/g, path));
+        expect(logs).toEqual(['content']);
+      });
+    });
+
+    it('returns false after a file is deleted', () => {
+      const path = tempPath();
+      nodeFs.writeFileSync(path, 'data', 'utf8');
+      nodeFs.unlinkSync(path);
+      const { logs } = run(`
+        proc p() {
+          println(fileExists("${path}"));
+        }
+        p();
+      `.replace('${path}', path));
+      expect(logs).toEqual(['false']);
+    });
+
+    it('throws in pure functions', () => {
+      expect(() => run(`
+        function bad() { return fileExists("x.txt"); }
+        bad();
+      `)).toThrow("side effects not allowed in pure functions");
+    });
+  });
 });

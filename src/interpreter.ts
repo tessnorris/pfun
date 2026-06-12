@@ -24,12 +24,12 @@ export type RegistryFunction = {
  * Plain records have fields; union types have variants each with their own fields.
  */
 export type RegistryType =
-  | { kind: 'plain'; name: string; fields: string[] }
+  | { kind: 'plain'; name: string; fields: string[]; generic?: boolean }
   | { kind: 'union'; name: string; variants: { name: string; fields: string[] }[] };
 
 // ─── Value Types ──────────────────────────────────────────────────────────────
 
-function getValueType(v: any): string {
+function getValueType(v: any, schemas?: Map<string, any[]>): string {
   if (v === null || v === undefined) return 'nil';
   if (v instanceof LazyList) return 'lazylist';
   if (v instanceof PfunDict) return 'dict';
@@ -37,10 +37,24 @@ function getValueType(v: any): string {
   if (v instanceof PfunChar) return 'char';
   if (Array.isArray(v)) {
     if (v.length === 0) return 'list';
-    return `list<${getValueType(v[0])}>`;
+    return `list<${getValueType(v[0], schemas)}>`;
   }
   if (v instanceof PfunFunction || v instanceof NativeFunction) return 'function';
-  if (v && v.__type) return v.__union ?? v.__type;
+  if (v && v.__type) {
+    const baseName = v.__union ?? v.__type;
+    if (schemas) {
+      const schemaList = schemas.get(v.__type);
+      const isGeneric = schemaList?.some((s: any) => s.generic) ?? false;
+      if (isGeneric) {
+        const fieldTypes = Object.keys(v)
+          .filter(k => k !== '__type' && k !== '__union')
+          .map(k => getValueType(v[k], schemas))
+          .join(',');
+        return `${baseName}<${fieldTypes}>`;
+      }
+    }
+    return baseName;
+  }
   return typeof v;
 }
 
@@ -199,6 +213,7 @@ interface TypeSchema {
   fields: string[];
   inferredTypes: string[] | null;
   unionName: string | null;
+  generic?: boolean;
 }
 
 /**
@@ -216,9 +231,9 @@ export class TypeRegistry {
   private schemas = new Map<string, TypeSchema[]>();
   private unions   = new Map<string, Set<string>>();
 
-  registerPlain(name: string, fields: string[]) {
+  registerPlain(name: string, fields: string[], generic: boolean = false) {
     const existing = this.schemas.get(name) ?? [];
-    existing.push({ fields, inferredTypes: null, unionName: null });
+    existing.push({ fields, inferredTypes: null, unionName: null, generic });
     this.schemas.set(name, existing);
   }
 
@@ -266,19 +281,21 @@ export class TypeRegistry {
       throw new Error(`'${name}' expects ${schema.fields.length} field(s), got ${orderedValues.length}.`);
     }
     const currentTypes = orderedValues.map(v => getValueType(v));
-    if (schema.inferredTypes === null) {
-      schema.inferredTypes = currentTypes;
-    } else {
-      for (let i = 0; i < schema.fields.length; i++) {
-        const expected = schema.inferredTypes[i];
-        const actual   = currentTypes[i];
-        if (actual === 'list' && expected.startsWith('list')) continue;
-        if (expected === 'list' && actual.startsWith('list')) {
-          schema.inferredTypes[i] = actual;
-          continue;
-        }
-        if (expected !== actual) {
-          throw new Error(`Type mismatch in ${name}: field '${schema.fields[i]}' expected ${expected}, got ${actual}.`);
+    if (!schema.generic) {
+      if (schema.inferredTypes === null) {
+        schema.inferredTypes = currentTypes;
+      } else {
+        for (let i = 0; i < schema.fields.length; i++) {
+          const expected = schema.inferredTypes[i];
+          const actual   = currentTypes[i];
+          if (actual === 'list' && expected.startsWith('list')) continue;
+          if (expected === 'list' && actual.startsWith('list')) {
+            schema.inferredTypes[i] = actual;
+            continue;
+          }
+          if (expected !== actual) {
+            throw new Error(`Type mismatch in ${name}: field '${schema.fields[i]}' expected ${expected}, got ${actual}.`);
+          }
         }
       }
     }
@@ -514,7 +531,7 @@ export class Interpreter {
   /** Register a plain record type or discriminated union type. */
   registerType(entry: RegistryType): void {
     if (entry.kind === 'plain') {
-      this.types.registerPlain(entry.name, entry.fields);
+      this.types.registerPlain(entry.name, entry.fields, entry.generic ?? false);
     } else {
       this.types.registerUnion(entry.name, entry.variants, this.globals);
     }
@@ -565,7 +582,7 @@ export class Interpreter {
         return;
       }
       case 'TypeStmt':
-        this.types.registerPlain(stmt.name, stmt.fields);
+        this.types.registerPlain(stmt.name, stmt.fields, stmt.generic ?? false);
         return;
       case 'UnionTypeStmt':
         this.types.registerUnion(stmt.name, stmt.variants, this.globals);
@@ -1175,10 +1192,11 @@ export class Interpreter {
   }
 
   enforceListType(elements: any[]): void {
+    const schemas = (this as any).types?.schemas as Map<string, any[]> | undefined;
     if (elements.length > 0) {
-      const firstType = getValueType(elements[0]);
+      const firstType = getValueType(elements[0], schemas);
       for (let i = 1; i < elements.length; i++) {
-        const currentType = getValueType(elements[i]);
+        const currentType = getValueType(elements[i], schemas);
         if (currentType === firstType) continue;
         // An empty list [] is compatible with any list<T>
         if (currentType === 'list' && firstType.startsWith('list')) continue;

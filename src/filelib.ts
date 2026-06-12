@@ -129,6 +129,14 @@ export const filelibTypes: RegistryType[] = [
 
 export const filelibFunctions: RegistryFunction[] = [
 
+  // fileExists(path) — returns true if the path exists, false otherwise.
+  { name: 'fileExists', fn: (args, interp) => {
+    if (interp.inPureContext) throw new Error("Functions cannot use 'fileExists': side effects not allowed in pure functions.");
+    const filePath = interp.force(args[0]);
+    if (typeof filePath !== 'string') throw new Error("fileExists: path must be a string.");
+    return fs.existsSync(filePath);
+  }},
+
   // fileOpen(path, mode) — mode is Read | Write | Append
   // Returns Ok { ReadHandle | WriteHandle } or Err { message }.
   { name: 'fileOpen', fn: (args, interp) => {

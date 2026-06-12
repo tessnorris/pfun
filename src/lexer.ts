@@ -48,6 +48,7 @@ export type Token =
   | { type: 'WithToken'; pos?: SourcePos }       // 'with' keyword (opens match arms)
   | { type: 'WhereToken'; pos?: SourcePos }
   | { type: 'WildcardToken'; pos?: SourcePos }
+  | { type: 'GenericToken'; pos?: SourcePos }
   | { type: 'DollarToken'; pos?: SourcePos }     // $ prefix for interpolated strings
   | { type: 'RawStrToken'; value: string; pos?: SourcePos } // @"..." raw string literal
   | { type: 'SemiToken'; pos?: SourcePos } | { type: 'EOFToken'; pos?: SourcePos };
@@ -285,6 +286,7 @@ export class Lexer {
       case 'match':    return { type: 'MatchToken' };
       case 'with':     return { type: 'WithToken' };
       case 'where':    return { type: 'WhereToken' };
+      case 'generic':  return { type: 'GenericToken' };
       default:         return { type: 'IdentToken', value: s };
     }
   }

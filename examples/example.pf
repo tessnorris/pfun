@@ -623,9 +623,8 @@ println(take(5, from2)); // [2, 3, 4, 5, 6]
 let short = take(3, [10, 20, 30, 40, 50]);
 println(short); // [10, 20, 30]
 
-// Fibonacci using iterate with a pair encoded as a record
-type Pair = { a, b }
-let fibs = map(fn p => p.a, iterate(fn p => Pair { p.b, p.a + p.b }, Pair { 0, 1 }));
+// Fibonacci using iterate with the built-in generic Pair record
+let fibs = map(fn p => p.key, iterate(fn p => Pair { p.value, p.key + p.value }, Pair { 0, 1 }));
 println(take(10, fibs)); // [0, 1, 1, 2, 3, 5, 8, 13, 21, 34]
 
 // Pure function returning an infinite list — fine, no side effects
@@ -982,6 +981,56 @@ var small = dict { "x" -> 10, "y" -> 20 };
 println(keys(small));    // [x, y]
 println(values(small));  // [10, 20]
 
+// Pair can be constructed directly — it's a built-in record type
+let p = Pair(key="lang", value="Pfun");
+println(p.key);    // lang
+println(p.value);  // Pfun
+
+// dictToList() — convert a dict to an immutable list of Pair { key, value } records
+// Pair is a built-in generic record — different lists can have different key/value types
+proc showPairs() {
+  var d = dict { "name" -> "Alice", "role" -> "admin" };
+  let pairs = dictToList(d);
+  println(length(pairs));             // 2
+  println(head(pairs).key);           // name
+  println(head(pairs).value);         // Alice
+
+  // Pairs work with all the usual list functions
+  let keys_only = map(fn p => p.key, pairs);
+  println(keys_only);                 // [name, role]
+
+  // Integer-keyed dict — a different list with different Pair field types
+  var scores2 = dict { 1 -> "gold", 2 -> "silver", 3 -> "bronze" };
+  let ranked = dictToList(scores2);
+  println(head(ranked).key);          // 1
+  println(head(ranked).value);        // gold
+}
+showPairs();
+
+// listToDict() — build a dict from a list of Pair { key, value } records
+// Useful for constructing dicts from transformed or filtered pair lists
+proc showListToDict() {
+  // Build a dict directly from a list of Pairs
+  let pairs = [Pair { "name", "Alice" }, Pair { "role", "admin" }, Pair { "lang", "Pfun" }];
+  var d = listToDict(pairs);
+  println(d["name"]);   // Alice
+  println(d["role"]);   // admin
+
+  // Round-trip: dict -> list -> transform -> dict
+  var scores = dict { "alice" -> 10, "bob" -> 8, "carol" -> 12 };
+  let bumped = map(fn p => Pair { p.key, p.value + 1 }, dictToList(scores));
+  var scores2 = listToDict(bumped);
+  println(scores2["alice"]);  // 11
+  println(scores2["carol"]);  // 13
+
+  // Filter pairs before converting — keep only high scorers
+  let top = filter(fn p => p.value >= 10, dictToList(scores));
+  var topScores = listToDict(top);
+  println(has(topScores, "alice"));  // true
+  println(has(topScores, "bob"));    // false
+}
+showListToDict();
+
 // Using a dict as a frequency counter in a procedure
 proc countWords(words) {
   var counts = dict {};
@@ -1176,6 +1225,9 @@ println(tmpl);  // template: {value}
     writeChar(handle, char)   -> Result
     writeLine(handle, string) -> Result
 
+  Existence check:
+    fileExists(path)          -> boolean
+
   All file functions are impure — proc/top-level only.
 */
 
@@ -1242,6 +1294,24 @@ proc readAllLines(path) {
 }
 readAllLines(tmpPath);
 
+// ── fileExists ───────────────────────────────────────────────────────────────
+
+// Returns true if the path exists, false otherwise — no handle needed
+println(fileExists(tmpPath));              // true
+println(fileExists("./no-such-file.txt")); // false
+
+// Useful as a guard before reading
+proc safeRead(path) {
+  if fileExists(path) then
+    match readFile(path) with
+    | Ok o  -> println("Read: " + o.value)
+    | Err e -> println("Error: " + e.message)
+  else
+    println("File not found: " + path);
+}
+safeRead(tmpPath);                         // Read: (contents)
+safeRead("./no-such-file.txt");            // File not found: ./no-such-file.txt
+
 // ── Clean up ──────────────────────────────────────────────────────────────────
 writeFile(tmpPath, "");
 
@@ -1282,7 +1352,7 @@ println("--- 24. Arrays ---");
 
 // ── Construction and access ───────────────────────────────────────────────────
 
-proc p() {
+proc arrayExamples() {
   var employees = array { "Alice", "Bob", "Carol" };
   println(employees[0]);              // Alice
   println(length(employees));         // 3
@@ -1347,4 +1417,144 @@ proc p() {
   println(d2[0]);                      // x
   println(d2[2]);                      // z
 }
-p();
+arrayExamples();
+
+
+/*
+ *  20. JSON PERSISTENCE
+ *  ============================================================================
+ *  The json module serializes and deserializes Pfun's immutable data structures
+ *  — records, discriminated union variants, and lists (arbitrarily nested) —
+ *  to and from JSON.
+ *
+ *  Import:
+ *    import * from "json";
+ *
+ *  Functions:
+ *    jsonSerialize(value)       — convert a value to a JSON string
+ *                                 returns Some { string } or None on failure
+ *    jsonDeserialize(string)    — parse a JSON string back to a Pfun value
+ *                                 returns Some { value } or None on failure
+ *    jsonWriteFile(path, value) — serialize and write to a file (procedure only)
+ *                                 returns Some { true } or None on failure
+ *    jsonReadFile(path)         — read and deserialize a JSON file (procedure only)
+ *                                 returns Some { value } or None on failure
+ *
+ *  Wire format
+ *  -----------
+ *  bigint      → { "__pfun": "int",    "v": "123" }
+ *  char        → { "__pfun": "char",   "v": "x"   }
+ *  record/variant → { "__pfun": "record", "__type": "Circle", "__union": "Shape", ...fields }
+ *  string, boolean, null, list → native JSON
+ */
+
+import * from "json";
+
+println("--- 20. JSON Persistence ---");
+
+// ── Serialize primitives ────────────────────────────────────────────────────
+
+proc json1() {
+  let s = jsonSerialize(42);
+  println(match s with | Some s -> s.value | None -> "failed");
+  // {"__pfun":"int","v":"42"}
+
+  let back = jsonDeserialize(match s with | Some s -> s.value | None -> "");
+  println(match back with | Some s -> s.value | None -> -1);
+  // 42
+}
+json1();
+
+// ── Serialize a record ──────────────────────────────────────────────────────
+
+type Coord = { x, y };
+
+proc json2() {
+  let pt = Coord(x=3, y=7);
+  let s = jsonSerialize(pt);
+  println(match s with | Some s -> s.value | None -> "failed");
+  // {"__pfun":"record","__type":"Coord","x":{"__pfun":"int","v":"3"},...}
+
+  let pt2 = match jsonDeserialize(match s with | Some s -> s.value | None -> "") with
+  | Some s -> s.value
+  | None   -> Coord { 0, 0 };
+  println("x=" + pt2.x + " y=" + pt2.y);   // x=3 y=7
+}
+json2();
+
+// ── Serialize a discriminated union ────────────────────────────────────────
+
+type Figure = {
+  | Disk: radius
+  | Rect2: x, y
+}
+
+proc json3() {
+  let shapes = [Disk { 5 }, Rect2(x=3, y=4), Disk { 10 }];
+  let s = jsonSerialize(shapes);
+
+  let shapes2 = match jsonDeserialize(match s with | Some s -> s.value | None -> "") with
+  | Some s -> s.value
+  | None   -> [];
+
+  let describe = fn shape => match shape with
+  | Disk d      -> "Disk r=" + d.radius
+  | Rect2 r     -> "Rect " + r.x + "x" + r.y;
+
+  println(describe(head(shapes2)));         // Disk r=5
+  println(describe(head(tail(shapes2))));   // Rect 3x4
+}
+json3();
+
+// ── Write to file and read back ─────────────────────────────────────────────
+
+type Config = { host, port, debug };
+
+proc json4() {
+  let cfg = Config(host="localhost", port=8080, debug=true);
+
+  match jsonWriteFile("./config.json", cfg) with
+  | Some _ -> println("written")           // written
+  | None   -> println("write failed");
+
+  let cfg2 = match jsonReadFile("./config.json") with
+  | Some s -> s.value
+  | None   -> Config(host="error", port=0, debug=false);
+
+  println("host=" + cfg2.host + " port=" + cfg2.port + " debug=" + cfg2.debug);
+  // host=localhost port=8080 debug=true
+}
+json4();
+
+// ── Nested structures round-trip ────────────────────────────────────────────
+
+type Tree = {
+  | Leaf: value
+  | Node: left, right
+}
+
+function treeSum(t) {
+  return match t with
+  | Leaf l -> l.value
+  | Node n -> treeSum(n.left) + treeSum(n.right);
+}
+
+proc json5() {
+  let t = Node {
+    Node { Leaf { 1 }, Leaf { 2 } },
+    Node { Leaf { 3 }, Leaf { 4 } }
+  };
+
+  println(treeSum(t));  // 10
+
+  match jsonWriteFile("./tree.json", t) with
+  | Some _ -> println("written")
+  | None   -> println("write failed");
+
+  let t2 = match jsonReadFile("./tree.json") with
+  | Some s -> s.value
+  | None   -> Leaf { 0 };
+
+  println(treeSum(t2));  // 10  (same sum after round-trip)
+}
+json5();

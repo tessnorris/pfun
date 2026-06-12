@@ -10,5 +10,7 @@ module.exports = {
       diagnostics: false,
     }],
   },
+  testPathIgnorePatterns: ['/node_modules/', '/dist/'],
+  snapshotSerializers: ['<rootDir>/jest.bigint-serializer.js'],
   collectCoverageFrom: ['src/**/*.ts', '!src/test/**/*.ts'],
 };

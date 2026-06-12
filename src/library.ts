@@ -31,6 +31,12 @@ export const stdlibTypes: RegistryType[] = [
       { name: 'None', fields: [] },
     ],
   },
+  {
+    kind: 'plain',
+    name: 'Pair',
+    fields: ['key', 'value'],
+    generic: true,
+  },
 ];
 
 // ─── Built-in Functions ───────────────────────────────────────────────────────
@@ -350,6 +356,38 @@ export const stdlibFunctions: RegistryFunction[] = [
     if (!(arr instanceof PfunArray)) throw new Error("toDict() requires an array.");
     const map = new Map<string, any>();
     arr.elements.forEach((v: any, i: number) => map.set(`i:${i}`, v));
+    return new PfunDict(map);
+  }},
+
+  // ─── Dict / Pair ──────────────────────────────────────────────────────────
+
+  // dictToList(dict) — convert a dict to a list of Pair { key, value } records.
+  // Key types are restored: 's:' -> string, 'i:' -> bigint, 'b:' -> boolean.
+  { name: 'dictToList', fn: (args, interp) => {
+    const dict = interp.force(args[0]);
+    if (!(dict instanceof PfunDict)) throw new Error("dictToList() requires a dict.");
+    return [...dict.entries.entries()].map(([k, v]) => {
+      const prefix = k.slice(0, 2), raw = k.slice(2);
+      let key: any;
+      if (prefix === 's:') key = raw;
+      else if (prefix === 'i:') key = BigInt(raw);
+      else if (prefix === 'b:') key = raw === 'true';
+      else key = raw;
+      return { __type: 'Pair', key, value: v };
+    });
+  }},
+
+  // listToDict(pairs) — convert a list of Pair { key, value } records to a dict.
+  // Keys must be strings, integers, or booleans — any other type throws an error.
+  { name: 'listToDict', fn: (args, interp) => {
+    const list = interp.force(args[0]);
+    if (!Array.isArray(list)) throw new Error("listToDict() requires a list of Pair records.");
+    const map = new Map<string, any>();
+    for (const item of list) {
+      const pair = interp.force(item);
+      if (!pair || pair.__type !== 'Pair') throw new Error("listToDict() requires a list of Pair records.");
+      map.set(PfunDict.keyOf(interp.force(pair.key)), interp.force(pair.value));
+    }
     return new PfunDict(map);
   }},
 ];

@@ -340,8 +340,8 @@ describe('List Operations Tests', () => {
 
     it('should support fibonacci via iterate with a pair record', () => {
       const { logs } = run(`
-        type Pair = { a, b }
-        let fibs = map(fn p => p.a, iterate(fn p => Pair { p.b, p.a + p.b }, Pair { 0, 1 }));
+        type FibPair = { a, b }
+        let fibs = map(fn p => p.a, iterate(fn p => FibPair { p.b, p.a + p.b }, FibPair { 0, 1 }));
         println(take(8, fibs));
       `);
       expect(logs).toEqual(['[0, 1, 1, 2, 3, 5, 8, 13]']);
