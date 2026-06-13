@@ -10,7 +10,7 @@ import { iolibFunctions } from './iolib';
 import { filelibFunctions, filelibTypes } from './filelib';
 import { jsonlibFunctions } from './jsonlib';
 import { PfunError, buildPfunError } from './errors';
-import { inferTypes } from './typechecker';
+import { inferTypes, checkTypes } from './typechecker';
 import { Stmt, Expr } from './ast';
 
 /**
@@ -106,7 +106,14 @@ function runFile(filePath: string) {
   }
 
   // ── Type inference pass ─────────────────────────────────────────────────
+  // inferTypes annotates the AST (needed for seeding and exhaustiveness).
+  // checkTypes collects HM unification errors — surfaced as warnings since
+  // currying and string coercion are not yet fully modelled.
   inferTypes(ast!);
+  const hmErrors = checkTypes(ast!, source);
+  for (const err of hmErrors) {
+    console.warn(err.pfunMessage.replace('[TypeCheck]', '[TypeWarn]'));
+  }
 
   // ── Collect compile-time errors ──────────────────────────────────────────
   const matchNodes = collectMatchExprs(ast!);

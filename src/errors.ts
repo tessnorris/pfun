@@ -46,6 +46,9 @@ export function classifyError(message: string): ErrorKind {
   if (m.includes('non-exhaustive match') || m.includes('missing arm'))
     return 'Exhaustiveness';
 
+  if (m.includes('cannot unify') || m.includes('occurs check'))
+    return 'TypeCheck';
+
   if (m.includes("functions cannot use") || m.includes("functions cannot call") ||
       m.includes("functions cannot mutate") || m.includes("side effect") ||
       m.includes("side-effect") || m.includes("pure function") ||

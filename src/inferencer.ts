@@ -9,9 +9,8 @@
 //   § 3  Free variable collection
 //   § 4  Type formatting
 //   § 5  Unification — extends a substitution to make two types equal
-//
-// Later phases (constraint generation, let-generalisation, the full inference
-// pass) will be added here as the implementation grows.
+//   § 6  Constraint generation — walks AST, assigns TyVars, emits constraints
+//   § 7  Type schemes — let-generalisation and instantiation
 //
 // Design notes
 // ────────────
@@ -27,6 +26,12 @@
 // Occurs check: bindVar applies the current substitution to the candidate
 // type before checking for free occurrences of the variable, so chains like
 // α1→α0 followed by α0→List<α1> are correctly rejected.
+//
+// Let-generalisation: only `let` bindings are generalised (value restriction
+// — mutable `var` bindings cannot safely be polymorphic).  Generalisation
+// quantifies over type variables free in the inferred type but not free in
+// the ambient type environment.  instantiate() creates fresh copies of those
+// variables at each use site, enabling parametric polymorphism.
 
 import { PfunType, Expr, Stmt } from './ast';
 import { SourcePos } from './lexer';
@@ -286,8 +291,12 @@ export function unify(
 
     case 'Named': {
       const tb_ = tb as typeof ta;
-      if (ta.name !== tb_.name) throw new UnificationError(ta, tb);
-      return subst;
+      // Same constructor name — trivially equal.
+      if (ta.name === tb_.name) return subst;
+      // Same union — variants of the same union are compatible in a list or
+      // ternary.  [Square { 5 }, Circle { 3 }] is a valid List<Shape>.
+      if (ta.unionName !== undefined && ta.unionName === tb_.unionName) return subst;
+      throw new UnificationError(ta, tb);
     }
 
     case 'Generic': {
@@ -424,35 +433,51 @@ const _BOOL: PfunType = { kind: 'Bool' };
 const _STR:  PfunType = { kind: 'Str'  };
 const _CHAR: PfunType = { kind: 'Char' };
 
+/**
+ * Build the constraint-generation environment pre-populated with builtin
+ * signatures.
+ *
+ * Polymorphic builtins (length, asc, println, etc.) use Unknown for their
+ * parameter types.  Unknown is the unification wildcard — it matches anything
+ * without binding — so call sites don't cross-pollinate each other's types.
+ * The return type is concrete where known (Int, Bool, etc.) so callers can
+ * still resolve the result type of e.g. `length(xs)` without constraints.
+ */
 function buildCGenBuiltinEnv(): CGenEnv {
   const env = new CGenEnv();
+  const UNK: PfunType = { kind: 'Unknown' };
 
-  // Functions with fully-known signatures use concrete Fn types.
-  const fixed: Array<[string, PfunType]> = [
-    ['length',      _INT ],
-    ['asc',         _INT ],
-    ['chr',         _CHAR],
-    ['isInfinite',  _BOOL],
-    ['has',         _BOOL],
-    ['join',        _STR ],
-    ['split',       { kind: 'List', element: _STR }],
-    ['__str__',     _STR ],
-    ['flushStdout', _BOOL],
-    ['fileExists',  _BOOL],
+  // ── Single-argument polymorphic builtins ──────────────────────────────────
+  // Unknown param: any argument accepted without constraint.
+  // Concrete return: callers can infer the result type.
+  const oneParam: Array<[string, PfunType]> = [
+    ['length',     _INT ],
+    ['asc',        _INT ],
+    ['chr',        _CHAR],
+    ['isInfinite', _BOOL],
+    ['__str__',    _STR ],
+    ['fileExists', _BOOL],
   ];
-  for (const [name, ret] of fixed) {
-    env.define(name, { kind: 'Fn', params: [], ret });
+  for (const [name, ret] of oneParam) {
+    env.define(name, { kind: 'Fn', params: [UNK], ret });
   }
 
-  // Polymorphic builtins get fresh TyVars for their param/return types.
-  // These will be further constrained when call sites are visited.
-  env.define('print',   freshVar());
-  env.define('println', freshVar());
-  env.define('readln',  { kind: 'Option', inner: _STR });
+  // ── Two-argument polymorphic builtins ─────────────────────────────────────
+  env.define('has',   { kind: 'Fn', params: [UNK, UNK], ret: _BOOL });
+  env.define('join',  { kind: 'Fn', params: [UNK, _STR], ret: _STR  });
+  env.define('split', { kind: 'Fn', params: [_STR, _STR], ret: { kind: 'List', element: _STR } });
 
+  // ── IO builtins ───────────────────────────────────────────────────────────
+  // print/println accept any type and return nothing useful — Unknown for both.
+  env.define('print',      { kind: 'Fn', params: [UNK], ret: UNK });
+  env.define('println',    { kind: 'Fn', params: [UNK], ret: UNK });
+  env.define('flushStdout',{ kind: 'Fn', params: [],    ret: _BOOL });
+  env.define('readln',     { kind: 'Fn', params: [],    ret: { kind: 'Option', inner: _STR } });
+
+  // ── Constants ────────────────────────────────────────────────────────────
   env.define('true',  _BOOL);
   env.define('false', _BOOL);
-  env.define('None',  { kind: 'Named', name: 'None' });
+  env.define('None',  { kind: 'Named', name: 'None', unionName: 'Option' });
 
   return env;
 }
@@ -588,7 +613,27 @@ function cgenExpr(
       const calleeType = cgenExpr(expr.callee, env, registry, cs);
       const argTypes   = expr.args.map(a => cgenExpr(a, env, registry, cs));
       const retVar     = freshVar();
-      // Constrain callee to be a function from the actual arg types to retVar
+
+      // Currying: if callee is a known Fn with more params than args supplied,
+      // return a partially-applied Fn for the remaining params rather than
+      // constraining the full arity.
+      if (calleeType.kind === 'Fn' &&
+          calleeType.params.length > argTypes.length &&
+          argTypes.length > 0) {
+        // Constrain each supplied arg against its corresponding param
+        argTypes.forEach((at, i) => {
+          cs.push(constraint(at, calleeType.params[i], pos));
+        });
+        // Return type is a Fn over the remaining params
+        t = {
+          kind: 'Fn',
+          params: calleeType.params.slice(argTypes.length),
+          ret: calleeType.ret,
+        };
+        break;
+      }
+
+      // Normal call — constrain callee to be a function from arg types to retVar
       cs.push(constraint(calleeType, { kind: 'Fn', params: argTypes, ret: retVar }, pos));
       t = retVar;
       break;
@@ -709,13 +754,14 @@ function cgenBinary(
       cs.push(constraint(rt, _INT, pos));
       return _INT;
 
-    // Plus — default to Int arithmetic.
-    // String/list concatenation is resolved by the first-pass inferencer;
-    // the constraint generator conservatively assumes Int for now.
+    // Plus — polymorphic with string coercion awareness.
+    // If either operand is already Str, the result is Str and we don't
+    // constrain the other operand (runtime stringifies it).
+    // Otherwise operands must agree and the result is their shared type.
     case 'PlusToken':
-      cs.push(constraint(lt, _INT, pos));
-      cs.push(constraint(rt, _INT, pos));
-      return _INT;
+      if (lt.kind === 'Str' || rt.kind === 'Str') return _STR;
+      cs.push(constraint(lt, rt, pos));
+      return lt;
 
     default: {
       const result = freshVar();
@@ -750,33 +796,58 @@ function cgenStmt(
 
     case 'FunctionStmt': {
       // Assign fresh vars to all params and a fresh var to the return type.
-      const paramTypes = stmt.params.map(() => freshVar() as PfunType);
-      const retVar     = freshVar() as PfunType;
-      const fnType: PfunType = { kind: 'Fn', params: paramTypes, ret: retVar };
-      // Pre-register so recursive calls can reference the function.
-      env.define(stmt.name, fnType);
+      const paramVars = stmt.params.map(() => freshVar() as PfunType);
+      const retVar    = freshVar() as PfunType;
+      // Pre-register with TyVar params so recursive calls type-check.
+      env.define(stmt.name, { kind: 'Fn', params: paramVars, ret: retVar });
       // Walk body in a child scope with params bound to their vars.
       const bodyEnv = env.child();
-      stmt.params.forEach((p, i) => bodyEnv.define(p, paramTypes[i]));
-      for (const s of stmt.body) cgenStmt(s, bodyEnv, registry, cs);
-      // Constrain the return var against all return expressions in the body.
-      collectReturnExprs(stmt.body).forEach(expr => {
-        if (expr.inferredType) cs.push(constraint(expr.inferredType, retVar, expr.pos));
+      stmt.params.forEach((p, i) => bodyEnv.define(p, paramVars[i]));
+      const bodyCs: ConstraintSet = [];
+      for (const s of stmt.body) cgenStmt(s, bodyEnv, registry, bodyCs);
+      collectReturnExprs(stmt.body).forEach(e => {
+        if (e.inferredType) bodyCs.push(constraint(e.inferredType, retVar, e.pos));
       });
+      // Solve body constraints locally and apply to get concrete param/ret types.
+      // Params that remain as TyVars are generalised to Unknown so each call
+      // site is independent (prevents cross-call-site type pollution).
+      const { subst: bodySubst } = solveConstraints(bodyCs);
+      const resolvedParams = paramVars.map(p => {
+        const r = bodySubst.apply(p);
+        return r.kind === 'TyVar' ? { kind: 'Unknown' } as PfunType : r;
+      });
+      const resolvedRet = (() => {
+        const r = bodySubst.apply(retVar);
+        return r.kind === 'TyVar' ? { kind: 'Unknown' } as PfunType : r;
+      })();
+      // Re-register with resolved types; also push body constraints to global set.
+      env.define(stmt.name, { kind: 'Fn', params: resolvedParams, ret: resolvedRet });
+      cs.push(...bodyCs);
       break;
     }
 
     case 'ProcedureStmt': {
-      const paramTypes = stmt.params.map(() => freshVar() as PfunType);
-      const retVar     = freshVar() as PfunType;
-      const fnType: PfunType = { kind: 'Fn', params: paramTypes, ret: retVar };
-      env.define(stmt.name, fnType);
+      const paramVars = stmt.params.map(() => freshVar() as PfunType);
+      const retVar    = freshVar() as PfunType;
+      env.define(stmt.name, { kind: 'Fn', params: paramVars, ret: retVar });
       const bodyEnv = env.child();
-      stmt.params.forEach((p, i) => bodyEnv.define(p, paramTypes[i]));
-      for (const s of stmt.body) cgenStmt(s, bodyEnv, registry, cs);
-      collectReturnExprs(stmt.body).forEach(expr => {
-        if (expr.inferredType) cs.push(constraint(expr.inferredType, retVar, expr.pos));
+      stmt.params.forEach((p, i) => bodyEnv.define(p, paramVars[i]));
+      const bodyCs: ConstraintSet = [];
+      for (const s of stmt.body) cgenStmt(s, bodyEnv, registry, bodyCs);
+      collectReturnExprs(stmt.body).forEach(e => {
+        if (e.inferredType) bodyCs.push(constraint(e.inferredType, retVar, e.pos));
       });
+      const { subst: bodySubst } = solveConstraints(bodyCs);
+      const resolvedParams = paramVars.map(p => {
+        const r = bodySubst.apply(p);
+        return r.kind === 'TyVar' ? { kind: 'Unknown' } as PfunType : r;
+      });
+      const resolvedRet = (() => {
+        const r = bodySubst.apply(retVar);
+        return r.kind === 'TyVar' ? { kind: 'Unknown' } as PfunType : r;
+      })();
+      env.define(stmt.name, { kind: 'Fn', params: resolvedParams, ret: resolvedRet });
+      cs.push(...bodyCs);
       break;
     }
 
@@ -854,7 +925,316 @@ function collectReturnExprs(body: Stmt[]): Expr[] {
 export function generateConstraints(stmts: Stmt[]): ConstraintSet {
   const env      = buildCGenBuiltinEnv();
   const registry = new CGenRegistry();
+  // Pre-register builtin union types so their variants get unionName attached.
+  registry.registerUnion('Option', [
+    { name: 'Some', fields: ['value'] },
+    { name: 'None', fields: [] },
+  ]);
   const cs: ConstraintSet = [];
   for (const stmt of stmts) cgenStmt(stmt, env, registry, cs);
   return cs;
+}
+
+// ─── § 7  Type schemes — let-generalisation and instantiation ────────────────
+//
+// A TypeScheme represents a polymorphic type: ∀ α0 α1 … . T
+// The `vars` array lists the universally-quantified variable ids.
+// The `type` field is the body type, which may contain those variables.
+//
+// Monomorphic types are represented as schemes with an empty `vars` array.
+
+/**
+ * A polymorphic type scheme: ∀ vars . type
+ *
+ * vars — ids of quantified type variables (empty for monomorphic types)
+ * type — the body, potentially containing TyVars with ids in vars
+ */
+export type TypeScheme = {
+  vars: number[];
+  type: PfunType;
+};
+
+/**
+ * Lift a monomorphic type into a trivial scheme (no quantified variables).
+ * Useful when a type must be stored as a scheme but is not yet generalised.
+ */
+export function mono(type: PfunType): TypeScheme {
+  return { vars: [], type };
+}
+
+/**
+ * Generalise a type with respect to a set of type variable ids that are
+ * free in the ambient type environment.
+ *
+ * The quantified variables are those free in `type` (after applying `subst`)
+ * minus those free in the environment.  Variables free in the environment
+ * cannot be generalised — they are shared with an outer scope and must remain
+ * monomorphic.
+ *
+ * @param envFreeVars  TyVar ids free in the current type environment.
+ *                     Compute this with collectEnvFreeVars() before calling.
+ * @param type         The type to generalise.
+ * @param subst        Current substitution — applied to `type` first so we
+ *                     generalise the most-resolved form.
+ * @returns            A TypeScheme quantifying over the generalisable vars.
+ *
+ * Example:
+ *   env  = {}  (no free vars)
+ *   type = Fn<α0, α0>  (identity function)
+ *   → TypeScheme { vars: [0], type: Fn<α0, α0> }
+ *
+ *   env  = { x: α0 }  (α0 is free in env)
+ *   type = Fn<α0, Bool>
+ *   → TypeScheme { vars: [], type: Fn<α0, Bool> }  (α0 not generalisable)
+ */
+export function generalize(
+  envFreeVars: Set<number>,
+  type:        PfunType,
+  subst:       Substitution = Substitution.empty(),
+): TypeScheme {
+  const resolved = subst.apply(type);
+  const typeFree = freeVarsIn(resolved);
+  const quantified = [...typeFree].filter(id => !envFreeVars.has(id));
+  return { vars: quantified, type: resolved };
+}
+
+/**
+ * Instantiate a type scheme by replacing each quantified variable with a
+ * fresh type variable.
+ *
+ * Each call to instantiate() produces an independent copy — call sites for
+ * a polymorphic function get different fresh variables, allowing the same
+ * function to be used at different types in the same expression.
+ *
+ * @param scheme  The scheme to instantiate.
+ * @returns       A monomorphic PfunType with fresh variables substituted in.
+ *
+ * Example:
+ *   scheme = { vars: [0], type: Fn<α0, α0> }
+ *   → Fn<α3, α3>  (fresh id, say 3, allocated for the first call)
+ *   → Fn<α4, α4>  (fresh id 4 for the second call)
+ */
+/**
+ * Apply a plain id→type map to a type — used by instantiate() to avoid
+ * the Substitution chain-chasing that would loop if a fresh var happened
+ * to share an id with a quantified var (possible when the counter is reset
+ * in tests).  This map never chains: every key maps to a concrete fresh var
+ * that is guaranteed not to be in the map's domain.
+ */
+function applyMap(t: PfunType, map: Map<number, PfunType>): PfunType {
+  switch (t.kind) {
+    case 'TyVar': return map.get(t.id) ?? t;
+    case 'List':    return { kind: 'List',    element: applyMap(t.element, map) };
+    case 'Array':   return { kind: 'Array',   element: applyMap(t.element, map) };
+    case 'Option':  return { kind: 'Option',  inner:   applyMap(t.inner,   map) };
+    case 'Dict':    return { kind: 'Dict',    key: applyMap(t.key, map), value: applyMap(t.value, map) };
+    case 'Fn':      return { kind: 'Fn', params: t.params.map(p => applyMap(p, map)), ret: applyMap(t.ret, map) };
+    case 'Generic': return { kind: 'Generic', name: t.name, params: t.params.map(p => applyMap(p, map)) };
+    default:        return t;
+  }
+}
+
+export function instantiate(scheme: TypeScheme): PfunType {
+  if (scheme.vars.length === 0) return scheme.type;
+
+  // Build a substitution mapping each quantified var to a fresh one.
+  // freshVar() always allocates a strictly increasing id, so as long as
+  // the scheme's vars were created before this call there is no collision —
+  // the new ids are always higher than any existing id in the scheme.
+  const subst = new Map<number, PfunType>();
+  for (const id of scheme.vars) {
+    subst.set(id, freshVar());
+  }
+  return applyMap(scheme.type, subst);
+}
+
+// ─── Environment of type schemes ─────────────────────────────────────────────
+
+/**
+ * A scoped environment mapping names to TypeSchemes.
+ * Used by the full inference pass (Phase 5) to track the types of all
+ * bindings in scope, including polymorphic ones.
+ */
+export class SchemeEnv {
+  private bindings = new Map<string, TypeScheme>();
+  constructor(public parent?: SchemeEnv) {}
+
+  define(name: string, scheme: TypeScheme): void {
+    this.bindings.set(name, scheme);
+  }
+
+  lookup(name: string): TypeScheme | undefined {
+    if (this.bindings.has(name)) return this.bindings.get(name)!;
+    return this.parent?.lookup(name);
+  }
+
+  child(): SchemeEnv { return new SchemeEnv(this); }
+
+  /**
+   * Collect all type variable ids free in this environment frame and all
+   * parent frames.  Used by generalize() to determine which variables are
+   * ambient and must not be quantified.
+   */
+  freeVars(): Set<number> {
+    const result = new Set<number>();
+    this.collectFreeVars(result);
+    return result;
+  }
+
+  private collectFreeVars(acc: Set<number>): void {
+    for (const scheme of this.bindings.values()) {
+      // Free vars of a scheme are those in type that are NOT quantified
+      const schemeTypeFree = freeVarsIn(scheme.type);
+      for (const id of schemeTypeFree) {
+        if (!scheme.vars.includes(id)) acc.add(id);
+      }
+    }
+    this.parent?.collectFreeVars(acc);
+  }
+}
+
+/**
+ * Collect the free type variable ids across all schemes in a SchemeEnv.
+ * Convenience wrapper around SchemeEnv.freeVars() for callers that have
+ * a raw env rather than wanting to call the method directly.
+ */
+export function collectEnvFreeVars(env: SchemeEnv): Set<number> {
+  return env.freeVars();
+}
+// ─── § 8  Constraint solving and AST annotation ──────────────────────────────
+//
+// Phase 5: wire together constraint generation, unification, and substitution
+// application to produce a fully-annotated AST.
+//
+// solveConstraints() folds unify() over the constraint set, collecting type
+// errors rather than throwing on the first failure.
+//
+// applySubstitutionToAST() walks every Expr and Stmt node and replaces
+// TyVar inferredType annotations with their resolved types.
+
+export type TypeError = {
+  message: string;
+  pos:     SourcePos | undefined;
+};
+
+/**
+ * Solve a constraint set by folding unify() over every constraint.
+ *
+ * Returns the final substitution and any type errors encountered.
+ * Does not throw — errors are collected so all failures are reported.
+ *
+ * Unknown types on either side of a constraint are treated as wildcards
+ * (unification passes through them), so first-pass annotations coexist
+ * with HM inference without causing spurious failures.
+ */
+export function solveConstraints(cs: ConstraintSet): {
+  subst:  Substitution;
+  errors: TypeError[];
+} {
+  let subst = Substitution.empty();
+  const errors: TypeError[] = [];
+
+  for (const c of cs) {
+    try {
+      subst = unify(c.a, c.b, subst);
+    } catch (e) {
+      errors.push({
+        message: e instanceof Error ? e.message : String(e),
+        pos:     c.pos,
+      });
+    }
+  }
+
+  return { subst, errors };
+}
+
+/**
+ * Walk every Expr and Stmt node in `stmts` and apply `subst` to each
+ * `inferredType` field, replacing TyVars with their resolved types.
+ *
+ * After this pass:
+ *   - TyVars that were unified with concrete types become those concrete types.
+ *   - TyVars that remain unsolved stay as TyVars (the type is genuinely
+ *     polymorphic or was never constrained).
+ *   - Unknown annotations are left unchanged (the first-pass result).
+ *
+ * Mutates nodes in place.
+ */
+export function applySubstitutionToAST(stmts: Stmt[], subst: Substitution): void {
+  function applyExpr(e: Expr): void {
+    if (!e) return;
+    if (e.inferredType) e.inferredType = subst.apply(e.inferredType);
+
+    switch (e.type) {
+      case 'BinaryExpr':
+        applyExpr(e.left); applyExpr(e.right); break;
+      case 'UnaryExpr':
+        applyExpr(e.right); break;
+      case 'GroupExpr':
+        applyExpr(e.expression); break;
+      case 'TernaryExpr':
+        applyExpr(e.condition); applyExpr(e.thenBranch); applyExpr(e.elseBranch); break;
+      case 'CallExpr':
+        applyExpr(e.callee); e.args.forEach(applyExpr); break;
+      case 'LambdaExpr':
+        applyExpr(e.body); break;
+      case 'ListExpr':
+        e.elements.forEach(applyExpr); break;
+      case 'RecordExpr':
+        e.fields.forEach(f => applyExpr(f.value)); break;
+      case 'GetExpr':
+        applyExpr(e.object); break;
+      case 'AssignExpr':
+        applyExpr(e.value); break;
+      case 'IndexExpr':
+        applyExpr(e.object); applyExpr(e.index); break;
+      case 'IndexAssignExpr':
+        applyExpr(e.object); applyExpr(e.index); applyExpr(e.value); break;
+      case 'MatchExpr':
+        applyExpr(e.subject);
+        e.arms.forEach(a => { if (a.guard) applyExpr(a.guard); applyExpr(a.body); });
+        break;
+      case 'ComprehensionExpr':
+        e.generators.forEach(g => applyExpr(g.source));
+        if (e.guard) applyExpr(e.guard);
+        applyExpr(e.body);
+        break;
+      case 'DictExpr':
+        e.entries.forEach(en => { applyExpr(en.key); applyExpr(en.value); }); break;
+      case 'ArrayExpr':
+        e.elements.forEach(applyExpr); break;
+      case 'BlockExpr':
+        e.statements.forEach(applyStmt); break;
+    }
+  }
+
+  function applyStmt(s: Stmt): void {
+    if (!s) return;
+    switch (s.type) {
+      case 'LetStmt':
+      case 'VarStmt':
+        if (s.inferredType) s.inferredType = subst.apply(s.inferredType);
+        applyExpr(s.initializer);
+        break;
+      case 'ExprStmt':
+      case 'EvalStmt':
+        applyExpr(s.expression); break;
+      case 'ReturnStmt':
+        if (s.value) applyExpr(s.value); break;
+      case 'IfStmt':
+        applyExpr(s.condition);
+        applyStmt(s.thenBranch);
+        if (s.elseBranch) applyStmt(s.elseBranch);
+        break;
+      case 'BlockStmt':
+        s.statements.forEach(applyStmt); break;
+      case 'FunctionStmt':
+      case 'ProcedureStmt':
+        s.body.forEach(applyStmt); break;
+      case 'ExportStmt':
+        applyStmt(s.declaration); break;
+    }
+  }
+
+  stmts.forEach(applyStmt);
 }

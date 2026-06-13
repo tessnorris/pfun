@@ -460,10 +460,25 @@ describe('Fn unification', () => {
 
 describe('Named unification', () => {
   it('same name unifies', () => expect(() => u(named('Point'), named('Point'))).not.toThrow());
-  it('different names fail', () => expect(() => u(named('Point'), named('Circle'))).toThrow(UnificationError));
 
-  it('same name with different unionName unifies (unionName is informational)', () => {
+  it('different names with no union fail', () => {
+    expect(() => u(named('Point'), named('Circle'))).toThrow(UnificationError);
+  });
+
+  it('same name with different unionName unifies (name equality wins)', () => {
     expect(() => u(named('Ok', 'Result'), named('Ok', 'ReadResult'))).not.toThrow();
+  });
+
+  it('different names but same union unify (variants of the same union are compatible)', () => {
+    expect(() => u(named('Square', 'Shape'), named('Circle', 'Shape'))).not.toThrow();
+  });
+
+  it('different names and different unions fail', () => {
+    expect(() => u(named('Square', 'Shape'), named('Disk', 'Figure'))).toThrow(UnificationError);
+  });
+
+  it('different names where one has no union fail', () => {
+    expect(() => u(named('Square', 'Shape'), named('Circle'))).toThrow(UnificationError);
   });
 });
 
@@ -708,13 +723,15 @@ describe('Constraint generation — lambdas', () => {
     expect(t.ret).toEqual(INT_T);
   });
 
-  it('fn x => x + 1 emits [type(x), Int] and produces Fn<TyVar, Int>', () => {
+  it('fn x => x + 1 emits constraint linking x to 1 and produces Fn<TyVar, TyVar>', () => {
+    // With polymorphic +, the constraint is [type(x), type(1)] = [TyVar, Int].
+    // The result type is the left operand's type (TyVar(x)).
+    // After solving, x resolves to Int, so ret also becomes Int.
     const stmts = parse('fn x => x + 1;');
     const cs = generateConstraints(stmts);
     const t = (stmts[0] as any).expression.inferredType;
     expect(t.kind).toBe('Fn');
-    expect(t.ret).toEqual(INT_T);
-    // x's param TyVar should be constrained to Int
+    // x's param TyVar should be constrained (to 1's type = Int)
     const xVar = t.params[0];
     expect(xVar.kind).toBe('TyVar');
     expect(hasConstraintWith(cs, xVar)).toBe(true);
@@ -913,5 +930,647 @@ describe('Constraint generation — robustness', () => {
       type Color = { | Red | Green | Blue }
       let c = Red;
     `)).not.toThrow();
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// § 7  Type schemes — let-generalisation and instantiation
+// ═══════════════════════════════════════════════════════════════════════════════
+
+import {
+  TypeScheme, mono, generalize, instantiate,
+  SchemeEnv, collectEnvFreeVars,
+} from '../inferencer';
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function scheme(vars: number[], type: PfunType): TypeScheme {
+  return { vars, type };
+}
+
+// ─── mono ─────────────────────────────────────────────────────────────────────
+
+describe('mono', () => {
+  it('wraps a type in a trivial scheme with no quantified vars', () => {
+    expect(mono(INT_T)).toEqual({ vars: [], type: INT_T });
+  });
+
+  it('works for compound types', () => {
+    const t: PfunType = { kind: 'List', element: INT_T };
+    expect(mono(t)).toEqual({ vars: [], type: t });
+  });
+
+  it('works for TyVar types', () => {
+    expect(mono(tyvar(0))).toEqual({ vars: [], type: tyvar(0) });
+  });
+});
+
+// ─── generalize ───────────────────────────────────────────────────────────────
+
+describe('generalize', () => {
+  it('quantifies over vars free in type but not in env', () => {
+    // Empty env — all free vars in type are generalisable
+    const t: PfunType = { kind: 'Fn', params: [tyvar(0)], ret: tyvar(0) };
+    const s = generalize(new Set(), t);
+    expect(s.vars).toContain(0);
+    expect(s.type).toEqual(t);
+  });
+
+  it('does not quantify vars that are free in env', () => {
+    // α0 is free in env — not generalisable
+    const t: PfunType = { kind: 'Fn', params: [tyvar(0)], ret: tyvar(1) };
+    const envFree = new Set([0]);
+    const s = generalize(envFree, t);
+    expect(s.vars).not.toContain(0);
+    expect(s.vars).toContain(1);
+  });
+
+  it('produces a monomorphic scheme when all vars are free in env', () => {
+    const t: PfunType = { kind: 'Fn', params: [tyvar(0)], ret: tyvar(0) };
+    const envFree = new Set([0]);
+    const s = generalize(envFree, t);
+    expect(s.vars).toHaveLength(0);
+    expect(s.type).toEqual(t);
+  });
+
+  it('generalises a ground type to a trivial scheme', () => {
+    const s = generalize(new Set(), INT_T);
+    expect(s.vars).toHaveLength(0);
+    expect(s.type).toEqual(INT_T);
+  });
+
+  it('applies substitution before generalising', () => {
+    // α0 → Int in subst; type is List<α0>
+    // After applying subst: List<Int> — no free vars to quantify
+    const subst = Substitution.of(0, INT_T);
+    const t: PfunType = { kind: 'List', element: tyvar(0) };
+    const s = generalize(new Set(), t, subst);
+    expect(s.vars).toHaveLength(0);
+    expect(s.type).toEqual({ kind: 'List', element: INT_T });
+  });
+
+  it('generalises multiple independent vars', () => {
+    // Fn<α0, α1> with empty env — both vars are quantified
+    const t: PfunType = { kind: 'Fn', params: [tyvar(0)], ret: tyvar(1) };
+    const s = generalize(new Set(), t);
+    expect(s.vars).toHaveLength(2);
+    expect(s.vars).toContain(0);
+    expect(s.vars).toContain(1);
+  });
+
+  it('deduplicates the same var appearing multiple times', () => {
+    // Fn<α0, α0> — α0 appears twice but should be quantified once
+    const t: PfunType = { kind: 'Fn', params: [tyvar(0)], ret: tyvar(0) };
+    const s = generalize(new Set(), t);
+    expect(s.vars).toHaveLength(1);
+    expect(s.vars).toContain(0);
+  });
+
+  it('generalises vars in nested types', () => {
+    // List<Fn<α0, α1>>
+    const t: PfunType = {
+      kind: 'List',
+      element: { kind: 'Fn', params: [tyvar(0)], ret: tyvar(1) },
+    };
+    const s = generalize(new Set(), t);
+    expect(s.vars).toContain(0);
+    expect(s.vars).toContain(1);
+  });
+
+  it('partial env free vars — some quantified, some not', () => {
+    // Fn<α0, α1, α2>; α1 is free in env
+    const t: PfunType = { kind: 'Fn', params: [tyvar(0), tyvar(1)], ret: tyvar(2) };
+    const s = generalize(new Set([1]), t);
+    expect(s.vars).toContain(0);
+    expect(s.vars).not.toContain(1);
+    expect(s.vars).toContain(2);
+  });
+});
+
+// ─── instantiate ──────────────────────────────────────────────────────────────
+
+describe('instantiate', () => {
+  it('trivial scheme (no quantified vars) returns the type unchanged', () => {
+    const s = mono(INT_T);
+    expect(instantiate(s)).toEqual(INT_T);
+  });
+
+  it('replaces quantified vars with fresh vars', () => {
+    const s = scheme([0], { kind: 'Fn', params: [tyvar(0)], ret: tyvar(0) });
+    const t = instantiate(s);
+    expect(t.kind).toBe('Fn');
+    const fnType = t as { kind: 'Fn'; params: PfunType[]; ret: PfunType };
+    expect(fnType.params[0].kind).toBe('TyVar');
+    // The fresh var must be a TyVar — its specific id is an implementation
+    // detail, but param and ret must be the same fresh var (identity fn)
+    expect(fnType.params[0]).toEqual(fnType.ret);
+  });
+
+  it('same fresh var used consistently within one instantiation', () => {
+    // ∀ α0 . Fn<α0, α0> — param and ret should get the SAME fresh var
+    const s = scheme([0], { kind: 'Fn', params: [tyvar(0)], ret: tyvar(0) });
+    const t = instantiate(s) as { kind: 'Fn'; params: PfunType[]; ret: PfunType };
+    expect(t.params[0]).toEqual(t.ret);
+  });
+
+  it('two calls produce independent fresh variables', () => {
+    const s = scheme([0], tyvar(0));
+    const t1 = instantiate(s) as { kind: 'TyVar'; id: number };
+    const t2 = instantiate(s) as { kind: 'TyVar'; id: number };
+    expect(t1.id).not.toBe(t2.id);
+  });
+
+  it('does not replace non-quantified vars', () => {
+    // ∀ α0 . Fn<α0, α1> — α1 is free (not quantified), should stay as α1
+    const s = scheme([0], { kind: 'Fn', params: [tyvar(0)], ret: tyvar(1) });
+    const t = instantiate(s) as { kind: 'Fn'; params: PfunType[]; ret: PfunType };
+    // ret should still be α1 exactly
+    expect(t.ret).toEqual(tyvar(1));
+    // param should be a TyVar but NOT α1 (a fresh var for α0)
+    expect(t.params[0].kind).toBe('TyVar');
+    expect(t.params[0]).not.toEqual(tyvar(1));
+  });
+
+  it('instantiates multiple quantified vars independently', () => {
+    // ∀ α0 α1 . Fn<α0, α1> — should produce Fn<αN, αM> for fresh N, M
+    const s = scheme([0, 1], { kind: 'Fn', params: [tyvar(0)], ret: tyvar(1) });
+    const t = instantiate(s) as { kind: 'Fn'; params: PfunType[]; ret: PfunType };
+    expect(t.params[0].kind).toBe('TyVar');
+    expect(t.ret.kind).toBe('TyVar');
+    // They should be different fresh vars
+    expect((t.params[0] as any).id).not.toBe((t.ret as any).id);
+  });
+
+  it('instantiates inside nested types', () => {
+    // ∀ α0 . List<α0>
+    const s = scheme([0], { kind: 'List', element: tyvar(0) });
+    const t = instantiate(s) as { kind: 'List'; element: PfunType };
+    expect(t.kind).toBe('List');
+    expect(t.element.kind).toBe('TyVar');
+    // The element should be a fresh TyVar, not the original α0
+    // (verified by ensuring it is not the original tyvar(0) value... unless
+    // counter was reset, in which case the id may be 0 but it's still valid)
+    // What we can assert: it's a TyVar
+    expect(t.element).toEqual({ kind: 'TyVar', id: (t.element as any).id });
+  });
+});
+
+// ─── generalize + instantiate round-trip ─────────────────────────────────────
+
+describe('generalize + instantiate round-trip', () => {
+  it('identity function round-trips correctly', () => {
+    // fn x => x : Fn<α0, α0>
+    // generalize → ∀ α0 . Fn<α0, α0>
+    // instantiate → Fn<αN, αN> for fresh N
+    const identType: PfunType = { kind: 'Fn', params: [tyvar(0)], ret: tyvar(0) };
+    const s = generalize(new Set(), identType);
+    expect(s.vars).toEqual([0]);
+
+    const t1 = instantiate(s) as any;
+    const t2 = instantiate(s) as any;
+
+    // Each instantiation is a valid Fn<αN, αN>
+    expect(t1.params[0]).toEqual(t1.ret);
+    expect(t2.params[0]).toEqual(t2.ret);
+    // But the two instantiations are different
+    expect(t1.params[0].id).not.toBe(t2.params[0].id);
+  });
+
+  it('const function round-trips correctly', () => {
+    // fn x, y => x : Fn<α0, α1, α0>
+    // generalize → ∀ α0 α1 . Fn<α0, α1, α0>
+    // instantiate → Fn<αN, αM, αN>
+    const constType: PfunType = {
+      kind: 'Fn',
+      params: [tyvar(0), tyvar(1)],
+      ret: tyvar(0),
+    };
+    const s = generalize(new Set(), constType);
+    const t = instantiate(s) as any;
+    // First param and ret should be the same fresh var
+    expect(t.params[0]).toEqual(t.ret);
+    // Second param should be a different fresh var
+    expect(t.params[1].id).not.toBe(t.params[0].id);
+  });
+
+  it('ground type round-trips as identity', () => {
+    const s = generalize(new Set(), INT_T);
+    expect(instantiate(s)).toEqual(INT_T);
+  });
+
+  it('partially-constrained type preserves env vars', () => {
+    // α0 is in env (fixed), α1 is free — only α1 is quantified
+    const t: PfunType = { kind: 'Fn', params: [tyvar(0)], ret: tyvar(1) };
+    const s = generalize(new Set([0]), t);
+    const inst = instantiate(s) as any;
+    // α0 should be unchanged (not quantified)
+    expect(inst.params[0]).toEqual(tyvar(0));
+    // α1 should be a fresh var
+    expect(inst.ret.kind).toBe('TyVar');
+    expect(inst.ret.id).not.toBe(1);
+  });
+});
+
+// ─── SchemeEnv ────────────────────────────────────────────────────────────────
+
+describe('SchemeEnv', () => {
+  it('define and lookup returns the scheme', () => {
+    const env = new SchemeEnv();
+    const s = mono(INT_T);
+    env.define('x', s);
+    expect(env.lookup('x')).toEqual(s);
+  });
+
+  it('lookup returns undefined for unknown names', () => {
+    expect(new SchemeEnv().lookup('x')).toBeUndefined();
+  });
+
+  it('child env inherits parent bindings', () => {
+    const parent = new SchemeEnv();
+    parent.define('x', mono(INT_T));
+    const child = parent.child();
+    expect(child.lookup('x')).toEqual(mono(INT_T));
+  });
+
+  it('child env can shadow parent bindings', () => {
+    const parent = new SchemeEnv();
+    parent.define('x', mono(INT_T));
+    const child = parent.child();
+    child.define('x', mono(STR_T));
+    expect(child.lookup('x')).toEqual(mono(STR_T));
+    expect(parent.lookup('x')).toEqual(mono(INT_T));
+  });
+});
+
+// ─── collectEnvFreeVars ───────────────────────────────────────────────────────
+
+describe('collectEnvFreeVars', () => {
+  it('empty env has no free vars', () => {
+    expect(collectEnvFreeVars(new SchemeEnv()).size).toBe(0);
+  });
+
+  it('monomorphic binding with TyVar contributes that var', () => {
+    const env = new SchemeEnv();
+    env.define('x', mono(tyvar(0)));
+    expect(collectEnvFreeVars(env)).toEqual(new Set([0]));
+  });
+
+  it('monomorphic ground type contributes no vars', () => {
+    const env = new SchemeEnv();
+    env.define('x', mono(INT_T));
+    expect(collectEnvFreeVars(env).size).toBe(0);
+  });
+
+  it('quantified vars in a scheme are NOT free in the env', () => {
+    // ∀ α0 . Fn<α0, α0> — α0 is bound, not free
+    const env = new SchemeEnv();
+    env.define('f', scheme([0], { kind: 'Fn', params: [tyvar(0)], ret: tyvar(0) }));
+    expect(collectEnvFreeVars(env).size).toBe(0);
+  });
+
+  it('unquantified vars in a scheme ARE free in the env', () => {
+    // scheme { vars: [0], type: Fn<α0, α1> } — α1 is free
+    const env = new SchemeEnv();
+    env.define('f', scheme([0], { kind: 'Fn', params: [tyvar(0)], ret: tyvar(1) }));
+    expect(collectEnvFreeVars(env)).toEqual(new Set([1]));
+  });
+
+  it('collects free vars from multiple bindings', () => {
+    const env = new SchemeEnv();
+    env.define('x', mono(tyvar(0)));
+    env.define('y', mono(tyvar(1)));
+    expect(collectEnvFreeVars(env)).toEqual(new Set([0, 1]));
+  });
+
+  it('includes free vars from parent env', () => {
+    const parent = new SchemeEnv();
+    parent.define('x', mono(tyvar(0)));
+    const child = parent.child();
+    child.define('y', mono(tyvar(1)));
+    const free = collectEnvFreeVars(child);
+    expect(free).toEqual(new Set([0, 1]));
+  });
+
+  it('free vars of child env feed correctly into generalize', () => {
+    // x: α0 is in scope.  We infer Fn<α0, α1> for f.
+    // Only α1 should be generalised (α0 is free in env).
+    const env = new SchemeEnv();
+    env.define('x', mono(tyvar(0)));
+    const fnType: PfunType = { kind: 'Fn', params: [tyvar(0)], ret: tyvar(1) };
+    const s = generalize(collectEnvFreeVars(env), fnType);
+    expect(s.vars).toEqual([1]);
+    expect(s.vars).not.toContain(0);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// § 8  Constraint solving and AST annotation
+// ═══════════════════════════════════════════════════════════════════════════════
+
+import {
+  solveConstraints, applySubstitutionToAST, TypeError as InferTypeError,
+} from '../inferencer';
+import { inferTypes } from '../typechecker';
+
+// ─── solveConstraints ─────────────────────────────────────────────────────────
+
+describe('solveConstraints', () => {
+  it('empty constraint set produces empty substitution with no errors', () => {
+    const { subst, errors } = solveConstraints([]);
+    expect(subst.size).toBe(0);
+    expect(errors).toHaveLength(0);
+  });
+
+  it('satisfiable constraints produce a substitution', () => {
+    // α0 = Int
+    const cs = [{ a: tyvar(0), b: INT_T, pos: undefined }];
+    const { subst, errors } = solveConstraints(cs);
+    expect(errors).toHaveLength(0);
+    expect(subst.apply(tyvar(0))).toEqual(INT_T);
+  });
+
+  it('unsatisfiable constraint produces an error without throwing', () => {
+    // Int = Str — should not throw, should collect an error
+    const cs = [{ a: INT_T, b: STR_T, pos: undefined }];
+    const { errors } = solveConstraints(cs);
+    expect(errors).toHaveLength(1);
+    expect(errors[0].message).toContain('Int');
+    expect(errors[0].message).toContain('Str');
+  });
+
+  it('collects multiple errors', () => {
+    const cs = [
+      { a: INT_T,  b: STR_T,  pos: undefined },
+      { a: BOOL_T, b: STR_T,  pos: undefined },
+    ];
+    const { errors } = solveConstraints(cs);
+    expect(errors).toHaveLength(2);
+  });
+
+  it('continues solving after an error', () => {
+    // First constraint fails, second should still be solved
+    const cs = [
+      { a: INT_T,   b: STR_T,   pos: undefined }, // error
+      { a: tyvar(0), b: BOOL_T, pos: undefined }, // should still bind
+    ];
+    const { subst, errors } = solveConstraints(cs);
+    expect(errors).toHaveLength(1);
+    expect(subst.apply(tyvar(0))).toEqual(BOOL_T);
+  });
+
+  it('threads substitution across constraints', () => {
+    // α0 = α1, α1 = Int — should resolve α0 to Int
+    const cs = [
+      { a: tyvar(0), b: tyvar(1), pos: undefined },
+      { a: tyvar(1), b: INT_T,    pos: undefined },
+    ];
+    const { subst, errors } = solveConstraints(cs);
+    expect(errors).toHaveLength(0);
+    expect(subst.apply(tyvar(0))).toEqual(INT_T);
+  });
+
+  it('preserves pos on errors', () => {
+    const pos = { line: 5, col: 10, offset: 50 };
+    const cs = [{ a: INT_T, b: STR_T, pos }];
+    const { errors } = solveConstraints(cs);
+    expect(errors[0].pos).toEqual(pos);
+  });
+
+  it('Unknown on either side does not produce an error', () => {
+    const cs = [
+      { a: { kind: 'Unknown' } as PfunType, b: INT_T, pos: undefined },
+      { a: STR_T, b: { kind: 'Unknown' } as PfunType, pos: undefined },
+    ];
+    const { errors } = solveConstraints(cs);
+    expect(errors).toHaveLength(0);
+  });
+});
+
+// ─── applySubstitutionToAST ───────────────────────────────────────────────────
+
+describe('applySubstitutionToAST', () => {
+  it('resolves TyVar inferredType on a let binding', () => {
+    const stmts = parse('let x = 1;');
+    generateConstraints(stmts);
+    // Manually set inferredType to a TyVar then apply a substitution
+    const letStmt = stmts[0] as any;
+    letStmt.inferredType = tyvar(0);
+    const subst = Substitution.of(0, INT_T);
+    applySubstitutionToAST(stmts, subst);
+    expect(letStmt.inferredType).toEqual(INT_T);
+  });
+
+  it('resolves TyVar on expression nodes', () => {
+    const stmts = parse('someVar;');
+    generateConstraints(stmts);
+    const exprStmt = stmts[0] as any;
+    const expr = exprStmt.expression;
+    expr.inferredType = tyvar(0);
+    const subst = Substitution.of(0, STR_T);
+    applySubstitutionToAST(stmts, subst);
+    expect(expr.inferredType).toEqual(STR_T);
+  });
+
+  it('leaves already-concrete types unchanged', () => {
+    const stmts = parse('42;');
+    generateConstraints(stmts);
+    const expr = (stmts[0] as any).expression;
+    // inferredType is Int from constraint generation
+    const subst = Substitution.of(99, STR_T); // unrelated substitution
+    applySubstitutionToAST(stmts, subst);
+    expect(expr.inferredType).toEqual(INT_T);
+  });
+
+  it('recurses into nested expressions', () => {
+    const stmts = parse('1 + someVar;');
+    generateConstraints(stmts);
+    const binExpr = (stmts[0] as any).expression;
+    const rightExpr = binExpr.right;
+    const varId = (rightExpr.inferredType as any)?.id ?? 0;
+    const subst = Substitution.of(varId, INT_T);
+    applySubstitutionToAST(stmts, subst);
+    expect(rightExpr.inferredType).toEqual(INT_T);
+  });
+
+  it('handles empty program without crashing', () => {
+    expect(() => applySubstitutionToAST([], Substitution.empty())).not.toThrow();
+  });
+});
+
+// ─── Full pipeline integration ────────────────────────────────────────────────
+
+describe('Full inference pipeline (inferTypes)', () => {
+  it('resolves let x = 42 to Int', () => {
+    const stmts = parse('let x = 42;');
+    inferTypes(stmts);
+    expect((stmts[0] as any).inferredType).toEqual(INT_T);
+  });
+
+  it('resolves let x = "hi" to Str', () => {
+    const stmts = parse('let x = "hi";');
+    inferTypes(stmts);
+    expect((stmts[0] as any).inferredType).toEqual(STR_T);
+  });
+
+  it('resolves let x = true to Bool', () => {
+    const stmts = parse('let x = true;');
+    inferTypes(stmts);
+    expect((stmts[0] as any).inferredType).toEqual(BOOL_T);
+  });
+
+  it('resolves fn x => x + 1 param to Int via constraint propagation', () => {
+    const stmts = parse('let f = fn x => x + 1;');
+    inferTypes(stmts);
+    const fnType = (stmts[0] as any).inferredType;
+    expect(fnType.kind).toBe('Fn');
+    // x is constrained to Int by the + rule — param should resolve to Int
+    expect(fnType.params[0]).toEqual(INT_T);
+    expect(fnType.ret).toEqual(INT_T);
+  });
+
+  it('resolves ternary branches that agree', () => {
+    const stmts = parse('let x = true ? 1 : 2;');
+    inferTypes(stmts);
+    expect((stmts[0] as any).inferredType).toEqual(INT_T);
+  });
+
+  it('resolves list element types', () => {
+    const stmts = parse('let xs = [1, 2, 3];');
+    inferTypes(stmts);
+    expect((stmts[0] as any).inferredType).toEqual({
+      kind: 'List', element: INT_T,
+    });
+  });
+
+  it('propagates type from binding to reference', () => {
+    const stmts = parse('let x = 42; let y = x + 1;');
+    inferTypes(stmts);
+    expect((stmts[1] as any).inferredType).toEqual(INT_T);
+  });
+
+  it('resolves function return type from literal', () => {
+    const stmts = parse('function answer() { return 42; }');
+    inferTypes(stmts);
+    // function name should be in env — check via a subsequent let binding
+    const stmts2 = parse('function answer() { return 42; } let t = answer;');
+    inferTypes(stmts2);
+    const fnType = (stmts2[1] as any).inferredType;
+    expect(fnType?.kind).toBe('Fn');
+    expect(fnType?.ret).toEqual(INT_T);
+  });
+
+  it('does not crash on complex programs', () => {
+    expect(() => inferTypes(parse(`
+      type Shape = { | Square: side | Circle: radius }
+      function area(s) {
+        return match s with
+          | Square sq -> sq.side * sq.side
+          | Circle c  -> c.radius;
+      }
+      let s = Square { 10 };
+      let a = area(s);
+    `))).not.toThrow();
+  });
+
+  it('exhaustiveness check still works after HM inference', () => {
+    const stmts = parse(`
+      type Toggle = { | On | Off }
+      let t = On;
+      let r = match t with | On -> 1;
+    `);
+    inferTypes(stmts);
+    const matchExpr = (stmts[2] as any).initializer;
+    expect(matchExpr.missingVariants).toEqual(['Off']);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// § 9  Error messages — checkTypes integration
+// ═══════════════════════════════════════════════════════════════════════════════
+
+import { checkTypes } from '../typechecker';
+
+describe('checkTypes — error formatting', () => {
+  it('returns empty array for a well-typed program', () => {
+    const stmts = parse('let x = 1 + 2;');
+    const errors = checkTypes(stmts, 'let x = 1 + 2;');
+    // The + constraint [Int, Int] unifies fine — no errors
+    expect(errors).toHaveLength(0);
+  });
+
+  it('returns errors for a program with type conflicts', () => {
+    // [1, "x"] — element TyVar constrained to Int then Str, second fails
+    const src = 'let xs = [1, "x"];';
+    const stmts = parse(src);
+    const errors = checkTypes(stmts, src);
+    expect(errors.length).toBeGreaterThan(0);
+  });
+
+  it('error messages reference the conflicting types', () => {
+    const src = 'let xs = [1, "x"];';
+    const stmts = parse(src);
+    const errors = checkTypes(stmts, src);
+    expect(errors.length).toBeGreaterThan(0);
+    const msg = errors[0].pfunMessage;
+    // Should mention Int and Str
+    expect(msg).toMatch(/Int|Str/);
+  });
+
+  it('errors carry TypeCheck kind', () => {
+    const src = 'let xs = [1, "x"];';
+    const stmts = parse(src);
+    const errors = checkTypes(stmts, src);
+    expect(errors.length).toBeGreaterThan(0);
+    expect(errors[0].kind).toBe('TypeCheck');
+  });
+
+  it('errors include source position when available', () => {
+    const src = 'let xs = [1, "x"];';
+    const stmts = parse(src);
+    const errors = checkTypes(stmts, src);
+    expect(errors.length).toBeGreaterThan(0);
+    // pfunMessage should include line info
+    expect(errors[0].pfunMessage).toMatch(/\[TypeCheck\]/);
+  });
+
+  it('collects multiple errors from multiple conflicts', () => {
+    // Two separate list mismatches
+    const src = `
+      let xs = [1, "x"];
+      let ys = [true, 42];
+    `;
+    const stmts = parse(src);
+    const errors = checkTypes(stmts, src);
+    expect(errors.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('does not throw for programs with errors', () => {
+    const src = 'let xs = [1, "x"];';
+    const stmts = parse(src);
+    expect(() => checkTypes(stmts, src)).not.toThrow();
+  });
+
+  it('well-typed lambda produces no errors', () => {
+    const src = 'let f = fn x => x + 1;';
+    const stmts = parse(src);
+    const errors = checkTypes(stmts, src);
+    expect(errors).toHaveLength(0);
+  });
+});
+
+describe('classifyError — TypeCheck classification', () => {
+  it('classifies "cannot unify" as TypeCheck', () => {
+    const { classifyError } = require('../errors');
+    expect(classifyError('Cannot unify Int with Str')).toBe('TypeCheck');
+  });
+
+  it('classifies "occurs check" as TypeCheck', () => {
+    const { classifyError } = require('../errors');
+    expect(classifyError('Occurs check failed: α0 occurs in List<α0>')).toBe('TypeCheck');
+  });
+
+  it('classifies type mismatch as Type (runtime)', () => {
+    const { classifyError } = require('../errors');
+    expect(classifyError('Type mismatch in Point')).toBe('Type');
   });
 });

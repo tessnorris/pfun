@@ -579,14 +579,74 @@ function inferStmt(stmt: Stmt, env: TypeEnv, registry: TypeRegistry): void {
 
 // ─── Public entry point ───────────────────────────────────────────────────────
 
+import { generateConstraints, solveConstraints, applySubstitutionToAST } from './inferencer';
+import { PfunError, buildPfunError } from './errors';
+
 /**
- * Walk an AST and annotate every node with `inferredType` where resolvable.
+ * Annotate every AST node with `inferredType`.
+ *
+ * Runs in two passes:
+ *
+ *   Pass 1 (first-pass inferencer) — simple top-down propagation.  Annotates
+ *   literals, operators, and known bindings directly.  Leaves UNKNOWN where
+ *   it cannot resolve.  Never throws.
+ *
+ *   Pass 2 (HM constraint-based inference) — assigns TyVars to every
+ *   unresolved site, generates equality constraints, solves them via
+ *   unification, and applies the resulting substitution back to all nodes.
+ *   Overwrites UNKNOWN with resolved types where possible.  Type errors from
+ *   unification are silently discarded — callers that want errors should use
+ *   checkTypes() instead.
+ *
  * Mutates nodes in place.  Never throws.
  */
 export function inferTypes(stmts: Stmt[]): void {
+  // Pass 1: first-pass inferencer
   const env      = buildBuiltinEnv();
   const registry = new TypeRegistry();
   for (const stmt of stmts) inferStmt(stmt, env, registry);
+
+  // Pass 2: HM constraint-based inference
+  const cs            = generateConstraints(stmts);
+  const { subst }     = solveConstraints(cs);
+  applySubstitutionToAST(stmts, subst);
+}
+
+/**
+ * Run full type inference and return any type errors as formatted PfunErrors.
+ *
+ * Runs the same two-pass pipeline as inferTypes(), but also collects
+ * unification errors and formats them with source positions using
+ * buildPfunError().  Intended for use in main.ts / the CLI pipeline.
+ *
+ * Mutates nodes in place.  Never throws.
+ *
+ * @param stmts   The parsed AST to annotate
+ * @param source  The original source text (used for error formatting)
+ */
+export function checkTypes(stmts: Stmt[], source: string): PfunError[] {
+  // Pass 1: first-pass inferencer
+  const env      = buildBuiltinEnv();
+  const registry = new TypeRegistry();
+  for (const stmt of stmts) inferStmt(stmt, env, registry);
+
+  // Pass 2: HM constraint-based inference
+  const cs               = generateConstraints(stmts);
+  const { subst, errors } = solveConstraints(cs);
+  applySubstitutionToAST(stmts, subst);
+
+  // Format errors as PfunErrors with source positions
+  return errors.map(err => {
+    const raw = Object.assign(new Error(err.message), { pos: err.pos });
+    return buildPfunError(
+      raw,
+      source,
+      err.pos,
+      null,           // no AST node — the error is at the constraint level
+      () => undefined,
+      { stringify: String },
+    );
+  });
 }
 
 // Re-export for tests
