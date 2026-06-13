@@ -55,29 +55,37 @@ function getValueType(v: any, schemas?: Map<string, any[]>): string {
     }
     return baseName;
   }
+  if (typeof v === 'number') return 'float';
   return typeof v;
 }
 
-// ─── PfunType → runtime type string ──────────────────────────────────────────
-//
-// Converts a static PfunType annotation (from the typechecker) to the runtime
-// type string produced by getValueType().  Returns null for types that cannot
-// be mapped (Unknown, Fn, Generic) — those fall through to runtime discovery.
-
+/**
+ * Convert a static PfunType to the runtime type string that getValueType()
+ * would return for a value of that type.  Returns null for types that have
+ * no direct runtime representation (Fn, TyVar, Unknown, Generic).
+ *
+ * Used by seedTypes() to pre-populate TypeSchema.inferredTypes from static
+ * type annotations before any value is constructed at runtime.
+ */
 export function pfunTypeToRuntimeType(t: PfunType): string | null {
   switch (t.kind) {
-    case 'Int':   return 'bigint';
-    case 'Float': return 'number';
-    case 'Bool':  return 'boolean';
-    case 'Str':   return 'string';
-    case 'Char':  return 'char';
-    case 'Nil':   return 'nil';
+    case 'Int':     return 'bigint';
+    case 'Float':   return 'number';
+    case 'Bool':    return 'boolean';
+    case 'Str':     return 'string';
+    case 'Char':    return 'char';
+    case 'Nil':     return 'nil';
+    case 'Named':   return t.unionName ?? t.name;
     case 'List': {
-      const inner = pfunTypeToRuntimeType(t.element);
-      return inner ? `list<${inner}>` : 'list';
+      const elem = pfunTypeToRuntimeType(t.element);
+      return elem ? `list<${elem}>` : 'list';
     }
-    case 'Named': return t.unionName ?? t.name;
-    default:      return null;
+    case 'Array': {
+      const elem = pfunTypeToRuntimeType(t.element);
+      return elem ? `array<${elem}>` : 'array';
+    }
+    // Fn, Generic, TyVar, Option, Dict, Unknown — no runtime string
+    default: return null;
   }
 }
 
@@ -230,86 +238,7 @@ export class PfunFunction {
 
 export class ReturnValue { constructor(public value: any) {} }
 
-// ─── Pre-seed registry from annotated AST ────────────────────────────────────
-//
-// Walks the AST after inferTypes has run and seeds TypeRegistry.inferredTypes
-// for every RecordExpr whose field values have inferredType annotations.
-// Must be called before interpret() so seeding happens even for lazy let
-// bindings that are never forced at runtime.
-
-export function seedTypesFromAST(stmts: any[], registry: TypeRegistry): void {
-  function walkExpr(e: any): void {
-    if (!e) return;
-    switch (e.type) {
-      case 'RecordExpr': {
-        // Positional fields
-        if (e.fields.length === 0 || e.fields[0].key === null) {
-          const fieldTypes = e.fields.map((f: any) => {
-            const t = f.value?.inferredType;
-            return t ? pfunTypeToRuntimeType(t) : null;
-          });
-          registry.seedTypes(e.name, fieldTypes);
-        } else {
-          // Named fields — map back to declaration order
-          const schema = registry.getFields(e.name);
-          const fieldTypes = schema.map((f: string) => {
-            const fieldExpr = e.fields.find((fe: any) => fe.key === f);
-            const t = fieldExpr?.value?.inferredType;
-            return t ? pfunTypeToRuntimeType(t) : null;
-          });
-          registry.seedTypes(e.name, fieldTypes);
-        }
-        for (const f of e.fields) walkExpr(f.value);
-        break;
-      }
-      case 'BinaryExpr':   walkExpr(e.left); walkExpr(e.right); break;
-      case 'UnaryExpr':    walkExpr(e.right); break;
-      case 'GroupExpr':    walkExpr(e.expression); break;
-      case 'TernaryExpr':  walkExpr(e.condition); walkExpr(e.thenBranch); walkExpr(e.elseBranch); break;
-      case 'CallExpr':     walkExpr(e.callee); e.args?.forEach(walkExpr); break;
-      case 'LambdaExpr':   walkExpr(e.body); break;
-      case 'ListExpr':     e.elements?.forEach(walkExpr); break;
-      case 'GetExpr':      walkExpr(e.object); break;
-      case 'AssignExpr':   walkExpr(e.value); break;
-      case 'IndexExpr':    walkExpr(e.object); walkExpr(e.index); break;
-      case 'IndexAssignExpr': walkExpr(e.object); walkExpr(e.index); walkExpr(e.value); break;
-      case 'ComprehensionExpr':
-        e.generators?.forEach((g: any) => walkExpr(g.source));
-        if (e.guard) walkExpr(e.guard);
-        walkExpr(e.body);
-        break;
-      case 'DictExpr':     e.entries?.forEach((en: any) => { walkExpr(en.key); walkExpr(en.value); }); break;
-      case 'ArrayExpr':    e.elements?.forEach(walkExpr); break;
-      case 'BlockExpr':    e.statements?.forEach(walkStmt); break;
-      case 'MatchExpr':
-        walkExpr(e.subject);
-        e.arms?.forEach((a: any) => { if (a.guard) walkExpr(a.guard); walkExpr(a.body); });
-        break;
-    }
-  }
-
-  function walkStmt(s: any): void {
-    if (!s) return;
-    switch (s.type) {
-      case 'ExprStmt':
-      case 'EvalStmt':      walkExpr(s.expression); break;
-      case 'LetStmt':
-      case 'VarStmt':       walkExpr(s.initializer); break;
-      case 'ReturnStmt':    if (s.value) walkExpr(s.value); break;
-      case 'IfStmt':
-        walkExpr(s.condition);
-        walkStmt(s.thenBranch);
-        if (s.elseBranch) walkStmt(s.elseBranch);
-        break;
-      case 'BlockStmt':     s.statements?.forEach(walkStmt); break;
-      case 'FunctionStmt':
-      case 'ProcedureStmt': s.body?.forEach(walkStmt); break;
-      case 'ExportStmt':    walkStmt(s.declaration); break;
-    }
-  }
-
-  for (const s of stmts) walkStmt(s);
-}
+// ─── Type Registry ────────────────────────────────────────────────────────────
 
 interface TypeSchema {
   fields: string[];
@@ -335,8 +264,6 @@ export class TypeRegistry {
 
   registerPlain(name: string, fields: string[], generic: boolean = false) {
     const existing = this.schemas.get(name) ?? [];
-    // Idempotent — skip if already registered with the same fields
-    if (existing.some(s => s.unionName === null && s.fields.join(',') === fields.join(','))) return;
     existing.push({ fields, inferredTypes: null, unionName: null, generic });
     this.schemas.set(name, existing);
   }
@@ -354,12 +281,37 @@ export class TypeRegistry {
       this.schemas.set(v.name, existing);
       variantNames.add(v.name);
       if (v.fields.length === 0 && globals) {
+        // Zero-field variants that share a name across unions should only be
+        // registered as globals once — first registration wins. Callers that
+        // need a specific union's zero-field variant should construct explicitly.
         if (!globals.isDefined(v.name)) {
           globals.define(v.name, { __type: v.name, __union: unionName }, false);
         }
       }
     }
     this.unions.set(unionName, variantNames);
+  }
+
+  /**
+   * Pre-seed the inferred field types for a schema from static type annotations.
+   *
+   * Called by evaluateRecord() using the inferredType annotation written by the
+   * typechecker, so that the FIRST runtime construction of a type is checked
+   * even if a prior lazy `let` binding of the same type was never forced.
+   *
+   * Rules (matching test expectations):
+   *  - Skips generic schemas — they accept any field type.
+   *  - Skips if inferredTypes is already set (runtime or prior seed wins).
+   *  - Skips if any entry in `runtimeTypes` is null (partial info → don't seed).
+   *  - Otherwise sets inferredTypes to the provided array.
+   */
+  seedTypes(name: string, runtimeTypes: (string | null)[], unionHint?: string): void {
+    const schema = this.getSchema(name, unionHint ?? null);
+    if (!schema) return;
+    if (schema.generic) return;
+    if (schema.inferredTypes !== null) return;            // already set — don't overwrite
+    if (runtimeTypes.some(t => t === null)) return;      // partial info — skip
+    schema.inferredTypes = runtimeTypes as string[];
   }
 
   /** Find the schema for (variantName, unionName). Falls back to first schema if unionName is null. */
@@ -421,34 +373,8 @@ export class TypeRegistry {
 
   hasType(name: string): boolean { return this.schemas.has(name); }
 
-  hasUnion(name: string): boolean { return this.unions.has(name); }
-
   getFields(name: string, unionHint?: string): string[] {
     return this.getSchema(name, unionHint ?? null)?.fields ?? [];
-  }
-
-  /**
-   * Pre-seed inferredTypes for a type from static PfunType annotations.
-   * Called from evaluateRecord when the RecordExpr carries inferredType data
-   * on its field value nodes.  Only seeds when inferredTypes is still null
-   * (i.e. before any runtime instances have been constructed) — never
-   * overwrites types already established at runtime.
-   *
-   * @param name       The record/variant constructor name
-   * @param fieldTypes Runtime type strings (from pfunTypeToRuntimeType) in
-   *                   field declaration order.  Entries that are null (Unknown)
-   *                   are skipped — partial seeding is not attempted since the
-   *                   schema stores a single array covering all fields.
-   * @param unionHint  Optional union name for disambiguation
-   */
-  seedTypes(name: string, fieldTypes: Array<string | null>, unionHint?: string): void {
-    const schema = this.getSchema(name, unionHint ?? null);
-    if (!schema) return;
-    if (schema.generic) return;
-    if (schema.inferredTypes !== null) return; // already seeded or runtime-discovered
-    // Only seed if every field resolved — partial info would give false mismatches
-    if (fieldTypes.some(t => t === null)) return;
-    schema.inferredTypes = fieldTypes as string[];
   }
 }
 
@@ -674,32 +600,6 @@ export class Interpreter {
 
   interpret(statements: Stmt[], sourceText?: string) {
     if (sourceText !== undefined) this.sourceText = sourceText;
-
-    // ── Pass 1: register all type declarations so seedTypesFromAST can
-    //    look up field schemas for named-field constructions.  We catch
-    //    duplicate-registration errors here because the full evaluation
-    //    pass (Pass 3) will process the same TypeStmt/UnionTypeStmt nodes
-    //    again — the idempotent plain-record check handles that for plain
-    //    types; union types throw on true duplicates but we swallow the
-    //    "already registered in this union" error from the pre-pass only. ─────
-    for (const stmt of statements) {
-      const register = (s: Stmt) => {
-        if (s.type === 'TypeStmt') {
-          this.types.registerPlain(s.name, s.fields, s.generic ?? false);
-        } else if (s.type === 'UnionTypeStmt') {
-          if (!this.types.hasUnion(s.name)) {
-            try { this.types.registerUnion(s.name, s.variants, this.globals); } catch (_) {}
-          }
-        }
-      };
-      if (stmt.type === 'ExportStmt') register(stmt.declaration);
-      else register(stmt);
-    }
-
-    // ── Pass 2: seed field types from static inferredType annotations ────────
-    seedTypesFromAST(statements, this.types);
-
-    // ── Pass 3: full evaluation ───────────────────────────────────────────────
     for (const stmt of statements) {
       try {
         this.force(this.evaluateStmt(stmt, this.globals));
@@ -724,6 +624,10 @@ export class Interpreter {
           throw new Error(`Arrays must be declared with 'var', not 'let'. Use: var ${stmt.name} = array { ... }`);
         }
         this.checkNameAvailable(stmt.name, env, 'let');
+        // Seed TypeRegistry from static type annotations on RecordExpr initializers
+        // before wrapping in a Thunk — so a lazy binding doesn't bypass type checking
+        // for a subsequent construction of the same type.
+        this.seedFromExpr(stmt.initializer);
         env.define(stmt.name, new Thunk(stmt.initializer, env), false);
         return;
       }
@@ -738,10 +642,7 @@ export class Interpreter {
         this.types.registerPlain(stmt.name, stmt.fields, stmt.generic ?? false);
         return;
       case 'UnionTypeStmt':
-        // Skip if already registered by the pre-pass in interpret()
-        if (!this.types.hasUnion(stmt.name)) {
-          this.types.registerUnion(stmt.name, stmt.variants, this.globals);
-        }
+        this.types.registerUnion(stmt.name, stmt.variants, this.globals);
         return;
       case 'ExprStmt': return this.evaluateExpr(stmt.expression, env);
       case 'EvalStmt': return this.force(this.evaluateExpr(stmt.expression, env));
@@ -858,6 +759,7 @@ export class Interpreter {
     this.trackPos(expr, env);
     switch (expr.type) {
       case 'IntExpr':   return expr.value;
+      case 'FloatExpr': return expr.value;
       case 'BoolExpr':  return expr.value;
       case 'StrExpr':   return expr.value;
       case 'CharExpr':  return new PfunChar(expr.value);
@@ -1092,9 +994,61 @@ export class Interpreter {
 
   // ─── Helpers ────────────────────────────────────────────────────────────────
 
+  /**
+   * Walk an expression and, for any RecordExpr nodes whose fields already carry
+   * inferredType annotations (written by the typechecker), pre-seed the
+   * TypeRegistry schema so that subsequent constructions of the same type are
+   * type-checked even if this expression is never forced (lazy let binding).
+   *
+   * Only recurses into positions where a RecordExpr can plausibly appear at the
+   * top level: grouping, ternary branches, and block last-expressions.
+   */
+  private seedFromExpr(expr: Expr): void {
+    switch (expr.type) {
+      case 'RecordExpr': {
+        const namedType = expr.inferredType as PfunType | undefined;
+        if (namedType && namedType.kind === 'Named') {
+          const fieldTypes = expr.fields.map((f: any) => {
+            const ft: PfunType | undefined = f.value?.inferredType;
+            return ft ? pfunTypeToRuntimeType(ft) : null;
+          });
+          this.types.seedTypes(expr.name, fieldTypes, namedType.unionName);
+        }
+        break;
+      }
+      case 'GroupExpr':   this.seedFromExpr(expr.expression); break;
+      case 'TernaryExpr': this.seedFromExpr(expr.thenBranch); this.seedFromExpr(expr.elseBranch); break;
+      case 'BlockExpr': {
+        const stmts = expr.statements;
+        if (stmts.length > 0) {
+          const last = stmts[stmts.length - 1];
+          if (last.type === 'ExprStmt') this.seedFromExpr(last.expression);
+        }
+        break;
+      }
+      default: break;
+    }
+  }
+
   private evaluateRecord(expr: any, env: Environment): any {
+    // If the typechecker annotated this RecordExpr with field types, seed the
+    // TypeRegistry before the first instantiate() so that lazy `let` bindings
+    // of an earlier construction don't bypass type checking for this one.
+    if (expr.inferredType) {
+      const namedType = expr.inferredType as PfunType;
+      if (namedType.kind === 'Named') {
+        // The fields on the Named type don't carry field-level types; we need
+        // the field annotations from the expr itself if present, or we fall back
+        // to seeding from the RecordExpr's fields' own inferredTypes.
+        const fieldTypes = expr.fields.map((f: any) => {
+          const ft: PfunType | undefined = f.value?.inferredType;
+          return ft ? pfunTypeToRuntimeType(ft) : null;
+        });
+        this.types.seedTypes(expr.name, fieldTypes, namedType.unionName);
+      }
+    }
+
     if (expr.fields.length > 0 && expr.fields[0].key !== null) {
-      // Named-field construction — resolve in declaration order
       const schema = this.types.getFields(expr.name);
       if (schema.length === 0) throw new Error(`Unknown type '${expr.name}'.`);
       const byKey: any = {};
@@ -1158,38 +1112,78 @@ export class Interpreter {
     const left  = this.force(this.evaluateExpr(expr.left, env));
     const right = this.force(this.evaluateExpr(expr.right, env));
 
+    // ── String / char concatenation via + ────────────────────────────────────
     if (expr.operator === 'PlusToken') {
       const lStr = typeof left === 'string', rStr = typeof right === 'string';
       const lChar = left instanceof PfunChar, rChar = right instanceof PfunChar;
       const lCL = Array.isArray(left)  && left.every((c: any)  => c instanceof PfunChar);
       const rCL = Array.isArray(right) && right.every((c: any) => c instanceof PfunChar);
       if (lStr || lChar || lCL || rStr || rChar || rCL) return this.stringify(left) + this.stringify(right);
-      return left + right;
     }
 
+    // ── Numeric helpers ───────────────────────────────────────────────────────
+    const lIsFloat = typeof left  === 'number';
+    const rIsFloat = typeof right === 'number';
+    const mixed    = lIsFloat || rIsFloat;
+
+    // Promote both sides to number for mixed or float-only arithmetic
+    const ln = mixed ? (typeof left  === 'bigint' ? Number(left)  : left  as number) : left;
+    const rn = mixed ? (typeof right === 'bigint' ? Number(right) : right as number) : right;
+
+    // Helper: check float result is finite (no NaN / Infinity)
+    const checkFloat = (result: number, op: string): number => {
+      if (!isFinite(result) || isNaN(result))
+        throw new Error(`Float domain error: ${op} produced ${isNaN(result) ? 'NaN' : 'Infinity'}.`);
+      return result;
+    };
+
     switch (expr.operator) {
-      case 'MinusToken':        return left - right;
-      case 'StarToken':         return left * right;
+      case 'PlusToken':
+        return mixed
+          ? checkFloat((ln as number) + (rn as number), '+')
+          : (left as bigint) + (right as bigint);
+
+      case 'MinusToken':
+        return mixed
+          ? checkFloat((ln as number) - (rn as number), '-')
+          : (left as bigint) - (right as bigint);
+
+      case 'StarToken':
+        return mixed
+          ? checkFloat((ln as number) * (rn as number), '*')
+          : (left as bigint) * (right as bigint);
+
       case 'SlashToken':
-        if (typeof right === 'bigint' && right === 0n) throw new Error('Divide by zero.');
-        return left / right;
+        if (mixed) return checkFloat((ln as number) / (rn as number), '/');
+        if ((right as bigint) === 0n) throw new Error('Divide by zero.');
+        return (left as bigint) / (right as bigint);
+
       case 'PercentToken':
-        if (typeof right === 'bigint' && right === 0n) throw new Error('Divide by zero (modulo by zero).');
-        return left % right;
+        if (lIsFloat || rIsFloat)
+          throw new Error('% requires integer operands. Use floats with fmod() from mathlib.');
+        if ((right as bigint) === 0n) throw new Error('Divide by zero (modulo by zero).');
+        return (left as bigint) % (right as bigint);
+
       case 'EqualToken': {
         if (left instanceof PfunChar && right instanceof PfunChar) return left.value === right.value;
         if (left instanceof PfunChar || right instanceof PfunChar) return false;
+        // Allow cross-type numeric equality: 1 == 1.0 is true
+        if (mixed) return (ln as number) === (rn as number);
         return left === right;
       }
       case 'NotEqualToken': {
         if (left instanceof PfunChar && right instanceof PfunChar) return left.value !== right.value;
         if (left instanceof PfunChar || right instanceof PfunChar) return true;
+        if (mixed) return (ln as number) !== (rn as number);
         return left !== right;
       }
-      case 'GreaterToken':      return left > right;
-      case 'LessToken':         return left < right;
-      case 'GreaterEqualToken': return left >= right;
-      case 'LessEqualToken':    return left <= right;
+
+      // Comparisons: promote bigint to number when mixed
+      case 'GreaterToken':      return mixed ? (ln as number) >  (rn as number) : left >  right;
+      case 'LessToken':         return mixed ? (ln as number) <  (rn as number) : left <  right;
+      case 'GreaterEqualToken': return mixed ? (ln as number) >= (rn as number) : left >= right;
+      case 'LessEqualToken':    return mixed ? (ln as number) <= (rn as number) : left <= right;
+
       default: throw new Error(`Unknown binary operator ${expr.operator}`);
     }
   }
@@ -1302,7 +1296,11 @@ export class Interpreter {
   }
 
   private getCacheKey(fn: PfunFunction, args: any[]): string {
-    return JSON.stringify(args, (_, v) => typeof v === 'bigint' ? v.toString() + 'n' : v);
+    return JSON.stringify(args, (_, v) => {
+      if (typeof v === 'bigint') return v.toString() + 'n';
+      if (typeof v === 'number') return 'f:' + v.toString();
+      return v;
+    });
   }
 
   isTruthy(value: any): boolean {
@@ -1318,6 +1316,11 @@ export class Interpreter {
     if (value === null || value === undefined) return 'nil';
     if (typeof value === 'boolean') return value ? 'true' : 'false';
     if (typeof value === 'bigint')  return value.toString();
+    if (typeof value === 'number') {
+      // Always include a decimal point so floats are visually distinct from ints
+      if (Number.isInteger(value)) return value.toFixed(1);
+      return value.toString();
+    }
     if (value instanceof PfunChar)  return value.value;
     if (value instanceof LazyList)  return '<lazylist>';
     if (value instanceof PfunDict) {

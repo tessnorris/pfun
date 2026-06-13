@@ -23,15 +23,16 @@ export type ErrorKind =
   | 'Syntax'         // Unexpected token, malformed expression or statement
   | 'Name'           // Undefined variable / unknown type
   | 'Type'           // Type mismatch (record fields, list homogeneity)
+  | 'TypeCheck'      // HM inference unification failure (cannot unify, occurs check)
   | 'Key'            // Missing dict key, missing record field
   | 'DivideByZero'   // Integer division by zero
+  | 'FloatDomain'    // Float operation produced NaN or Infinity (sqrt(-1), log(0), etc.)
   | 'Purity'         // Side effect attempted inside a pure function
   | 'Exhaustiveness' // Non-exhaustive match expression
   | 'Arity'          // Wrong number of arguments or record fields
   | 'Import'         // Module resolution / circular import / missing export
   | 'File'           // File I/O error
   | 'IO'             // Other I/O error (stdin/stdout)
-  | 'TypeCheck'    // Compile-time check failure (e.g. non-exhaustive match)
   | 'Runtime';       // Catch-all for unclassified runtime errors
 
 // ─── Classify a raw Error message ─────────────────────────────────────────────
@@ -40,14 +41,20 @@ export function classifyError(message: string): ErrorKind {
   const m = message.toLowerCase();
 
   // Check most-specific patterns first
+  if (m.includes('cannot unify') || m.includes('occurs check') ||
+      m.includes('unification') || m.includes('type variable'))
+    return 'TypeCheck';
+
   if (m.includes('divide by zero') || m.includes('division by zero') ||
       (m.includes('divided') && m.includes('zero'))) return 'DivideByZero';
 
+  if (m.includes('float domain') || m.includes('not a number') || m.includes('infinity') ||
+      m.includes('nan') || m.includes('infinite result') || m.includes('domain error') ||
+      m.includes('modulo on float') || m.includes('% requires integer'))
+    return 'FloatDomain';
+
   if (m.includes('non-exhaustive match') || m.includes('missing arm'))
     return 'Exhaustiveness';
-
-  if (m.includes('cannot unify') || m.includes('occurs check'))
-    return 'TypeCheck';
 
   if (m.includes("functions cannot use") || m.includes("functions cannot call") ||
       m.includes("functions cannot mutate") || m.includes("side effect") ||
@@ -338,6 +345,7 @@ export function formatValue(value: any, interp: { stringify(v: any): string }): 
 function exprToString(expr: Expr): string | null {
   switch (expr.type) {
     case 'IntExpr':   return expr.value.toString();
+    case 'FloatExpr': return expr.value.toString();
     case 'BoolExpr':  return expr.value.toString();
     case 'StrExpr':   return `"${expr.value}"`;
     case 'CharExpr':  return `'${expr.value}'`;

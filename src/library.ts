@@ -390,4 +390,77 @@ export const stdlibFunctions: RegistryFunction[] = [
     }
     return new PfunDict(map);
   }},
+
+  // ─── Numeric casts & predicates ──────────────────────────────────────────
+
+  // toFloat(n) — convert integer or float to float. Accepts numeric strings too.
+  { name: 'toFloat', arity: 1, fn: (args, interp) => {
+    const v = interp.force(args[0]);
+    if (typeof v === 'number') return v;
+    if (typeof v === 'bigint') return Number(v);
+    if (typeof v === 'string') {
+      const n = parseFloat(v);
+      if (isNaN(n)) throw new Error(`toFloat: cannot convert string "${v}" to float.`);
+      return n;
+    }
+    throw new Error(`toFloat() requires a number or string, got ${typeof v}.`);
+  }},
+
+  // toInt(n) — convert float to integer (truncates toward zero). Integers pass through.
+  { name: 'toInt', arity: 1, fn: (args, interp) => {
+    const v = interp.force(args[0]);
+    if (typeof v === 'bigint') return v;
+    if (typeof v === 'number') {
+      if (!isFinite(v) || isNaN(v)) throw new Error('toInt: cannot convert NaN or Infinity to integer.');
+      return BigInt(Math.trunc(v));
+    }
+    throw new Error(`toInt() requires a number, got ${typeof v}.`);
+  }},
+
+  // floor(n) — largest integer <= n. Returns int.
+  { name: 'floor', arity: 1, fn: (args, interp) => {
+    const v = interp.force(args[0]);
+    if (typeof v === 'bigint') return v;
+    if (typeof v === 'number') {
+      if (!isFinite(v) || isNaN(v)) throw new Error('floor: cannot floor NaN or Infinity.');
+      return BigInt(Math.floor(v));
+    }
+    throw new Error(`floor() requires a number, got ${typeof v}.`);
+  }},
+
+  // ceil(n) — smallest integer >= n. Returns int.
+  { name: 'ceil', arity: 1, fn: (args, interp) => {
+    const v = interp.force(args[0]);
+    if (typeof v === 'bigint') return v;
+    if (typeof v === 'number') {
+      if (!isFinite(v) || isNaN(v)) throw new Error('ceil: cannot ceil NaN or Infinity.');
+      return BigInt(Math.ceil(v));
+    }
+    throw new Error(`ceil() requires a number, got ${typeof v}.`);
+  }},
+
+  // round(n) — round to nearest integer (half-up). Returns int.
+  { name: 'round', arity: 1, fn: (args, interp) => {
+    const v = interp.force(args[0]);
+    if (typeof v === 'bigint') return v;
+    if (typeof v === 'number') {
+      if (!isFinite(v) || isNaN(v)) throw new Error('round: cannot round NaN or Infinity.');
+      return BigInt(Math.round(v));
+    }
+    throw new Error(`round() requires a number, got ${typeof v}.`);
+  }},
+
+  // isNaN(n) — true if value is a float NaN.
+  { name: 'isNaN', arity: 1, fn: (args, interp) => {
+    const v = interp.force(args[0]);
+    return typeof v === 'number' && Number.isNaN(v);
+  }},
+
+  // isFinite(n) — true if value is a finite number (not Infinity, not NaN).
+  { name: 'isFinite', arity: 1, fn: (args, interp) => {
+    const v = interp.force(args[0]);
+    if (typeof v === 'bigint') return true;
+    if (typeof v === 'number') return Number.isFinite(v);
+    return false;
+  }},
 ];

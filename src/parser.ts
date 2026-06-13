@@ -301,6 +301,7 @@ export class Parser {
     const token = this.advance();
     switch (token.type) {
       case 'IntToken': return { type: 'IntExpr', value: token.value, pos: token.pos ?? exprPos };
+      case 'FloatToken': return { type: 'FloatExpr', value: token.value, pos: token.pos ?? exprPos };
       case 'BoolToken': return { type: 'BoolExpr', value: token.value, pos: token.pos ?? exprPos };
       case 'StrToken': return { type: 'StrExpr', value: token.value, pos: token.pos ?? exprPos };
       case 'CharToken': return { type: 'CharExpr', value: token.value, pos: token.pos ?? exprPos };

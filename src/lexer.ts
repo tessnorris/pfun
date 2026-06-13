@@ -13,6 +13,7 @@ export type SourcePos = { line: number; col: number; offset: number };
  */
 export type Token =
   | { type: 'IntToken'; value: bigint; pos?: SourcePos }
+  | { type: 'FloatToken'; value: number; pos?: SourcePos }
   | { type: 'BoolToken'; value: boolean; pos?: SourcePos }
   | { type: 'StrToken'; value: string; pos?: SourcePos }
   | { type: 'CharToken'; value: string; pos?: SourcePos }
@@ -191,7 +192,32 @@ export class Lexer {
   private readNumber(): Token {
     let s = '';
     while (!this.isAtEnd() && this.isDigit(this.peek())) s += this.advance();
-    // The language exclusively uses BigInt for numerical precision
+
+    // Check for decimal point followed by at least one digit (1.5, not 1.)
+    let isFloat = false;
+    if (!this.isAtEnd() && this.peek() === '.' &&
+        this.pos + 1 < this.input.length && this.isDigit(this.input[this.pos + 1])) {
+      isFloat = true;
+      s += this.advance(); // consume '.'
+      while (!this.isAtEnd() && this.isDigit(this.peek())) s += this.advance();
+    }
+
+    // Check for scientific notation: e/E followed by optional +/- and digits
+    if (!this.isAtEnd() && (this.peek() === 'e' || this.peek() === 'E')) {
+      const nextPos = this.pos + 1;
+      const nextCh  = nextPos < this.input.length ? this.input[nextPos] : '';
+      const afterSign = (nextCh === '+' || nextCh === '-')
+        ? (this.pos + 2 < this.input.length ? this.input[this.pos + 2] : '')
+        : nextCh;
+      if (this.isDigit(afterSign)) {
+        isFloat = true;
+        s += this.advance(); // consume 'e' or 'E'
+        if (!this.isAtEnd() && (this.peek() === '+' || this.peek() === '-')) s += this.advance();
+        while (!this.isAtEnd() && this.isDigit(this.peek())) s += this.advance();
+      }
+    }
+
+    if (isFloat) return { type: 'FloatToken', value: parseFloat(s) };
     return { type: 'IntToken', value: BigInt(s) };
   }
 
