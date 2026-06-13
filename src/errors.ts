@@ -31,6 +31,7 @@ export type ErrorKind =
   | 'Import'         // Module resolution / circular import / missing export
   | 'File'           // File I/O error
   | 'IO'             // Other I/O error (stdin/stdout)
+  | 'TypeCheck'    // Compile-time check failure (e.g. non-exhaustive match)
   | 'Runtime';       // Catch-all for unclassified runtime errors
 
 // ─── Classify a raw Error message ─────────────────────────────────────────────

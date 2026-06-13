@@ -1,5 +1,5 @@
 // src/interpreter.ts
-import { Expr, Stmt } from './ast';
+import { Expr, Stmt, PfunType } from './ast';
 import { SourcePos } from './lexer';
 import { buildPfunError, PfunError } from './errors';
 import * as fs from 'fs';
@@ -56,6 +56,29 @@ function getValueType(v: any, schemas?: Map<string, any[]>): string {
     return baseName;
   }
   return typeof v;
+}
+
+// ─── PfunType → runtime type string ──────────────────────────────────────────
+//
+// Converts a static PfunType annotation (from the typechecker) to the runtime
+// type string produced by getValueType().  Returns null for types that cannot
+// be mapped (Unknown, Fn, Generic) — those fall through to runtime discovery.
+
+export function pfunTypeToRuntimeType(t: PfunType): string | null {
+  switch (t.kind) {
+    case 'Int':   return 'bigint';
+    case 'Float': return 'number';
+    case 'Bool':  return 'boolean';
+    case 'Str':   return 'string';
+    case 'Char':  return 'char';
+    case 'Nil':   return 'nil';
+    case 'List': {
+      const inner = pfunTypeToRuntimeType(t.element);
+      return inner ? `list<${inner}>` : 'list';
+    }
+    case 'Named': return t.unionName ?? t.name;
+    default:      return null;
+  }
 }
 
 export class Environment {
@@ -207,7 +230,86 @@ export class PfunFunction {
 
 export class ReturnValue { constructor(public value: any) {} }
 
-// ─── Type Registry ────────────────────────────────────────────────────────────
+// ─── Pre-seed registry from annotated AST ────────────────────────────────────
+//
+// Walks the AST after inferTypes has run and seeds TypeRegistry.inferredTypes
+// for every RecordExpr whose field values have inferredType annotations.
+// Must be called before interpret() so seeding happens even for lazy let
+// bindings that are never forced at runtime.
+
+export function seedTypesFromAST(stmts: any[], registry: TypeRegistry): void {
+  function walkExpr(e: any): void {
+    if (!e) return;
+    switch (e.type) {
+      case 'RecordExpr': {
+        // Positional fields
+        if (e.fields.length === 0 || e.fields[0].key === null) {
+          const fieldTypes = e.fields.map((f: any) => {
+            const t = f.value?.inferredType;
+            return t ? pfunTypeToRuntimeType(t) : null;
+          });
+          registry.seedTypes(e.name, fieldTypes);
+        } else {
+          // Named fields — map back to declaration order
+          const schema = registry.getFields(e.name);
+          const fieldTypes = schema.map((f: string) => {
+            const fieldExpr = e.fields.find((fe: any) => fe.key === f);
+            const t = fieldExpr?.value?.inferredType;
+            return t ? pfunTypeToRuntimeType(t) : null;
+          });
+          registry.seedTypes(e.name, fieldTypes);
+        }
+        for (const f of e.fields) walkExpr(f.value);
+        break;
+      }
+      case 'BinaryExpr':   walkExpr(e.left); walkExpr(e.right); break;
+      case 'UnaryExpr':    walkExpr(e.right); break;
+      case 'GroupExpr':    walkExpr(e.expression); break;
+      case 'TernaryExpr':  walkExpr(e.condition); walkExpr(e.thenBranch); walkExpr(e.elseBranch); break;
+      case 'CallExpr':     walkExpr(e.callee); e.args?.forEach(walkExpr); break;
+      case 'LambdaExpr':   walkExpr(e.body); break;
+      case 'ListExpr':     e.elements?.forEach(walkExpr); break;
+      case 'GetExpr':      walkExpr(e.object); break;
+      case 'AssignExpr':   walkExpr(e.value); break;
+      case 'IndexExpr':    walkExpr(e.object); walkExpr(e.index); break;
+      case 'IndexAssignExpr': walkExpr(e.object); walkExpr(e.index); walkExpr(e.value); break;
+      case 'ComprehensionExpr':
+        e.generators?.forEach((g: any) => walkExpr(g.source));
+        if (e.guard) walkExpr(e.guard);
+        walkExpr(e.body);
+        break;
+      case 'DictExpr':     e.entries?.forEach((en: any) => { walkExpr(en.key); walkExpr(en.value); }); break;
+      case 'ArrayExpr':    e.elements?.forEach(walkExpr); break;
+      case 'BlockExpr':    e.statements?.forEach(walkStmt); break;
+      case 'MatchExpr':
+        walkExpr(e.subject);
+        e.arms?.forEach((a: any) => { if (a.guard) walkExpr(a.guard); walkExpr(a.body); });
+        break;
+    }
+  }
+
+  function walkStmt(s: any): void {
+    if (!s) return;
+    switch (s.type) {
+      case 'ExprStmt':
+      case 'EvalStmt':      walkExpr(s.expression); break;
+      case 'LetStmt':
+      case 'VarStmt':       walkExpr(s.initializer); break;
+      case 'ReturnStmt':    if (s.value) walkExpr(s.value); break;
+      case 'IfStmt':
+        walkExpr(s.condition);
+        walkStmt(s.thenBranch);
+        if (s.elseBranch) walkStmt(s.elseBranch);
+        break;
+      case 'BlockStmt':     s.statements?.forEach(walkStmt); break;
+      case 'FunctionStmt':
+      case 'ProcedureStmt': s.body?.forEach(walkStmt); break;
+      case 'ExportStmt':    walkStmt(s.declaration); break;
+    }
+  }
+
+  for (const s of stmts) walkStmt(s);
+}
 
 interface TypeSchema {
   fields: string[];
@@ -233,6 +335,8 @@ export class TypeRegistry {
 
   registerPlain(name: string, fields: string[], generic: boolean = false) {
     const existing = this.schemas.get(name) ?? [];
+    // Idempotent — skip if already registered with the same fields
+    if (existing.some(s => s.unionName === null && s.fields.join(',') === fields.join(','))) return;
     existing.push({ fields, inferredTypes: null, unionName: null, generic });
     this.schemas.set(name, existing);
   }
@@ -250,9 +354,6 @@ export class TypeRegistry {
       this.schemas.set(v.name, existing);
       variantNames.add(v.name);
       if (v.fields.length === 0 && globals) {
-        // Zero-field variants that share a name across unions should only be
-        // registered as globals once — first registration wins. Callers that
-        // need a specific union's zero-field variant should construct explicitly.
         if (!globals.isDefined(v.name)) {
           globals.define(v.name, { __type: v.name, __union: unionName }, false);
         }
@@ -320,8 +421,34 @@ export class TypeRegistry {
 
   hasType(name: string): boolean { return this.schemas.has(name); }
 
+  hasUnion(name: string): boolean { return this.unions.has(name); }
+
   getFields(name: string, unionHint?: string): string[] {
     return this.getSchema(name, unionHint ?? null)?.fields ?? [];
+  }
+
+  /**
+   * Pre-seed inferredTypes for a type from static PfunType annotations.
+   * Called from evaluateRecord when the RecordExpr carries inferredType data
+   * on its field value nodes.  Only seeds when inferredTypes is still null
+   * (i.e. before any runtime instances have been constructed) — never
+   * overwrites types already established at runtime.
+   *
+   * @param name       The record/variant constructor name
+   * @param fieldTypes Runtime type strings (from pfunTypeToRuntimeType) in
+   *                   field declaration order.  Entries that are null (Unknown)
+   *                   are skipped — partial seeding is not attempted since the
+   *                   schema stores a single array covering all fields.
+   * @param unionHint  Optional union name for disambiguation
+   */
+  seedTypes(name: string, fieldTypes: Array<string | null>, unionHint?: string): void {
+    const schema = this.getSchema(name, unionHint ?? null);
+    if (!schema) return;
+    if (schema.generic) return;
+    if (schema.inferredTypes !== null) return; // already seeded or runtime-discovered
+    // Only seed if every field resolved — partial info would give false mismatches
+    if (fieldTypes.some(t => t === null)) return;
+    schema.inferredTypes = fieldTypes as string[];
   }
 }
 
@@ -547,6 +674,32 @@ export class Interpreter {
 
   interpret(statements: Stmt[], sourceText?: string) {
     if (sourceText !== undefined) this.sourceText = sourceText;
+
+    // ── Pass 1: register all type declarations so seedTypesFromAST can
+    //    look up field schemas for named-field constructions.  We catch
+    //    duplicate-registration errors here because the full evaluation
+    //    pass (Pass 3) will process the same TypeStmt/UnionTypeStmt nodes
+    //    again — the idempotent plain-record check handles that for plain
+    //    types; union types throw on true duplicates but we swallow the
+    //    "already registered in this union" error from the pre-pass only. ─────
+    for (const stmt of statements) {
+      const register = (s: Stmt) => {
+        if (s.type === 'TypeStmt') {
+          this.types.registerPlain(s.name, s.fields, s.generic ?? false);
+        } else if (s.type === 'UnionTypeStmt') {
+          if (!this.types.hasUnion(s.name)) {
+            try { this.types.registerUnion(s.name, s.variants, this.globals); } catch (_) {}
+          }
+        }
+      };
+      if (stmt.type === 'ExportStmt') register(stmt.declaration);
+      else register(stmt);
+    }
+
+    // ── Pass 2: seed field types from static inferredType annotations ────────
+    seedTypesFromAST(statements, this.types);
+
+    // ── Pass 3: full evaluation ───────────────────────────────────────────────
     for (const stmt of statements) {
       try {
         this.force(this.evaluateStmt(stmt, this.globals));
@@ -585,7 +738,10 @@ export class Interpreter {
         this.types.registerPlain(stmt.name, stmt.fields, stmt.generic ?? false);
         return;
       case 'UnionTypeStmt':
-        this.types.registerUnion(stmt.name, stmt.variants, this.globals);
+        // Skip if already registered by the pre-pass in interpret()
+        if (!this.types.hasUnion(stmt.name)) {
+          this.types.registerUnion(stmt.name, stmt.variants, this.globals);
+        }
         return;
       case 'ExprStmt': return this.evaluateExpr(stmt.expression, env);
       case 'EvalStmt': return this.force(this.evaluateExpr(stmt.expression, env));
@@ -938,6 +1094,7 @@ export class Interpreter {
 
   private evaluateRecord(expr: any, env: Environment): any {
     if (expr.fields.length > 0 && expr.fields[0].key !== null) {
+      // Named-field construction — resolve in declaration order
       const schema = this.types.getFields(expr.name);
       if (schema.length === 0) throw new Error(`Unknown type '${expr.name}'.`);
       const byKey: any = {};
