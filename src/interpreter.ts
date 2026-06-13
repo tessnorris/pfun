@@ -611,6 +611,10 @@ export class Interpreter {
 
   getGlobal(name: string): any { return this.force(this.globals.get(name)); }
 
+  /** Public accessor for the global environment — used by the REPL to evaluate
+   *  top-level statements in the same scope across multiple inputs. */
+  getGlobalsEnv(): Environment { return this.globals; }
+
   // ─── Statement Evaluation ───────────────────────────────────────────────────
 
   evaluateStmt(stmt: Stmt, env: Environment): any {
