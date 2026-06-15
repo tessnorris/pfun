@@ -5,6 +5,7 @@ import { Interpreter, ModuleLoader } from '../interpreter';
 import { stdlibFunctions, stdlibTypes } from '../library';
 import { iolibFunctions } from '../iolib';
 import { jsonlibFunctions } from '../jsonlib';
+import { filelibFunctions, filelibTypes } from '../filelib';
 import * as os from 'os';
 import * as nodePath from 'path';
 import * as nodeFs from 'fs';
@@ -22,6 +23,7 @@ const run = (source: string) => {
   const interp = new Interpreter('/no', loader);
   interp.registerLibrary(stdlibFunctions, stdlibTypes);
   interp.registerLibrary(iolibFunctions, []);
+  interp.registerLibrary(filelibFunctions, filelibTypes);
 
   const logs: string[] = [];
   let currentLine = '';
@@ -248,9 +250,15 @@ describe('jsonSerialize and jsonDeserialize', () => {
   });
 });
 
-// ─── jsonWriteFile / jsonReadFile ─────────────────────────────────────────────
+// ─── Composing jsonSerialize/jsonDeserialize with filelib's writeFile/readFile ─
+//
+// jsonWriteFile/jsonReadFile were removed: persistence is now expressed by
+// composing jsonlib's pure encode/decode (Option-based) with filelib's
+// writeFile/readFile (Result-based) via match. These tests exercise that
+// composition end-to-end (same scenarios the old jsonWriteFile/jsonReadFile
+// tests covered).
 
-describe('jsonWriteFile and jsonReadFile', () => {
+describe('Composing jsonSerialize/jsonDeserialize with writeFile/readFile', () => {
 
   it('writes and reads back a record', () => {
     const path = tempPath();
@@ -260,9 +268,11 @@ describe('jsonWriteFile and jsonReadFile', () => {
         type Config = { host, port };
         proc p() {
           let cfg = Config(host="localhost", port=8080);
-          let ok = match jsonWriteFile("${path}", cfg) with | Some _ -> "written" | None -> "failed";
+          let json = match jsonSerialize(cfg) with | Some j -> j.value | None -> "failed";
+          let ok = match writeFile("${path}", json) with | Ok _ -> "written" | Err _ -> "failed";
           println(ok);
-          let cfg2 = match jsonReadFile("${path}") with | Some s -> s.value | None -> Config(host="err", port=0);
+          let content = match readFile("${path}") with | Ok c -> c.value | Err _ -> "";
+          let cfg2 = match jsonDeserialize(content) with | Some v -> v.value | None -> Config(host="err", port=0);
           println(cfg2.host);
           println(cfg2.port);
         }
@@ -280,7 +290,10 @@ describe('jsonWriteFile and jsonReadFile', () => {
       run(`
         import * from "json";
         type Point = { x, y };
-        proc p() { jsonWriteFile("${path}", Point { 3, 7 }); }
+        proc p() {
+          let json = match jsonSerialize(Point { 3, 7 }) with | Some j -> j.value | None -> "";
+          writeFile("${path}", json);
+        }
         p();
       `);
       const parsed = JSON.parse(nodeFs.readFileSync(path, 'utf8'));
@@ -300,8 +313,10 @@ describe('jsonWriteFile and jsonReadFile', () => {
         import * from "json";
         type Status = { | Active: id | Inactive }
         proc p() {
-          jsonWriteFile("${path}", [Active { 1 }, Inactive, Active { 2 }]);
-          let items2 = match jsonReadFile("${path}") with | Some s -> s.value | None -> [];
+          let json = match jsonSerialize([Active { 1 }, Inactive, Active { 2 }]) with | Some j -> j.value | None -> "";
+          writeFile("${path}", json);
+          let content = match readFile("${path}") with | Ok c -> c.value | Err _ -> "";
+          let items2 = match jsonDeserialize(content) with | Some v -> v.value | None -> [];
           println(match head(tail(items2)) with | Active _ -> "active" | Inactive -> "inactive");
         }
         p();
@@ -323,8 +338,10 @@ describe('jsonWriteFile and jsonReadFile', () => {
             Node { Leaf { 10 }, Leaf { 20 } },
             Node { Leaf { 30 }, Node { Leaf { 40 }, Leaf { 50 } } }
           };
-          jsonWriteFile("${path}", t);
-          let t2 = match jsonReadFile("${path}") with | Some s -> s.value | None -> Leaf { 0 };
+          let json = match jsonSerialize(t) with | Some j -> j.value | None -> "";
+          writeFile("${path}", json);
+          let content = match readFile("${path}") with | Ok c -> c.value | Err _ -> "";
+          let t2 = match jsonDeserialize(content) with | Some v -> v.value | None -> Leaf { 0 };
           let v = match t2.right with
             | Node n -> (match n.right with
                 | Node nn -> (match nn.right with | Leaf l -> l.value | Node _ -> -1)
@@ -344,7 +361,10 @@ describe('jsonWriteFile and jsonReadFile', () => {
     const { logs } = run(`
       import * from "json";
       proc p() {
-        println(match jsonReadFile("/no/such/file.json") with | Some _ -> "ok" | None -> "none");
+        let result = match readFile("/no/such/file.json") with
+          | Ok content -> jsonDeserialize(content.value)
+          | Err _ -> None;
+        println(match result with | Some _ -> "ok" | None -> "none");
       }
       p();
     `);

@@ -364,4 +364,85 @@ describe('Parser Unit Tests', () => {
       expect(stmt.path).toBe('io');
     });
   });
+
+  // ── Async/await (phase 1) ────────────────────────────────────────────────
+  // These tests only check that 'async'/'await' parse into the expected AST
+  // shapes (FunctionStmt.async / ProcedureStmt.async / AwaitExpr). No
+  // evaluation or effect-checking exists yet (steps 4-5).
+  describe('Async/await (phase 1 - parsing only)', () => {
+    it('should parse "async function" with async: true', () => {
+      const ast = parse('async function f(x) { return x; }');
+      const stmt = ast[0] as any;
+      expect(stmt.type).toBe('FunctionStmt');
+      expect(stmt.name).toBe('f');
+      expect(stmt.async).toBe(true);
+      expect(stmt.memo).toBe(false);
+    });
+
+    it('should parse "async memo function" with async: true and memo: true', () => {
+      const ast = parse('async memo function f(x) { return x; }');
+      const stmt = ast[0] as any;
+      expect(stmt.type).toBe('FunctionStmt');
+      expect(stmt.async).toBe(true);
+      expect(stmt.memo).toBe(true);
+    });
+
+    it('should parse "async proc" with async: true', () => {
+      const ast = parse('async proc p(x) { return x; }');
+      const stmt = ast[0] as any;
+      expect(stmt.type).toBe('ProcedureStmt');
+      expect(stmt.name).toBe('p');
+      expect(stmt.async).toBe(true);
+    });
+
+    it('plain "function"/"proc" should not have async set to true', () => {
+      const fnAst = parse('function f(x) { return x; }');
+      const procAst = parse('proc p(x) { return x; }');
+      expect((fnAst[0] as any).async).toBeFalsy();
+      expect((procAst[0] as any).async).toBeFalsy();
+    });
+
+    it('should parse "await <expr>" as AwaitExpr at unary precedence (binds tighter than +)', () => {
+      const ast = parse('async function f() { return 1 + await g(); }');
+      const stmt = ast[0] as any;
+      const ret = stmt.body[0]; // ReturnStmt
+      expect(ret.type).toBe('ReturnStmt');
+      expect(ret.value).toMatchObject({
+        type: 'BinaryExpr',
+        operator: 'PlusToken',
+        left: { type: 'IntExpr', value: 1n },
+        right: { type: 'AwaitExpr', value: { type: 'CallExpr' } },
+      });
+    });
+
+    it('should parse "await <expr>" in statement position', () => {
+      const ast = parse('async proc p() { await foo(); }');
+      const stmt = ast[0] as any;
+      expect(stmt.body[0]).toMatchObject({
+        type: 'ExprStmt',
+        expression: { type: 'AwaitExpr', value: { type: 'CallExpr' } },
+      });
+    });
+
+    it('should parse nested "await" (await of an await-producing call argument)', () => {
+      const ast = parse('async function f() { return await g(await h()); }');
+      const stmt = ast[0] as any;
+      const ret = stmt.body[0];
+      expect(ret.value.type).toBe('AwaitExpr');
+      expect(ret.value.value.type).toBe('CallExpr');
+      expect(ret.value.value.args[0].type).toBe('AwaitExpr');
+    });
+
+    it('should parse consecutive async and non-async declarations correctly (non-block bodies terminate)', () => {
+      // Non-block function body followed by another declaration: ensure the
+      // 'async' keyword on the next declaration isn't swallowed into the
+      // previous function's expression body.
+      const ast = parse('function f(x) x + 1\nasync function g(y) { return y; }');
+      expect(ast).toHaveLength(2);
+      expect((ast[0] as any).type).toBe('FunctionStmt');
+      expect((ast[0] as any).async).toBeFalsy();
+      expect((ast[1] as any).type).toBe('FunctionStmt');
+      expect((ast[1] as any).async).toBe(true);
+    });
+  });
 });

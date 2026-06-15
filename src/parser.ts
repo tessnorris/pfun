@@ -30,6 +30,20 @@ export class Parser {
     if (this.match('SemiToken')) return this.parseStatement();
     if (this.match('ImportToken')) return this.parseImportStatement();
     if (this.match('ExportToken')) return this.parseExportStatement();
+    // ── Async/await (phase 1) ──────────────────────────────────────────────
+    // 'async function', 'async memo function', and 'async proc' all set the
+    // `async: true` flag on the resulting FunctionStmt/ProcedureStmt. No
+    // legality checking here (e.g. whether memo+async is sensible) — that's
+    // deferred to the typechecker's effect-checking pass (step 5).
+    if (this.match('AsyncToken')) {
+      if (this.match('MemoToken')) {
+        this.consume('FunctionToken', "Expected 'function' after 'memo'.");
+        return this.parseFunctionStatement(true, true);
+      }
+      if (this.match('FunctionToken')) return this.parseFunctionStatement(false, true);
+      this.consume('ProcToken', "Expected 'function' or 'proc' after 'async'.");
+      return this.parseProcedureStatement(true);
+    }
     if (this.match('MemoToken')) {
       this.consume('FunctionToken', "Expected 'function' after 'memo'.");
       return this.parseFunctionStatement(true);
@@ -55,7 +69,10 @@ export class Parser {
     return { type: 'ExprStmt', expression: expr, pos: exprStmtPos };
   }
 
-  private parseFunctionStatement(memo: boolean = false): Stmt {
+  // ── Async/await (phase 1) ────────────────────────────────────────────────
+  // `isAsync` is purely a flag carried onto the AST node (FunctionStmt.async).
+  // It does not change how the body/params are parsed.
+  private parseFunctionStatement(memo: boolean = false, isAsync: boolean = false): Stmt {
     const stmtPos = this.pos();
     const name = (this.consume('IdentToken', "Expected function name.") as any).value;
     this.consume('LParenToken', "Expected '(' after function name.");
@@ -68,12 +85,17 @@ export class Parser {
       this.consume('RBraceToken', "Expected '}' after block.");
       this.rejectSemiAfterBlock();
     } else {
-      while (!this.check('FunctionToken') && !this.check('MemoToken') && !this.isAtEnd()) statements.push(this.parseStatement());
+      // ── Async/await (phase 1): also stop at 'async' so a following
+      // 'async function'/'async memo function' is not swallowed into this
+      // non-block expression body. ──────────────────────────────────────
+      while (!this.check('FunctionToken') && !this.check('MemoToken') && !this.check('AsyncToken') && !this.isAtEnd()) statements.push(this.parseStatement());
     }
-    return { type: 'FunctionStmt', name, params, body: statements, memo, pos: stmtPos };
+    return { type: 'FunctionStmt', name, params, body: statements, memo, async: isAsync, pos: stmtPos };
   }
 
-  private parseProcedureStatement(): Stmt {
+  // ── Async/await (phase 1) ────────────────────────────────────────────────
+  // `isAsync` is purely a flag carried onto the AST node (ProcedureStmt.async).
+  private parseProcedureStatement(isAsync: boolean = false): Stmt {
     const stmtPos = this.pos();
     const name = (this.consume('IdentToken', "Expected procedure name.") as any).value;
     this.consume('LParenToken', "Expected '(' after procedure name.");
@@ -86,9 +108,11 @@ export class Parser {
       this.consume('RBraceToken', "Expected '}' after block.");
       this.rejectSemiAfterBlock();
     } else {
-      while (!this.check('ProcToken') && !this.isAtEnd()) statements.push(this.parseStatement());
+      // ── Async/await (phase 1): also stop at 'async' so a following
+      // 'async proc' is not swallowed into this non-block expression body. ──
+      while (!this.check('ProcToken') && !this.check('AsyncToken') && !this.isAtEnd()) statements.push(this.parseStatement());
     }
-    return { type: 'ProcedureStmt', name, params, body: statements, pos: stmtPos };
+    return { type: 'ProcedureStmt', name, params, body: statements, async: isAsync, pos: stmtPos };
   }
 
   private parseParameters(): string[] {
@@ -334,6 +358,12 @@ export class Parser {
         return { type: 'IdentExpr', name: token.value, pos: token.pos ?? exprPos };
       case 'BooleanNot': case 'MinusToken':
         return { type: 'UnaryExpr', operator: token.type, right: this.parseExpression(Precedence.UNARY), pos: token.pos ?? exprPos };
+      // ── Async/await (phase 1) ────────────────────────────────────────────
+      // 'await <expr>' parses as a unary-precedence prefix expression, same
+      // tier as unary '-'/'!'. No evaluation or effect-checking yet — the
+      // interpreter (step 4) and typechecker (step 5) will give this meaning.
+      case 'AwaitToken':
+        return { type: 'AwaitExpr', value: this.parseExpression(Precedence.UNARY), pos: token.pos ?? exprPos };
       case 'FnToken': return this.parseLambda();
       case 'MatchToken': return this.parseMatchExpression();
       case 'DictToken': {
@@ -619,8 +649,9 @@ export class Parser {
 
   private isExprStart(): boolean {
     const t = this.peek().type;
+    // ── Async/await (phase 1): 'await' starts an expression (AwaitExpr). ──
     return ['IntToken', 'BoolToken', 'StrToken', 'CharToken', 'RawStrToken', 'DollarToken', 'IdentToken', 'BooleanNot', 'MinusToken',
-            'LParenToken', 'LBracketToken', 'FnToken', 'MatchToken', 'DictToken', 'ArrayToken'].includes(t);
+            'LParenToken', 'LBracketToken', 'FnToken', 'MatchToken', 'DictToken', 'ArrayToken', 'AwaitToken'].includes(t);
   }
   private isAtEnd(): boolean { return this.peek().type === 'EOFToken'; }
   private peek(): Token { return this.tokens[this.current]; }

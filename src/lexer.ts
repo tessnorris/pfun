@@ -52,6 +52,12 @@ export type Token =
   | { type: 'GenericToken'; pos?: SourcePos }
   | { type: 'DollarToken'; pos?: SourcePos }     // $ prefix for interpolated strings
   | { type: 'RawStrToken'; value: string; pos?: SourcePos } // @"..." raw string literal
+  // ── Async/await (phase 1) ─────────────────────────────────────────────────
+  // 'async' modifies function/proc declarations; 'await' is a unary prefix
+  // expression operator. See parser.ts parsePrefix/parseStatement and
+  // ast.ts AwaitExpr / FunctionStmt.async / ProcedureStmt.async.
+  | { type: 'AsyncToken'; pos?: SourcePos }
+  | { type: 'AwaitToken'; pos?: SourcePos }
   | { type: 'SemiToken'; pos?: SourcePos } | { type: 'EOFToken'; pos?: SourcePos };
 
 export class Lexer {
@@ -313,6 +319,9 @@ export class Lexer {
       case 'with':     return { type: 'WithToken' };
       case 'where':    return { type: 'WhereToken' };
       case 'generic':  return { type: 'GenericToken' };
+      // ── Async/await (phase 1) ──────────────────────────────────────────────
+      case 'async':    return { type: 'AsyncToken' };
+      case 'await':    return { type: 'AwaitToken' };
       default:         return { type: 'IdentToken', value: s };
     }
   }

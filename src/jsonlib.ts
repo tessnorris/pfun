@@ -1,9 +1,23 @@
 // src/jsonlib.ts
-// JSON persistence library for Pfun immutable data structures.
+// JSON encode/decode for Pfun immutable data structures.
 // Handles records, discriminated union variants, and lists (arbitrarily nested).
 //
 // Register with: loader.registerBuiltin('json', jsonlibFunctions)
 // Use with:      import * from "json";
+//
+// This module is purely encode/decode (no file I/O). To persist JSON to disk,
+// compose with filelib's writeFile/readFile, e.g.:
+//
+//   match jsonSerialize(value) with
+//   | Some json -> writeFile(path, json)
+//   | None -> err("could not serialize")
+//
+//   match readFile(path) with
+//   | Ok content -> jsonDeserialize(content)
+//   | Err _ -> None
+//
+// (jsonlib uses Option-based results; filelib uses Result-based results —
+// composing the two requires converting between the two conventions via match.)
 //
 // Serialization format
 // --------------------
@@ -21,7 +35,6 @@
 // On the way back in, the "__pfun" discriminator tells the reviver exactly what
 // to reconstruct, so round-trips are lossless for all supported types.
 
-import * as fs from 'fs';
 import { RegistryFunction, PfunChar } from './interpreter';
 
 // ─── Option helpers ───────────────────────────────────────────────────────────
@@ -148,37 +161,6 @@ export const jsonlibFunctions: RegistryFunction[] = [
     if (typeof str !== 'string') throw new Error("jsonDeserialize: argument must be a string.");
     try {
       const parsed = JSON.parse(str);
-      return some(jsonToPfun(parsed));
-    } catch (e) {
-      return none;
-    }
-  }},
-
-  // jsonWriteFile(path, value) — serialize and write to a file.
-  // Returns Some { true } on success, None on failure.
-  { name: 'jsonWriteFile', fn: (args, interp) => {
-    if (interp.inPureContext) throw new Error("Functions cannot use 'jsonWriteFile': side effects are not allowed in pure functions.");
-    const filePath = interp.force(args[0]);
-    const value    = interp.force(args[1]);
-    if (typeof filePath !== 'string') throw new Error("jsonWriteFile: path must be a string.");
-    try {
-      const jsonable = pfunToJson(value);
-      fs.writeFileSync(filePath, JSON.stringify(jsonable, null, 2), 'utf8');
-      return some(true);
-    } catch (e) {
-      return none;
-    }
-  }},
-
-  // jsonReadFile(path) — read and deserialize a JSON file.
-  // Returns Some { value } on success, None on failure.
-  { name: 'jsonReadFile', fn: (args, interp) => {
-    if (interp.inPureContext) throw new Error("Functions cannot use 'jsonReadFile': side effects are not allowed in pure functions.");
-    const filePath = interp.force(args[0]);
-    if (typeof filePath !== 'string') throw new Error("jsonReadFile: path must be a string.");
-    try {
-      const content = fs.readFileSync(filePath, 'utf8');
-      const parsed  = JSON.parse(content);
       return some(jsonToPfun(parsed));
     } catch (e) {
       return none;

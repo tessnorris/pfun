@@ -7,10 +7,13 @@ import { Lexer } from './lexer';
 import { Parser } from './parser';
 import { Interpreter, ModuleLoader } from './interpreter';
 import { stdlibFunctions, stdlibTypes } from './library';
+import { mutStructuresFunctions, mutStructuresTypes } from './mutStructures';
 import { iolibFunctions } from './iolib';
 import { filelibFunctions, filelibTypes } from './filelib';
 import { jsonlibFunctions } from './jsonlib';
 import { mathlibFunctions } from './mathlib';
+import { asynclibFunctions } from './asynclib';
+import { httplibFunctions, httplibTypes } from './httplib';
 import { PfunError, buildPfunError } from './errors';
 
 /**
@@ -19,17 +22,26 @@ import { PfunError, buildPfunError } from './errors';
  */
 function setupInterpreter(interp: Interpreter): void {
   interp.registerLibrary(stdlibFunctions, stdlibTypes);
+  interp.registerLibrary(mutStructuresFunctions, mutStructuresTypes);
 }
 
-/** Register all built-in system modules ('io', 'file', 'json', 'math') on a loader. */
+/** Register all built-in system modules ('io', 'file', 'json', 'math', 'async', 'http') on a loader. */
 function registerBuiltinModules(loader: ModuleLoader): void {
   loader.registerBuiltin('io', iolibFunctions);
   loader.registerBuiltin('file', filelibFunctions, filelibTypes);
   loader.registerBuiltin('json', jsonlibFunctions);
   loader.registerBuiltin('math', mathlibFunctions);
+  loader.registerBuiltin('async', asynclibFunctions);
+  loader.registerBuiltin('http', httplibFunctions, httplibTypes);
 }
 
-function runFile(filePath: string) {
+// ── Async/await (phase 4) ────────────────────────────────────────────────
+// runFile is now async and drives top-level statements via interpretAsync,
+// so a top-level `await` (or a top-level call to an async proc that itself
+// awaits) performs a real suspend/resume rather than throwing runSync's
+// "yielded an Effect" error. Non-async programs are unaffected — runAsync
+// is a no-op driver loop when no 'await' Effect is ever yielded.
+async function runFile(filePath: string) {
   const absolutePath = path.resolve(filePath);
   if (!fs.existsSync(absolutePath)) {
     console.error(`File not found: ${absolutePath}`);
@@ -57,7 +69,7 @@ function runFile(filePath: string) {
   setupInterpreter(interp);
 
   try {
-    interp.interpret(ast!, source);
+    await interp.interpretAsync(ast!, source);
   } catch (e) {
     if (e instanceof PfunError) {
       console.error(e.pfunMessage);
@@ -189,9 +201,9 @@ function loadReplFile(interp: Interpreter, filePath: string): void {
  * they would inside a `function` body:
  *   - `var` and array/dict mutation throw immediately.
  *   - Calling a `proc` throws "Functions cannot call procedures".
- *   - Any impure builtin (println, readLine, writeFile, jsonWriteFile, ...)
- *     throws "side effects are not allowed in pure functions" the moment
- *     it's called — not when it's merely defined or imported.
+ *   - Any impure builtin (println, readLine, writeFile, ...) throws "side
+ *     effects are not allowed in pure functions" the moment it's called —
+ *     not when it's merely defined or imported.
  * This means `import * from "math"` (or any user module) is always allowed;
  * if that module happens to export something impure, using it throws at the
  * call site with a clear message, same as it would in a `function`. Users
@@ -481,5 +493,13 @@ if (args.includes('-i') || args.includes('--interactive')) {
   console.log('       pfun -i [script.pf]   (interactive mode, optionally pre-loading a file)');
   process.exit(1);
 } else {
-  runFile(args[0]);
+  runFile(args[0]).catch(e => {
+    // runFile already handles PfunError/wrapError + process.exit(1) for
+    // expected interpreter errors. This catch only guards against truly
+    // unexpected exceptions escaping interpretAsync (e.g. a bug in the
+    // driver itself) so they're reported rather than becoming a silent
+    // unhandled rejection.
+    console.error(e instanceof Error ? e.message : String(e));
+    process.exit(1);
+  });
 }

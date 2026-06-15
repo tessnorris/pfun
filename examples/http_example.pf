@@ -1,0 +1,94 @@
+// ============================================================================
+// Pfun ASYNC/AWAIT + HTTP EXAMPLE
+// ============================================================================
+// Demonstrates async/await, the httpListen server, and the httpGet client.
+// Run with: pfun http_example.pf
+//
+// The server keeps running after this script's top-level statements finish
+// (the open socket keeps the Node process alive) — press Ctrl+C to stop it.
+// ============================================================================
+
+import * from "io";
+import * from "async";
+import * from "http";
+
+/*
+  ASYNC FUNCTIONS AND AWAIT
+  -------------------------
+  `async function` / `async proc` mark a declaration as able to use `await`.
+  `await <expr>` suspends until a Promise-returning native call (sleep,
+  httpGet, ...) resolves, without blocking other tasks.
+*/
+
+async proc delayedDouble(x) {
+  await sleep(10);
+  return x * 2;
+}
+
+async proc demoAwait() {
+  let result = await delayedDouble(21);
+  println("delayedDouble(21) = " + result);  // 42
+}
+demoAwait();
+
+/*
+  HTTP SERVER
+  -----------
+  httpListen(port, handler) starts a server. `handler` is an
+  `async proc (req, res) { ... }`, called once per incoming request as its
+  own task — multiple in-flight requests interleave at `await` points, so a
+  slow handler doesn't block other requests.
+
+    req:  { method, path, query, headers, body }
+    res:  text(status, body) | json(status, value)
+*/
+
+async proc handleRequest(req, res) {
+  if req.path == "/" then {
+    res.text(200, "Pfun HTTP server is running.");
+  } else if req.path == "/slow" then {
+    // Demonstrates that other requests aren't blocked while this one waits.
+    await sleep(200);
+    res.text(200, "That took a while, but here I am.");
+  } else if req.path == "/greet" then {
+    let name = has(req.query, "name") ? req.query["name"] : "stranger";
+    res.json(200, dict { "message" -> "Hello, " + name + "!" });
+  } else {
+    res.text(404, "Not found: " + req.path);
+  }
+}
+
+let port = 8080;
+httpListen(port, handleRequest);
+println("Listening on http://localhost:" + port + " ...");
+
+/*
+  HTTP CLIENT
+  -----------
+  httpGet(url) returns a Promise<HttpResult> — Ok { status, headers, body }
+  or Err { message } — and never rejects, so no exception handling is
+  needed: just match on the result.
+
+  This demo client talks to the server we just started, on the same
+  process/port.
+*/
+
+async proc demoClient() {
+  await sleep(50); // give the server a moment to start accepting connections
+
+  let home = await httpGet("http://localhost:" + port + "/");
+  match home with
+  | Ok r  -> println("GET / -> " + r.value.status + ": " + r.value.body)
+  | Err e -> println("GET / failed: " + e.message);
+
+  let greet = await httpGet("http://localhost:" + port + "/greet?name=Pfun");
+  match greet with
+  | Ok r  -> println("GET /greet?name=Pfun -> " + r.value.status + ": " + r.value.body)
+  | Err e -> println("GET /greet failed: " + e.message);
+
+  let missing = await httpGet("http://localhost:" + port + "/nope");
+  match missing with
+  | Ok r  -> println("GET /nope -> " + r.value.status + ": " + r.value.body)
+  | Err e -> println("GET /nope failed: " + e.message);
+}
+demoClient();

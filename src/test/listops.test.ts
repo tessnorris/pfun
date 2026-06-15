@@ -265,6 +265,37 @@ describe('List Operations Tests', () => {
       expect(logs).toEqual(['[a, b, c, a, b, c, a]']);
     });
 
+    it('cycle over a take()-derived array should repeat its elements', () => {
+      const { logs } = run(`
+        let three = take(3, iterate(fn x => x + 1, 1));
+        println(take(8, cycle(three)));
+      `);
+      expect(logs).toEqual(['[1, 2, 3, 1, 2, 3, 1, 2]']);
+    });
+
+    it('map over cycle(list) should apply to every repeated element', () => {
+      const { logs } = run(`
+        let doubled = map(fn x => x * 2, cycle([1, 2, 3]));
+        println(take(7, doubled));
+      `);
+      expect(logs).toEqual(['[2, 4, 6, 2, 4, 6, 2]']);
+    });
+
+    it('filter over cycle(list) should filter every repeated element', () => {
+      const { logs } = run(`
+        let evens = filter(fn x => x % 2 == 0, cycle([1, 2, 3, 4]));
+        println(take(5, evens));
+      `);
+      expect(logs).toEqual(['[2, 4, 2, 4, 2]']);
+    });
+
+    it('tail (drop) of cycle(list) should skip across the repeat boundary', () => {
+      const { logs } = run(`
+        println(take(5, tail(cycle(["a", "b", "c"]))));
+      `);
+      expect(logs).toEqual(['[b, c, a, b, c]']);
+    });
+
     it('map over a lazy list should produce a new lazy list', () => {
       const { logs } = run(`
         let nats = iterate(fn x => x + 1, 1);

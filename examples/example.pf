@@ -1338,14 +1338,17 @@ writeFile(tmpPath, "");
     append(a, value)          — add to end
     removeAt(a, index)        — remove at index, shift later elements down
     insertAt(a, index, value) — insert before index, shift later elements up
-                                index must be in [0, length(a)]
+                                index must be in [0, arrayLength(a)]
 
   Non-mutating functions (usable anywhere):
-    length(a)     — element count
-    find(a, item) — Some { index } or None (deep equality)
-    toList(a)     — copy to an immutable Pfun list
-    toArray(list) — copy a list or string into a new mutable array
-    toDict(a)     — copy to a dict with integer keys 0, 1, 2, ...
+    arrayLength(a) — element count
+    find(a, item)  — Some { index } or None (deep equality)
+    toList(a)      — copy to an immutable Pfun list
+    toArray(list)  — copy a list or string into a new mutable array
+    toDict(a)      — copy to a dict with integer keys 0, 1, 2, ...
+
+  Note: length() (for immutable lists and strings) does not accept arrays —
+  use arrayLength() for PfunArray.
 */
 
 println("--- 24. Arrays ---");
@@ -1355,18 +1358,18 @@ println("--- 24. Arrays ---");
 proc arrayExamples() {
   var employees = array { "Alice", "Bob", "Carol" };
   println(employees[0]);              // Alice
-  println(length(employees));         // 3
+  println(arrayLength(employees));         // 3
 
   // ── append ───────────────────────────────────────────────────────────────────
 
   append(employees, "Dave");
-  println(length(employees));         // 4
+  println(arrayLength(employees));         // 4
   println(employees[3]);              // Dave
 
   // ── removeAt — shifts elements down ──────────────────────────────────────────
 
   removeAt(employees, 1);             // removes "Bob"
-  println(length(employees));         // 3
+  println(arrayLength(employees));         // 3
   println(employees[1]);              // Carol (was index 2)
 
   // ── insertAt — shifts elements up ────────────────────────────────────────────
@@ -1374,10 +1377,10 @@ proc arrayExamples() {
   insertAt(employees, 2, "Charlie");  // inserts before Dave
   println(employees[2]);              // Charlie
   println(employees[3]);              // Dave
-  println(length(employees));         // 4
+  println(arrayLength(employees));         // 4
 
   // insertAt at end is equivalent to append
-  insertAt(employees, length(employees), "Edgar");
+  insertAt(employees, arrayLength(employees), "Edgar");
   println(employees[4]);              // Edgar
 
   // insertAt beyond length throws — no gap-filling
@@ -1409,7 +1412,7 @@ proc arrayExamples() {
   let numList = [10, 20, 30];
   var numArr = toArray(numList);
   append(numArr, 40);
-  println(length(numArr));            // 4
+  println(arrayLength(numArr));            // 4
 
   // toDict — integer-keyed dict
   var smallArr = array { "x", "y", "z" };
@@ -1435,10 +1438,20 @@ arrayExamples();
  *                                 returns Some { string } or None on failure
  *    jsonDeserialize(string)    — parse a JSON string back to a Pfun value
  *                                 returns Some { value } or None on failure
- *    jsonWriteFile(path, value) — serialize and write to a file (procedure only)
- *                                 returns Some { true } or None on failure
- *    jsonReadFile(path)         — read and deserialize a JSON file (procedure only)
- *                                 returns Some { value } or None on failure
+ *
+ *  jsonlib is pure encode/decode only (no file I/O). To persist to disk,
+ *  compose with filelib's writeFile/readFile (see "file" module above):
+ *
+ *    match jsonSerialize(value) with
+ *    | Some s -> writeFile(path, s.value)
+ *    | None   -> err("could not serialize")
+ *
+ *    match readFile(path) with
+ *    | Ok c  -> jsonDeserialize(c.value)
+ *    | Err _ -> None
+ *
+ *  (jsonlib uses Option-based results; filelib uses Result-based results —
+ *  composing the two requires converting via match, as shown above.)
  *
  *  Wire format
  *  -----------
@@ -1513,11 +1526,13 @@ type Config = { host, port, debug };
 proc json4() {
   let cfg = Config(host="localhost", port=8080, debug=true);
 
-  match jsonWriteFile("./config.json", cfg) with
-  | Some _ -> println("written")           // written
-  | None   -> println("write failed");
+  let json = match jsonSerialize(cfg) with | Some s -> s.value | None -> "";
+  match writeFile("./config.json", json) with
+  | Ok _  -> println("written")            // written
+  | Err _ -> println("write failed");
 
-  let cfg2 = match jsonReadFile("./config.json") with
+  let content = match readFile("./config.json") with | Ok c -> c.value | Err _ -> "";
+  let cfg2 = match jsonDeserialize(content) with
   | Some s -> s.value
   | None   -> Config(host="error", port=0, debug=false);
 
@@ -1547,11 +1562,13 @@ proc json5() {
 
   println(treeSum(t));  // 10
 
-  match jsonWriteFile("./tree.json", t) with
-  | Some _ -> println("written")
-  | None   -> println("write failed");
+  let json = match jsonSerialize(t) with | Some s -> s.value | None -> "";
+  match writeFile("./tree.json", json) with
+  | Ok _  -> println("written")
+  | Err _ -> println("write failed");
 
-  let t2 = match jsonReadFile("./tree.json") with
+  let content = match readFile("./tree.json") with | Ok c -> c.value | Err _ -> "";
+  let t2 = match jsonDeserialize(content) with
   | Some s -> s.value
   | None   -> Leaf { 0 };
 

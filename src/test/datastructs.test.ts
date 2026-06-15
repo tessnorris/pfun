@@ -3,12 +3,14 @@ import { Lexer } from '../lexer';
 import { Parser } from '../parser';
 import { Interpreter, PfunArray } from '../interpreter';
 import { stdlibFunctions, stdlibTypes } from '../library';
+import { mutStructuresFunctions, mutStructuresTypes } from '../mutStructures';
 import { iolibFunctions } from '../iolib';
 
 const run = (source: string) => {
   const ast = new Parser(new Lexer(source).lex()).parse();
   const interpreter = new Interpreter();
   interpreter.registerLibrary(stdlibFunctions, stdlibTypes);
+  interpreter.registerLibrary(mutStructuresFunctions, mutStructuresTypes);
   interpreter.registerLibrary(iolibFunctions, []);
   const logs: string[] = [];
   let currentLine = '';
@@ -345,12 +347,24 @@ describe('Data Structure Tests', () => {
       `)).toThrow("Type mismatch in array");
     });
 
-    it('length() should return the element count', () => {
+    it('arrayLength() should return the element count', () => {
       const { logs } = run(`
         var a = array { 10, 20, 30 };
-        println(length(a));
+        println(arrayLength(a));
       `);
       expect(logs).toEqual(['3']);
+    });
+
+    it('length() should reject a PfunArray (use arrayLength instead)', () => {
+      expect(() => run(`
+        var a = array { 1, 2, 3 };
+        eval length(a);
+      `)).toThrow("arrayLength()");
+    });
+
+    it('arrayLength() should reject an immutable list', () => {
+      expect(() => run(`eval arrayLength([1, 2, 3]);`))
+        .toThrow("arrayLength() requires an array");
     });
 
     it('should print as array { ... }', () => {
@@ -371,7 +385,7 @@ describe('Data Structure Tests', () => {
         proc p() {
           var a = array { "Alice", "Bob" };
           append(a, "Dave");
-          println(length(a));
+          println(arrayLength(a));
           println(a[2]);
         }
         p();
@@ -394,7 +408,7 @@ describe('Data Structure Tests', () => {
         proc p() {
           var a = array { "Alice", "Bob", "Carol" };
           removeAt(a, 1);
-          println(length(a));
+          println(arrayLength(a));
           println(a[0]);
           println(a[1]);
         }
@@ -418,7 +432,7 @@ describe('Data Structure Tests', () => {
         proc p() {
           var a = array { "Alice", "Bob", "Dave" };
           insertAt(a, 2, "Charlie");
-          println(length(a));
+          println(arrayLength(a));
           println(a[2]);
           println(a[3]);
         }
@@ -494,7 +508,7 @@ describe('Data Structure Tests', () => {
       const { logs } = run(`
         var a = toArray("hello");
         println(a[0]);
-        println(length(a));
+        println(arrayLength(a));
       `);
       expect(logs).toEqual(['h', '5']);
     });

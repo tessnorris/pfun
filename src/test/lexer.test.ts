@@ -199,4 +199,38 @@ describe('Lexer Unit Tests', () => {
       expect((token as any).value).toBe('line1\nline2');
     });
   });
+
+  // ── Async/await (phase 1) ────────────────────────────────────────────────
+  describe('Async/await keywords', () => {
+    it('should tokenize "async" as AsyncToken', () => {
+      expect(lex('async')[0].type).toBe('AsyncToken');
+    });
+
+    it('should tokenize "await" as AwaitToken', () => {
+      expect(lex('await')[0].type).toBe('AwaitToken');
+    });
+
+    it('should tokenize an async function declaration with await in the body', () => {
+      const tokens = lex('async function f() { await x }');
+      expect(tokens.map(t => t.type)).toEqual([
+        'AsyncToken', 'FunctionToken', 'IdentToken', 'LParenToken', 'RParenToken',
+        'LBraceToken', 'AwaitToken', 'IdentToken', 'RBraceToken', 'EOFToken'
+      ]);
+    });
+
+    it('should tokenize an async proc declaration', () => {
+      const tokens = lex('async proc p() { }');
+      expect(tokens.map(t => t.type)).toEqual([
+        'AsyncToken', 'ProcToken', 'IdentToken', 'LParenToken', 'RParenToken',
+        'LBraceToken', 'RBraceToken', 'EOFToken'
+      ]);
+    });
+
+    it('should not confuse identifiers containing "async"/"await" as substrings with the keywords', () => {
+      const tokens = lex('asyncValue awaitable');
+      expect(tokens.map(t => t.type)).toEqual(['IdentToken', 'IdentToken', 'EOFToken']);
+      expect((tokens[0] as any).value).toBe('asyncValue');
+      expect((tokens[1] as any).value).toBe('awaitable');
+    });
+  });
 });

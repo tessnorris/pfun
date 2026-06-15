@@ -88,7 +88,14 @@ export type Expr =
   | { type: 'ArrayExpr';  elements: Expr[]; pos?: SourcePos; inferredType?: PfunType }
   | { type: 'IndexExpr';  object: Expr; index: Expr; pos?: SourcePos; inferredType?: PfunType }
   | { type: 'IndexAssignExpr'; object: Expr; index: Expr; value: Expr; pos?: SourcePos; inferredType?: PfunType }
-  | { type: 'BlockExpr';  statements: Stmt[]; pos?: SourcePos; inferredType?: PfunType };
+  | { type: 'BlockExpr';  statements: Stmt[]; pos?: SourcePos; inferredType?: PfunType }
+  // ── Async/await (phase 1) ───────────────────────────────────────────────────
+  // 'await <value>' — a unary prefix expression. In phase 1 this only parses;
+  // evaluation (interpreter.ts) and effect-checking (typechecker.ts, "async
+  // contagion": await is only legal inside an async function/proc, and a
+  // value produced by an async call may only be forced from an async
+  // context) are deferred to later steps.
+  | { type: 'AwaitExpr'; value: Expr; pos?: SourcePos; inferredType?: PfunType };
 
 /**
  * Statements represent actions or control flow.
@@ -99,6 +106,13 @@ export type Expr =
  *
  * LetStmt and VarStmt carry an optional `inferredType` annotation written
  * by the type inferencer after constraint solving.
+ *
+ * ── Async/await (phase 1) ───────────────────────────────────────────────────
+ * `async?: boolean` on FunctionStmt/ProcedureStmt marks a declaration as
+ * async (parsed via `async function` / `async proc`). Currently this is
+ * purely a syntactic flag — it carries no interpreter or typechecker
+ * semantics yet. `async memo function` is allowed to *parse* (memo + async
+ * legality is deferred to the typechecker's effect-checking pass, step 5).
  */
 export type Stmt =
   | { type: 'LetStmt';       name: string; initializer: Expr; pos?: SourcePos; inferredType?: PfunType }
@@ -108,8 +122,8 @@ export type Stmt =
   | { type: 'ExprStmt';      expression: Expr; pos?: SourcePos }
   | { type: 'BlockStmt';     statements: Stmt[]; pos?: SourcePos }
   | { type: 'IfStmt';        condition: Expr; thenBranch: Stmt; elseBranch?: Stmt; pos?: SourcePos }
-  | { type: 'FunctionStmt';  name: string; params: string[]; body: Stmt[]; memo: boolean; pos?: SourcePos }
-  | { type: 'ProcedureStmt'; name: string; params: string[]; body: Stmt[]; pos?: SourcePos }
+  | { type: 'FunctionStmt';  name: string; params: string[]; body: Stmt[]; memo: boolean; async?: boolean; pos?: SourcePos }
+  | { type: 'ProcedureStmt'; name: string; params: string[]; body: Stmt[]; async?: boolean; pos?: SourcePos }
   | { type: 'ReturnStmt';    value?: Expr; pos?: SourcePos }
   | { type: 'EvalStmt';      expression: Expr; pos?: SourcePos }
   | { type: 'ImportStmt';    kind: 'named';     names: { name: string; alias?: string }[]; path: string; pos?: SourcePos }

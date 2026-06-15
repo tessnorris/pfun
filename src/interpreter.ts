@@ -178,6 +178,102 @@ export type LazyListDescriptor =
   | { kind: 'cons';    head: any; tail: any }
   | { kind: 'drop';    n: number; source: LazyList };
 
+// ─── Async/await (phase 2): the Effect protocol ────────────────────────────
+//
+// The evaluator core (evaluateExpr/evaluateStmt/force/PfunFunction.execute/
+// trampoline, plus — from step 3 — the lazy-list machinery) is implemented
+// as a mutually-recursive chain of generator functions (`function*`) that
+// communicate via `yield*` delegation. Every `yield` in that chain yields an
+// `Effect`:
+//
+//   - 'await'  — (step 4) the evaluator hit an `AwaitExpr`; carries a real JS
+//                 Promise that the top-level driver must `await` before
+//                 resuming. Unhandled by intermediate frames — bubbles all
+//                 the way up via `yield*`.
+//   - 'emit'   — (step 3) a lazy-list generator (makeGenerator) has produced
+//                 the next element; consumed internally by takeFrom/etc.,
+//                 never escapes to the top-level driver.
+//
+// In phase 2, NOTHING in source can produce either kind of Effect yet (no
+// `await` expressions are evaluated, and makeGenerator/takeFrom haven't been
+// unified into this protocol yet — that's step 3). So every generator in
+// this phase runs to completion on the first `.next()` with `done: true`
+// and never yields. `runSync` below enforces this: if a generator DOES
+// yield in phase 2, that's a bug (most likely a missed `yield*` during the
+// conversion), and runSync throws loudly rather than silently dropping the
+// effect.
+export type Effect =
+  | { kind: 'await'; promise: Promise<any> }
+  | { kind: 'emit';  value: any };
+
+/**
+ * Drive a generator-core method to completion synchronously, assuming it
+ * never yields an Effect. This is the "Option B" sync wrapper: library code
+ * (library.ts, mathlib.ts, iolib.ts, jsonlib.ts, filelib.ts, and their
+ * tests) keeps calling `interp.force(...)`, `interp.evaluateExpr(...)`,
+ * `fn.execute(...)`, etc. with the same synchronous signatures as before —
+ * those names now drive the `*Gen` generator core via runSync.
+ *
+ * Phase 2/3: no Effect can ever be produced, so this is purely a mechanical
+ * adapter. Phase 4+: per the typechecker's async-contagion rule, a sync
+ * (non-async) calling context is guaranteed to never need to suspend, so
+ * runSync remains correct for library call sites that are themselves
+ * reachable only from sync Pfun code.
+ */
+export function runSync<T>(gen: Generator<Effect, T, any>): T {
+  const step = gen.next();
+  if (!step.done) {
+    throw new Error(
+      `Internal error: synchronous evaluation path yielded an Effect ` +
+      `(kind: '${step.value.kind}'). This indicates either an 'await' was ` +
+      `reached from a context that cannot suspend, or a generator-core ` +
+      `method is missing a 'yield*' delegation.`
+    );
+  }
+  return step.value;
+}
+
+/**
+ * Drive a generator-core method to completion, performing a real JS `await`
+ * whenever an 'await' Effect is yielded (step 4).
+ *
+ * This is the top-level driver for any evaluation that might contain
+ * `AwaitExpr`. A single call to runAsync corresponds to one "task" — for
+ * now (before step 6's scheduler exists) there is exactly one task at a
+ * time, so this is just `interpret`'s evaluation loop made `async`.
+ *
+ * 'emit' effects should never reach here — they're consumed internally by
+ * takeFromGen/makeGeneratorGen (step 3). If one does escape to this driver,
+ * that's a bug in the lazy-list plumbing, so we throw loudly rather than
+ * silently misinterpreting it as an await.
+ *
+ * Promise rejection: if the awaited promise rejects, we resume the
+ * generator via `.throw(err)` rather than `.next(...)` — the rejection
+ * becomes a normal thrown error at the `yield` inside AwaitExpr's
+ * evaluation, propagating through Pfun's existing try/catch and
+ * wrapError/PfunError machinery exactly like a synchronous throw.
+ */
+export async function runAsync<T>(gen: Generator<Effect, T, any>): Promise<T> {
+  let step = gen.next();
+  while (!step.done) {
+    const eff = step.value;
+    if (eff.kind !== 'await') {
+      throw new Error(
+        `Internal error: top-level driver received an unexpected Effect ` +
+        `(kind: '${(eff as any).kind}'). 'emit' effects must be consumed ` +
+        `internally by takeFromGen/makeGeneratorGen.`
+      );
+    }
+    try {
+      const resolved = await eff.promise;
+      step = gen.next(resolved);
+    } catch (err) {
+      step = gen.throw(err);
+    }
+  }
+  return step.value;
+}
+
 export class NativeFunction {
   constructor(
     public fn: (args: any[], interpreter: Interpreter) => any,
@@ -194,44 +290,82 @@ export class PfunFunction {
     public body: Stmt[] | Expr,
     public closure: Environment,
     public kind: 'function' | 'procedure' = 'function',
-    public memo: boolean = false
+    public memo: boolean = false,
+    // ── Async/await (phase 4) ──────────────────────────────────────────────
+    // Mirrors FunctionStmt.async/ProcedureStmt.async (phase 1, purely
+    // syntactic until now). Used by Interpreter.containsAwait so that
+    // `f()` — a call to a function/proc whose own body contains `await` —
+    // is treated as itself "containing await" for the purposes of deciding
+    // whether an argument/let-initializer expression must be evaluated
+    // eagerly rather than thunked (see containsAwait for the full
+    // explanation). Defaults to false for PfunFunctions constructed without
+    // it (lambdas, currying partials — see PfunFunction construction sites).
+    public async: boolean = false
   ) {}
 
+  // ── Async/await (phase 2) ────────────────────────────────────────────────
+  // execute() is now a sync wrapper around executeGen(), the generator-core
+  // implementation. Library code calling fn.execute(args, interp) is
+  // unaffected — same signature, same synchronous return (see runSync).
   execute(args: any[], interpreter: Interpreter): any {
+    return runSync(this.executeGen(args, interpreter));
+  }
+
+  /**
+   * Generator-core implementation of execute(). Identical logic to the
+   * original execute(), but every recursive call into the evaluator
+   * (evaluateStmtGen/evaluateExprGen) is delegated via `yield*` so that an
+   * Effect (e.g. an 'await' from step 4) yielded deep inside a function body
+   * propagates all the way out to the top-level driver through this
+   * trampoline loop.
+   */
+  *executeGen(args: any[], interpreter: Interpreter): Generator<Effect, any, any> {
     let currentArgs = args;
     // eslint-disable-next-line @typescript-eslint/no-this-alias
     let currentFn: PfunFunction = this;
-    while (true) {
-      const env = new Environment(currentFn.closure);
-      for (let i = 0; i < currentFn.params.length; i++) {
-        env.define(currentFn.params[i], currentArgs[i], false);
-      }
-      let result: any;
-      if (Array.isArray(currentFn.body)) {
-        try {
-          result = undefined;
-          const stmts = currentFn.body;
-          for (let i = 0; i < stmts.length; i++) {
-            interpreter.inTailPosition = (i === stmts.length - 1);
-            result = interpreter.evaluateStmt(stmts[i], env);
-          }
-          interpreter.inTailPosition = false;
-        } catch (e) {
-          interpreter.inTailPosition = false;
-          if (e instanceof ReturnValue) result = e.value;
-          else throw e;
+    // ── Async/await (phase 5) ────────────────────────────────────────────
+    // Save the caller's inAsyncContext once; restore it when this call
+    // (including any TailCall trampoline iterations) finishes. Within the
+    // loop, inAsyncContext tracks currentFn.async — a TailCall to a
+    // differently-`async`-flagged function correctly updates the context
+    // for that iteration's body.
+    const prevAsyncContext = interpreter.inAsyncContext;
+    try {
+      while (true) {
+        interpreter.inAsyncContext = currentFn.async;
+        const env = new Environment(currentFn.closure);
+        for (let i = 0; i < currentFn.params.length; i++) {
+          env.define(currentFn.params[i], currentArgs[i], false);
         }
-      } else {
-        interpreter.inTailPosition = true;
-        result = interpreter.evaluateExpr(currentFn.body, env);
-        interpreter.inTailPosition = false;
+        let result: any;
+        if (Array.isArray(currentFn.body)) {
+          try {
+            result = undefined;
+            const stmts = currentFn.body;
+            for (let i = 0; i < stmts.length; i++) {
+              interpreter.inTailPosition = (i === stmts.length - 1);
+              result = yield* interpreter.evaluateStmtGen(stmts[i], env);
+            }
+            interpreter.inTailPosition = false;
+          } catch (e) {
+            interpreter.inTailPosition = false;
+            if (e instanceof ReturnValue) result = e.value;
+            else throw e;
+          }
+        } else {
+          interpreter.inTailPosition = true;
+          result = yield* interpreter.evaluateExprGen(currentFn.body, env);
+          interpreter.inTailPosition = false;
+        }
+        if (result instanceof TailCall) {
+          currentFn   = result.fn;
+          currentArgs = result.args;
+          continue;
+        }
+        return result;
       }
-      if (result instanceof TailCall) {
-        currentFn   = result.fn;
-        currentArgs = result.args;
-        continue;
-      }
-      return result;
+    } finally {
+      interpreter.inAsyncContext = prevAsyncContext;
     }
   }
 }
@@ -482,6 +616,47 @@ export class Interpreter {
   public  types    = new TypeRegistry();
   public  inPureContext: boolean = false;
   public  inTailPosition: boolean = false;
+  // ── Async/await (phase 5) ──────────────────────────────────────────────
+  // Mirrors inPureContext: true while executing top-level code or the body
+  // of an `async function`/`async proc`; false inside a non-async
+  // function/proc body. AwaitExpr evaluation checks this and throws if
+  // false — the runtime enforcement of "await only inside async
+  // functions/procs" (the async-contagion rule), exactly parallel to how
+  // inPureContext enforces "var/procedure-calls only outside pure
+  // functions" as a RUNTIME check rather than a static one, consistent with
+  // this codebase's existing purity-checking style.
+  //
+  // Defaults to true: top-level statements (driven by interpret/
+  // interpretAsync) may use `await` directly, matching top-level await in
+  // ES modules. executeGen sets this to `currentFn.async` for the duration
+  // of a function/procedure body, restoring the previous value afterward —
+  // same save/restore pattern as inPureContext/inTailPosition. Concurrent
+  // tasks (step 6) are isolated from each other's mutations of this field
+  // by Scheduler.spawn, which snapshots/restores inPureContext/
+  // inTailPosition/inAsyncContext around each task's execution slice — see
+  // the Scheduler class below for details.
+  public  inAsyncContext: boolean = true;
+
+  // ── Async/await (phase 6) ────────────────────────────────────────────────
+  // Lazily-created Scheduler for this interpreter. Native functions that
+  // need to run Pfun code concurrently (e.g. httpserver.listen, which spawns
+  // a task per incoming HTTP request) call `interp.scheduler.spawn(...)`.
+  // Most programs (no httpserver involved) never touch this.
+  private _scheduler?: Scheduler;
+  get scheduler(): Scheduler {
+    if (!this._scheduler) this._scheduler = new Scheduler(this);
+    return this._scheduler;
+  }
+
+  // ── Async/await (phase 6) ────────────────────────────────────────────────
+  // Generic cleanup registry: long-lived resources created by native
+  // functions (currently: http.Server instances from httpListen) register a
+  // close()-like callback here. Normal Pfun programs never call this — the
+  // process exits naturally when the script ends or the server keeps it
+  // alive. Tests use this to close servers between test cases. Typed `any`
+  // to avoid this module depending on 'http'.
+  public _resources: { close: () => void }[] = [];
+
   private exports  = new Map<string, any>();
   private baseDir:      string;
   private moduleLoader: ModuleLoader;
@@ -609,6 +784,38 @@ export class Interpreter {
     }
   }
 
+  // ── Async/await (phase 4) ────────────────────────────────────────────────
+  // interpretAsync() is the `await`-aware counterpart to interpret(): each
+  // top-level statement is driven via runAsync, so a top-level `await`
+  // (e.g. `eval await fetchUsers();`, or top-level `let`/`var` initializers
+  // containing `await`) performs a real JS await rather than throwing
+  // runSync's "yielded an Effect" error.
+  //
+  // interpret() (sync) remains for callers that know their program contains
+  // no `await` — e.g. existing tests, and any embedding that wants a
+  // synchronous result. Both share the same evaluateStmtGen/forceGen core;
+  // the only difference is the driver (runSync vs runAsync).
+  async interpretAsync(statements: Stmt[], sourceText?: string): Promise<void> {
+    if (sourceText !== undefined) this.sourceText = sourceText;
+    for (const stmt of statements) {
+      try {
+        await runAsync(this.evalAndForceGen(stmt, this.globals));
+      } catch (e) {
+        throw this.wrapError(e);
+      }
+    }
+  }
+
+  /**
+   * Small helper generator: evaluateStmtGen then forceGen the result, as a
+   * single Generator<Effect, ...> — used by interpretAsync so each top-level
+   * statement is one runAsync() call (mirrors `this.force(this.evaluateStmt(...))`
+   * in the sync interpret()).
+   */
+  private *evalAndForceGen(stmt: Stmt, env: Environment): Generator<Effect, any, any> {
+    return yield* this.forceGen(yield* this.evaluateStmtGen(stmt, env));
+  }
+
   getGlobal(name: string): any { return this.force(this.globals.get(name)); }
 
   /** Public accessor for the global environment — used by the REPL to evaluate
@@ -617,7 +824,19 @@ export class Interpreter {
 
   // ─── Statement Evaluation ───────────────────────────────────────────────────
 
+  // ── Async/await (phase 2) ────────────────────────────────────────────────
+  // evaluateStmt() is now a sync wrapper around evaluateStmtGen(). Same
+  // signature/return as before — see runSync.
   evaluateStmt(stmt: Stmt, env: Environment): any {
+    return runSync(this.evaluateStmtGen(stmt, env));
+  }
+
+  /**
+   * Generator-core implementation of evaluateStmt(). Identical logic to the
+   * original evaluateStmt(), with every recursive evaluator call (evaluateExpr,
+   * evaluateStmt, force) delegated via `yield*` to its *Gen counterpart.
+   */
+  *evaluateStmtGen(stmt: Stmt, env: Environment): Generator<Effect, any, any> {
     this.trackPos(stmt, env);
     switch (stmt.type) {
       case 'LetStmt': {
@@ -632,13 +851,22 @@ export class Interpreter {
         // before wrapping in a Thunk — so a lazy binding doesn't bypass type checking
         // for a subsequent construction of the same type.
         this.seedFromExpr(stmt.initializer);
+        // ── Async/await (phase 4): see containsAwait — `await`-containing
+        // initializers must be evaluated eagerly, at the `let` statement,
+        // since deferring to a later force() may happen from a sync context
+        // that cannot suspend.
+        if (this.containsAwait(stmt.initializer, env)) {
+          const val = yield* this.forceGen(yield* this.evaluateExprGen(stmt.initializer, env));
+          env.define(stmt.name, val, false);
+          return;
+        }
         env.define(stmt.name, new Thunk(stmt.initializer, env), false);
         return;
       }
       case 'VarStmt': {
         if (this.inPureContext) throw new Error("Functions cannot use 'var': side-effectful mutation is not allowed in pure functions. Use 'let' or convert to a procedure.");
         this.checkNameAvailable(stmt.name, env, 'var');
-        const val = this.force(this.evaluateExpr(stmt.initializer, env));
+        const val = yield* this.forceGen(yield* this.evaluateExprGen(stmt.initializer, env));
         env.define(stmt.name, val, true);
         return;
       }
@@ -648,10 +876,10 @@ export class Interpreter {
       case 'UnionTypeStmt':
         this.types.registerUnion(stmt.name, stmt.variants, this.globals);
         return;
-      case 'ExprStmt': return this.evaluateExpr(stmt.expression, env);
-      case 'EvalStmt': return this.force(this.evaluateExpr(stmt.expression, env));
+      case 'ExprStmt': return yield* this.evaluateExprGen(stmt.expression, env);
+      case 'EvalStmt': return yield* this.forceGen(yield* this.evaluateExprGen(stmt.expression, env));
       case 'ExportStmt': {
-        this.evaluateStmt(stmt.declaration, env);
+        yield* this.evaluateStmtGen(stmt.declaration, env);
         const decl = stmt.declaration;
         if (decl.type === 'LetStmt' || decl.type === 'VarStmt') {
           try { this.exports.set(decl.name, env.get(decl.name)); } catch {}
@@ -731,35 +959,52 @@ export class Interpreter {
         const stmts = stmt.statements;
         for (let i = 0; i < stmts.length; i++) {
           if (i < stmts.length - 1) this.inTailPosition = false;
-          blockResult = this.evaluateStmt(stmts[i], blockEnv);
+          blockResult = yield* this.evaluateStmtGen(stmts[i], blockEnv);
         }
         return blockResult;
       }
       case 'IfStmt': {
         const prevTail = this.inTailPosition;
         this.inTailPosition = false;
-        const cond = this.force(this.evaluateExpr(stmt.condition, env));
+        const cond = yield* this.forceGen(yield* this.evaluateExprGen(stmt.condition, env));
         this.inTailPosition = prevTail;
-        if (this.isTruthy(cond)) return this.evaluateStmt(stmt.thenBranch, env);
-        else if (stmt.elseBranch) return this.evaluateStmt(stmt.elseBranch, env);
+        if (this.isTruthy(cond)) return yield* this.evaluateStmtGen(stmt.thenBranch, env);
+        else if (stmt.elseBranch) return yield* this.evaluateStmtGen(stmt.elseBranch, env);
         return;
       }
       case 'FunctionStmt':
         this.checkNameAvailable(stmt.name, env, 'function');
-        env.define(stmt.name, new PfunFunction(stmt.name, stmt.params, stmt.body, env, 'function', stmt.memo), false);
+        env.define(stmt.name, new PfunFunction(stmt.name, stmt.params, stmt.body, env, 'function', stmt.memo, stmt.async ?? false), false);
         return;
       case 'ProcedureStmt':
         this.checkNameAvailable(stmt.name, env, 'proc');
-        env.define(stmt.name, new PfunFunction(stmt.name, stmt.params, stmt.body, env, 'procedure'), false);
+        env.define(stmt.name, new PfunFunction(stmt.name, stmt.params, stmt.body, env, 'procedure', false, stmt.async ?? false), false);
         return;
       case 'ReturnStmt':
-        throw new ReturnValue(stmt.value ? this.evaluateExpr(stmt.value, env) : undefined);
+        throw new ReturnValue(stmt.value ? yield* this.evaluateExprGen(stmt.value, env) : undefined);
     }
   }
 
   // ─── Expression Evaluation ──────────────────────────────────────────────────
 
+  // ── Async/await (phase 2) ────────────────────────────────────────────────
+  // evaluateExpr() is now a sync wrapper around evaluateExprGen(). Same
+  // signature/return as before — see runSync.
   evaluateExpr(expr: Expr, env: Environment): any {
+    return runSync(this.evaluateExprGen(expr, env));
+  }
+
+  /**
+   * Generator-core implementation of evaluateExpr(). Identical logic to the
+   * original evaluateExpr(), with every recursive evaluator call (evaluateExpr,
+   * evaluateStmt, evaluateBinary, evaluateMatch, evaluateRecord, force)
+   * delegated via `yield*` to its *Gen counterpart.
+   *
+   * NOTE: AwaitExpr (added to the AST in phase 1) does not have a case here
+   * yet — that's step 4. Evaluating an AwaitExpr-containing program will hit
+   * the switch's implicit fallthrough (returns undefined) until then.
+   */
+  *evaluateExprGen(expr: Expr, env: Environment): Generator<Effect, any, any> {
     this.trackPos(expr, env);
     switch (expr.type) {
       case 'IntExpr':   return expr.value;
@@ -768,85 +1013,94 @@ export class Interpreter {
       case 'StrExpr':   return expr.value;
       case 'CharExpr':  return new PfunChar(expr.value);
       case 'IdentExpr': return env.get(expr.name);
-      case 'GroupExpr': return this.evaluateExpr(expr.expression, env);
+      case 'GroupExpr': return yield* this.evaluateExprGen(expr.expression, env);
       case 'UnaryExpr': {
         this.inTailPosition = false;
-        const val = this.force(this.evaluateExpr(expr.right, env));
+        const val = yield* this.forceGen(yield* this.evaluateExprGen(expr.right, env));
         if (expr.operator === 'BooleanNot') return !val;
         if (expr.operator === 'MinusToken') return -val;
         throw new Error(`Unknown unary operator ${expr.operator}`);
       }
-      case 'BinaryExpr': { this.inTailPosition = false; return this.evaluateBinary(expr, env); }
+      case 'BinaryExpr': { this.inTailPosition = false; return yield* this.evaluateBinaryGen(expr, env); }
       case 'TernaryExpr': {
         const prevTailTern = this.inTailPosition;
         this.inTailPosition = false;
-        const cond = this.force(this.evaluateExpr(expr.condition, env));
+        const cond = yield* this.forceGen(yield* this.evaluateExprGen(expr.condition, env));
         this.inTailPosition = prevTailTern;
         return this.isTruthy(cond)
-          ? this.evaluateExpr(expr.thenBranch, env)
-          : this.evaluateExpr(expr.elseBranch, env);
+          ? yield* this.evaluateExprGen(expr.thenBranch, env)
+          : yield* this.evaluateExprGen(expr.elseBranch, env);
       }
       case 'AssignExpr': {
         this.inTailPosition = false;
-        const val = this.force(this.evaluateExpr(expr.value, env));
+        const val = yield* this.forceGen(yield* this.evaluateExprGen(expr.value, env));
         env.assign(expr.name, val);
         return val;
       }
       case 'LambdaExpr': { this.inTailPosition = false; return new PfunFunction(null, expr.params, expr.body, env, 'function'); }
       case 'ListExpr': {
         this.inTailPosition = false;
-        const elements = expr.elements.map(e => this.force(this.evaluateExpr(e, env)));
+        const elements: any[] = [];
+        for (const e of expr.elements) elements.push(yield* this.forceGen(yield* this.evaluateExprGen(e, env)));
         this.enforceListType(elements);
         return elements;
       }
       case 'ComprehensionExpr': {
+        // The original implementation used a synchronous recursive closure
+        // (evalGenerators) over nested `for` loops. Converted to an
+        // equivalent generator-core recursive *generator* function so that
+        // any `yield*` inside guard/source/body expressions propagates.
         const results: any[] = [];
-        const evalGenerators = (genIndex: number, scopeEnv: Environment) => {
-          if (genIndex === expr.generators.length) {
-            if (expr.guard) {
-              const guardVal = this.force(this.evaluateExpr(expr.guard, scopeEnv));
-              if (!this.isTruthy(guardVal)) return;
+        const evalGenerators = (genIndex: number, scopeEnv: Environment): Generator<Effect, void, any> => {
+          const self = this;
+          return (function* () {
+            if (genIndex === expr.generators.length) {
+              if (expr.guard) {
+                const guardVal = yield* self.forceGen(yield* self.evaluateExprGen(expr.guard, scopeEnv));
+                if (!self.isTruthy(guardVal)) return;
+              }
+              results.push(yield* self.forceGen(yield* self.evaluateExprGen(expr.body, scopeEnv)));
+              return;
             }
-            results.push(this.force(this.evaluateExpr(expr.body, scopeEnv)));
-            return;
-          }
-          const gen = expr.generators[genIndex];
-          const source = this.force(this.evaluateExpr(gen.source, scopeEnv));
-          let items: any[];
-          if (typeof source === 'string') {
-            items = source.split('').map(c => new PfunChar(c));
-          } else if (Array.isArray(source)) {
-            items = source;
-          } else if (source instanceof LazyList) {
-            throw new Error(`Comprehension source must be a finite list. Use take() to make a lazy list finite.`);
-          } else {
-            throw new Error(`Comprehension source must be a list, got ${typeof source}.`);
-          }
-          for (const item of items) {
-            const innerEnv = new Environment(scopeEnv);
-            innerEnv.define(gen.variable, item, false);
-            evalGenerators(genIndex + 1, innerEnv);
-          }
+            const gen = expr.generators[genIndex];
+            const source = yield* self.forceGen(yield* self.evaluateExprGen(gen.source, scopeEnv));
+            let items: any[];
+            if (typeof source === 'string') {
+              items = source.split('').map(c => new PfunChar(c));
+            } else if (Array.isArray(source)) {
+              items = source;
+            } else if (source instanceof LazyList) {
+              throw new Error(`Comprehension source must be a finite list. Use take() to make a lazy list finite.`);
+            } else {
+              throw new Error(`Comprehension source must be a list, got ${typeof source}.`);
+            }
+            for (const item of items) {
+              const innerEnv = new Environment(scopeEnv);
+              innerEnv.define(gen.variable, item, false);
+              yield* evalGenerators(genIndex + 1, innerEnv);
+            }
+          })();
         };
-        evalGenerators(0, env);
+        yield* evalGenerators(0, env);
         if (results.length > 0 && results.every((c: any) => c instanceof PfunChar)) {
           return results.map((c: PfunChar) => c.value).join('');
         }
         this.enforceListType(results);
         return results;
       }
-      case 'RecordExpr':      return this.evaluateRecord(expr, env);
+      case 'RecordExpr':      return yield* this.evaluateRecordGen(expr, env);
       case 'DictExpr': {
         const map = new Map<string, any>();
         for (const entry of expr.entries) {
-          const k = this.force(this.evaluateExpr(entry.key, env));
-          const v = this.force(this.evaluateExpr(entry.value, env));
+          const k = yield* this.forceGen(yield* this.evaluateExprGen(entry.key, env));
+          const v = yield* this.forceGen(yield* this.evaluateExprGen(entry.value, env));
           map.set(PfunDict.keyOf(k), v);
         }
         return new PfunDict(map);
       }
       case 'ArrayExpr': {
-        const elements = expr.elements.map((e: any) => this.force(this.evaluateExpr(e, env)));
+        const elements: any[] = [];
+        for (const e of expr.elements as any[]) elements.push(yield* this.forceGen(yield* this.evaluateExprGen(e, env)));
         const arr = new PfunArray(elements);
         if (elements.length > 0) {
           const firstType = getValueType(elements[0]);
@@ -859,8 +1113,8 @@ export class Interpreter {
         return arr;
       }
       case 'IndexExpr': {
-        const obj = this.force(this.evaluateExpr(expr.object, env));
-        const idx = this.force(this.evaluateExpr(expr.index, env));
+        const obj = yield* this.forceGen(yield* this.evaluateExprGen(expr.object, env));
+        const idx = yield* this.forceGen(yield* this.evaluateExprGen(expr.index, env));
         if (obj instanceof PfunDict) {
           const key = PfunDict.keyOf(idx);
           if (!obj.entries.has(key)) throw new Error(`Key not found in dict: ${this.stringify(idx)}`);
@@ -882,30 +1136,30 @@ export class Interpreter {
       }
       case 'IndexAssignExpr': {
         if (this.inPureContext) throw new Error("Functions cannot mutate arrays or dicts: side-effectful mutation is not allowed in pure functions. Use a procedure instead.");
-        const obj = this.force(this.evaluateExpr(expr.object, env));
+        const obj = yield* this.forceGen(yield* this.evaluateExprGen(expr.object, env));
         if (obj instanceof PfunArray) {
-          const idx = this.force(this.evaluateExpr(expr.index, env));
+          const idx = yield* this.forceGen(yield* this.evaluateExprGen(expr.index, env));
           if (typeof idx !== 'bigint') throw new Error("Array index must be an integer.");
           const i = Number(idx);
           if (i < 0 || i >= obj.elements.length) throw new Error(`Array index ${i} out of bounds (length ${obj.elements.length}).`);
-          const val = this.force(this.evaluateExpr(expr.value, env));
+          const val = yield* this.forceGen(yield* this.evaluateExprGen(expr.value, env));
           this.enforceArrayType(obj, val);
           obj.elements[i] = val;
           return val;
         }
         if (!(obj instanceof PfunDict)) throw new Error("Index assignment is only supported on dicts and arrays.");
-        const idx = this.force(this.evaluateExpr(expr.index, env));
-        const val = this.force(this.evaluateExpr(expr.value, env));
+        const idx = yield* this.forceGen(yield* this.evaluateExprGen(expr.index, env));
+        const val = yield* this.forceGen(yield* this.evaluateExprGen(expr.value, env));
         obj.entries.set(PfunDict.keyOf(idx), val);
         return val;
       }
       case 'GetExpr': {
-        const obj = this.force(this.evaluateExpr(expr.object, env));
+        const obj = yield* this.forceGen(yield* this.evaluateExprGen(expr.object, env));
         if (obj && typeof obj === 'object' && expr.name in obj) return obj[expr.name];
         throw new Error(`Property '${expr.name}' not found.`);
       }
       case 'CallExpr': {
-        const callee = this.force(this.evaluateExpr(expr.callee, env));
+        const callee = yield* this.forceGen(yield* this.evaluateExprGen(expr.callee, env));
         if (!(callee instanceof PfunFunction) && !(callee instanceof NativeFunction)) {
           throw new Error("Can only call functions.");
         }
@@ -920,12 +1174,13 @@ export class Interpreter {
           const expectedCount = callee.params.length;
           if (suppliedCount < expectedCount) {
             // Bind supplied args, return a new function expecting the rest
-            const suppliedArgs = expr.args.map(arg => this.force(this.evaluateExpr(arg, env)));
+            const suppliedArgs: any[] = [];
+            for (const arg of expr.args) suppliedArgs.push(yield* this.forceGen(yield* this.evaluateExprGen(arg, env)));
             const remainingParams = callee.params.slice(suppliedCount);
             const capturedParams  = callee.params.slice(0, suppliedCount);
             const partialEnv = new Environment(callee.closure);
             capturedParams.forEach((p, i) => partialEnv.define(p, suppliedArgs[i], false));
-            return new PfunFunction(callee.name, remainingParams, callee.body, partialEnv, callee.kind, callee.memo);
+            return new PfunFunction(callee.name, remainingParams, callee.body, partialEnv, callee.kind, callee.memo, callee.async);
           }
         }
 
@@ -933,7 +1188,8 @@ export class Interpreter {
           const suppliedCount = expr.args.length;
           if (suppliedCount < callee.arity) {
             // Wrap native in a PfunFunction closure carrying the supplied args
-            const suppliedArgs = expr.args.map(arg => this.force(this.evaluateExpr(arg, env)));
+            const suppliedArgs: any[] = [];
+            for (const arg of expr.args) suppliedArgs.push(yield* this.forceGen(yield* this.evaluateExprGen(arg, env)));
             const nativeFn = callee;
             const remainingParams = Array.from({ length: callee.arity - suppliedCount }, (_, i) => `__a${i}`);
             // Build a NativeFunction that prepends captured args before calling original
@@ -944,25 +1200,44 @@ export class Interpreter {
           }
         }
 
-        const args = expr.args.map(arg => new Thunk(arg, env));
+        // ── Async/await (phase 4) ────────────────────────────────────────
+        // Any argument expression containing `await` must be evaluated
+        // eagerly here (yield*), not wrapped in a Thunk — the same reasoning
+        // as LetStmt (see containsAwait): a Thunk might later be forced via
+        // the SYNC force()/runSync wrapper (e.g. inside a NativeFunction's
+        // plain JS body, like println's `interp.force(args[0])`), which
+        // cannot suspend. Eagerly-evaluated values are passed through
+        // directly — force() on a non-Thunk/TailCall value is a no-op, so
+        // natives' `interp.force(args[i])` calls work unchanged.
+        const args: any[] = [];
+        for (const arg of expr.args) {
+          if (this.containsAwait(arg, env)) {
+            args.push(yield* this.forceGen(yield* this.evaluateExprGen(arg, env)));
+          } else {
+            args.push(new Thunk(arg, env));
+          }
+        }
         if (callee instanceof NativeFunction) return callee.execute(args, this);
 
         if (callee.kind === 'function') {
           // Only use TailCall (iterative TCO) when this call is in tail position
           if (this.inPureContext && this.inTailPosition) {
             this.inTailPosition = false;
-            return new TailCall(callee, args.map(a => this.force(a)));
+            const forcedArgsTail: any[] = [];
+            for (const a of args) forcedArgsTail.push(yield* this.forceGen(a));
+            return new TailCall(callee, forcedArgsTail);
           }
           const prevPure = this.inPureContext;
           const prevTail = this.inTailPosition;
           this.inTailPosition = false;
-          const forcedArgs = args.map(a => this.force(a));
+          const forcedArgs: any[] = [];
+          for (const a of args) forcedArgs.push(yield* this.forceGen(a));
           if (callee.memo) {
             const cacheKey = this.getCacheKey(callee, forcedArgs);
             if (callee.cache.has(cacheKey)) { this.inTailPosition = prevTail; return callee.cache.get(cacheKey); }
             this.inPureContext = true;
             try {
-              const result = this.force(callee.execute(forcedArgs, this));
+              const result = yield* this.forceGen(yield* callee.executeGen(forcedArgs, this));
               callee.cache.set(cacheKey, result);
               return result;
             } finally {
@@ -972,7 +1247,7 @@ export class Interpreter {
           } else {
             this.inPureContext = true;
             try {
-              return this.force(callee.execute(forcedArgs, this));
+              return yield* this.forceGen(yield* callee.executeGen(forcedArgs, this));
             } finally {
               this.inPureContext = prevPure;
               this.inTailPosition = prevTail;
@@ -980,18 +1255,67 @@ export class Interpreter {
           }
         }
         this.inTailPosition = false;
-        return callee.execute(args, this);
+        return yield* callee.executeGen(args, this);
       }
-      case 'MatchExpr': return this.evaluateMatch(expr, env);
+      case 'MatchExpr': return yield* this.evaluateMatchGen(expr, env);
       case 'BlockExpr': {
         const blockEnv = new Environment(env);
         let result: any = undefined;
         const stmts = expr.statements;
         for (let i = 0; i < stmts.length; i++) {
           if (i < stmts.length - 1) this.inTailPosition = false;
-          result = this.evaluateStmt(stmts[i], blockEnv);
+          result = yield* this.evaluateStmtGen(stmts[i], blockEnv);
         }
         return result;
+      }
+      // ── Async/await (phase 4) ────────────────────────────────────────────
+      // `await <value>`: force the operand. If it's a thenable (a real JS
+      // Promise — the shape native async functions return, see step 6's
+      // httplib/asynclib), yield {kind:'await', promise} and suspend. The
+      // top-level driver (runAsync, below) does a real `await` on that
+      // promise and resumes this generator with the resolved value via
+      // `.next(resolvedValue)` — which becomes the result of this whole
+      // `yield` expression, i.e. the value of the AwaitExpr.
+      //
+      // If the operand rejects, the driver resumes via `.throw(err)` instead
+      // of `.next(...)`, so the rejection surfaces as a normal JS exception
+      // at this `yield` — propagating through Pfun's existing error-handling
+      // (wrapError/PfunError) exactly like a synchronous throw would.
+      //
+      // Non-promise values: `await 5` returns `5` immediately, no
+      // suspension — matching JS's `await` semantics for non-thenables. This
+      // also means `await` on a value from a SYNC driver (runSync) is fine
+      // as long as the value is never actually a thenable; per the
+      // typechecker's async-contagion rule (step 5), `await` only typechecks
+      // inside an `async` function/proc, and an `async` function/proc must
+      // be invoked through the async driver (runAsync) — so runSync should
+      // never actually observe an AwaitExpr whose operand is a real promise.
+      case 'AwaitExpr': {
+        // ── Async/await (phase 5): async-contagion check ───────────────────
+        // Mirrors the inPureContext checks on 'var'/procedure-calls/array
+        // mutation: a RUNTIME error, thrown at the point `await` is
+        // evaluated, if we're not inside an `async` function/proc (or at
+        // top level). This is what makes `async` "contagious" — calling an
+        // async function from a non-async one without `await`ing it would
+        // itself be flagged via containsAwait's eager-evaluation path
+        // (step 4) reaching this same check inside the callee's body.
+        if (!this.inAsyncContext) {
+          throw new Error("'await' can only be used inside an 'async function' or 'async proc'.");
+        }
+        this.inTailPosition = false;
+        const awaited = yield* this.forceGen(yield* this.evaluateExprGen(expr.value, env));
+        if (awaited && typeof awaited === 'object' && typeof (awaited as any).then === 'function') {
+          const promise = Promise.resolve(awaited);
+          // Mark the promise as "handled" immediately so Node doesn't report
+          // an unhandledRejection between now (when we first see the
+          // promise) and the moment runAsync's `await eff.promise` actually
+          // observes a rejection. The no-op catch doesn't change what value
+          // flows to runAsync — `promise` itself (still rejecting) is what
+          // gets yielded and awaited there.
+          promise.catch(() => {});
+          return yield { kind: 'await', promise };
+        }
+        return awaited;
       }
     }
   }
@@ -1034,7 +1358,100 @@ export class Interpreter {
     }
   }
 
+  // ── Async/await (phase 4) ────────────────────────────────────────────────
+  //
+  // Laziness/await interaction: `let x = <expr>` normally wraps <expr> in a
+  // Thunk, deferring evaluation until something forces `x`. But forcing can
+  // happen from an arbitrary later context — including a native function's
+  // synchronous JS body (e.g. println's `interp.force(args[0])`), which goes
+  // through the SYNC `force()`/runSync wrapper and CANNOT suspend on
+  // `await`.
+  //
+  // If <expr> contains `await` anywhere, the suspension must happen at the
+  // `let` statement itself (where we're already inside the async generator
+  // chain driven by runAsync), not deferred to whatever later, possibly-sync
+  // context forces the binding. So: `let` initializers containing `await`
+  // are evaluated EAGERLY (yield*, like `var`) rather than thunked.
+  //
+  // This mirrors how `await` works in every mainstream async/await
+  // language — `let x = await foo()` is never lazy; the suspension point is
+  // fixed at the binding. The typechecker's async-contagion rule (step 5)
+  // additionally ensures `await` only appears inside `async` functions/procs,
+  // which themselves can only be invoked through the async driver — so this
+  // eager-evaluation path is always reached via runAsync, never runSync.
+  //
+  // Recurses into the same "top-level-ish" positions as seedFromExpr
+  // (grouping, ternary branches, block last-expression) plus binary/unary/
+  // call-argument positions, since `await` can appear in ordinary
+  // sub-expression position (`1 + await f()`, `g(await f())`).
+  //
+  // ENV-AWARE: a `CallExpr` whose callee resolves (in `env`) to a
+  // PfunFunction with `.async === true` is ALSO treated as "containing
+  // await" — calling such a function inlines its body via yield*
+  // delegation (see executeGen), and that body may itself `yield`
+  // {kind:'await'}. `f()` therefore needs the same eager-evaluation
+  // treatment as `await f()` when `f` is async: e.g. `println(f())` must
+  // evaluate `f()` eagerly rather than thunk it, or println's sync
+  // `interp.force(thunk)` would hit runSync's "yielded an Effect" error.
+  // Lookup is best-effort: only a simple `IdentExpr` callee bound to a
+  // PfunFunction is checked; failures (undefined name, non-function value,
+  // etc.) are swallowed and treated as "not async" — those cases either
+  // aren't callable at all (will error elsewhere) or are NativeFunctions
+  // (never async in phase 4; see step 6 for async natives, which return
+  // real Promises and are handled via the `awaited.then` check in
+  // AwaitExpr/are simply not thunked-and-forced-by-natives in a way that
+  // breaks, since natives returning Promises are values, not suspensions).
+  private containsAwait(expr: Expr, env?: Environment): boolean {
+    switch (expr.type) {
+      case 'AwaitExpr': return true;
+      case 'GroupExpr': return this.containsAwait(expr.expression, env);
+      case 'TernaryExpr':
+        return this.containsAwait(expr.condition, env) || this.containsAwait(expr.thenBranch, env) || this.containsAwait(expr.elseBranch, env);
+      case 'BinaryExpr':
+        return this.containsAwait(expr.left, env) || this.containsAwait(expr.right, env);
+      case 'UnaryExpr': return this.containsAwait(expr.right, env);
+      case 'AssignExpr': return this.containsAwait(expr.value, env);
+      case 'CallExpr': {
+        if (this.containsAwait(expr.callee, env) || expr.args.some(a => this.containsAwait(a, env))) return true;
+        if (env && expr.callee.type === 'IdentExpr') {
+          try {
+            const callee = env.get(expr.callee.name);
+            if (callee instanceof PfunFunction && callee.async) return true;
+          } catch { /* undefined name — not our concern here */ }
+        }
+        return false;
+      }
+      case 'IndexExpr':
+        return this.containsAwait(expr.object, env) || this.containsAwait(expr.index, env);
+      case 'GetExpr': return this.containsAwait(expr.object, env);
+      case 'ListExpr': return expr.elements.some(e => this.containsAwait(e, env));
+      case 'BlockExpr': {
+        const stmts = expr.statements;
+        if (stmts.length === 0) return false;
+        const last = stmts[stmts.length - 1];
+        return last.type === 'ExprStmt' && this.containsAwait(last.expression, env);
+      }
+      // Lambdas/records/dicts/arrays/match/comprehensions: `await` inside a
+      // lambda body belongs to whenever the lambda is *called*, not to this
+      // binding — don't recurse into LambdaExpr. RecordExpr/DictExpr/
+      // ArrayExpr/MatchExpr/ComprehensionExpr fields/arms could in principle
+      // contain `await`, but those are richer constructs where lazy
+      // construction is more central to Pfun's model; treating `await`
+      // inside them as "doesn't force eager evaluation of the whole let" is
+      // conservative in the wrong direction for correctness. For phase 4,
+      // these are out of scope (no test programs use them) — the
+      // typechecker (step 5) is the right place to either restrict `await`
+      // from appearing in these positions or to extend this check.
+      default: return false;
+    }
+  }
+
+  // ── Async/await (phase 2): sync wrapper, see runSync ─────────────────────
   private evaluateRecord(expr: any, env: Environment): any {
+    return runSync(this.evaluateRecordGen(expr, env));
+  }
+
+  private *evaluateRecordGen(expr: any, env: Environment): Generator<Effect, any, any> {
     // If the typechecker annotated this RecordExpr with field types, seed the
     // TypeRegistry before the first instantiate() so that lazy `let` bindings
     // of an earlier construction don't bypass type checking for this one.
@@ -1056,7 +1473,7 @@ export class Interpreter {
       const schema = this.types.getFields(expr.name);
       if (schema.length === 0) throw new Error(`Unknown type '${expr.name}'.`);
       const byKey: any = {};
-      for (const f of expr.fields) byKey[f.key] = this.force(this.evaluateExpr(f.value, env));
+      for (const f of expr.fields) byKey[f.key] = yield* this.forceGen(yield* this.evaluateExprGen(f.value, env));
       const ordered = schema.map(f => {
         if (!(f in byKey)) throw new Error(`Missing field '${f}' in ${expr.name}.`);
         return byKey[f];
@@ -1064,16 +1481,22 @@ export class Interpreter {
       return this.types.instantiate(expr.name, ordered);
     }
     if (this.types.hasType(expr.name)) {
-      const orderedValues = expr.fields.map((f: any) => this.force(this.evaluateExpr(f.value, env)));
+      const orderedValues: any[] = [];
+      for (const f of expr.fields as any[]) orderedValues.push(yield* this.forceGen(yield* this.evaluateExprGen(f.value, env)));
       return this.types.instantiate(expr.name, orderedValues);
     }
     throw new Error(`Unknown type '${expr.name}'.`);
   }
 
+  // ── Async/await (phase 2): sync wrapper, see runSync ─────────────────────
   private evaluateMatch(expr: any, env: Environment): any {
+    return runSync(this.evaluateMatchGen(expr, env));
+  }
+
+  private *evaluateMatchGen(expr: any, env: Environment): Generator<Effect, any, any> {
     const prevTail     = this.inTailPosition;
     this.inTailPosition = false;
-    const subject     = this.force(this.evaluateExpr(expr.subject, env));
+    const subject     = yield* this.forceGen(yield* this.evaluateExprGen(expr.subject, env));
     const subjectType = subject?.__type ?? null;
     const subjectUnion = subject?.__union ?? null;
     // Use the subject's __union to disambiguate when variant names are shared
@@ -1093,28 +1516,33 @@ export class Interpreter {
       if (arm.binding !== null) armEnv.define(arm.binding, subject, false);
       if (arm.guard) {
         this.inTailPosition = false;
-        const guardVal = this.force(this.evaluateExpr(arm.guard, armEnv));
+        const guardVal = yield* this.forceGen(yield* this.evaluateExprGen(arm.guard, armEnv));
         if (!this.isTruthy(guardVal)) continue;
       }
       this.inTailPosition = prevTail;
-      return this.evaluateExpr(arm.body, armEnv);
+      return yield* this.evaluateExprGen(arm.body, armEnv);
     }
     throw new Error(`Non-exhaustive match: no arm matched value of type '${subjectType ?? 'unknown'}'.`);
   }
 
+  // ── Async/await (phase 2): sync wrapper, see runSync ─────────────────────
   private evaluateBinary(expr: any, env: Environment): any {
+    return runSync(this.evaluateBinaryGen(expr, env));
+  }
+
+  private *evaluateBinaryGen(expr: any, env: Environment): Generator<Effect, any, any> {
     if (expr.operator === 'BooleanAnd') {
-      const left = this.force(this.evaluateExpr(expr.left, env));
+      const left = yield* this.forceGen(yield* this.evaluateExprGen(expr.left, env));
       if (!this.isTruthy(left)) return false;
-      return this.isTruthy(this.force(this.evaluateExpr(expr.right, env)));
+      return this.isTruthy(yield* this.forceGen(yield* this.evaluateExprGen(expr.right, env)));
     }
     if (expr.operator === 'BooleanOr') {
-      const left = this.force(this.evaluateExpr(expr.left, env));
+      const left = yield* this.forceGen(yield* this.evaluateExprGen(expr.left, env));
       if (this.isTruthy(left)) return true;
-      return this.isTruthy(this.force(this.evaluateExpr(expr.right, env)));
+      return this.isTruthy(yield* this.forceGen(yield* this.evaluateExprGen(expr.right, env)));
     }
-    const left  = this.force(this.evaluateExpr(expr.left, env));
-    const right = this.force(this.evaluateExpr(expr.right, env));
+    const left  = yield* this.forceGen(yield* this.evaluateExprGen(expr.left, env));
+    const right = yield* this.forceGen(yield* this.evaluateExprGen(expr.right, env));
 
     // ── String / char concatenation via + ────────────────────────────────────
     if (expr.operator === 'PlusToken') {
@@ -1192,7 +1620,21 @@ export class Interpreter {
     }
   }
 
+  // ── Async/await (phase 2) ────────────────────────────────────────────────
+  // force() is now a sync wrapper around forceGen(). Same signature/return
+  // as before — see runSync. This is the most heavily-used sync wrapper:
+  // ~111 call sites across library.ts/mathlib.ts/iolib.ts/jsonlib.ts/
+  // filelib.ts/mutStructures.ts call interp.force(...) unchanged.
   force(value: any): any {
+    return runSync(this.forceGen(value));
+  }
+
+  /**
+   * Generator-core implementation of force(). Identical logic to the
+   * original force(), with the recursive evaluateExpr/trampoline calls
+   * delegated via `yield*`.
+   */
+  *forceGen(value: any): Generator<Effect, any, any> {
     let current = value;
     while (true) {
       if (current instanceof Thunk) {
@@ -1202,19 +1644,25 @@ export class Interpreter {
         const savedPos  = this._currentPos;
         const savedNode = this._currentNode;
         const savedEnv  = this._currentEnv;
-        current = this.evaluateExpr(current.expr, current.env);
+        current = yield* this.evaluateExprGen(current.expr, current.env);
         this._currentPos  = savedPos;
         this._currentNode = savedNode;
         this._currentEnv  = savedEnv;
       }
-      else if (current instanceof TailCall) current = this.trampoline(current.fn, current.args);
+      else if (current instanceof TailCall) current = yield* this.trampolineGen(current.fn, current.args);
       else return current;
     }
   }
 
+  // ── Async/await (phase 2): sync wrapper, see runSync ─────────────────────
   private trampoline(fn: PfunFunction, args: any[]): any {
+    return runSync(this.trampolineGen(fn, args));
+  }
+
+  private *trampolineGen(fn: PfunFunction, args: any[]): Generator<Effect, any, any> {
     let currentFn   = fn;
-    let currentArgs = args.map(a => this.force(a));
+    let currentArgs: any[] = [];
+    for (const a of args) currentArgs.push(yield* this.forceGen(a));
     const callStack: { fn: PfunFunction; args: any[]; key: string }[] = [];
     const prevPure  = this.inPureContext;
     if (currentFn.kind === 'function') this.inPureContext = true;
@@ -1229,71 +1677,169 @@ export class Interpreter {
           }
           callStack.push({ fn: currentFn, args: currentArgs, key: cacheKey });
         }
-        const result = currentFn.execute(currentArgs, this);
+        const result = yield* currentFn.executeGen(currentArgs, this);
         if (result instanceof TailCall) {
           this.inPureContext = result.fn.kind === 'function';
           currentFn   = result.fn;
-          currentArgs = result.args.map(a => this.force(a));
+          const nextArgs: any[] = [];
+          for (const a of result.args) nextArgs.push(yield* this.forceGen(a));
+          currentArgs = nextArgs;
           continue;
         }
-        const finalResult = this.force(result);
+        const finalResult = yield* this.forceGen(result);
         while (callStack.length > 0) { const p = callStack.pop()!; if (p.fn.memo) p.fn.cache.set(p.key, finalResult); }
         return finalResult;
       }
     } finally { this.inPureContext = prevPure; }
   }
 
+  // ── Async/await (phase 3): unified Effect protocol ───────────────────────
+  // makeGenerator now yields `Effect` values rather than raw lazy-list
+  // elements:
+  //   - {kind: 'emit', value}  — "here is the next lazy-list element"
+  //     (the step-2-era meaning of a bare `yield element`)
+  //   - {kind: 'await', promise} — (step 4+) a map/filter/iterate callback
+  //     hit an `await`; must bubble all the way to the top-level driver.
+  //
+  // 'emit' effects are consumed locally by whichever loop is iterating a
+  // sub-generator (the `cycle`/`map`/`filter`/`drop`/`cons` cases below, and
+  // takeFrom itself); 'await' effects are forwarded untouched via `yield`
+  // (this function is itself a generator, so an un-handled yielded value
+  // propagates to ITS caller the same way `yield*` would for a delegated
+  // generator — see the `forwardAwait` helper).
+  //
+  // takeFrom() is the sync wrapper (see runSync): correct as long as no
+  // 'await' effect is ever produced from a sync calling context, per the
+  // typechecker's async-contagion rule (step 5). A future async-aware
+  // consumer (e.g. an async lazy-list fold) would drive takeFromGen()
+  // directly and handle 'await' effects via the real top-level driver.
   takeFrom(list: LazyList, n: number): any[] {
+    return runSync(this.takeFromGen(list, n));
+  }
+
+  *takeFromGen(list: LazyList, n: number): Generator<Effect, any[], any> {
     const results: any[] = [];
-    const gen = this.makeGenerator(list.descriptor);
-    while (results.length < n) {
-      const { value, done } = gen.next();
-      if (done) break;
-      results.push(value);
+    const gen = this.makeGeneratorGen(list.descriptor);
+    let step = gen.next();
+    while (results.length < n && !step.done) {
+      const eff = step.value;
+      if (eff.kind === 'emit') {
+        results.push(eff.value);
+        step = gen.next();
+      } else {
+        // eff.kind === 'await': forward to our caller; resume gen with
+        // whatever value comes back, then re-check the new step.
+        const resumed = yield eff;
+        step = gen.next(resumed);
+      }
     }
     return results;
   }
 
-  private *makeGenerator(desc: LazyListDescriptor): Generator<any> {
+  /**
+   * Generator-core lazy-list element producer. Yields `Effect` values (see
+   * above): {kind:'emit', value} for each lazy-list element, {kind:'await',
+   * promise} if a map/filter/iterate callback suspends.
+   *
+   * Helper note: `forward()` drives an inner makeGeneratorGen, yielding any
+   * 'await' effects upward (via plain `yield`, with the resumed value sent
+   * back into the inner generator) and returning the inner generator's next
+   * 'emit' value (or undefined if the inner generator is done).
+   */
+  private *makeGeneratorGen(desc: LazyListDescriptor): Generator<Effect, void, any> {
+    // Drive `inner` to its next 'emit', forwarding any 'await' effects to
+    // our own caller. Returns {value, done}.
+    function* nextEmit(inner: Generator<Effect, void, any>): Generator<Effect, { value: any; done: boolean }, any> {
+      let step = inner.next();
+      while (!step.done) {
+        const eff = step.value;
+        if (eff.kind === 'emit') return { value: eff.value, done: false };
+        // eff.kind === 'await': forward to our caller, resume inner with
+        // whatever value comes back.
+        const resumed = yield eff;
+        step = inner.next(resumed);
+      }
+      return { value: undefined, done: true };
+    }
+
     switch (desc.kind) {
-      case 'iterate': { let cur = desc.seed; while (true) { yield cur; cur = this.force(desc.f.execute([cur], this)); } }
-      case 'repeat':  { while (true) yield desc.value; }
+      case 'iterate': {
+        let cur = desc.seed;
+        while (true) {
+          yield { kind: 'emit', value: cur };
+          const callResult = yield* this.forceGen(yield* desc.f.executeGen([cur], this));
+          cur = callResult;
+        }
+      }
+      case 'repeat':  { while (true) yield { kind: 'emit', value: desc.value }; }
       case 'cycle': {
         const src = desc.source;
         if (Array.isArray(src)) {
           if (src.length === 0) return;
-          let i = 0; while (true) { yield src[i % src.length]; i++; }
+          let i = 0; while (true) { yield { kind: 'emit', value: src[i % src.length] }; i++; }
         } else if (src instanceof LazyList) {
+          // NOTE: every LazyList reachable from Pfun source (iterate/repeat/
+          // cycle/map/filter/drop/cons, recursively) is either infinite or
+          // an immediately-empty cycle — there is no way to construct a
+          // finite-but-nonempty LazyList via the public API. This buffering
+          // loop therefore cannot terminate for any real LazyList and is
+          // effectively unreachable; preserved as-is from the original
+          // (which had the identical non-terminating behavior) rather than
+          // removed, in case a future LazyListDescriptor variant produces a
+          // genuinely finite LazyList.
           const buf: any[] = [];
-          const inner = this.makeGenerator(src.descriptor);
-          while (true) { const { value, done } = inner.next(); if (done) break; buf.push(value); yield value; }
+          const inner = this.makeGeneratorGen(src.descriptor);
+          while (true) {
+            const { value, done } = yield* nextEmit(inner);
+            if (done) break;
+            buf.push(value);
+            yield { kind: 'emit', value };
+          }
           if (buf.length === 0) return;
-          let i = 0; while (true) { yield buf[i % buf.length]; i++; }
+          let i = 0; while (true) { yield { kind: 'emit', value: buf[i % buf.length] }; i++; }
         }
         break;
       }
       case 'map': {
-        const inner = this.makeGenerator(desc.source.descriptor);
-        while (true) { const { value, done } = inner.next(); if (done) break; yield this.force(desc.f.execute([value], this)); }
+        const inner = this.makeGeneratorGen(desc.source.descriptor);
+        while (true) {
+          const { value, done } = yield* nextEmit(inner);
+          if (done) break;
+          const mapped = yield* this.forceGen(yield* desc.f.executeGen([value], this));
+          yield { kind: 'emit', value: mapped };
+        }
         break;
       }
       case 'filter': {
-        const inner = this.makeGenerator(desc.source.descriptor);
-        while (true) { const { value, done } = inner.next(); if (done) break; if (this.isTruthy(this.force(desc.f.execute([value], this)))) yield value; }
+        const inner = this.makeGeneratorGen(desc.source.descriptor);
+        while (true) {
+          const { value, done } = yield* nextEmit(inner);
+          if (done) break;
+          const keep = yield* this.forceGen(yield* desc.f.executeGen([value], this));
+          if (this.isTruthy(keep)) yield { kind: 'emit', value };
+        }
         break;
       }
       case 'cons': {
-        yield desc.head;
+        yield { kind: 'emit', value: desc.head };
         const t = desc.tail;
-        if (t instanceof LazyList) yield* this.makeGenerator(t.descriptor);
-        else if (Array.isArray(t)) yield* t;
+        if (t instanceof LazyList) yield* this.makeGeneratorGen(t.descriptor);
+        else if (Array.isArray(t)) { for (const v of t) yield { kind: 'emit', value: v }; }
         break;
       }
       case 'drop': {
-        const inner = this.makeGenerator(desc.source.descriptor);
+        const inner = this.makeGeneratorGen(desc.source.descriptor);
         let skipped = 0;
-        while (skipped < desc.n) { const { done } = inner.next(); if (done) return; skipped++; }
-        while (true) { const { value, done } = inner.next(); if (done) break; yield value; }
+        while (skipped < desc.n) {
+          const { done } = yield* nextEmit(inner);
+          if (done) return;
+          skipped++;
+        }
+        while (true) {
+          const { value, done } = yield* nextEmit(inner);
+          if (done) break;
+          yield { kind: 'emit', value };
+        }
         break;
       }
     }
@@ -1393,4 +1939,147 @@ export class Interpreter {
     }
     return a === b;
   }
+}
+
+// ── Async/await (phase 6): Scheduler ────────────────────────────────────────
+//
+// A Scheduler runs multiple "tasks" — each task is a Generator<Effect, T, any>
+// (typically produced by interpreter.evalAndForceGenPublic or a request
+// handler's executeGen) — concurrently on ONE shared Interpreter instance.
+//
+// Concurrency model: cooperative, single-threaded. At any instant only one
+// task's JS code is actually running; tasks interleave only at `await`
+// points (yielded {kind:'await'} Effects). This is the same model as JS
+// async/await itself — Scheduler is just making that explicit for Pfun's
+// generator-core.
+//
+// Per-task context isolation (the "step 6 per-frame fix"):
+// inPureContext/inTailPosition/inAsyncContext remain instance fields on
+// Interpreter (read directly by native functions like println via
+// `interp.inPureContext` — see mutStructures/iolib/filelib). Within a
+// SINGLE task's yield* chain, mutations to these fields by one frame and
+// restoration by an enclosing frame are already correctly ordered (proven
+// in step 4). The risk step 6 introduces is a DIFFERENT task's code running
+// — via a `.then()` callback — while this task is parked at a `yield`, which
+// would mutate these shared fields out from under the parked task.
+//
+// Fix: the Scheduler snapshots these three fields into a per-task
+// `TaskContext` immediately before resuming that task (gen.next/gen.throw),
+// and snapshots them back from the Interpreter immediately after that
+// resumption returns (whether by yielding again or completing) — i.e. each
+// task's slice of wall-clock execution runs with ITS OWN values installed on
+// the Interpreter, and the Interpreter's fields are saved/restored around
+// that slice exactly as if each task had its own Interpreter. No changes to
+// any *Gen method are needed — they continue reading/writing
+// this.inPureContext etc. as before; the Scheduler just swaps the values
+// in and out between tasks.
+export interface TaskContext {
+  inPureContext:  boolean;
+  inTailPosition: boolean;
+  inAsyncContext: boolean;
+}
+
+export type TaskErrorHandler = (err: unknown) => void;
+
+export class Scheduler {
+  private pending = 0;
+  private resolveRun?: () => void;
+  private defaultOnError?: TaskErrorHandler;
+
+  constructor(private interp: Interpreter) {}
+
+  /** Set a default error handler for tasks spawned without their own. */
+  setDefaultErrorHandler(handler: TaskErrorHandler): void {
+    this.defaultOnError = handler;
+  }
+
+  /**
+   * Start running `gen` as a new task. Returns immediately — the task runs
+   * (and interleaves with other tasks) as `await` points are reached.
+   *
+   * If the task throws/rejects without completing (an uncaught error), it
+   * is reported via `onError` (or the scheduler's default handler, if set)
+   * rather than rejecting `run()` — one failing task (e.g. one HTTP request
+   * handler) does not take down the scheduler or other in-flight tasks.
+   */
+  spawn<T>(gen: Generator<Effect, T, any>, onError?: TaskErrorHandler): void {
+    this.pending++;
+    const ctx: TaskContext = {
+      inPureContext:  this.interp.inPureContext,
+      inTailPosition: this.interp.inTailPosition,
+      inAsyncContext: this.interp.inAsyncContext,
+    };
+
+    const installContext = () => {
+      this.interp.inPureContext  = ctx.inPureContext;
+      this.interp.inTailPosition = ctx.inTailPosition;
+      this.interp.inAsyncContext = ctx.inAsyncContext;
+    };
+    const saveContext = () => {
+      ctx.inPureContext  = this.interp.inPureContext;
+      ctx.inTailPosition = this.interp.inTailPosition;
+      ctx.inAsyncContext = this.interp.inAsyncContext;
+    };
+
+    const step = (input?: any, isThrow?: boolean) => {
+      installContext();
+      let result: IteratorResult<Effect, T>;
+      try {
+        result = isThrow ? gen.throw(input) : gen.next(input);
+      } catch (err) {
+        this.taskDone();
+        (onError ?? this.defaultOnError)?.(err);
+        return;
+      }
+      saveContext();
+
+      if (result.done) { this.taskDone(); return; }
+
+      const eff = result.value;
+      if (eff.kind !== 'await') {
+        this.taskDone();
+        (onError ?? this.defaultOnError)?.(new Error(
+          `Internal error: Scheduler task received an unexpected Effect ` +
+          `(kind: '${(eff as any).kind}'). 'emit' effects must be consumed ` +
+          `internally by takeFromGen/makeGeneratorGen.`
+        ));
+        return;
+      }
+      eff.promise.then(
+        (v: any) => step(v, false),
+        (e: any) => step(e, true),
+      );
+    };
+
+    step();
+  }
+
+  private taskDone(): void {
+    this.pending--;
+    if (this.pending === 0 && this.resolveRun) {
+      const resolve = this.resolveRun;
+      this.resolveRun = undefined;
+      resolve();
+    }
+  }
+
+  /**
+   * Resolves once every task spawned so far (and any tasks THEY spawn,
+   * transitively) has completed. If new tasks are spawned after run()'s
+   * returned promise has already resolved once, call run() again to wait
+   * for those too — each call only waits for pending === 0 at least once.
+   *
+   * For a long-running server (httpserver.listen spawns a task per
+   * request, indefinitely), run() is not the right tool — the process
+   * stays alive because of the open server socket (Node-level), not
+   * because of this scheduler. run() is for "run this batch of tasks to
+   * completion", e.g. a script's top-level tasks in a test harness.
+   */
+  run(): Promise<void> {
+    if (this.pending === 0) return Promise.resolve();
+    return new Promise(resolve => { this.resolveRun = resolve; });
+  }
+
+  /** Number of tasks currently in flight (spawned but not yet completed). */
+  get taskCount(): number { return this.pending; }
 }
