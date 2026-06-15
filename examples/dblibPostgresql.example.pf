@@ -6,16 +6,31 @@
 //
 // Run with: pfun dblibPostgresql.example.pf
 //
-// SETUP — before running, point this script at a real Postgres instance by
-// editing CONNECTION_STRING below, and create the test table:
+// SETUP
+// -----
+// 1. Point this script at a real Postgres instance by editing
+//    CONNECTION_STRING below (format: postgres://user:password@host:port/db).
+//    Do not commit real credentials — this placeholder assumes a fresh local
+//    install with a "postgres" role/database and password "postgres".
 //
-//   CREATE TABLE users (
-//     id      SERIAL PRIMARY KEY,
-//     name    TEXT NOT NULL,
-//     balance NUMERIC(10,2) NOT NULL DEFAULT 0,
-//     active  BOOLEAN NOT NULL DEFAULT true,
-//     notes   TEXT
-//   );
+// 2. Create the test table:
+//
+//      CREATE TABLE users (
+//        id      SERIAL PRIMARY KEY,
+//        name    TEXT NOT NULL,
+//        balance NUMERIC(10,2) NOT NULL DEFAULT 0,
+//        active  BOOLEAN NOT NULL DEFAULT true,
+//        notes   TEXT
+//      );
+//
+// 3. If dbConnect returns an error like 'Ident authentication failed for
+//    user "..."', your local Postgres is using ident/peer auth for TCP
+//    connections (the Fedora/Debian default), which generally doesn't work
+//    for loopback connections without an ident daemon. Switch the relevant
+//    `host ... 127.0.0.1/32` / `::1/128` lines in pg_hba.conf to
+//    scram-sha-256 (with a password set via `ALTER USER ... PASSWORD ...`)
+//    or, for local dev only, `trust`, then restart Postgres. See:
+//    https://www.postgresql.org/docs/current/auth-pg-hba-conf.html
 //
 // The script INSERTs a couple of rows, queries them back, prints them using
 // only plain list/Pair/DbValue pattern matching (no mutStructures import
@@ -26,6 +41,7 @@ import * from "io";
 import * from "async";
 import * from "db/postgresql";
 
+// EDIT ME for your local setup — do not commit real credentials.
 let CONNECTION_STRING = "postgres://postgres:postgres@localhost:5432/postgres";
 
 /*

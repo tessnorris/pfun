@@ -6,16 +6,36 @@
 //
 // Run with: pfun dblibMariadb.example.pf
 //
-// SETUP — before running, point this script at a real MariaDB/MySQL instance
-// by editing CONNECTION_STRING below, and create the test table:
+// SETUP
+// -----
+// 1. Point this script at a real MariaDB/MySQL instance by editing
+//    CONNECTION_STRING below (format: mysql://user:password@host:port/db).
+//    Do not commit real credentials — this placeholder assumes a "test"
+//    database accessible to "root" with password "root".
 //
-//   CREATE TABLE users (
-//     id      INT AUTO_INCREMENT PRIMARY KEY,
-//     name    VARCHAR(255) NOT NULL,
-//     balance DECIMAL(10,2) NOT NULL DEFAULT 0,
-//     active  BOOLEAN NOT NULL DEFAULT true,
-//     notes   TEXT
-//   );
+// 2. Create the test table:
+//
+//      CREATE TABLE users (
+//        id      INT AUTO_INCREMENT PRIMARY KEY,
+//        name    VARCHAR(255) NOT NULL,
+//        balance DECIMAL(10,2) NOT NULL DEFAULT 0,
+//        active  BOOLEAN NOT NULL DEFAULT true,
+//        notes   TEXT
+//      );
+//
+// 3. If dbConnect fails with an access-denied error, your local
+//    MariaDB/MySQL may have the "root" user configured for socket-based
+//    auth (unix_socket / auth_socket plugin) rather than a password, which
+//    is the Fedora/Debian default and doesn't work for TCP connections like
+//    this one. Either create a dedicated user with password auth:
+//
+//      CREATE USER 'pfun'@'localhost' IDENTIFIED BY 'somepassword';
+//      GRANT ALL PRIVILEGES ON test.* TO 'pfun'@'localhost';
+//      FLUSH PRIVILEGES;
+//
+//    and use that in CONNECTION_STRING, or switch root to password auth:
+//
+//      ALTER USER 'root'@'localhost' IDENTIFIED BY 'somepassword';
 //
 // This script mirrors dblibPostgresql.example.pf, with two MariaDB-specific
 // differences called out below: `?` placeholders (instead of $1, $2, ...),
@@ -26,6 +46,7 @@ import * from "io";
 import * from "async";
 import * from "db/mariadb";
 
+// EDIT ME for your local setup — do not commit real credentials.
 let CONNECTION_STRING = "mysql://root:root@localhost:3306/test";
 
 /*

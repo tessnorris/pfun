@@ -15,6 +15,9 @@ import { mathlibFunctions } from './mathlib';
 import { asynclibFunctions } from './asynclib';
 import { httplibFunctions, httplibTypes } from './httplib';
 import { PfunError, buildPfunError } from './errors';
+import { dblibTypes } from './dblib';
+import { dblibPostgresqlFunctions } from './dblibPostgresql';
+import { dblibMariadbFunctions } from './dblibMariadb';
 
 /**
  * Sets up a fresh interpreter with the core standard library.
@@ -33,6 +36,8 @@ function registerBuiltinModules(loader: ModuleLoader): void {
   loader.registerBuiltin('math', mathlibFunctions);
   loader.registerBuiltin('async', asynclibFunctions);
   loader.registerBuiltin('http', httplibFunctions, httplibTypes);
+  loader.registerBuiltin('db/postgresql', dblibPostgresqlFunctions, dblibTypes);
+  loader.registerBuiltin('db/mariadb', dblibMariadbFunctions, dblibTypes);
 }
 
 // ── Async/await (phase 4) ────────────────────────────────────────────────
