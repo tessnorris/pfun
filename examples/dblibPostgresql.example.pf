@@ -1,0 +1,149 @@
+// ============================================================================
+// Pfun POSTGRESQL EXAMPLE
+// ============================================================================
+// Demonstrates dbConnect, dbQuery, and dbClose from the "db/postgresql"
+// module against a REAL PostgreSQL database.
+//
+// Run with: pfun dblibPostgresql.example.pf
+//
+// SETUP — before running, point this script at a real Postgres instance by
+// editing CONNECTION_STRING below, and create the test table:
+//
+//   CREATE TABLE users (
+//     id      SERIAL PRIMARY KEY,
+//     name    TEXT NOT NULL,
+//     balance NUMERIC(10,2) NOT NULL DEFAULT 0,
+//     active  BOOLEAN NOT NULL DEFAULT true,
+//     notes   TEXT
+//   );
+//
+// The script INSERTs a couple of rows, queries them back, prints them using
+// only plain list/Pair/DbValue pattern matching (no mutStructures import
+// needed), then cleans up the rows it inserted.
+// ============================================================================
+
+import * from "io";
+import * from "async";
+import * from "db/postgresql";
+
+let CONNECTION_STRING = "postgres://postgres:postgres@localhost:5432/postgres";
+
+/*
+  PRINTING A ROW
+  --------------
+  Each row is a list<Pair<string, DbValue>>. printPair handles one column;
+  printRow recurses over the row's columns. Both are `proc`s (not pure
+  `function`s) because println is a side effect.
+*/
+proc printPair(pair) {
+  match pair.value with
+  | DbInt n   -> println("  " + pair.key + " = " + __str__(n.value) + " (int)")
+  | DbFloat n -> println("  " + pair.key + " = " + __str__(n.value) + " (float)")
+  | DbText s  -> println("  " + pair.key + " = " + s.value + " (text)")
+  | DbBool b  -> println("  " + pair.key + " = " + __str__(b.value) + " (bool)")
+  | DbNull    -> println("  " + pair.key + " = NULL");
+}
+
+proc printRow(row) {
+  if length(row) == 0 then return 0;
+  printPair(head(row));
+  printRow(tail(row));
+}
+
+proc printRows(rows) {
+  if length(rows) == 0 then return 0;
+  printRow(head(rows));
+  println("---");
+  printRows(tail(rows));
+}
+
+async proc demo() {
+  let conn = await dbConnect(CONNECTION_STRING);
+  match conn with
+  | Err e -> println("Could not connect: " + e.message)
+  | Ok c -> {
+      let connection = c.value;
+      println("Connected.");
+
+      // ── INSERT two rows ────────────────────────────────────────────────
+      let insert1 = await dbQuery(
+        connection,
+        "INSERT INTO users (name, balance, active, notes) VALUES ($1, $2, $3, $4)",
+        [DbText { "Alice" }, DbFloat { 12.5 }, DbBool { true }, DbNull]
+      );
+      match insert1 with
+      | Ok r  -> println("Inserted " + __str__(r.value.rowCount) + " row(s) for Alice.")
+      | Err e -> println("Insert (Alice) failed: " + e.message);
+
+      let insert2 = await dbQuery(
+        connection,
+        "INSERT INTO users (name, balance, active, notes) VALUES ($1, $2, $3, $4)",
+        [DbText { "Bob" }, DbFloat { 0.0 }, DbBool { false }, DbText { "vip" }]
+      );
+      match insert2 with
+      | Ok r  -> println("Inserted " + __str__(r.value.rowCount) + " row(s) for Bob.")
+      | Err e -> println("Insert (Bob) failed: " + e.message);
+
+      // ── SELECT them back ───────────────────────────────────────────────
+      println("");
+      println("Querying users with balance >= $1 ...");
+      let selected = await dbQuery(
+        connection,
+        "SELECT name, balance, active, notes FROM users WHERE balance >= $1 ORDER BY name",
+        [DbFloat { 0.0 }]
+      );
+      match selected with
+      | Ok r -> {
+          println("rowCount = " + __str__(r.value.rowCount));
+          println("---");
+          printRows(r.value.rows);
+        }
+      | Err e -> println("Select failed: " + e.message);
+
+      // ── A parameterized query with a single homogeneous raw param ──────
+      println("");
+      println("Querying for a specific name ...");
+      let byName = await dbQuery(
+        connection,
+        "SELECT name, balance FROM users WHERE name = $1",
+        [DbText { "Bob" }]
+      );
+      match byName with
+      | Ok r -> {
+          if length(r.value.rows) == 0 then {
+            println("No matching user.");
+          } else {
+            println("Found " + __str__(length(r.value.rows)) + " row(s):");
+            printRows(r.value.rows);
+          }
+        }
+      | Err e -> println("Select by name failed: " + e.message);
+
+      // ── A query that produces an error (intentional) ───────────────────
+      println("");
+      println("Running an intentionally-bad query ...");
+      let bad = await dbQuery(connection, "SELECT * FORM users", []);
+      match bad with
+      | Ok _  -> println("(unexpectedly succeeded)")
+      | Err e -> println("Got expected error: " + e.message);
+
+      // ── Clean up the rows we inserted ──────────────────────────────────
+      println("");
+      let cleanup = await dbQuery(
+        connection,
+        "DELETE FROM users WHERE name = $1 OR name = $2",
+        [DbText { "Alice" }, DbText { "Bob" }]
+      );
+      match cleanup with
+      | Ok r  -> println("Cleaned up " + __str__(r.value.rowCount) + " row(s).")
+      | Err e -> println("Cleanup failed: " + e.message);
+
+      // ── Close the connection ────────────────────────────────────────────
+      let closed = await dbClose(connection);
+      match closed with
+      | Ok _  -> println("Connection closed.")
+      | Err e -> println("Close failed: " + e.message);
+    }
+}
+
+demo();

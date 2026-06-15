@@ -1,0 +1,169 @@
+// ============================================================================
+// Pfun MARIADB/MYSQL EXAMPLE
+// ============================================================================
+// Demonstrates dbConnect, dbQuery, and dbClose from the "db/mariadb" module
+// against a REAL MariaDB or MySQL database.
+//
+// Run with: pfun dblibMariadb.example.pf
+//
+// SETUP — before running, point this script at a real MariaDB/MySQL instance
+// by editing CONNECTION_STRING below, and create the test table:
+//
+//   CREATE TABLE users (
+//     id      INT AUTO_INCREMENT PRIMARY KEY,
+//     name    VARCHAR(255) NOT NULL,
+//     balance DECIMAL(10,2) NOT NULL DEFAULT 0,
+//     active  BOOLEAN NOT NULL DEFAULT true,
+//     notes   TEXT
+//   );
+//
+// This script mirrors dblibPostgresql.example.pf, with two MariaDB-specific
+// differences called out below: `?` placeholders (instead of $1, $2, ...),
+// and how BOOLEAN/DECIMAL columns map to DbValue.
+// ============================================================================
+
+import * from "io";
+import * from "async";
+import * from "db/mariadb";
+
+let CONNECTION_STRING = "mysql://root:root@localhost:3306/test";
+
+/*
+  PRINTING A ROW
+  --------------
+  Identical to the Postgres example: each row is a list<Pair<string, DbValue>>,
+  walked recursively. No mutStructures import needed.
+
+  NOTE ON BOOLEAN AND DECIMAL COLUMNS:
+  - mysql2 represents MySQL's BOOLEAN (an alias for TINYINT(1)) as a JS
+    number (0 or 1) by default, not a JS boolean — so `active` below shows
+    up as DbInt, not DbBool.
+  - dblibMariadb configures the connection with bigNumberStrings/decimalNumbers
+    so DECIMAL columns (like `balance`) come back as JS strings -> DbText,
+    avoiding floating-point precision loss. Use toFloat() (from the core
+    stdlib) if you need to compute with the value.
+*/
+proc printPair(pair) {
+  match pair.value with
+  | DbInt n   -> println("  " + pair.key + " = " + __str__(n.value) + " (int)")
+  | DbFloat n -> println("  " + pair.key + " = " + __str__(n.value) + " (float)")
+  | DbText s  -> println("  " + pair.key + " = " + s.value + " (text)")
+  | DbBool b  -> println("  " + pair.key + " = " + __str__(b.value) + " (bool)")
+  | DbNull    -> println("  " + pair.key + " = NULL");
+}
+
+proc printRow(row) {
+  if length(row) == 0 then return 0;
+  printPair(head(row));
+  printRow(tail(row));
+}
+
+proc printRows(rows) {
+  if length(rows) == 0 then return 0;
+  printRow(head(rows));
+  println("---");
+  printRows(tail(rows));
+}
+
+async proc demo() {
+  let conn = await dbConnect(CONNECTION_STRING);
+  match conn with
+  | Err e -> println("Could not connect: " + e.message)
+  | Ok c -> {
+      let connection = c.value;
+      println("Connected.");
+
+      // ── INSERT two rows ────────────────────────────────────────────────
+      // MariaDB/MySQL placeholders are positional `?`, not $1/$2/...
+      let insert1 = await dbQuery(
+        connection,
+        "INSERT INTO users (name, balance, active, notes) VALUES (?, ?, ?, ?)",
+        [DbText { "Alice" }, DbFloat { 12.5 }, DbBool { true }, DbNull]
+      );
+      match insert1 with
+      | Ok r  -> println("Inserted " + __str__(r.value.rowCount) + " row(s) for Alice.")
+      | Err e -> println("Insert (Alice) failed: " + e.message);
+
+      let insert2 = await dbQuery(
+        connection,
+        "INSERT INTO users (name, balance, active, notes) VALUES (?, ?, ?, ?)",
+        [DbText { "Bob" }, DbFloat { 0.0 }, DbBool { false }, DbText { "vip" }]
+      );
+      match insert2 with
+      | Ok r  -> println("Inserted " + __str__(r.value.rowCount) + " row(s) for Bob.")
+      | Err e -> println("Insert (Bob) failed: " + e.message);
+
+      // ── SELECT them back ───────────────────────────────────────────────
+      println("");
+      println("Querying users with balance >= ? ...");
+      let selected = await dbQuery(
+        connection,
+        "SELECT name, balance, active, notes FROM users WHERE balance >= ? ORDER BY name",
+        [DbFloat { 0.0 }]
+      );
+      match selected with
+      | Ok r -> {
+          println("rowCount = " + __str__(r.value.rowCount));
+          println("---");
+          printRows(r.value.rows);
+        }
+      | Err e -> println("Select failed: " + e.message);
+
+      // ── A parameterized query with a single homogeneous raw param ──────
+      println("");
+      println("Querying for a specific name ...");
+      let byName = await dbQuery(
+        connection,
+        "SELECT name, balance FROM users WHERE name = ?",
+        [DbText { "Bob" }]
+      );
+      match byName with
+      | Ok r -> {
+          if length(r.value.rows) == 0 then {
+            println("No matching user.");
+          } else {
+            println("Found " + __str__(length(r.value.rows)) + " row(s):");
+            printRows(r.value.rows);
+          }
+        }
+      | Err e -> println("Select by name failed: " + e.message);
+
+      // ── A query that produces an error (intentional) ───────────────────
+      println("");
+      println("Running an intentionally-bad query ...");
+      let bad = await dbQuery(connection, "SELECT * FORM users", []);
+      match bad with
+      | Ok _  -> println("(unexpectedly succeeded)")
+      | Err e -> println("Got expected error: " + e.message);
+
+      // ── An UPDATE — note the empty rows list, rowCount = affected rows ──
+      println("");
+      let update = await dbQuery(
+        connection,
+        "UPDATE users SET active = ? WHERE name = ?",
+        [DbBool { false }, DbText { "Alice" }]
+      );
+      match update with
+      | Ok r  -> println("Updated " + __str__(r.value.rowCount) + " row(s); rows list has " + __str__(length(r.value.rows)) + " entries.")
+      | Err e -> println("Update failed: " + e.message);
+
+      // ── Clean up the rows we inserted ──────────────────────────────────
+      println("");
+      let cleanup = await dbQuery(
+        connection,
+        "DELETE FROM users WHERE name = ? OR name = ?",
+        [DbText { "Alice" }, DbText { "Bob" }]
+      );
+      match cleanup with
+      | Ok r  -> println("Cleaned up " + __str__(r.value.rowCount) + " row(s).")
+      | Err e -> println("Cleanup failed: " + e.message);
+
+      // ── Close the connection ────────────────────────────────────────────
+      let closed = await dbClose(connection);
+      match closed with
+      | Ok _  -> println("Connection closed.")
+      | Err e -> println("Close failed: " + e.message);
+    }
+}
+
+demo();
