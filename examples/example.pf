@@ -1575,3 +1575,204 @@ proc json5() {
   println(treeSum(t2));  // 10  (same sum after round-trip)
 }
 json5();
+
+
+/*
+ *  25. BYTES & BINARY I/O
+ *  ============================================================================
+ *  Byte is a distinct scalar type for raw 8-bit values (0–255).
+ *  It is separate from Int and Char — no implicit coercions.
+ *
+ *  Byte literals:
+ *    255b      — decimal byte literal
+ *    0xFFb     — hex byte literal
+ *    0x00b     — zero byte
+ *
+ *  Byte arithmetic (errors on overflow/underflow):
+ *    +  -  *  /  %  — range-checked, result is Byte
+ *    ==  !=  <  >  <=  >=  — comparisons, result is Bool
+ *
+ *  Bitwise operators (work on both Byte and Int):
+ *    &   — bitwise AND
+ *    |   — bitwise OR
+ *    <<  — left shift  (Byte: masks shift amount to 3 bits)
+ *    >>  — right shift (Byte: masks shift amount to 3 bits)
+ *
+ *  Conversion functions:
+ *    toByte(x)          — Int or Char -> Byte (errors if out of range)
+ *    toChar(b)          — Byte -> Char (always valid)
+ *    charBytes(c)       — Char -> List<Byte> (UTF-8 byte sequence)
+ *    bytesToChar(bytes) — List<Byte> -> Char (must be valid UTF-8)
+ *
+ *  File I/O (import * from "file"):
+ *    readByte(handle)         — ReadResult: Ok { Byte } | Eof | Err
+ *    writeByte(handle, byte)  — Result: Ok { 1 } | Err
+ *    readBytes(handle, n)     — ReadResult: Ok { List<Byte> } | Eof | Err
+ *    writeBytes(handle, list) — Result: Ok { n } | Err
+ *    readBuffer(handle, n, mode)   — Result: Ok { Buffer } | Err
+ *    writeBuffer(handle, buffer)   — Result: Ok { n } | Err
+ *    bufferToBytes(buf)   — List<Byte>
+ *    bufferToString(buf)  — String (UTF-8 decode)
+ *    bufferLength(buf)    — Int
+ *    makeBuffer(mode)     — creates an empty Buffer (ByteMode | CharMode)
+ */
+
+println("--- 25. Bytes & Binary I/O ---");
+
+// ── Byte literals ────────────────────────────────────────────────────────────
+
+let zero     = 0b;
+let max_byte = 0xFFb;
+let mid_byte = 128b;
+
+println(zero);      // 0
+println(max_byte);  // 255
+println(mid_byte);  // 128
+
+// ── Byte arithmetic ──────────────────────────────────────────────────────────
+
+let byte_sum  = 100b + 55b;   // 155
+let byte_diff = 200b - 50b;   // 150
+let byte_prod = 10b * 10b;    // 100
+let byte_quot = 7b / 2b;      // 3  (truncates)
+let byte_rem  = 10b % 3b;     // 1
+
+println(byte_sum);   // 155
+println(byte_diff);  // 150
+println(byte_prod);  // 100
+println(byte_quot);  // 3
+println(byte_rem);   // 1
+
+// ── Bitwise operators ────────────────────────────────────────────────────────
+
+let masked  = 0xF0b & 0x0Fb;  // 0x00 = 0
+let merged  = 0xF0b | 0x0Fb;  // 0xFF = 255
+let shifted = 0x01b << 4;     // 0x10 = 16
+let rshift  = 0x80b >> 4;     // 0x08 = 8
+
+println(masked);   // 0
+println(merged);   // 255
+println(shifted);  // 16
+println(rshift);   // 8
+
+// Int bitwise works the same way without masking:
+let iand = 0xFF & 0x0F;   // 15
+let ishl = 1 << 8;        // 256
+println(iand);   // 15
+println(ishl);   // 256
+
+// ── Conversions ──────────────────────────────────────────────────────────────
+
+// toByte: Int or Char → Byte
+let b_from_int  = toByte(65);    // 65b  (ASCII 'A')
+let b_from_char = toByte('A');   // 65b
+
+// toChar: Byte → Char
+let c_from_byte = toChar(65b);   // 'A'
+println(c_from_byte);            // A
+
+// charBytes: Char → List<Byte>  (UTF-8 encoding)
+let ascii_bytes  = charBytes('A');   // [65b]
+let pound_bytes  = charBytes('£');   // [0xC2b, 0xA3b]  (2 bytes)
+let euro_bytes   = charBytes('€');   // [0xE2b, 0x82b, 0xACb]  (3 bytes)
+
+println(length(ascii_bytes));   // 1
+println(length(pound_bytes));   // 2
+println(length(euro_bytes));    // 3
+
+// bytesToChar: List<Byte> → Char  (inverse of charBytes)
+let euro_back = bytesToChar(euro_bytes);
+println(euro_back);   // €
+
+// toInt: Byte → Int  (the byte's numeric value as a full integer)
+let byt = 0xFFb;
+println(toInt(byt));        // 255
+println(toInt(0b));         // 0
+println(toInt(toByte(42))); // 42  — round-trip via Int
+
+// Round-trip: char → bytes → char
+function roundTrip(c) {
+  return bytesToChar(charBytes(c));
+}
+println(roundTrip('€'));  // €
+println(roundTrip('A'));  // A
+
+// ── Byte truthiness ──────────────────────────────────────────────────────────
+// 0b is falsy; any non-zero Byte is truthy.
+
+let flag = 0xFFb;
+if flag then println("flag is set") else println("flag is clear");
+// flag is set
+
+// ── Binary file I/O ──────────────────────────────────────────────────────────
+
+proc byte_io_demo() {
+  // Write raw bytes to a file
+  var wh = fileOpen("./bytes.bin", Write);
+  match wh with
+  | Ok o -> {
+      writeBytes(o.value, [0xDEb, 0xADb, 0xBEb, 0xEFb]);
+      fileClose(o.value);
+      println("wrote 4 bytes");  // wrote 4 bytes
+    }
+  | Err e -> println("open failed: " + e.message);
+
+  // Read them back
+  var rh = fileOpen("./bytes.bin", Read);
+  match rh with
+  | Ok o -> {
+      let r = readBytes(o.value, 4);
+      match r with
+      | Ok b -> {
+          println(length(b.value));          // 4
+          println(nth(b.value, 0));          // 222  (0xDE)
+          println(nth(b.value, 3));          // 239  (0xEF)
+        }
+      | Eof -> println("eof")
+      | Err e -> println("read error: " + e.message);
+      fileClose(o.value);
+    }
+  | Err e -> println("open failed: " + e.message);
+}
+byte_io_demo();
+
+// ── Buffer I/O ───────────────────────────────────────────────────────────────
+// Buffers accumulate bytes or chars before flushing — useful for bulk reads.
+
+proc buffer_demo() {
+  // Write some text
+  var wh = fileOpen("./hello.txt", Write);
+  match wh with
+  | Ok o -> { writeLine(o.value, "hello world"); fileClose(o.value); }
+  | Err _ -> 0;
+
+  // Read back as a CharMode buffer
+  var rh = fileOpen("./hello.txt", Read);
+  match rh with
+  | Ok o -> {
+      let r = readBuffer(o.value, 11, CharMode);
+      match r with
+      | Ok b -> println(bufferToString(b.value))  // hello world
+      | Err e -> println("error: " + e.message);
+      fileClose(o.value);
+    }
+  | Err _ -> 0;
+
+  // Read back as a ByteMode buffer and inspect raw bytes
+  var rh2 = fileOpen("./hello.txt", Read);
+  match rh2 with
+  | Ok o -> {
+      let r = readBuffer(o.value, 5, ByteMode);
+      match r with
+      | Ok b -> {
+          println(bufferLength(b.value));      // 5
+          let bytes = bufferToBytes(b.value);
+          println(nth(bytes, 0));              // 104  ('h')
+          println(nth(bytes, 1));              // 101  ('e')
+        }
+      | Err e -> println("error: " + e.message);
+      fileClose(o.value);
+    }
+  | Err _ -> 0;
+}
+buffer_demo();

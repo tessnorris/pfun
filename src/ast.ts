@@ -23,6 +23,7 @@ export type PfunType =
   | { kind: 'Bool' }
   | { kind: 'Str' }
   | { kind: 'Char' }
+  | { kind: 'Byte' }
   | { kind: 'Nil' }
   | { kind: 'List';    element: PfunType }
   | { kind: 'Array';   element: PfunType }
@@ -71,6 +72,7 @@ export type Expr =
   | { type: 'BoolExpr';   value: boolean; pos?: SourcePos; inferredType?: PfunType }
   | { type: 'StrExpr';    value: string;  pos?: SourcePos; inferredType?: PfunType }
   | { type: 'CharExpr';   value: string;  pos?: SourcePos; inferredType?: PfunType }
+  | { type: 'ByteExpr';   value: number;  pos?: SourcePos; inferredType?: PfunType }
   | { type: 'IdentExpr';  name: string;   pos?: SourcePos; inferredType?: PfunType }
   | { type: 'UnaryExpr';  operator: string; right: Expr; pos?: SourcePos; inferredType?: PfunType }
   | { type: 'BinaryExpr'; left: Expr; operator: string; right: Expr; pos?: SourcePos; inferredType?: PfunType }

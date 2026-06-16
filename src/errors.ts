@@ -309,12 +309,21 @@ export function formatValue(value: any, interp: { stringify(v: any): string }): 
     return `'${value.value}'`;
   }
 
+  // PfunByte
+  if (value && value.constructor && value.constructor.name === 'PfunByte') {
+    return `${value.value}b`;
+  }
+
   // Arrays (lists)
   if (Array.isArray(value)) {
     // Char list — it's a string at runtime
     if (value.length > 0 && value.every((c: any) => c && c.constructor && c.constructor.name === 'PfunChar')) {
       const s = value.map((c: any) => c.value).join('');
       return `"${s.length > 20 ? s.slice(0, 20) + '...' : s}"`;
+    }
+    // Byte list
+    if (value.length > 0 && value.every((b: any) => b && b.constructor && b.constructor.name === 'PfunByte')) {
+      return `List<Byte> (${value[0].value}b ...)`;
     }
     if (value.length === 0) return 'List (empty)';
     const first = interp.stringify(value[0]);

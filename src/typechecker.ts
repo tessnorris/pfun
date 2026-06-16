@@ -294,6 +294,7 @@ function inferExpr(expr: Expr, env: TypeEnv, registry: TypeRegistry): PfunType {
     case 'BoolExpr': t = BOOL; break;
     case 'StrExpr':  t = STR;  break;
     case 'CharExpr': t = CHAR; break;
+    case 'ByteExpr': t = { kind: 'Byte' }; break;
 
     // ── Identifiers ─────────────────────────────────────────────────────────
     case 'IdentExpr': {
@@ -493,6 +494,7 @@ function inferBinary(op: string, lt: PfunType, rt: PfunType): PfunType {
   switch (op) {
     case 'PlusToken':
       if (lt.kind === 'Int'  && rt.kind === 'Int')  return INT;
+      if (lt.kind === 'Byte' && rt.kind === 'Byte') return { kind: 'Byte' };
       if (lt.kind === 'Str'  && rt.kind === 'Str')  return STR;
       if (lt.kind === 'List' && rt.kind === 'List')
         return { kind: 'List', element: typesEqual(lt.element, rt.element) ? lt.element : UNKNOWN };
@@ -501,7 +503,21 @@ function inferBinary(op: string, lt: PfunType, rt: PfunType): PfunType {
     case 'StarToken':
     case 'SlashToken':
     case 'PercentToken':
+      if (lt.kind === 'Byte' && rt.kind === 'Byte') return { kind: 'Byte' };
       return (lt.kind === 'Int' && rt.kind === 'Int') ? INT : UNKNOWN;
+
+    // Bitwise operators — result is same type as left operand
+    case 'BitAndToken':
+    case 'BitOrToken':
+      if (lt.kind === 'Byte' && rt.kind === 'Byte') return { kind: 'Byte' };
+      if (lt.kind === 'Int'  && rt.kind === 'Int')  return INT;
+      return UNKNOWN;
+
+    case 'ShiftLeftToken':
+    case 'ShiftRightToken':
+      if (lt.kind === 'Byte') return { kind: 'Byte' };
+      if (lt.kind === 'Int')  return INT;
+      return UNKNOWN;
   }
 
   return UNKNOWN;

@@ -206,6 +206,7 @@ export function formatType(t: PfunType): string {
     case 'Bool':    return 'Bool';
     case 'Str':     return 'Str';
     case 'Char':    return 'Char';
+    case 'Byte':    return 'Byte';
     case 'Nil':     return 'Nil';
     case 'Unknown': return '?';
     case 'TyVar':   return `α${t.id}`;
@@ -507,6 +508,7 @@ function cgenExpr(
     case 'BoolExpr': t = _BOOL; break;
     case 'StrExpr':  t = _STR;  break;
     case 'CharExpr': t = _CHAR; break;
+    case 'ByteExpr': t = { kind: 'Byte' }; break;
 
     // ── Identifiers — look up or assign a fresh var ──────────────────────────
     case 'IdentExpr': {
@@ -744,6 +746,18 @@ function cgenBinary(
       cs.push(constraint(lt, _BOOL, pos));
       cs.push(constraint(rt, _BOOL, pos));
       return _BOOL;
+
+    // Bitwise operators — operands must agree (both Byte or both Int);
+    // result is the same type. Shifts additionally accept a Byte shift amount.
+    case 'BitAndToken':
+    case 'BitOrToken':
+      cs.push(constraint(lt, rt, pos));
+      return lt;
+
+    case 'ShiftLeftToken':
+    case 'ShiftRightToken':
+      // Left operand determines result type; shift amount may be Int or Byte.
+      return lt;
 
     // Arithmetic — all operands and result are Int
     case 'MinusToken':

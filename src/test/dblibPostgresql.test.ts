@@ -157,6 +157,7 @@ describe('dblibPostgresql', () => {
           | DbFloat n  -> println(pair.key + ":float:" + __str__(n.value))
           | DbText s   -> println(pair.key + ":text:" + s.value)
           | DbBool b   -> println(pair.key + ":bool:" + __str__(b.value))
+          | DbBytes b  -> println(pair.key + ":bytes:" + __str__(length(b.value)))
           | DbNull     -> println(pair.key + ":null");
         }
 
@@ -203,6 +204,7 @@ describe('dblibPostgresql', () => {
           | DbFloat n -> println(pair.key + ":float")
           | DbText s  -> println(pair.key + ":text")
           | DbBool b  -> println(pair.key + ":bool")
+          | DbBytes b -> println(pair.key + ":bytes:" + __str__(length(b.value)))
           | DbNull    -> println(pair.key + ":null");
         }
 
@@ -285,6 +287,57 @@ describe('dblibPostgresql', () => {
         p();
       `);
       expect(logs).toEqual(['error: syntax error at or near "FORM"']);
+    });
+
+    it('maps a Buffer column to DbBytes containing the correct List<Byte>', async () => {
+      queryResult = {
+        rows: [{ data: Buffer.from([0xDE, 0xAD, 0xBE, 0xEF]) }],
+        rowCount: 1,
+      };
+      const { logs } = await runAsyncProgram(`
+        async proc p() {
+          let conn = await dbConnect("postgres://localhost/test");
+          match conn with
+          | Ok c -> {
+              let result = await dbQuery(c.value, "SELECT data FROM blobs WHERE id = $1", [DbInt { 1 }]);
+              match result with
+              | Ok r -> {
+                  let row = nth(r.value.rows, 0);
+                  let col = nth(row, 0);
+                  match col.value with
+                  | DbBytes b -> {
+                      println(length(b.value));
+                      println(nth(b.value, 0));
+                      println(nth(b.value, 3));
+                    }
+                  | _ -> println("not bytes");
+                }
+              | Err e -> println("query error: " + e.message);
+            }
+          | Err e -> println("connect error: " + e.message);
+        }
+        p();
+      `);
+      expect(logs).toEqual(['4', '222', '239']); // 0xDE=222, 0xEF=239
+    });
+
+    it('passes a List<Byte> parameter as a Buffer to the driver', async () => {
+      queryResult = { rows: [], rowCount: 1 };
+      await runAsyncProgram(`
+        async proc p() {
+          let conn = await dbConnect("postgres://localhost/test");
+          match conn with
+          | Ok c -> {
+              let result = await dbQuery(c.value, "INSERT INTO blobs(data) VALUES ($1)", [DbBytes { [0xCAb, 0xFEb] }]);
+              match result with
+              | Ok _  -> println("ok")
+              | Err e -> println("query error: " + e.message);
+            }
+          | Err e -> println("connect error: " + e.message);
+        }
+        p();
+      `);
+      expect(lastQueryParams).toEqual([Buffer.from([0xCA, 0xFE])]);
     });
 
     it('treats an empty result set correctly', async () => {

@@ -14,7 +14,7 @@
 //       operations return Promise<DbResult<...>> and never reject.
 //
 //   DbValue: DbInt { value: int } | DbFloat { value: float } | DbText { value: string }
-//          | DbBool { value: bool } | DbNull
+//          | DbBool { value: bool } | DbBytes { value: List<Byte> } | DbNull
 //     - A small closed union representing a single column value, so that a
 //       row (list<Pair<string, DbValue>>) satisfies Pfun dicts'/lists'
 //       single-element-type requirement while preserving the underlying
@@ -25,6 +25,7 @@
 //         JS number (non-int)  -> DbFloat
 //         JS string            -> DbText
 //         JS boolean           -> DbBool
+//         JS Buffer            -> DbBytes  (binary columns: BYTEA, BLOB, VARBINARY, ...)
 //         null / undefined     -> DbNull
 //       Notably, SQL NUMERIC/DECIMAL/BIGINT columns that drivers return as
 //       strings (to avoid precision loss) become DbText — callers can use
@@ -36,11 +37,13 @@
 //       variant record — its payload is `n.value`, not `n` itself.
 //     - DbValue is also used for QUERY PARAMETERS (see dbQuery below): wrap
 //       each parameter in the matching constructor, e.g.
-//       `[DbInt { 42 }, DbText { "Alice" }]`. This keeps a single query's
-//       parameter list homogeneous (`list<DbValue>`), satisfying Pfun's
-//       list-element-type rule even when the parameters themselves have
-//       different underlying types. A list of raw scalars of the SAME type
-//       (e.g. `[1, 2]`, all bigint) is also accepted directly.
+//       `[DbInt { 42 }, DbText { "Alice" }, DbBytes { [0xDEb, 0xADb] }]`.
+//       A List<Byte> may also be passed directly (without DbBytes wrapping)
+//       and will be sent to the driver as a Buffer. This keeps a single
+//       query's parameter list homogeneous (`list<DbValue>`), satisfying
+//       Pfun's list-element-type rule even when the parameters themselves
+//       have different underlying types. A list of raw scalars of the SAME
+//       type (e.g. `[1, 2]`, all bigint) is also accepted directly.
 //
 //   QueryResult: { rows: list<list<Pair<string, DbValue>>>, rowCount: int }
 //     - Each row is an ordered list of column-name/DbValue pairs (using the
@@ -55,7 +58,7 @@
 //   The wrapped client (__client) is not accessible from Pfun code; it is
 //   only inspected by this module's and the driver modules' native functions.
 
-import { RegistryType, PfunChar } from './interpreter';
+import { RegistryType, PfunChar, PfunByte } from './interpreter';
 
 // ─── Result / DbValue helpers ─────────────────────────────────────────────────
 // These construct values directly (bypassing instantiate) so they carry the
@@ -65,11 +68,12 @@ import { RegistryType, PfunChar } from './interpreter';
 export const ok  = (value: any)      => ({ __type: 'Ok',  __union: 'DbResult', value });
 export const err = (message: string) => ({ __type: 'Err', __union: 'DbResult', message });
 
-export const dbInt   = (value: bigint)  => ({ __type: 'DbInt',   __union: 'DbValue', value });
-export const dbFloat = (value: number)  => ({ __type: 'DbFloat', __union: 'DbValue', value });
-export const dbText  = (value: string)  => ({ __type: 'DbText',  __union: 'DbValue', value });
-export const dbBool  = (value: boolean) => ({ __type: 'DbBool',  __union: 'DbValue', value });
-export const dbNull  =                     { __type: 'DbNull',  __union: 'DbValue' };
+export const dbInt   = (value: bigint)   => ({ __type: 'DbInt',   __union: 'DbValue', value });
+export const dbFloat = (value: number)   => ({ __type: 'DbFloat', __union: 'DbValue', value });
+export const dbText  = (value: string)   => ({ __type: 'DbText',  __union: 'DbValue', value });
+export const dbBool  = (value: boolean)  => ({ __type: 'DbBool',  __union: 'DbValue', value });
+export const dbBytes = (value: PfunByte[]) => ({ __type: 'DbBytes', __union: 'DbValue', value });
+export const dbNull  =                      { __type: 'DbNull',  __union: 'DbValue' };
 
 export function nodeErrMsg(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
@@ -88,7 +92,11 @@ export function sqlValueToDbValue(v: any): any {
   // Dates, Buffers, etc. — fall back to string representation rather than
   // throwing, so unusual column types don't crash the whole query.
   if (v instanceof Date) return dbText(v.toISOString());
-  if (Buffer.isBuffer(v)) return dbText(v.toString('utf8'));
+  if (Buffer.isBuffer(v)) {
+    // Binary columns (BYTEA, BLOB, VARBINARY, etc.) — preserve as DbBytes
+    // (List<Byte>) so callers can inspect raw bytes without data loss.
+    return dbBytes(Array.from(v, b => new PfunByte(b)));
+  }
   return dbText(String(v));
 }
 
@@ -141,6 +149,10 @@ function pfunValueToSql(v: any, fnName: string): any {
   if (typeof v === 'string') return v;
   if (typeof v === 'boolean') return v;
   if (v instanceof PfunChar) return v.value;
+  // Allow passing a List<Byte> directly as a binary parameter (BYTEA/BLOB)
+  if (Array.isArray(v) && v.every((b: any) => b instanceof PfunByte)) {
+    return Buffer.from(v.map((b: PfunByte) => b.value));
+  }
   // Allow passing DbValue records back in directly (e.g. round-tripping a
   // value read from one query into another).
   if (v && typeof v === 'object' && v.__union === 'DbValue') {
@@ -149,6 +161,7 @@ function pfunValueToSql(v: any, fnName: string): any {
       case 'DbFloat': return v.value;
       case 'DbText':  return v.value;
       case 'DbBool':  return v.value;
+      case 'DbBytes': return Buffer.from((v.value as PfunByte[]).map((b: PfunByte) => b.value));
       case 'DbNull':  return null;
     }
   }
@@ -174,6 +187,7 @@ export const dblibTypes: RegistryType[] = [
       { name: 'DbFloat', fields: ['value'] },
       { name: 'DbText',  fields: ['value'] },
       { name: 'DbBool',  fields: ['value'] },
+      { name: 'DbBytes', fields: ['value'] },  // List<Byte> — binary/BLOB/BYTEA columns
       { name: 'DbNull',  fields: [] },
     ],
   },

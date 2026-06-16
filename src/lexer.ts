@@ -17,6 +17,7 @@ export type Token =
   | { type: 'BoolToken'; value: boolean; pos?: SourcePos }
   | { type: 'StrToken'; value: string; pos?: SourcePos }
   | { type: 'CharToken'; value: string; pos?: SourcePos }
+  | { type: 'ByteToken'; value: number; pos?: SourcePos }
   | { type: 'IdentToken'; value: string; pos?: SourcePos }
   | { type: 'PlusToken'; pos?: SourcePos } | { type: 'MinusToken'; pos?: SourcePos } | { type: 'StarToken'; pos?: SourcePos }
   | { type: 'SlashToken'; pos?: SourcePos } | { type: 'PercentToken'; pos?: SourcePos }
@@ -25,6 +26,11 @@ export type Token =
   | { type: 'GreaterToken'; pos?: SourcePos } | { type: 'LessToken'; pos?: SourcePos } | { type: 'NotEqualToken'; pos?: SourcePos }
   | { type: 'LessEqualToken'; pos?: SourcePos } | { type: 'GreaterEqualToken'; pos?: SourcePos } | { type: 'BooleanNot'; pos?: SourcePos }
   | { type: 'BooleanAnd'; pos?: SourcePos } | { type: 'BooleanOr'; pos?: SourcePos } | { type: 'LParenToken'; pos?: SourcePos }
+  // ── Bitwise operators ─────────────────────────────────────────────────────
+  | { type: 'BitAndToken'; pos?: SourcePos }     // &  (single)
+  | { type: 'BitOrToken'; pos?: SourcePos }      // |  (single, mid-expression; parser disambiguates from PipeToken)
+  | { type: 'ShiftLeftToken'; pos?: SourcePos }  // <<
+  | { type: 'ShiftRightToken'; pos?: SourcePos } // >>
   | { type: 'RParenToken'; pos?: SourcePos } | { type: 'LBraceToken'; pos?: SourcePos } | { type: 'RBraceToken'; pos?: SourcePos }
   | { type: 'LBracketToken'; pos?: SourcePos } | { type: 'RBracketToken'; pos?: SourcePos }
   | { type: 'LetToken'; pos?: SourcePos } | { type: 'VarToken'; pos?: SourcePos } | { type: 'TypeToken'; pos?: SourcePos }
@@ -124,17 +130,29 @@ export class Lexer {
         case '?': tokens.push({ type: 'QuestionToken', pos: tokPos }); break;
         case '.': tokens.push({ type: 'DotToken', pos: tokPos }); break;
         case '$': tokens.push({ type: 'DollarToken', pos: tokPos }); break;
-        // '|' is now a pipe token for union variants and match arms.
-        // '||' is still supported for boolean or.
+        // '|' — '||' is boolean or; single '|' is PipeToken (match arms / union defs).
+        // The parser re-interprets PipeToken as BitOrToken in expression context.
         case '|':
           tokens.push(this.match('|') ? { type: 'BooleanOr', pos: tokPos } : { type: 'PipeToken', pos: tokPos });
           break;
-        // Lookahead for compound comparison operators
-        case '>': tokens.push(this.match('=') ? { type: 'GreaterEqualToken', pos: tokPos } : { type: 'GreaterToken', pos: tokPos }); break;
-        case '<': tokens.push(this.match('=') ? { type: 'LessEqualToken', pos: tokPos } : (this.match('-') ? { type: 'ArrowLeftToken', pos: tokPos } : { type: 'LessToken', pos: tokPos })); break;
+        // '<' — could be <=, <-, <<, or plain <
+        case '<':
+          if (this.match('<'))      tokens.push({ type: 'ShiftLeftToken', pos: tokPos });
+          else if (this.match('=')) tokens.push({ type: 'LessEqualToken', pos: tokPos });
+          else if (this.match('-')) tokens.push({ type: 'ArrowLeftToken', pos: tokPos });
+          else                      tokens.push({ type: 'LessToken', pos: tokPos });
+          break;
+        // '>' — could be >=, >>, or plain >
+        case '>':
+          if (this.match('>'))      tokens.push({ type: 'ShiftRightToken', pos: tokPos });
+          else if (this.match('=')) tokens.push({ type: 'GreaterEqualToken', pos: tokPos });
+          else                      tokens.push({ type: 'GreaterToken', pos: tokPos });
+          break;
         case '!': tokens.push(this.match('=') ? { type: 'NotEqualToken', pos: tokPos } : { type: 'BooleanNot', pos: tokPos }); break;
-        // Strict requirement for double-character logical and
-        case '&': if (this.match('&')) tokens.push({ type: 'BooleanAnd', pos: tokPos }); else throw new Error("Expected '&&'"); break;
+        // '&' — '&&' is boolean and; single '&' is bitwise and
+        case '&':
+          tokens.push(this.match('&') ? { type: 'BooleanAnd', pos: tokPos } : { type: 'BitAndToken', pos: tokPos });
+          break;
         default: throw new Error(`Unexpected character '${char}'`);
       }
     }
@@ -191,6 +209,7 @@ export class Lexer {
 
   // --- Character Classification ---
   private isDigit(c: string): boolean { return c >= '0' && c <= '9'; }
+  private isHexDigit(c: string): boolean { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'); }
   private isAlpha(c: string): boolean { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c === '_'; }
   private isAlphaNumeric(c: string): boolean { return this.isAlpha(c) || this.isDigit(c); }
 
@@ -198,6 +217,40 @@ export class Lexer {
   private readNumber(): Token {
     let s = '';
     while (!this.isAtEnd() && this.isDigit(this.peek())) s += this.advance();
+
+    // Hex literal: 0x... optionally followed by 'b' suffix for byte.
+    // We scan non-b/B hex digits freely, then handle a trailing b/B specially:
+    // consume it only if the character after it is NOT a hex digit (i.e. it's
+    // a suffix, not part of the number e.g. 0xAB where B is the last hex digit).
+    if (s === '0' && !this.isAtEnd() && (this.peek() === 'x' || this.peek() === 'X')) {
+      s += this.advance(); // consume 'x'/'X'
+      // Consume hex digits, but stop before a lone trailing 'b'/'B' that looks like a suffix
+      while (!this.isAtEnd()) {
+        const ch = this.peek();
+        // If this is b/B, peek at the character after it
+        if (ch === 'b' || ch === 'B') {
+          const afterB = (this.pos + 1 < this.input.length) ? this.input[this.pos + 1] : '';
+          if (this.isHexDigit(afterB)) {
+            // b/B is a mid-number hex digit (e.g. 0xABCD), consume it normally
+            s += this.advance();
+          } else {
+            // b/B is the byte suffix — stop scanning hex digits here
+            break;
+          }
+        } else if (this.isHexDigit(ch)) {
+          s += this.advance();
+        } else {
+          break;
+        }
+      }
+      if (!this.isAtEnd() && (this.peek() === 'b' || this.peek() === 'B')) {
+        this.advance(); // consume 'b' suffix
+        const n = parseInt(s.slice(2), 16); // skip '0x'/'0X'
+        if (n < 0 || n > 255) throw new Error(`Byte literal out of range (0–255): ${s}b`);
+        return { type: 'ByteToken', value: n };
+      }
+      return { type: 'IntToken', value: BigInt(s) };
+    }
 
     // Check for decimal point followed by at least one digit (1.5, not 1.)
     let isFloat = false;
@@ -224,6 +277,15 @@ export class Lexer {
     }
 
     if (isFloat) return { type: 'FloatToken', value: parseFloat(s) };
+
+    // Decimal byte literal: 255b
+    if (!this.isAtEnd() && this.peek() === 'b') {
+      this.advance(); // consume 'b' suffix
+      const n = parseInt(s, 10);
+      if (n < 0 || n > 255) throw new Error(`Byte literal out of range (0–255): ${s}b`);
+      return { type: 'ByteToken', value: n };
+    }
+
     return { type: 'IntToken', value: BigInt(s) };
   }
 

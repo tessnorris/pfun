@@ -371,3 +371,86 @@ describe('Composing jsonSerialize/jsonDeserialize with writeFile/readFile', () =
     expect(logs).toEqual(['none']);
   });
 });
+
+// ─── Byte serialisation ───────────────────────────────────────────────────────
+
+describe('jsonlib — Byte serialisation', () => {
+
+  it('serialises a Byte as { "__pfun": "byte", "v": n }', () => {
+    const { logs } = run(`
+      import * from "json";
+      let b = 0xFFb;
+      match jsonSerialize(b) with
+      | Some s -> println(s.value)
+      | None   -> println("none");
+    `);
+    const parsed = JSON.parse(logs[0]);
+    expect(parsed.__pfun).toBe('byte');
+    expect(parsed.v).toBe(255);
+  });
+
+  it('deserialises a byte tag back to a Byte value', () => {
+    // Serialise first so we get valid JSON without embedding raw JSON in Pfun source
+    const { logs } = run(`
+      import * from "json";
+      let b = 65b;
+      let json = match jsonSerialize(b) with | Some s -> s.value | None -> "";
+      let b2 = match jsonDeserialize(json) with | Some v -> v.value | None -> 0b;
+      println(b2);
+      println(b == b2);
+    `);
+    expect(logs).toEqual(['65', 'true']);
+  });
+
+  it('round-trips a Byte value', () => {
+    const { logs } = run(`
+      import * from "json";
+      let b = 200b;
+      let json = match jsonSerialize(b) with | Some s -> s.value | None -> "";
+      let b2 = match jsonDeserialize(json) with | Some v -> v.value | None -> 0b;
+      println(b2);
+      println(b == b2);
+    `);
+    expect(logs).toEqual(['200', 'true']);
+  });
+
+  it('round-trips a List<Byte>', () => {
+    const { logs } = run(`
+      import * from "json";
+      let bytes = [0xDEb, 0xADb, 0xBEb, 0xEFb];
+      let json = match jsonSerialize(bytes) with | Some s -> s.value | None -> "";
+      let bytes2 = match jsonDeserialize(json) with | Some v -> v.value | None -> [];
+      println(length(bytes2));
+      println(nth(bytes2, 0));
+      println(nth(bytes2, 3));
+    `);
+    expect(logs).toEqual(['4', '222', '239']);
+  });
+
+  it('round-trips a record containing Byte fields', () => {
+    const { logs } = run(`
+      import * from "json";
+      type Pixel = { r, g, b_chan };
+      let px = Pixel(r=255b, g=128b, b_chan=0b);
+      let json = match jsonSerialize(px) with | Some s -> s.value | None -> "";
+      let px2 = match jsonDeserialize(json) with | Some v -> v.value | None -> Pixel(r=0b, g=0b, b_chan=0b);
+      println(px2.r);
+      println(px2.g);
+      println(px2.b_chan);
+    `);
+    expect(logs).toEqual(['255', '128', '0']);
+  });
+
+  it('serialises 0b correctly', () => {
+    const { logs } = run(`
+      import * from "json";
+      let b = 0b;
+      match jsonSerialize(b) with
+      | Some s -> println(s.value)
+      | None   -> println("none");
+    `);
+    const parsed = JSON.parse(logs[0]);
+    expect(parsed.__pfun).toBe('byte');
+    expect(parsed.v).toBe(0);
+  });
+});

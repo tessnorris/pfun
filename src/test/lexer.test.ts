@@ -200,6 +200,125 @@ describe('Lexer Unit Tests', () => {
     });
   });
 
+  // ── Byte literals ────────────────────────────────────────────────────────
+  describe('Byte literals', () => {
+    it('should tokenize a decimal byte literal', () => {
+      const token = lex('255b')[0];
+      expect(token.type).toBe('ByteToken');
+      expect((token as any).value).toBe(255);
+    });
+
+    it('should tokenize a zero byte literal', () => {
+      const token = lex('0b')[0];
+      expect(token.type).toBe('ByteToken');
+      expect((token as any).value).toBe(0);
+    });
+
+    it('should tokenize a hex byte literal lowercase', () => {
+      const token = lex('0xffb')[0];
+      expect(token.type).toBe('ByteToken');
+      expect((token as any).value).toBe(255);
+    });
+
+    it('should tokenize a hex byte literal uppercase', () => {
+      const token = lex('0xFFb')[0];
+      expect(token.type).toBe('ByteToken');
+      expect((token as any).value).toBe(255);
+    });
+
+    it('should tokenize a mid-range hex byte literal', () => {
+      const token = lex('0x80b')[0];
+      expect(token.type).toBe('ByteToken');
+      expect((token as any).value).toBe(128);
+    });
+
+    it('should tokenize a hex int without b suffix as IntToken', () => {
+      const token = lex('0xFF')[0];
+      expect(token.type).toBe('IntToken');
+      expect((token as any).value).toBe(255n);
+    });
+
+    it('should error on decimal byte literal out of range', () => {
+      expect(() => lex('256b')).toThrow('out of range');
+    });
+
+    it('should error on hex byte literal out of range', () => {
+      expect(() => lex('0x100b')).toThrow('out of range');
+    });
+
+    it('should tokenize byte literal in an expression', () => {
+      const tokens = lex('let x = 0xFFb;');
+      expect(tokens.map(t => t.type)).toEqual([
+        'LetToken', 'IdentToken', 'AssignToken', 'ByteToken', 'SemiToken', 'EOFToken'
+      ]);
+      expect((tokens[3] as any).value).toBe(255);
+    });
+  });
+
+  // ── Bitwise operators ─────────────────────────────────────────────────────
+  describe('Bitwise operators', () => {
+    it('should tokenize single & as BitAndToken', () => {
+      expect(lex('&')[0].type).toBe('BitAndToken');
+    });
+
+    it('should still tokenize && as BooleanAnd', () => {
+      expect(lex('&&')[0].type).toBe('BooleanAnd');
+    });
+
+    it('should distinguish & from &&', () => {
+      const tokens = lex('a & b && c');
+      expect(tokens[1].type).toBe('BitAndToken');
+      expect(tokens[3].type).toBe('BooleanAnd');
+    });
+
+    it('should tokenize << as ShiftLeftToken', () => {
+      expect(lex('<<')[0].type).toBe('ShiftLeftToken');
+    });
+
+    it('should tokenize >> as ShiftRightToken', () => {
+      expect(lex('>>')[0].type).toBe('ShiftRightToken');
+    });
+
+    it('should distinguish << from <, <=, <-', () => {
+      const tokens = lex('a << b < c <= d <- e');
+      expect(tokens[1].type).toBe('ShiftLeftToken');
+      expect(tokens[3].type).toBe('LessToken');
+      expect(tokens[5].type).toBe('LessEqualToken');
+      expect(tokens[7].type).toBe('ArrowLeftToken');
+    });
+
+    it('should distinguish >> from >, >=', () => {
+      const tokens = lex('a >> b > c >= d');
+      expect(tokens[1].type).toBe('ShiftRightToken');
+      expect(tokens[3].type).toBe('GreaterToken');
+      expect(tokens[5].type).toBe('GreaterEqualToken');
+    });
+
+    it('should still tokenize single | as PipeToken', () => {
+      expect(lex('|')[0].type).toBe('PipeToken');
+    });
+
+    it('should still tokenize || as BooleanOr', () => {
+      expect(lex('||')[0].type).toBe('BooleanOr');
+    });
+
+    it('should tokenize a bitwise expression with byte literals', () => {
+      const tokens = lex('0xF0b & 0x0Fb');
+      expect(tokens[0].type).toBe('ByteToken');
+      expect(tokens[1].type).toBe('BitAndToken');
+      expect(tokens[2].type).toBe('ByteToken');
+      expect((tokens[0] as any).value).toBe(0xF0);
+      expect((tokens[2] as any).value).toBe(0x0F);
+    });
+
+    it('should tokenize a shift expression', () => {
+      const tokens = lex('x >> 2');
+      expect(tokens[0].type).toBe('IdentToken');
+      expect(tokens[1].type).toBe('ShiftRightToken');
+      expect(tokens[2].type).toBe('IntToken');
+    });
+  });
+
   // ── Async/await (phase 1) ────────────────────────────────────────────────
   describe('Async/await keywords', () => {
     it('should tokenize "async" as AsyncToken', () => {

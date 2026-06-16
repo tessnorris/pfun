@@ -27,6 +27,7 @@
 //   boolean       → JSON boolean  (true / false)
 //   string        → JSON string
 //   PfunChar      → { "__pfun": "char", "v": "x" }
+//   PfunByte      → { "__pfun": "byte", "v": 255 }
 //   null/nil      → JSON null
 //   Array (list)  → JSON array  (elements recursively encoded)
 //   record/union  → { "__pfun": "record", "__type": "Foo", "__union": "Bar"|null,
@@ -35,7 +36,7 @@
 // On the way back in, the "__pfun" discriminator tells the reviver exactly what
 // to reconstruct, so round-trips are lossless for all supported types.
 
-import { RegistryFunction, PfunChar } from './interpreter';
+import { RegistryFunction, PfunChar, PfunByte } from './interpreter';
 
 // ─── Option helpers ───────────────────────────────────────────────────────────
 
@@ -61,6 +62,10 @@ function pfunToJson(value: any): any {
 
   if (value instanceof PfunChar) {
     return { __pfun: 'char', v: value.value };
+  }
+
+  if (value instanceof PfunByte) {
+    return { __pfun: 'byte', v: value.value };
   }
 
   if (Array.isArray(value)) {
@@ -115,6 +120,10 @@ function jsonToPfun(node: any): any {
 
     if (tag === 'char') {
       return new PfunChar(node.v);
+    }
+
+    if (tag === 'byte') {
+      return new PfunByte(node.v);
     }
 
     if (tag === 'record') {

@@ -7,7 +7,7 @@ import { Expr, Stmt, MatchArm } from './ast';
  * Higher values bind tighter.
  */
 enum Precedence {
-  NONE, ASSIGNMENT, TERNARY, OR, AND, EQUALITY, COMPARISON, TERM, FACTOR, UNARY, CALL, PRIMARY
+  NONE, ASSIGNMENT, TERNARY, OR, AND, EQUALITY, COMPARISON, BITOR, BITAND, SHIFT, TERM, FACTOR, UNARY, CALL, PRIMARY
 }
 
 export class Parser {
@@ -329,6 +329,7 @@ export class Parser {
       case 'BoolToken': return { type: 'BoolExpr', value: token.value, pos: token.pos ?? exprPos };
       case 'StrToken': return { type: 'StrExpr', value: token.value, pos: token.pos ?? exprPos };
       case 'CharToken': return { type: 'CharExpr', value: token.value, pos: token.pos ?? exprPos };
+      case 'ByteToken': return { type: 'ByteExpr', value: token.value, pos: token.pos ?? exprPos };
       case 'RawStrToken': return { type: 'StrExpr', value: token.value, pos: token.pos ?? exprPos };
       case 'DollarToken': return this.parseFormatString(token.pos ?? exprPos);
       case 'IdentToken':
@@ -601,7 +602,7 @@ export class Parser {
       return { type: 'IndexExpr', object: left, index, pos: infixPos };
     }
 
-    return { type: 'BinaryExpr', left, operator: token.type, right: this.parseExpression(precedence), pos: infixPos };
+    return { type: 'BinaryExpr', left, operator: token.type === 'PipeToken' ? 'BitOrToken' : token.type, right: this.parseExpression(precedence), pos: infixPos };
   }
 
   private parseCall(callee: Expr): Expr {
@@ -633,6 +634,22 @@ export class Parser {
       case 'BooleanAnd': return Precedence.AND;
       case 'EqualToken': case 'NotEqualToken': return Precedence.EQUALITY;
       case 'GreaterToken': case 'LessToken': case 'GreaterEqualToken': case 'LessEqualToken': return Precedence.COMPARISON;
+      // ── Bitwise operators (below comparison, above arithmetic) ──────────────
+      // BitAndToken and shift tokens are unambiguous.
+      case 'BitAndToken':     return Precedence.BITAND;
+      case 'ShiftLeftToken':  return Precedence.SHIFT;
+      case 'ShiftRightToken': return Precedence.SHIFT;
+      // PipeToken is ambiguous: '|' starts a match arm at the statement level,
+      // but acts as BitOr in a mid-expression context.
+      // Heuristic: if the token after '|' is an IdentToken or WildcardToken
+      // (i.e. a match arm pattern), treat it as NONE so the match loop can
+      // consume it. Otherwise treat it as BITOR.
+      case 'PipeToken': {
+        const next = this.peekNext().type;
+        if (next === 'IdentToken' || next === 'WildcardToken') return Precedence.NONE;
+        return Precedence.BITOR;
+      }
+      case 'BitOrToken':      return Precedence.BITOR;
       case 'PlusToken': case 'MinusToken': return Precedence.TERM;
       case 'StarToken': case 'SlashToken': case 'PercentToken': return Precedence.FACTOR;
       case 'LParenToken': case 'DotToken': case 'LBracketToken': return Precedence.CALL;
@@ -650,7 +667,7 @@ export class Parser {
   private isExprStart(): boolean {
     const t = this.peek().type;
     // ── Async/await (phase 1): 'await' starts an expression (AwaitExpr). ──
-    return ['IntToken', 'BoolToken', 'StrToken', 'CharToken', 'RawStrToken', 'DollarToken', 'IdentToken', 'BooleanNot', 'MinusToken',
+    return ['IntToken', 'FloatToken', 'BoolToken', 'StrToken', 'CharToken', 'ByteToken', 'RawStrToken', 'DollarToken', 'IdentToken', 'BooleanNot', 'MinusToken',
             'LParenToken', 'LBracketToken', 'FnToken', 'MatchToken', 'DictToken', 'ArrayToken', 'AwaitToken'].includes(t);
   }
   private isAtEnd(): boolean { return this.peek().type === 'EOFToken'; }

@@ -34,6 +34,7 @@ function getValueType(v: any, schemas?: Map<string, any[]>): string {
   if (v instanceof LazyList) return 'lazylist';
   if (v instanceof PfunDict) return 'dict';
   if (v instanceof PfunArray) return v.elementType ? `array<${v.elementType}>` : 'array';
+  if (v instanceof PfunByte) return 'byte';
   if (v instanceof PfunChar) return 'char';
   if (Array.isArray(v)) {
     if (v.length === 0) return 'list';
@@ -74,6 +75,7 @@ export function pfunTypeToRuntimeType(t: PfunType): string | null {
     case 'Bool':    return 'boolean';
     case 'Str':     return 'string';
     case 'Char':    return 'char';
+    case 'Byte':    return 'byte';
     case 'Nil':     return 'nil';
     case 'Named':   return t.unionName ?? t.name;
     case 'List': {
@@ -163,6 +165,10 @@ export class PfunArray {
 
 export class PfunChar {
   constructor(public value: string) {}
+}
+
+export class PfunByte {
+  constructor(public value: number) {}  // always 0–255
 }
 
 export class LazyList {
@@ -1012,6 +1018,7 @@ export class Interpreter {
       case 'BoolExpr':  return expr.value;
       case 'StrExpr':   return expr.value;
       case 'CharExpr':  return new PfunChar(expr.value);
+      case 'ByteExpr':  return new PfunByte(expr.value);
       case 'IdentExpr': return env.get(expr.name);
       case 'GroupExpr': return yield* this.evaluateExprGen(expr.expression, env);
       case 'UnaryExpr': {
@@ -1544,6 +1551,32 @@ export class Interpreter {
     const left  = yield* this.forceGen(yield* this.evaluateExprGen(expr.left, env));
     const right = yield* this.forceGen(yield* this.evaluateExprGen(expr.right, env));
 
+    // ── Byte arithmetic ───────────────────────────────────────────────────────
+    // Byte+Byte arithmetic produces a Byte (range-checked, errors on overflow).
+    if (left instanceof PfunByte && right instanceof PfunByte) {
+      const checkByte = (n: number, op: string): PfunByte => {
+        if (n < 0 || n > 255) throw new Error(`Byte overflow: ${op} produced ${n}, which is out of range (0–255).`);
+        return new PfunByte(n);
+      };
+      switch (expr.operator) {
+        case 'PlusToken':    return checkByte(left.value + right.value, '+');
+        case 'MinusToken':   return checkByte(left.value - right.value, '-');
+        case 'StarToken':    return checkByte(left.value * right.value, '*');
+        case 'SlashToken':
+          if (right.value === 0) throw new Error('Divide by zero.');
+          return checkByte(Math.trunc(left.value / right.value), '/');
+        case 'PercentToken':
+          if (right.value === 0) throw new Error('Divide by zero (modulo by zero).');
+          return checkByte(left.value % right.value, '%');
+        case 'EqualToken':        return left.value === right.value;
+        case 'NotEqualToken':     return left.value !== right.value;
+        case 'GreaterToken':      return left.value >  right.value;
+        case 'LessToken':         return left.value <  right.value;
+        case 'GreaterEqualToken': return left.value >= right.value;
+        case 'LessEqualToken':    return left.value <= right.value;
+      }
+    }
+
     // ── String / char concatenation via + ────────────────────────────────────
     if (expr.operator === 'PlusToken') {
       const lStr = typeof left === 'string', rStr = typeof right === 'string';
@@ -1615,6 +1648,51 @@ export class Interpreter {
       case 'LessToken':         return mixed ? (ln as number) <  (rn as number) : left <  right;
       case 'GreaterEqualToken': return mixed ? (ln as number) >= (rn as number) : left >= right;
       case 'LessEqualToken':    return mixed ? (ln as number) <= (rn as number) : left <= right;
+
+      // ── Bitwise operators ──────────────────────────────────────────────────
+      // Byte operands: results masked to 0–255; shifts mask shift amount to 7.
+      // Int operands: full bigint bitwise semantics, no masking.
+      // Mixed Byte+Int: not permitted — types must match.
+      case 'BitAndToken': {
+        if (left instanceof PfunByte && right instanceof PfunByte)
+          return new PfunByte((left.value & right.value) & 0xFF);
+        if (typeof left === 'bigint' && typeof right === 'bigint')
+          return left & right;
+        throw new Error(`Operator & requires both operands to be Byte or both to be Int, got ${getValueType(left)} and ${getValueType(right)}.`);
+      }
+      case 'BitOrToken': {
+        if (left instanceof PfunByte && right instanceof PfunByte)
+          return new PfunByte((left.value | right.value) & 0xFF);
+        if (typeof left === 'bigint' && typeof right === 'bigint')
+          return left | right;
+        throw new Error(`Operator | requires both operands to be Byte or both to be Int, got ${getValueType(left)} and ${getValueType(right)}.`);
+      }
+      case 'ShiftLeftToken': {
+        if (left instanceof PfunByte) {
+          const shift = typeof right === 'bigint' ? Number(right) : (right instanceof PfunByte ? right.value : -1);
+          if (shift < 0) throw new Error(`<< shift amount must be a non-negative Int or Byte.`);
+          return new PfunByte((left.value << (shift & 7)) & 0xFF);
+        }
+        if (typeof left === 'bigint') {
+          const shift = typeof right === 'bigint' ? right : (right instanceof PfunByte ? BigInt(right.value) : null);
+          if (shift === null || shift < 0n) throw new Error(`<< shift amount must be a non-negative Int or Byte.`);
+          return left << shift;
+        }
+        throw new Error(`Operator << requires a Byte or Int left operand, got ${getValueType(left)}.`);
+      }
+      case 'ShiftRightToken': {
+        if (left instanceof PfunByte) {
+          const shift = typeof right === 'bigint' ? Number(right) : (right instanceof PfunByte ? right.value : -1);
+          if (shift < 0) throw new Error(`>> shift amount must be a non-negative Int or Byte.`);
+          return new PfunByte((left.value >>> (shift & 7)) & 0xFF);
+        }
+        if (typeof left === 'bigint') {
+          const shift = typeof right === 'bigint' ? right : (right instanceof PfunByte ? BigInt(right.value) : null);
+          if (shift === null || shift < 0n) throw new Error(`>> shift amount must be a non-negative Int or Byte.`);
+          return left >> shift;
+        }
+        throw new Error(`Operator >> requires a Byte or Int left operand, got ${getValueType(left)}.`);
+      }
 
       default: throw new Error(`Unknown binary operator ${expr.operator}`);
     }
@@ -1859,6 +1937,7 @@ export class Interpreter {
     if (typeof value === 'number')  return value !== 0;
     if (typeof value === 'bigint')  return value !== 0n;
     if (typeof value === 'string')  return value !== '';
+    if (value instanceof PfunByte)  return value.value !== 0;
     return true;
   }
 
@@ -1872,6 +1951,7 @@ export class Interpreter {
       return value.toString();
     }
     if (value instanceof PfunChar)  return value.value;
+    if (value instanceof PfunByte)  return value.value.toString();
     if (value instanceof LazyList)  return '<lazylist>';
     if (value instanceof PfunDict) {
       const entries = [...value.entries.entries()].map(([k, v]) => `${k.slice(2)} -> ${this.stringify(v)}`);
@@ -1926,6 +2006,8 @@ export class Interpreter {
 
   valEqual(a: any, b: any): boolean {
     a = this.force(a); b = this.force(b);
+    if (a instanceof PfunByte && b instanceof PfunByte) return a.value === b.value;
+    if (a instanceof PfunByte || b instanceof PfunByte) return false;
     if (a instanceof PfunChar && b instanceof PfunChar) return a.value === b.value;
     if (a instanceof PfunChar || b instanceof PfunChar) return false;
     if (Array.isArray(a) && Array.isArray(b)) {

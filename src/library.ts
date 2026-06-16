@@ -5,7 +5,7 @@
 
 import {
   RegistryFunction, RegistryType,
-  PfunChar, PfunArray, LazyList
+  PfunChar, PfunByte, PfunArray, LazyList
 } from './interpreter';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -254,14 +254,16 @@ export const stdlibFunctions: RegistryFunction[] = [
   }},
 
   // toInt(n) — convert float to integer (truncates toward zero). Integers pass through.
+  // Also accepts Byte, returning its value as an Int.
   { name: 'toInt', arity: 1, fn: (args, interp) => {
     const v = interp.force(args[0]);
     if (typeof v === 'bigint') return v;
+    if (v instanceof PfunByte) return BigInt(v.value);
     if (typeof v === 'number') {
       if (!isFinite(v) || isNaN(v)) throw new Error('toInt: cannot convert NaN or Infinity to integer.');
       return BigInt(Math.trunc(v));
     }
-    throw new Error(`toInt() requires a number, got ${typeof v}.`);
+    throw new Error(`toInt() requires a number or Byte, got ${typeof v}.`);
   }},
 
   // floor(n) — largest integer <= n. Returns int.
@@ -309,5 +311,54 @@ export const stdlibFunctions: RegistryFunction[] = [
     if (typeof v === 'bigint') return true;
     if (typeof v === 'number') return Number.isFinite(v);
     return false;
+  }},
+
+  // ─── Byte conversions ─────────────────────────────────────────────────────
+
+  // toByte(x) — convert Int or Char to Byte. Errors if out of range (0–255).
+  { name: 'toByte', arity: 1, fn: (args, interp) => {
+    const v = interp.force(args[0]);
+    if (v instanceof PfunByte) return v;
+    if (typeof v === 'bigint') {
+      const n = Number(v);
+      if (n < 0 || n > 255) throw new Error(`toByte: value ${n} is out of range (0–255).`);
+      return new PfunByte(n);
+    }
+    if (v instanceof PfunChar) {
+      const cp = v.value.codePointAt(0)!;
+      if (cp > 255) throw new Error(`toByte: char '${v.value}' has codepoint ${cp}, which is out of range (0–255). Use charBytes() to get the UTF-8 byte sequence.`);
+      return new PfunByte(cp);
+    }
+    throw new Error(`toByte() requires an Int or Char, got ${typeof v}.`);
+  }},
+
+  // toChar(b) — convert Byte to Char. Always valid since 0–255 ⊆ valid codepoints.
+  { name: 'toChar', arity: 1, fn: (args, interp) => {
+    const v = interp.force(args[0]);
+    if (!(v instanceof PfunByte)) throw new Error(`toChar() requires a Byte, got ${typeof v}.`);
+    return new PfunChar(String.fromCodePoint(v.value));
+  }},
+
+  // charBytes(c) — decompose a Char into its UTF-8 byte sequence as List<Byte>.
+  // Handles all Unicode codepoints including those above U+00FF.
+  { name: 'charBytes', arity: 1, fn: (args, interp) => {
+    const v = interp.force(args[0]);
+    if (!(v instanceof PfunChar)) throw new Error(`charBytes() requires a Char, got ${typeof v}.`);
+    const bytes = Buffer.from(v.value, 'utf8');
+    return Array.from(bytes, b => new PfunByte(b));
+  }},
+
+  // bytesToChar(bytes) — reassemble a List<Byte> UTF-8 sequence into a Char.
+  // Errors if the bytes do not form a valid single Unicode codepoint.
+  { name: 'bytesToChar', arity: 1, fn: (args, interp) => {
+    const v = interp.force(args[0]);
+    if (!Array.isArray(v) || !v.every((b: any) => b instanceof PfunByte))
+      throw new Error(`bytesToChar() requires a List<Byte>.`);
+    const buf = Buffer.from(v.map((b: PfunByte) => b.value));
+    const str = buf.toString('utf8');
+    // Validate that decoding produced exactly one codepoint
+    const codepoints = [...str];
+    if (codepoints.length !== 1) throw new Error(`bytesToChar: byte sequence decoded to ${codepoints.length} codepoints, expected exactly 1.`);
+    return new PfunChar(codepoints[0]);
   }},
 ];
