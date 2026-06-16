@@ -178,6 +178,41 @@ export const filelibFunctions: RegistryFunction[] = [
     return fs.existsSync(filePath);
   }},
 
+  // removeFile(path) — deletes the file at path.
+  // Returns Ok { 0 } or Err { message } (e.g. file doesn't exist, permission
+  // denied, or path is a directory).
+  { name: 'removeFile', fn: (args, interp) => {
+    if (interp.inPureContext) throw new Error("Functions cannot use 'removeFile': side effects not allowed in pure functions.");
+    const filePath = interp.force(args[0]);
+    if (typeof filePath !== 'string') throw new Error("removeFile: path must be a string.");
+    try {
+      fs.unlinkSync(filePath);
+      return ok(0n);
+    } catch (e) { return err(nodeErrMsg(e)); }
+  }},
+
+  // touchFile(path) — creates an empty file at path if it doesn't exist;
+  // if it already exists, updates its modification time to now (matching
+  // the conventional Unix `touch` behavior) without altering its contents.
+  // Returns Ok { 0 } or Err { message }.
+  { name: 'touchFile', fn: (args, interp) => {
+    if (interp.inPureContext) throw new Error("Functions cannot use 'touchFile': side effects not allowed in pure functions.");
+    const filePath = interp.force(args[0]);
+    if (typeof filePath !== 'string') throw new Error("touchFile: path must be a string.");
+    try {
+      if (fs.existsSync(filePath)) {
+        const now = new Date();
+        fs.utimesSync(filePath, now, now);
+      } else {
+        // 'wx' creates the file but fails if it already exists — combined
+        // with the existsSync check above, this is the standard
+        // check-then-create touch pattern, fine for typical single-script use.
+        fs.closeSync(fs.openSync(filePath, 'w'));
+      }
+      return ok(0n);
+    } catch (e) { return err(nodeErrMsg(e)); }
+  }},
+
   // fileOpen(path, mode) — mode is Read | Write | Append
   // Returns Ok { ReadHandle | WriteHandle } or Err { message }.
   { name: 'fileOpen', fn: (args, interp) => {

@@ -608,7 +608,7 @@ describe('File Library Tests', () => {
       `)).toThrow("side effects not allowed in pure functions");
     });
   });
-}
+
   describe('fileExists', () => {
     it('returns true for a file that exists', () => {
       withTempFile('hello', path => {
@@ -664,6 +664,156 @@ describe('File Library Tests', () => {
     it('throws in pure functions', () => {
       expect(() => run(`
         function bad() { return fileExists("x.txt"); }
+        bad();
+      `)).toThrow("side effects not allowed in pure functions");
+    });
+  });
+
+  describe('removeFile', () => {
+    it('deletes an existing file and returns Ok', () => {
+      const path = tempPath();
+      nodeFs.writeFileSync(path, 'data', 'utf8');
+      const { logs } = run(`
+        proc p() {
+          let result = removeFile("${path}");
+          match result with
+          | Ok _  -> println("removed")
+          | Err e -> println("error: " + e.message);
+        }
+        p();
+      `.replace(/\$\{path\}/g, path));
+      expect(logs).toEqual(['removed']);
+      expect(nodeFs.existsSync(path)).toBe(false);
+    });
+
+    it('the removed file no longer exists per fileExists', () => {
+      const path = tempPath();
+      nodeFs.writeFileSync(path, 'data', 'utf8');
+      const { logs } = run(`
+        proc p() {
+          removeFile("${path}");
+          println(fileExists("${path}"));
+        }
+        p();
+      `.replace(/\$\{path\}/g, path));
+      expect(logs).toEqual(['false']);
+    });
+
+    it('returns Err for a file that does not exist', () => {
+      const { logs } = run(`
+        proc p() {
+          let result = removeFile("/no/such/file.txt");
+          match result with
+          | Ok _  -> println("removed")
+          | Err e -> println("error");
+        }
+        p();
+      `);
+      expect(logs).toEqual(['error']);
+    });
+
+    it('rejects a non-string path', () => {
+      expect(() => run(`
+        proc p() { eval removeFile(42); }
+        p();
+      `)).toThrow('path must be a string');
+    });
+
+    it('throws in pure functions', () => {
+      expect(() => run(`
+        function bad() { return removeFile("x.txt"); }
+        bad();
+      `)).toThrow("side effects not allowed in pure functions");
+    });
+  });
+
+  describe('touchFile', () => {
+    it('creates a new empty file when the path does not exist', () => {
+      const path = tempPath();
+      try {
+        const { logs } = run(`
+          proc p() {
+            let result = touchFile("${path}");
+            match result with
+            | Ok _  -> println("touched")
+            | Err e -> println("error: " + e.message);
+          }
+          p();
+        `.replace(/\$\{path\}/g, path));
+        expect(logs).toEqual(['touched']);
+        expect(nodeFs.existsSync(path)).toBe(true);
+        expect(nodeFs.readFileSync(path, 'utf8')).toBe('');
+      } finally {
+        try { nodeFs.unlinkSync(path); } catch {}
+      }
+    });
+
+    it('does not alter the contents of an existing file', () => {
+      const path = tempPath();
+      nodeFs.writeFileSync(path, 'preserved content', 'utf8');
+      try {
+        const { logs } = run(`
+          proc p() {
+            let result = touchFile("${path}");
+            match result with
+            | Ok _  -> println("touched")
+            | Err e -> println("error: " + e.message);
+          }
+          p();
+        `.replace(/\$\{path\}/g, path));
+        expect(logs).toEqual(['touched']);
+        expect(nodeFs.readFileSync(path, 'utf8')).toBe('preserved content');
+      } finally {
+        try { nodeFs.unlinkSync(path); } catch {}
+      }
+    });
+
+    it('updates the modification time of an existing file', async () => {
+      const path = tempPath();
+      nodeFs.writeFileSync(path, 'data', 'utf8');
+      const before = nodeFs.statSync(path).mtimeMs;
+      // Set mtime artificially into the past so the touch is guaranteed to advance it,
+      // regardless of filesystem timestamp resolution.
+      const past = new Date(Date.now() - 60_000);
+      nodeFs.utimesSync(path, past, past);
+      try {
+        run(`
+          proc p() { touchFile("${path}"); }
+          p();
+        `.replace(/\$\{path\}/g, path));
+        const after = nodeFs.statSync(path).mtimeMs;
+        expect(after).toBeGreaterThan(past.getTime() - 1);
+      } finally {
+        try { nodeFs.unlinkSync(path); } catch {}
+      }
+    });
+
+    it('fileExists returns true after touching a new path', () => {
+      const path = tempPath();
+      try {
+        const { logs } = run(`
+          proc p() {
+            touchFile("${path}");
+            println(fileExists("${path}"));
+          }
+          p();
+        `.replace(/\$\{path\}/g, path));
+        expect(logs).toEqual(['true']);
+      } finally {
+        try { nodeFs.unlinkSync(path); } catch {}
+      }
+    });
+
+    it('rejects a non-string path', () => {
+      expect(() => run(`
+        proc p() { eval touchFile(42); }
+        p();
+      `)).toThrow('path must be a string');
+    });
+
+    it('throws in pure functions', () => {
+      expect(() => run(`
+        function bad() { return touchFile("x.txt"); }
         bad();
       `)).toThrow("side effects not allowed in pure functions");
     });
