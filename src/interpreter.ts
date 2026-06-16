@@ -6,6 +6,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { Lexer } from './lexer';
 import { Parser } from './parser';
+import { checkProcedureUsage } from './procedureCheck';
 
 // ─── Registry Types ───────────────────────────────────────────────────────────
 
@@ -605,6 +606,7 @@ export class ModuleLoader {
     this.loading.add(resolvedPath);
     const source = fs.readFileSync(resolvedPath, 'utf-8');
     const ast    = new Parser(new Lexer(source).lex()).parse();
+    checkProcedureUsage(ast);
     const interp = new Interpreter(path.dirname(resolvedPath), this);
     this.setup(interp);
     interp.interpret(ast);

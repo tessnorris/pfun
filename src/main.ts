@@ -5,6 +5,7 @@ import * as path from 'path';
 import * as readline from 'readline';
 import { Lexer } from './lexer';
 import { Parser } from './parser';
+import { checkProcedureUsage } from './procedureCheck';
 import { Interpreter, ModuleLoader } from './interpreter';
 import { stdlibFunctions, stdlibTypes } from './library';
 import { mutStructuresFunctions, mutStructuresTypes } from './mutStructures';
@@ -58,6 +59,7 @@ async function runFile(filePath: string, scriptArgs: string[] = []) {
   let ast;
   try {
     ast = new Parser(new Lexer(source).lex()).parse();
+    checkProcedureUsage(ast);
   } catch (e) {
     const raw = e instanceof Error ? e : new Error(String(e));
     const pfunErr = buildPfunError(raw, source, (raw as any).pos, null, () => undefined, { stringify: String });
