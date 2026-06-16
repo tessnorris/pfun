@@ -39,8 +39,12 @@ demoAwait();
   own task — multiple in-flight requests interleave at `await` points, so a
   slow handler doesn't block other requests.
 
-    req:  { method, path, query, headers, body }
-    res:  text(status, body) | json(status, value)
+    req:  { method, path, query, headers, body, bodyBytes }
+    res:  text(status, body) | json(status, value) | bytes(status, byteList, contentType)
+
+  `body` is the request body decoded as UTF-8 text; `bodyBytes` is the same
+  body as a raw List<Byte>, undecoded — use bodyBytes for binary uploads
+  (images, file attachments, ...) where UTF-8 decoding would corrupt the data.
 */
 
 async proc handleRequest(req, res) {
@@ -53,6 +57,16 @@ async proc handleRequest(req, res) {
   } else if req.path == "/greet" then {
     let name = has(req.query, "name") ? req.query["name"] : "stranger";
     res.json(200, dict { "message" -> "Hello, " + name + "!" });
+  } else if req.path == "/pixel" then {
+    // Serves a tiny 1x1 transparent PNG as raw binary bytes.
+    let pngBytes = [
+      0x89b, 0x50b, 0x4Eb, 0x47b, 0x0Db, 0x0Ab, 0x1Ab, 0x0Ab,
+      0x00b, 0x00b, 0x00b, 0x0Db, 0x49b, 0x48b, 0x44b, 0x52b
+    ];
+    res.bytes(200, pngBytes, "image/png");
+  } else if req.path == "/upload" then {
+    // Echoes back how many raw bytes were received in the request body.
+    res.text(200, "Received " + length(req.bodyBytes) + " byte(s).");
   } else {
     res.text(404, "Not found: " + req.path);
   }
@@ -67,7 +81,10 @@ println("Listening on http://localhost:" + port + " ...");
   -----------
   httpGet(url) returns a Promise<HttpResult> — Ok { status, headers, body }
   or Err { message } — and never rejects, so no exception handling is
-  needed: just match on the result.
+  needed: just match on the result. `body` is decoded as UTF-8 text.
+
+  httpGetBytes(url) is identical, but `body` is a raw List<Byte> instead —
+  use it for binary content where UTF-8 decoding would corrupt the data.
 
   This demo client talks to the server we just started, on the same
   process/port.
@@ -90,5 +107,11 @@ async proc demoClient() {
   match missing with
   | Ok r  -> println("GET /nope -> " + r.value.status + ": " + r.value.body)
   | Err e -> println("GET /nope failed: " + e.message);
+
+  // ── Binary content via httpGetBytes ───────────────────────────────────
+  let pixel = await httpGetBytes("http://localhost:" + port + "/pixel");
+  match pixel with
+  | Ok r  -> println("GET /pixel -> " + r.value.status + ": " + length(r.value.body) + " byte(s), first byte = " + nth(r.value.body, 0))
+  | Err e -> println("GET /pixel failed: " + e.message);
 }
 demoClient();

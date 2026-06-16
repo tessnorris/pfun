@@ -70,6 +70,7 @@ proc printPair(pair) {
   | DbFloat n -> println("  " + pair.key + " = " + __str__(n.value) + " (float)")
   | DbText s  -> println("  " + pair.key + " = " + s.value + " (text)")
   | DbBool b  -> println("  " + pair.key + " = " + __str__(b.value) + " (bool)")
+  | DbBytes b -> println("  " + pair.key + " = <" + __str__(length(b.value)) + " bytes> (bytes)")
   | DbNull    -> println("  " + pair.key + " = NULL");
 }
 

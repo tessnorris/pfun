@@ -279,6 +279,170 @@ describe('httplib (phase 6)', () => {
     });
   });
 
+  describe('httpGetBytes against a real server', () => {
+    it('returns Ok with status, headers, and body as List<Byte> for binary content', async () => {
+      const pngBytes = Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]); // PNG magic bytes
+      const { server, port } = await startNodeServer((req, res) => {
+        res.writeHead(200, { 'Content-Type': 'image/png' });
+        res.end(pngBytes);
+      });
+      try {
+        const { logs } = await runAsyncProgram(`
+          async proc p() {
+            let result = await httpGetBytes("http://127.0.0.1:${port}/");
+            match result with
+            | Ok r -> {
+                println(r.value.status);
+                println(length(r.value.body));
+                println(nth(r.value.body, 0));
+                println(nth(r.value.body, 1));
+              }
+            | Err e -> println("error: " + e.message);
+          }
+          p();
+        `);
+        expect(logs).toEqual(['200', '8', '137', '80']); // 0x89=137, 0x50=80
+      } finally {
+        await closeServer(server);
+      }
+    });
+
+    it('preserves bytes that would corrupt under UTF-8 decoding', async () => {
+      // 0xFF 0xFE is invalid UTF-8 and would be mangled by .text()
+      const rawBytes = Buffer.from([0xFF, 0xFE, 0x00, 0x01]);
+      const { server, port } = await startNodeServer((req, res) => {
+        res.writeHead(200, { 'Content-Type': 'application/octet-stream' });
+        res.end(rawBytes);
+      });
+      try {
+        const { logs } = await runAsyncProgram(`
+          async proc p() {
+            let result = await httpGetBytes("http://127.0.0.1:${port}/");
+            match result with
+            | Ok r -> {
+                println(nth(r.value.body, 0));
+                println(nth(r.value.body, 1));
+                println(nth(r.value.body, 2));
+                println(nth(r.value.body, 3));
+              }
+            | Err e -> println("error: " + e.message);
+          }
+          p();
+        `);
+        expect(logs).toEqual(['255', '254', '0', '1']);
+      } finally {
+        await closeServer(server);
+      }
+    });
+
+    it('returns Err for a connection that is refused', async () => {
+      const port = await findFreePort();
+      const { logs } = await runAsyncProgram(`
+        async proc p() {
+          let result = await httpGetBytes("http://127.0.0.1:${port}/");
+          match result with
+          | Ok r  -> println("ok: " + r.value.status)
+          | Err e -> println("error");
+        }
+        p();
+      `);
+      expect(logs).toEqual(['error']);
+    });
+  });
+
+  describe('httpListen — binary request/response handling', () => {
+    it('Request.bodyBytes contains the raw, undecoded request body', async () => {
+      const port = await findFreePort();
+      const interpreter = makeInterpreter();
+      await runAsyncProgram(`
+        async proc handle(req, res) {
+          res.text(200, "" + length(req.bodyBytes) + ":" + nth(req.bodyBytes, 0));
+        }
+        httpListen(${port}, handle);
+      `, interpreter);
+
+      const res = await fetch(`http://127.0.0.1:${port}/upload`, {
+        method: 'POST',
+        body: Buffer.from([0xDE, 0xAD, 0xBE, 0xEF]),
+      });
+      const body = await res.text();
+      expect(body).toBe('4:222'); // 4 bytes, first byte 0xDE = 222
+    });
+
+    it('Request.body and Request.bodyBytes both reflect the same underlying data for text', async () => {
+      const port = await findFreePort();
+      const interpreter = makeInterpreter();
+      await runAsyncProgram(`
+        async proc handle(req, res) {
+          res.text(200, req.body + "|" + length(req.bodyBytes));
+        }
+        httpListen(${port}, handle);
+      `, interpreter);
+
+      const res = await fetch(`http://127.0.0.1:${port}/echo`, {
+        method: 'POST',
+        body: 'hello',
+      });
+      const body = await res.text();
+      expect(body).toBe('hello|5');
+    });
+
+    it('res.bytes sends raw bytes with the given Content-Type', async () => {
+      const port = await findFreePort();
+      const interpreter = makeInterpreter();
+      await runAsyncProgram(`
+        async proc handle(req, res) {
+          res.bytes(200, [0x89b, 0x50b, 0x4Eb, 0x47b], "image/png");
+        }
+        httpListen(${port}, handle);
+      `, interpreter);
+
+      const res = await fetch(`http://127.0.0.1:${port}/image`);
+      const buf = Buffer.from(await res.arrayBuffer());
+      expect(res.headers.get('content-type')).toBe('image/png');
+      expect(buf).toEqual(Buffer.from([0x89, 0x50, 0x4E, 0x47]));
+    });
+
+    it('res.bytes round-trips through httpGetBytes', async () => {
+      const port = await findFreePort();
+      const interpreter = makeInterpreter();
+      const { logs } = await runAsyncProgram(`
+        async proc handle(req, res) {
+          res.bytes(200, [0x01b, 0x02b, 0x03b], "application/octet-stream");
+        }
+        httpListen(${port}, handle);
+
+        async proc client() {
+          await sleep(5);
+          let result = await httpGetBytes("http://127.0.0.1:${port}/data");
+          match result with
+          | Ok r  -> println(length(r.value.body) + ":" + nth(r.value.body, 2))
+          | Err e -> println("error: " + e.message);
+        }
+        client();
+      `, interpreter);
+      expect(logs).toEqual(['3:3']);
+    });
+
+    it('a Pfun client uploads binary data to a Pfun server', async () => {
+      const port = await findFreePort();
+      const interpreter = makeInterpreter();
+      const { logs } = await runAsyncProgram(`
+        async proc handle(req, res) {
+          res.text(200, "received " + length(req.bodyBytes) + " bytes, sum of first two = " + (toInt(nth(req.bodyBytes, 0)) + toInt(nth(req.bodyBytes, 1))));
+        }
+        httpListen(${port}, handle);
+      `, interpreter);
+
+      const res = await fetch(`http://127.0.0.1:${port}/upload`, {
+        method: 'POST',
+        body: Buffer.from([10, 20, 30]),
+      });
+      const body = await res.text();
+      expect(body).toBe('received 3 bytes, sum of first two = 30');
+    });
+  });
+
   describe('asynclib sleep', () => {
     it('resolves after approximately the requested delay', async () => {
       const start = Date.now();

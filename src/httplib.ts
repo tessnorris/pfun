@@ -10,8 +10,16 @@
 // Returns a Promise<HttpResult> — HttpResult is a Result-shaped union
 // (consistent with filelib's Result), so it never rejects:
 //   Ok { status, headers, body }  — status: int, headers: dict<string,string>,
-//                                    body: string
+//                                    body: string (decoded as UTF-8)
 //   Err { message }               — network/DNS/connection errors
+//
+//   await httpGetBytes(url)
+//
+// Identical to httpGet, but the body is returned as List<Byte> (raw,
+// undecoded bytes) instead of a UTF-8 string — use this for binary content
+// (images, PDFs, archives, ...) where UTF-8 decoding would corrupt the data:
+//   Ok { status, headers, body }  — body: List<Byte>
+//   Err { message }
 //
 // ─── Server ─────────────────────────────────────────────────────────────────
 //
@@ -23,16 +31,22 @@
 // multiple in-flight requests interleave at `await` points, and a slow
 // handler does not block other requests.
 //
-//   Request:  { method, path, query, headers, body }
-//     - method:  string ("GET", "POST", ...)
-//     - path:    string (URL path, without query string)
-//     - query:   dict<string,string> (parsed query parameters)
-//     - headers: dict<string,string> (lower-cased header names)
-//     - body:    string (raw request body)
+//   Request:  { method, path, query, headers, body, bodyBytes }
+//     - method:    string ("GET", "POST", ...)
+//     - path:      string (URL path, without query string)
+//     - query:     dict<string,string> (parsed query parameters)
+//     - headers:   dict<string,string> (lower-cased header names)
+//     - body:      string (raw request body, decoded as UTF-8 — may contain
+//                  the U+FFFD replacement character if the body isn't valid
+//                  UTF-8, e.g. for binary uploads; use bodyBytes instead)
+//     - bodyBytes: List<Byte> (raw request body, undecoded — use this for
+//                  binary uploads such as images or file attachments)
 //
-//   Response: { text, json }
-//     - text(statusCode, body)   — send a plain-text response
-//     - json(statusCode, value)  — send `value` JSON-serialized
+//   Response: { text, json, bytes }
+//     - text(statusCode, body)                — send a plain-text response
+//     - json(statusCode, value)                — send `value` JSON-serialized
+//     - bytes(statusCode, byteList, contentType) — send raw List<Byte> with
+//       the given Content-Type (e.g. "image/png", "application/octet-stream")
 //
 // `listen` returns immediately (it doesn't block) — the server keeps the
 // Node process alive via its open socket, independent of the Scheduler. An
@@ -42,7 +56,7 @@
 
 import * as http from 'http';
 import { URL } from 'url';
-import { Interpreter, RegistryFunction, RegistryType, PfunDict, PfunFunction, NativeFunction } from './interpreter';
+import { Interpreter, RegistryFunction, RegistryType, PfunDict, PfunFunction, NativeFunction, PfunByte } from './interpreter';
 
 // ─── Result helpers (consistent with filelib's Result convention) ────────────
 
@@ -93,6 +107,19 @@ function dictFromRecord(rec: Record<string, string>): PfunDict {
   return new PfunDict(map);
 }
 
+/** Convert a Node Buffer into a Pfun List<Byte>. */
+function bufferToByteList(buf: Buffer): PfunByte[] {
+  return Array.from(buf, b => new PfunByte(b));
+}
+
+/** Convert a Pfun List<Byte> into a Node Buffer, for sending as a response body. */
+function byteListToBuffer(list: any, fnName: string): Buffer {
+  if (!Array.isArray(list) || !list.every((b: any) => b instanceof PfunByte)) {
+    throw new Error(`${fnName}: requires a List<Byte>.`);
+  }
+  return Buffer.from(list.map((b: PfunByte) => b.value));
+}
+
 // ─── Built-in Types ───────────────────────────────────────────────────────────
 
 export const httplibTypes: RegistryType[] = [
@@ -136,6 +163,33 @@ export const httplibFunctions: RegistryFunction[] = [
     },
   },
 
+  // httpGetBytes(url) -> Promise<HttpResult>
+  // Same as httpGet, but the body is returned as List<Byte> (raw, undecoded
+  // bytes) — use for binary content (images, PDFs, archives, ...) where
+  // UTF-8 decoding would corrupt the data.
+  {
+    name: 'httpGetBytes',
+    arity: 1,
+    fn: (args, interp) => {
+      if (interp.inPureContext) throw new Error("Functions cannot use 'httpGetBytes': side effects are not allowed in pure functions.");
+      const url = interp.force(args[0]);
+      if (typeof url !== 'string') throw new Error("httpGetBytes() requires a URL string.");
+      return fetch(url)
+        .then(async (res) => {
+          const arrayBuf = await res.arrayBuffer();
+          const body = bufferToByteList(Buffer.from(arrayBuf));
+          const headers: Record<string, string> = {};
+          res.headers.forEach((value, key) => { headers[key] = value; });
+          return ok({
+            status: BigInt(res.status),
+            headers: dictFromRecord(headers),
+            body,
+          });
+        })
+        .catch((e: any) => err(e instanceof Error ? e.message : String(e)));
+    },
+  },
+
   // ─── Server ───────────────────────────────────────────────────────────────
 
   // httpListen(port, handler) -> nil
@@ -155,7 +209,9 @@ export const httplibFunctions: RegistryFunction[] = [
         const chunks: Buffer[] = [];
         nodeReq.on('data', (chunk) => chunks.push(chunk));
         nodeReq.on('end', () => {
-          const body = Buffer.concat(chunks).toString('utf8');
+          const rawBody = Buffer.concat(chunks);
+          const body = rawBody.toString('utf8');
+          const bodyBytes = bufferToByteList(rawBody);
 
           let pathname = nodeReq.url ?? '/';
           const queryEntries = new Map<string, any>();
@@ -178,10 +234,11 @@ export const httplibFunctions: RegistryFunction[] = [
             query: new PfunDict(queryEntries),
             headers: new PfunDict(headersEntries),
             body,
+            bodyBytes,
           };
 
           let responded = false;
-          const send = (status: bigint, contentType: string, payload: string) => {
+          const send = (status: bigint, contentType: string, payload: string | Buffer) => {
             if (responded) return;
             responded = true;
             if (typeof status !== 'bigint') throw new Error("Response status code must be an integer.");
@@ -206,6 +263,16 @@ export const httplibFunctions: RegistryFunction[] = [
               send(status, 'application/json; charset=utf-8', JSON.stringify(jsonValue));
               return undefined;
             }, 2),
+            bytes: new NativeFunction((bytesArgs, bytesInterp) => {
+              if (bytesInterp.inPureContext) throw new Error("Functions cannot use 'res.bytes': side effects are not allowed in pure functions.");
+              const status      = bytesInterp.force(bytesArgs[0]);
+              const byteList    = bytesInterp.force(bytesArgs[1]);
+              const contentType = bytesInterp.force(bytesArgs[2]);
+              if (typeof contentType !== 'string') throw new Error("res.bytes: third argument (contentType) must be a string.");
+              const buf = byteListToBuffer(byteList, 'res.bytes');
+              send(status, contentType, buf);
+              return undefined;
+            }, 3),
           };
 
           // Spawn the handler as its own task — multiple in-flight requests
