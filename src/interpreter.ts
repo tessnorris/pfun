@@ -667,6 +667,14 @@ export class Interpreter {
   private baseDir:      string;
   private moduleLoader: ModuleLoader;
 
+  // ─── Script arguments ───────────────────────────────────────────────────
+  // Command-line arguments passed to the running .pf script (i.e. everything
+  // after the script path: `pfun script.pf foo bar` -> ["foo", "bar"]).
+  // Set by main.ts after construction; defaults to [] (e.g. for tests or
+  // any embedding that doesn't set it explicitly). iolib's scriptArgs()
+  // exposes this to Pfun code as a List<Str>.
+  public scriptArgs: string[] = [];
+
   // ─── Error reporting context ──────────────────────────────────────────────
   // Tracks the source text and current position for error reporting.
   // The interpreter pushes/pops positions as it evaluates AST nodes so that

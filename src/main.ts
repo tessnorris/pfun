@@ -15,9 +15,6 @@ import { mathlibFunctions } from './mathlib';
 import { asynclibFunctions } from './asynclib';
 import { httplibFunctions, httplibTypes } from './httplib';
 import { PfunError, buildPfunError } from './errors';
-import { dblibTypes } from './dblib';
-import { dblibPostgresqlFunctions } from './dblibPostgresql';
-import { dblibMariadbFunctions } from './dblibMariadb';
 
 /**
  * Sets up a fresh interpreter with the core standard library.
@@ -36,8 +33,6 @@ function registerBuiltinModules(loader: ModuleLoader): void {
   loader.registerBuiltin('math', mathlibFunctions);
   loader.registerBuiltin('async', asynclibFunctions);
   loader.registerBuiltin('http', httplibFunctions, httplibTypes);
-  loader.registerBuiltin('db/postgresql', dblibPostgresqlFunctions, dblibTypes);
-  loader.registerBuiltin('db/mariadb', dblibMariadbFunctions, dblibTypes);
 }
 
 // ── Async/await (phase 4) ────────────────────────────────────────────────
@@ -46,7 +41,7 @@ function registerBuiltinModules(loader: ModuleLoader): void {
 // awaits) performs a real suspend/resume rather than throwing runSync's
 // "yielded an Effect" error. Non-async programs are unaffected — runAsync
 // is a no-op driver loop when no 'await' Effect is ever yielded.
-async function runFile(filePath: string) {
+async function runFile(filePath: string, scriptArgs: string[] = []) {
   const absolutePath = path.resolve(filePath);
   if (!fs.existsSync(absolutePath)) {
     console.error(`File not found: ${absolutePath}`);
@@ -71,6 +66,7 @@ async function runFile(filePath: string) {
   }
 
   const interp = new Interpreter(baseDir, loader);
+  interp.scriptArgs = scriptArgs;
   setupInterpreter(interp);
 
   try {
@@ -498,7 +494,7 @@ if (args.includes('-i') || args.includes('--interactive')) {
   console.log('       pfun -i [script.pf]   (interactive mode, optionally pre-loading a file)');
   process.exit(1);
 } else {
-  runFile(args[0]).catch(e => {
+  runFile(args[0], args.slice(1)).catch(e => {
     // runFile already handles PfunError/wrapError + process.exit(1) for
     // expected interpreter errors. This catch only guards against truly
     // unexpected exceptions escaping interpretAsync (e.g. a bug in the

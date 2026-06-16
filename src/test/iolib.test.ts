@@ -3,13 +3,16 @@ import { Lexer } from '../lexer';
 import { Parser } from '../parser';
 import { Interpreter } from '../interpreter';
 import { stdlibFunctions, stdlibTypes } from '../library';
+import { mutStructuresFunctions, mutStructuresTypes } from '../mutStructures';
 import { iolibFunctions } from '../iolib';
 
-const run = (source: string) => {
+const run = (source: string, opts: { scriptArgs?: string[] } = {}) => {
   const ast = new Parser(new Lexer(source).lex()).parse();
   const interpreter = new Interpreter();
   interpreter.registerLibrary(stdlibFunctions, stdlibTypes);
+  interpreter.registerLibrary(mutStructuresFunctions, mutStructuresTypes);
   interpreter.registerLibrary(iolibFunctions, []);
+  if (opts.scriptArgs) interpreter.scriptArgs = opts.scriptArgs;
   const logs: any[] = [];
   let currentLine = '';
   const originalLog = console.log;
@@ -217,6 +220,125 @@ describe('IO Library Tests', () => {
         }
         p();
       `)).not.toThrow();
+    });
+  });
+
+  // ─── scriptArgs ───────────────────────────────────────────────────────────
+
+  describe('scriptArgs', () => {
+    it('returns an empty list when no args were set', () => {
+      const { logs } = run(`println(length(scriptArgs()));`);
+      expect(logs).toEqual(['0']);
+    });
+
+    it('returns the configured args as a List<Str>', () => {
+      const { logs } = run(`
+        let a = scriptArgs();
+        println(length(a));
+        println(nth(a, 0));
+        println(nth(a, 1));
+      `, { scriptArgs: ['foo', 'bar'] });
+      expect(logs).toEqual(['2', 'foo', 'bar']);
+    });
+
+    it('throws in a pure function, consistent with print/readln', () => {
+      expect(() => run(`
+        function f() { return length(scriptArgs()); }
+        println(f());
+      `, { scriptArgs: ['x'] })).toThrow("Functions cannot use 'scriptArgs'");
+    });
+
+    it('preserves argument order and exact string values', () => {
+      const { logs } = run(`
+        let a = scriptArgs();
+        println(nth(a, 0));
+        println(nth(a, 1));
+        println(nth(a, 2));
+      `, { scriptArgs: ['--flag', 'value with spaces', '123'] });
+      expect(logs).toEqual(['--flag', 'value with spaces', '123']);
+    });
+  });
+
+  // ─── getEnv / envVars ───────────────────────────────────────────────────────
+
+  describe('getEnv', () => {
+    const ENV_KEY = 'PFUN_TEST_ENV_VAR_XYZ';
+
+    afterEach(() => { delete process.env[ENV_KEY]; });
+
+    it('returns Some with the value when the variable is set', () => {
+      process.env[ENV_KEY] = 'hello';
+      const { logs } = run(`
+        match getEnv("${ENV_KEY}") with
+        | Some v -> println(v.value)
+        | None   -> println("missing");
+      `);
+      expect(logs).toEqual(['hello']);
+    });
+
+    it('returns None when the variable is not set', () => {
+      delete process.env[ENV_KEY];
+      const { logs } = run(`
+        match getEnv("${ENV_KEY}") with
+        | Some v -> println(v.value)
+        | None   -> println("missing");
+      `);
+      expect(logs).toEqual(['missing']);
+    });
+
+    it('throws when given a non-string argument', () => {
+      expect(() => run(`eval getEnv(42);`)).toThrow('getEnv() requires a string');
+    });
+
+    it('throws in a pure function, consistent with print/readln', () => {
+      process.env[ENV_KEY] = 'val';
+      expect(() => run(`
+        function f() {
+          return match getEnv("${ENV_KEY}") with | Some v -> v.value | None -> "?";
+        }
+        println(f());
+      `)).toThrow("Functions cannot use 'getEnv'");
+    });
+  });
+
+  describe('envVars', () => {
+    const ENV_KEY = 'PFUN_TEST_ENV_VAR_ABC';
+
+    afterEach(() => { delete process.env[ENV_KEY]; });
+
+    it('includes a variable that was set on process.env', () => {
+      process.env[ENV_KEY] = 'present';
+      const { logs } = run(`
+        let e = envVars();
+        println(has(e, "${ENV_KEY}"));
+        println(e["${ENV_KEY}"]);
+      `);
+      expect(logs).toEqual(['true', 'present']);
+    });
+
+    it('does not include a variable that was never set', () => {
+      delete process.env[ENV_KEY];
+      const { logs } = run(`
+        let e = envVars();
+        println(has(e, "${ENV_KEY}"));
+      `);
+      expect(logs).toEqual(['false']);
+    });
+
+    it('returns a usable dict (keys works on it)', () => {
+      process.env[ENV_KEY] = 'x';
+      const { logs } = run(`
+        let e = envVars();
+        println(length(keys(e)) > 0);
+      `);
+      expect(logs).toEqual(['true']);
+    });
+
+    it('throws in a pure function, consistent with print/readln', () => {
+      expect(() => run(`
+        function f() { return length(keys(envVars())); }
+        println(f());
+      `)).toThrow("Functions cannot use 'envVars'");
     });
   });
 
