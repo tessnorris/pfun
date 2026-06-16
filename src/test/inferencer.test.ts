@@ -13,11 +13,13 @@ beforeEach(() => resetFreshVarCounter());
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-const INT:  PfunType = { kind: 'Int' };
-const STR:  PfunType = { kind: 'Str' };
-const BOOL: PfunType = { kind: 'Bool' };
-const CHAR: PfunType = { kind: 'Char' };
-const NIL:  PfunType = { kind: 'Nil' };
+const INT:   PfunType = { kind: 'Int' };
+const FLOAT: PfunType = { kind: 'Float' };
+const STR:   PfunType = { kind: 'Str' };
+const BOOL:  PfunType = { kind: 'Bool' };
+const CHAR:  PfunType = { kind: 'Char' };
+const BYTE:  PfunType = { kind: 'Byte' };
+const NIL:   PfunType = { kind: 'Nil' };
 
 function tyvar(id: number): PfunType { return { kind: 'TyVar', id }; }
 function list(el: PfunType): PfunType { return { kind: 'List', element: el }; }
@@ -323,6 +325,32 @@ describe('Ground type unification', () => {
   it('kind mismatch fails', () => {
     expect(() => u(INT, list(INT))).toThrow(UnificationError);
   });
+
+  // Regression: Byte was missing from unify()'s primitive-kind switch, so
+  // two structurally-identical { kind: 'Byte' } types (which is what every
+  // ByteExpr literal produces) fell through to the `default: throw` case —
+  // producing the nonsensical "Cannot unify Byte with Byte" for ANY
+  // same-byte comparison, equality check, or arithmetic operation. See
+  // checkTypes' real-world false positives against example.pf (100b + 55b,
+  // 0xF0b & 0x0Fb, etc.) that this bug caused.
+  it('Byte unifies with Byte (regression: was missing from the primitive switch)', () => {
+    expect(u(BYTE, BYTE).size).toBe(0);
+    expect(() => u(BYTE, BYTE)).not.toThrow();
+  });
+
+  it('Byte does not unify with Int or Float (genuinely distinct types)', () => {
+    expect(() => u(BYTE, INT)).toThrow(UnificationError);
+    expect(() => u(BYTE, FLOAT)).toThrow(UnificationError);
+  });
+
+  it('Float unifies with Float', () => {
+    expect(u(FLOAT, FLOAT).size).toBe(0);
+    expect(() => u(FLOAT, FLOAT)).not.toThrow();
+  });
+
+  it('Float does not unify with Int (genuinely distinct types)', () => {
+    expect(() => u(FLOAT, INT)).toThrow(UnificationError);
+  });
 });
 
 describe('TyVar binding', () => {
@@ -583,9 +611,11 @@ function hasConstraintWith(cs: ReturnType<typeof constraints>, t: PfunType): boo
   );
 }
 
-const INT_T:  PfunType = { kind: 'Int'  };
-const STR_T:  PfunType = { kind: 'Str'  };
-const BOOL_T: PfunType = { kind: 'Bool' };
+const INT_T:   PfunType = { kind: 'Int'   };
+const FLOAT_T: PfunType = { kind: 'Float' };
+const STR_T:   PfunType = { kind: 'Str'   };
+const BOOL_T:  PfunType = { kind: 'Bool'  };
+const BYTE_T:  PfunType = { kind: 'Byte'  };
 
 // ─── Literals produce no constraints ─────────────────────────────────────────
 
@@ -619,6 +649,27 @@ describe('Constraint generation — literals', () => {
     const stmts = parse('true;');
     generateConstraints(stmts);
     expect((stmts[0] as any).expression.inferredType).toEqual(BOOL_T);
+  });
+
+  // Regression: FloatExpr had no case in cgenExpr's literal switch at all,
+  // so a float literal silently fell through to `default: freshVar()`
+  // instead of resolving to a concrete Float type. This didn't throw —
+  // freshVar() unifies with anything — so it was a silent FALSE NEGATIVE:
+  // checkTypes failed to catch real errors like `[1.5, "x"]` because the
+  // 1.5's unconstrained TyVar happily unified with Str from "x". See the
+  // "Float literal mixed with Str" test below and in the checkTypes suite.
+  it('float literal produces no constraints and gets inferredType Float (regression: was missing entirely)', () => {
+    expect(constraints('4.2;')).toHaveLength(0);
+    const stmts = parse('4.2;');
+    generateConstraints(stmts);
+    expect((stmts[0] as any).expression.inferredType).toEqual(FLOAT_T);
+  });
+
+  it('byte literal produces no constraints and gets inferredType Byte', () => {
+    expect(constraints('42b;')).toHaveLength(0);
+    const stmts = parse('42b;');
+    generateConstraints(stmts);
+    expect((stmts[0] as any).expression.inferredType).toEqual(BYTE_T);
   });
 });
 
@@ -683,6 +734,69 @@ describe('Constraint generation — binary operators', () => {
     const cs = generateConstraints(stmts);
     expect((stmts[0] as any).expression.inferredType).toEqual(BOOL_T);
     expect(hasConstraintWith(cs, INT_T)).toBe(true);
+  });
+
+  // Regression: cgenBinary's arithmetic case (-, *, /, %, +) hardcoded both
+  // operands and the result to Int, with no awareness that the interpreter
+  // (see evaluateBinaryGen in interpreter.ts) also supports Byte-op-Byte
+  // arithmetic (producing a Byte) and mixed Int/Float arithmetic (producing
+  // a Float). This made every byte-arithmetic expression a false positive
+  // "Cannot unify Byte with Int" type error — e.g. example.pf's
+  // `100b + 55b`, `200b - 50b`, `10b * 10b`, `7b / 2b`, `10b % 3b` all
+  // failed checkTypes despite being valid, already-working pfun code.
+  it('Byte - Byte assigns Byte, not Int (regression)', () => {
+    const stmts = parse('100b - 55b;');
+    generateConstraints(stmts);
+    expect((stmts[0] as any).expression.inferredType).toEqual(BYTE_T);
+  });
+
+  it('Byte * Byte, Byte / Byte, Byte % Byte all assign Byte (regression)', () => {
+    for (const src of ['10b * 10b;', '7b / 2b;', '10b % 3b;']) {
+      const stmts = parse(src);
+      generateConstraints(stmts);
+      expect((stmts[0] as any).expression.inferredType).toEqual(BYTE_T);
+    }
+  });
+
+  it('Byte + Byte assigns Byte (regression — Plus has its own Byte/Float branch)', () => {
+    const stmts = parse('100b + 55b;');
+    generateConstraints(stmts);
+    expect((stmts[0] as any).expression.inferredType).toEqual(BYTE_T);
+  });
+
+  // Mixed Int/Float arithmetic (e.g. `1 - 2.5`) was ALSO broken once the
+  // FloatExpr fix (above) gave float literals a real Float type instead of
+  // an unconstrained freshVar — the arithmetic case's old hardcoded-Int
+  // constraint would have made this a NEW false positive. Verifies the
+  // fix's Float branch handles this correctly, matching the interpreter's
+  // real numeric-promotion behavior (bigint promoted to number whenever
+  // either operand is already a float).
+  it('Int - Float (and Float - Int) both assign Float (regression)', () => {
+    for (const src of ['1 - 2.5;', '2.5 - 1;', '1 * 2.5;', '2.5 / 1;']) {
+      const stmts = parse(src);
+      generateConstraints(stmts);
+      expect((stmts[0] as any).expression.inferredType).toEqual(FLOAT_T);
+    }
+  });
+
+  it('Float + Int assigns Float via the Plus branch (regression)', () => {
+    const stmts = parse('2.5 + 1;');
+    generateConstraints(stmts);
+    expect((stmts[0] as any).expression.inferredType).toEqual(FLOAT_T);
+  });
+
+  // Byte/Int mixing is genuinely NOT a supported runtime operation — the
+  // interpreter's Byte-arithmetic branch requires BOTH operands to be
+  // PfunByte; a Byte mixed with a plain Int falls through to broken
+  // fallback behavior (silently producing garbage like "[object Object]3"
+  // rather than a clean error — see evaluateBinaryGen). This should
+  // continue to be flagged as a real type error after the fix, not
+  // silently allowed.
+  it('Byte + Int is a genuine unification failure (not a false positive to suppress)', () => {
+    const cs = generateConstraints(parse('5b + 3;'));
+    expect(() => {
+      for (const c of cs) unify(c.a, c.b);
+    }).toThrow(UnificationError);
   });
 });
 

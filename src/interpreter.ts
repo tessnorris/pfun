@@ -7,6 +7,7 @@ import * as path from 'path';
 import { Lexer } from './lexer';
 import { Parser } from './parser';
 import { checkProcedureUsage } from './procedureCheck';
+import { checkTypes } from './typechecker';
 
 // ─── Registry Types ───────────────────────────────────────────────────────────
 
@@ -604,16 +605,29 @@ export class ModuleLoader {
     if (this.loading.has(resolvedPath)) throw new Error(`Circular import detected: ${resolvedPath}`);
     if (!fs.existsSync(resolvedPath)) throw new Error(`Module not found: ${resolvedPath}`);
     this.loading.add(resolvedPath);
-    const source = fs.readFileSync(resolvedPath, 'utf-8');
-    const ast    = new Parser(new Lexer(source).lex()).parse();
-    checkProcedureUsage(ast);
-    const interp = new Interpreter(path.dirname(resolvedPath), this);
-    this.setup(interp);
-    interp.interpret(ast);
-    const exports = interp.getExports();
-    this.cache.set(resolvedPath, exports);
-    this.loading.delete(resolvedPath);
-    return exports;
+    try {
+      const source = fs.readFileSync(resolvedPath, 'utf-8');
+      const ast    = new Parser(new Lexer(source).lex()).parse();
+      checkProcedureUsage(ast);
+      const typeErrors = checkTypes(ast, source);
+      if (typeErrors.length > 0) throw typeErrors[0];
+      const interp = new Interpreter(path.dirname(resolvedPath), this);
+      this.setup(interp);
+      interp.interpret(ast);
+      const exports = interp.getExports();
+      this.cache.set(resolvedPath, exports);
+      return exports;
+    } finally {
+      // Always clear the in-progress marker, regardless of how the load
+      // ended — on success AND on any error (lex/parse error,
+      // checkProcedureUsage, checkTypes, or interpretation itself throwing).
+      // Without this, any failed load would leave resolvedPath stuck in
+      // `loading` forever, so a SECOND attempt to load the same (now
+      // perhaps-fixed, in a REPL session, or simply retried) path would
+      // incorrectly report "Circular import detected" instead of
+      // re-attempting the load and surfacing the real error again.
+      this.loading.delete(resolvedPath);
+    }
   }
 }
 

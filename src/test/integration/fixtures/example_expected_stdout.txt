@@ -1,0 +1,295 @@
+--- 1. Variables ---
+10
+--- 2. Operators & Ternary ---
+20
+--- 3. Control Flow ---
+a is less than b
+--- 14. Strings, Chars & Output ---
+A
+65
+A
+10
+9
+He said "hello"
+h
+ello
+Hello
+heo
+one two three
+Name: Alice, Age: 30
+Dimensions: 3 by 4
+Use { and } for literal braces
+--- 21. @ Raw String Literals ---
+Options:
+-n   do not output the trailing \n
+-e   enable interpretation of \\n as newline
+C:\Users\Alice\Documents\notes.txt
+\d+\.\d+
+10
+11
+--- 22. split & join ---
+[one, two, three]
+3
+[Alice, 30, true]
+[h, e, l, l, o]
+a-b-c
+1, 2, 3
+the_quick_brown_fox
+numbers: 10, 20, 30
+--- 4. Functions & Procedures ---
+20
+20
+sum: 7
+102
+--- 5. TCO, Memoization & Currying ---
+Liftoff!
+120
+55
+6765
+42
+0
+100
+[2, 4, 6, 8, 10]
+[2, 4, 6]
+60
+[3, 6, 9, 12]
+[1, 2, 3, 4, 5]
+[10, 20, 30, 40, 50]
+--- 6. Lists ---
+1
+[2, 3, 4, 5]
+[0, 1, 2, 3, 4, 5]
+[4, 8]
+12
+--- 15. Slice, nth & isInfinite ---
+[20, 30, 40]
+[10, 20]
+ell
+[6, 7, 8]
+10
+30
+false
+e
+10
+true
+false
+false
+--- 16. find & findSlice ---
+2
+not found
+0
+2
+not found
+1
+1
+not found
+0
+6
+not found
+0
+1
+not found
+--- 17. reverse & length ---
+[5, 4, 3, 2, 1]
+[c, b, a]
+olleh
+
+[10, 20, 30]
+5
+0
+5
+0
+40
+true
+false
+[6, 4, 2]
+--- 11. List Comprehensions ---
+[4, 8]
+[20, 40, 60]
+[4, 5, 6, 7]
+[one!, two!, three!]
+[11, 21, 12, 22, 13, 23]
+[3, 4, 3, 5, 4, 5]
+[100, 400, 900]
+[2, 4, 6]
+[1, 2, 3, 4, 5, 6]
+--- 12. Infinite Lists ---
+[1, 2, 3, 4, 5]
+[1, 2, 4, 8, 16, 32, 64, 128]
+[2, 4, 6, 8, 10]
+[2, 4, 6, 8, 10]
+[1, 1, 1, 1]
+12
+[red, green, blue, red, green, blue, red]
+[6, 12, 18, 24, 30]
+[0, 1, 2, 3, 4]
+[2, 3, 4, 5, 6]
+[10, 20, 30]
+[0, 1, 1, 2, 3, 5, 8, 13, 21, 34]
+[7, 14, 21, 28, 35]
+--- 7. Records ---
+10
+Alice is 30
+--- 8. Discriminated Unions ---
+10
+5
+3
+4
+--- 9. Pattern Matching ---
+100
+circle
+medium circle
+0
+200
+Square with side 10
+Circle with radius 5
+Rectangle 3x4
+--- 10. Option Type ---
+[6, 12, 18, 24, 30]
+0
+Result: 5
+Division by zero
+big
+[1, 2, 3]
+7
+--- 19. Modules & Imports ---
+15
+720
+10
+5
+fact(5): 120
+Result: 5
+42
+7
+6
+countdown: Liftoff!
+--- 13. Dictionaries ---
+95
+87
+90
+true
+false
+false
+one
+two
+42
+[x, y]
+[10, 20]
+lang
+Pfun
+2
+name
+Alice
+[name, role]
+1
+gold
+Alice
+admin
+11
+13
+true
+false
+1
+Enter your name: Hello, TestUser!
+Speak, friend, and enter: None shall pass!
+--- 20. $ Format Strings ---
+p1 = (3, 9)
+p2 = (7, 49)
+p1 = (3, 9), p2 = (7, 49)
+Vec(1, 2, 3)
+template: {value}
+--- 23. File I/O ---
+Wrote 26 chars
+Hello from Pfun!
+Line two.
+Caught missing file: ENOENT: no such file or directory, open './does-not-exist.txt'
+overwritten
+appended line
+
+  1: overwritten
+  2: appended line
+true
+false
+Read: overwritten
+appended line
+
+File not found: ./no-such-file.txt
+--- 24. Arrays ---
+Alice
+3
+4
+Dave
+3
+Carol
+Charlie
+Dave
+4
+Edgar
+Alicia
+2
+not found
+88
+[Alicia, Carol, Charlie, Dave, Edgar]
+4
+x
+z
+--- 20. JSON Persistence ---
+{
+  "__pfun": "int",
+  "v": "42"
+}
+42
+{
+  "__pfun": "record",
+  "__type": "Coord",
+  "x": {
+    "__pfun": "int",
+    "v": "3"
+  },
+  "y": {
+    "__pfun": "int",
+    "v": "7"
+  }
+}
+x=3 y=7
+Disk r=5
+Rect 3x4
+written
+host=localhost port=8080 debug=true
+10
+written
+10
+--- 25. Bytes & Binary I/O ---
+0
+255
+128
+155
+150
+100
+3
+1
+0
+255
+16
+8
+15
+256
+A
+1
+2
+3
+€
+255
+0
+42
+€
+A
+flag is set
+wrote 4 bytes
+4
+222
+239
+hello world
+5
+104
+101

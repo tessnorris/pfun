@@ -6,6 +6,7 @@ import * as readline from 'readline';
 import { Lexer } from './lexer';
 import { Parser } from './parser';
 import { checkProcedureUsage } from './procedureCheck';
+import { checkTypes } from './typechecker';
 import { Interpreter, ModuleLoader } from './interpreter';
 import { stdlibFunctions, stdlibTypes } from './library';
 import { mutStructuresFunctions, mutStructuresTypes } from './mutStructures';
@@ -15,6 +16,9 @@ import { jsonlibFunctions } from './jsonlib';
 import { mathlibFunctions } from './mathlib';
 import { asynclibFunctions } from './asynclib';
 import { httplibFunctions, httplibTypes } from './httplib';
+import { dblibTypes } from './dblib';
+import { dblibPostgresqlFunctions } from './dblibPostgresql';
+import { dblibMariadbFunctions } from './dblibMariadb';
 import { PfunError, buildPfunError } from './errors';
 
 /**
@@ -26,14 +30,16 @@ function setupInterpreter(interp: Interpreter): void {
   interp.registerLibrary(mutStructuresFunctions, mutStructuresTypes);
 }
 
-/** Register all built-in system modules ('io', 'file', 'json', 'math', 'async', 'http') on a loader. */
-function registerBuiltinModules(loader: ModuleLoader): void {
+/** Register all built-in system modules ('io', 'file', 'json', 'math', 'async', 'http', 'db/postgresql', 'db/mariadb') on a loader. */
+export function registerBuiltinModules(loader: ModuleLoader): void {
   loader.registerBuiltin('io', iolibFunctions);
   loader.registerBuiltin('file', filelibFunctions, filelibTypes);
   loader.registerBuiltin('json', jsonlibFunctions);
   loader.registerBuiltin('math', mathlibFunctions);
   loader.registerBuiltin('async', asynclibFunctions);
   loader.registerBuiltin('http', httplibFunctions, httplibTypes);
+  loader.registerBuiltin('db/postgresql', dblibPostgresqlFunctions, dblibTypes);
+  loader.registerBuiltin('db/mariadb', dblibMariadbFunctions, dblibTypes);
 }
 
 // ── Async/await (phase 4) ────────────────────────────────────────────────
@@ -42,7 +48,7 @@ function registerBuiltinModules(loader: ModuleLoader): void {
 // awaits) performs a real suspend/resume rather than throwing runSync's
 // "yielded an Effect" error. Non-async programs are unaffected — runAsync
 // is a no-op driver loop when no 'await' Effect is ever yielded.
-async function runFile(filePath: string, scriptArgs: string[] = []) {
+export async function runFile(filePath: string, scriptArgs: string[] = []) {
   const absolutePath = path.resolve(filePath);
   if (!fs.existsSync(absolutePath)) {
     console.error(`File not found: ${absolutePath}`);
@@ -64,6 +70,17 @@ async function runFile(filePath: string, scriptArgs: string[] = []) {
     const raw = e instanceof Error ? e : new Error(String(e));
     const pfunErr = buildPfunError(raw, source, (raw as any).pos, null, () => undefined, { stringify: String });
     console.error(pfunErr.pfunMessage);
+    process.exit(1);
+  }
+
+  // Static type checking (Hindley-Milner inference via inferencer.ts,
+  // orchestrated by typechecker.ts's checkTypes). Unlike the lex/parse/
+  // procedure-usage checks above, checkTypes() never throws — it always
+  // returns an array (possibly empty) of already-formatted PfunErrors, so
+  // this is a plain check rather than a try/catch.
+  const typeErrors = checkTypes(ast!, source);
+  if (typeErrors.length > 0) {
+    for (const err of typeErrors) console.error(err.pfunMessage);
     process.exit(1);
   }
 
@@ -181,10 +198,14 @@ function loadReplFile(interp: Interpreter, filePath: string): void {
     const trimmed = entry.trimEnd();
     const withoutQ = trimmed.endsWith('?') ? trimmed.slice(0, -1) : entry;
     try {
-      new Parser(new Lexer(withoutQ).lex()).parse();
+      const entryAst = new Parser(new Lexer(withoutQ).lex()).parse();
+      const typeErrors = checkTypes(entryAst, withoutQ);
+      if (typeErrors.length > 0) throw typeErrors[0];
     } catch (e) {
       const rawErr = e instanceof Error ? e : new Error(String(e));
-      const pfunErr = buildPfunError(rawErr, withoutQ, (rawErr as any).pos, null, () => undefined, { stringify: String });
+      const pfunErr = rawErr instanceof PfunError
+        ? rawErr
+        : buildPfunError(rawErr, withoutQ, (rawErr as any).pos, null, () => undefined, { stringify: String });
       console.error(pfunErr.pfunMessage);
       process.exit(1);
     }
@@ -345,10 +366,14 @@ function evalEntryImmediately(interp: Interpreter, raw: string): void {
   let ast;
   try {
     ast = new Parser(new Lexer(source).lex()).parse();
+    const typeErrors = checkTypes(ast, source);
+    if (typeErrors.length > 0) throw typeErrors[0];
   } catch (e) {
     const errSource = wantsPrint ? source : raw;
     const rawErr = e instanceof Error ? e : new Error(String(e));
-    const pfunErr = buildPfunError(rawErr, errSource, (rawErr as any).pos, null, () => undefined, { stringify: String });
+    const pfunErr = rawErr instanceof PfunError
+      ? rawErr
+      : buildPfunError(rawErr, errSource, (rawErr as any).pos, null, () => undefined, { stringify: String });
     console.error(pfunErr.pfunMessage);
     return;
   }
@@ -452,10 +477,14 @@ function flushQueue(interp: Interpreter, queue: string[]): void {
     let ast;
     try {
       ast = new Parser(new Lexer(source).lex()).parse();
+      const typeErrors = checkTypes(ast, source);
+      if (typeErrors.length > 0) throw typeErrors[0];
     } catch (e) {
       const errSource = source;
       const rawErr = e instanceof Error ? e : new Error(String(e));
-      const pfunErr = buildPfunError(rawErr, errSource, (rawErr as any).pos, null, () => undefined, { stringify: String });
+      const pfunErr = rawErr instanceof PfunError
+        ? rawErr
+        : buildPfunError(rawErr, errSource, (rawErr as any).pos, null, () => undefined, { stringify: String });
       console.error(pfunErr.pfunMessage);
       return;
     }
@@ -486,23 +515,29 @@ function flushQueue(interp: Interpreter, queue: string[]): void {
   }
 }
 
-const args = process.argv.slice(2);
-if (args.includes('-i') || args.includes('--interactive')) {
-  // Any non-flag argument is treated as a file to pre-load into the session.
-  const fileArg = args.find(a => a !== '-i' && a !== '--interactive');
-  runRepl(fileArg);
-} else if (args.length === 0) {
-  console.log('Usage: pfun <script.pf>');
-  console.log('       pfun -i [script.pf]   (interactive mode, optionally pre-loading a file)');
-  process.exit(1);
-} else {
-  runFile(args[0], args.slice(1)).catch(e => {
-    // runFile already handles PfunError/wrapError + process.exit(1) for
-    // expected interpreter errors. This catch only guards against truly
-    // unexpected exceptions escaping interpretAsync (e.g. a bug in the
-    // driver itself) so they're reported rather than becoming a silent
-    // unhandled rejection.
-    console.error(e instanceof Error ? e.message : String(e));
+// Only run the CLI driver when this file is executed directly (`pfun ...`),
+// not when imported as a module (e.g. by tests importing
+// registerBuiltinModules) — otherwise `process.exit(1)` in the
+// no-arguments branch would kill the importing process/test runner.
+if (require.main === module) {
+  const args = process.argv.slice(2);
+  if (args.includes('-i') || args.includes('--interactive')) {
+    // Any non-flag argument is treated as a file to pre-load into the session.
+    const fileArg = args.find(a => a !== '-i' && a !== '--interactive');
+    runRepl(fileArg);
+  } else if (args.length === 0) {
+    console.log('Usage: pfun <script.pf>');
+    console.log('       pfun -i [script.pf]   (interactive mode, optionally pre-loading a file)');
     process.exit(1);
-  });
+  } else {
+    runFile(args[0], args.slice(1)).catch(e => {
+      // runFile already handles PfunError/wrapError + process.exit(1) for
+      // expected interpreter errors. This catch only guards against truly
+      // unexpected exceptions escaping interpretAsync (e.g. a bug in the
+      // driver itself) so they're reported rather than becoming a silent
+      // unhandled rejection.
+      console.error(e instanceof Error ? e.message : String(e));
+      process.exit(1);
+    });
+  }
 }

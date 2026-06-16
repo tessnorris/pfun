@@ -46,7 +46,7 @@ jest.mock('mysql2/promise', () => {
 
 import { Lexer } from '../lexer';
 import { Parser } from '../parser';
-import { Interpreter } from '../interpreter';
+import { Interpreter, ModuleLoader } from '../interpreter';
 import { stdlibFunctions, stdlibTypes } from '../library';
 import { mutStructuresFunctions, mutStructuresTypes } from '../mutStructures';
 import { iolibFunctions } from '../iolib';
@@ -360,6 +360,59 @@ describe('dblibMariadb', () => {
       `);
       expect(logs).toEqual(['closed']);
       expect(endCalls).toBe(1);
+    });
+  });
+
+  // ─── Module registration (regression) ────────────────────────────────────
+  //
+  // See the matching test in dblibPostgresql.test.ts for the full rationale:
+  // dblib.ts documents `loader.registerBuiltin('db/mariadb',
+  // dblibMariadbFunctions, dblibTypes)` as the intended wiring, but main.ts
+  // never actually called it, so `import * from "db/mariadb"` failed with
+  // "Module not found" for every user despite the driver code itself
+  // working correctly. This exercises the real ModuleLoader/import path.
+  describe('Module registration (db/mariadb via ModuleLoader)', () => {
+    it('resolves and loads "db/mariadb" as a builtin module', () => {
+      const loader = new ModuleLoader('/unused-lib-dir');
+      loader.registerBuiltin('db/mariadb', dblibMariadbFunctions, dblibTypes);
+      const resolved = loader.resolve('db/mariadb', '/unused-from-dir');
+      expect(() => loader.load(resolved)).not.toThrow();
+    });
+
+    it('exposes dbConnect/dbQuery/dbClose and the DbResult/DbValue/QueryResult types via "import * from \\"db/mariadb\\""', async () => {
+      const loader = new ModuleLoader('/unused-lib-dir');
+      loader.registerBuiltin('io', iolibFunctions);
+      loader.registerBuiltin('db/mariadb', dblibMariadbFunctions, dblibTypes);
+      const interpreter = new Interpreter('/unused-base-dir', loader);
+      interpreter.registerLibrary(stdlibFunctions, stdlibTypes);
+      interpreter.registerLibrary(mutStructuresFunctions, mutStructuresTypes);
+
+      const source = `
+        import * from "io";
+        import * from "db/mariadb";
+        async proc p() {
+          let conn = await dbConnect("mysql://localhost/test");
+          match conn with
+          | Ok c -> {
+              let result = await dbClose(c.value);
+              match result with
+              | Ok _  -> println("closed")
+              | Err e -> println("error: " + e.message);
+            }
+          | Err e -> println("connect error: " + e.message);
+        }
+        p();
+      `;
+      const ast = new Parser(new Lexer(source).lex()).parse();
+      const logs: string[] = [];
+      const originalLog = console.log;
+      console.log = (...args: any[]) => logs.push(args.map(String).join(' '));
+      try {
+        await interpreter.interpretAsync(ast, source);
+      } finally {
+        console.log = originalLog;
+      }
+      expect(logs).toEqual(['closed']);
     });
   });
 });

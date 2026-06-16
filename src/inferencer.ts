@@ -278,6 +278,7 @@ export function unify(
     case 'Bool':
     case 'Str':
     case 'Char':
+    case 'Byte':
     case 'Nil':
       return subst;
 
@@ -429,10 +430,12 @@ class CGenRegistry {
 
 // ─── Built-in environment ────────────────────────────────────────────────────
 
-const _INT:  PfunType = { kind: 'Int'  };
-const _BOOL: PfunType = { kind: 'Bool' };
-const _STR:  PfunType = { kind: 'Str'  };
-const _CHAR: PfunType = { kind: 'Char' };
+const _INT:   PfunType = { kind: 'Int'   };
+const _FLOAT: PfunType = { kind: 'Float' };
+const _BOOL:  PfunType = { kind: 'Bool'  };
+const _STR:   PfunType = { kind: 'Str'   };
+const _CHAR:  PfunType = { kind: 'Char'  };
+const _BYTE:  PfunType = { kind: 'Byte'  };
 
 /**
  * Build the constraint-generation environment pre-populated with builtin
@@ -504,11 +507,12 @@ function cgenExpr(
   switch (expr.type) {
 
     // ── Literals — concrete types, no constraints needed ────────────────────
-    case 'IntExpr':  t = _INT;  break;
-    case 'BoolExpr': t = _BOOL; break;
-    case 'StrExpr':  t = _STR;  break;
-    case 'CharExpr': t = _CHAR; break;
-    case 'ByteExpr': t = { kind: 'Byte' }; break;
+    case 'IntExpr':   t = _INT;   break;
+    case 'FloatExpr': t = _FLOAT; break;
+    case 'BoolExpr':  t = _BOOL;  break;
+    case 'StrExpr':   t = _STR;   break;
+    case 'CharExpr':  t = _CHAR;  break;
+    case 'ByteExpr':  t = _BYTE;  break;
 
     // ── Identifiers — look up or assign a fresh var ──────────────────────────
     case 'IdentExpr': {
@@ -759,23 +763,67 @@ function cgenBinary(
       // Left operand determines result type; shift amount may be Int or Byte.
       return lt;
 
-    // Arithmetic — all operands and result are Int
+    // Arithmetic (-, *, /, %) — mirrors the interpreter's real semantics
+    // (see evaluateBinaryGen in interpreter.ts):
+    //   - Byte op Byte -> Byte (no mixing with Int/Float at all — the
+    //     interpreter's Byte arithmetic branch requires BOTH operands to be
+    //     PfunByte; a Byte mixed with an Int/Float is not supported).
+    //   - Int op Int -> Int; Int/Float mixed (in either order) -> Float
+    //     (the interpreter promotes bigint to number whenever either side
+    //     is already a float). Float op Float -> Float.
+    // A Byte mixed with an Int/Float, or any other kind, is a genuine type
+    // error — unify() will report it once neither numeric special case
+    // below applies.
     case 'MinusToken':
     case 'StarToken':
     case 'SlashToken':
-    case 'PercentToken':
+    case 'PercentToken': {
+      if (lt.kind === 'Byte' || rt.kind === 'Byte') {
+        cs.push(constraint(lt, _BYTE, pos));
+        cs.push(constraint(rt, _BYTE, pos));
+        return _BYTE;
+      }
+      if (lt.kind === 'Float' || rt.kind === 'Float') {
+        // Int/Float mixing is allowed; constrain each operand individually
+        // to Int-or-Float rather than to each other, so e.g. `1 - 2.5` and
+        // `2.5 - 1` both type-check without forcing the Int side to Float
+        // syntactically. Unification has no "numeric" type class, so this
+        // is expressed as two independent soft checks instead of a single
+        // unify(lt, rt) — matching PlusToken's existing Str special case
+        // immediately below, which takes the same approach for the same
+        // reason.
+        if (lt.kind !== 'Int' && lt.kind !== 'Float' && lt.kind !== 'Unknown' && lt.kind !== 'TyVar')
+          cs.push(constraint(lt, _FLOAT, pos));
+        if (rt.kind !== 'Int' && rt.kind !== 'Float' && rt.kind !== 'Unknown' && rt.kind !== 'TyVar')
+          cs.push(constraint(rt, _FLOAT, pos));
+        return _FLOAT;
+      }
       cs.push(constraint(lt, _INT, pos));
       cs.push(constraint(rt, _INT, pos));
       return _INT;
+    }
 
     // Plus — polymorphic with string coercion awareness.
     // If either operand is already Str, the result is Str and we don't
     // constrain the other operand (runtime stringifies it).
-    // Otherwise operands must agree and the result is their shared type.
-    case 'PlusToken':
+    // Byte/numeric mixing rules mirror the other arithmetic operators above.
+    case 'PlusToken': {
       if (lt.kind === 'Str' || rt.kind === 'Str') return _STR;
+      if (lt.kind === 'Byte' || rt.kind === 'Byte') {
+        cs.push(constraint(lt, _BYTE, pos));
+        cs.push(constraint(rt, _BYTE, pos));
+        return _BYTE;
+      }
+      if (lt.kind === 'Float' || rt.kind === 'Float') {
+        if (lt.kind !== 'Int' && lt.kind !== 'Float' && lt.kind !== 'Unknown' && lt.kind !== 'TyVar')
+          cs.push(constraint(lt, _FLOAT, pos));
+        if (rt.kind !== 'Int' && rt.kind !== 'Float' && rt.kind !== 'Unknown' && rt.kind !== 'TyVar')
+          cs.push(constraint(rt, _FLOAT, pos));
+        return _FLOAT;
+      }
       cs.push(constraint(lt, rt, pos));
       return lt;
+    }
 
     default: {
       const result = freshVar();

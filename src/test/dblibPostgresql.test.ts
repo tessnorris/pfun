@@ -46,7 +46,7 @@ jest.mock('pg', () => {
 
 import { Lexer } from '../lexer';
 import { Parser } from '../parser';
-import { Interpreter } from '../interpreter';
+import { Interpreter, ModuleLoader } from '../interpreter';
 import { stdlibFunctions, stdlibTypes } from '../library';
 import { mutStructuresFunctions, mutStructuresTypes } from '../mutStructures';
 import { iolibFunctions } from '../iolib';
@@ -381,6 +381,64 @@ describe('dblibPostgresql', () => {
       `);
       expect(logs).toEqual(['closed']);
       expect(endCalls).toBe(1);
+    });
+  });
+
+  // ─── Module registration (regression) ────────────────────────────────────
+  //
+  // Regression test for a real bug: dblib.ts's own header documents
+  // `loader.registerBuiltin('db/postgresql', dblibPostgresqlFunctions,
+  // dblibTypes)` as the intended wiring, but main.ts never actually called
+  // it — so `import * from "db/postgresql"` failed with "Module not found"
+  // for every user, even though the driver code itself worked correctly
+  // (as the tests above, which bypass the module system, already proved).
+  // This exercises the actual ModuleLoader/import path main.ts depends on,
+  // rather than the direct registerLibrary() shortcut used elsewhere in this
+  // file, so a regression here is caught even if the direct-registration
+  // tests above keep passing.
+  describe('Module registration (db/postgresql via ModuleLoader)', () => {
+    it('resolves and loads "db/postgresql" as a builtin module', () => {
+      const loader = new ModuleLoader('/unused-lib-dir');
+      loader.registerBuiltin('db/postgresql', dblibPostgresqlFunctions, dblibTypes);
+      const resolved = loader.resolve('db/postgresql', '/unused-from-dir');
+      expect(() => loader.load(resolved)).not.toThrow();
+    });
+
+    it('exposes dbConnect/dbQuery/dbClose and the DbResult/DbValue/QueryResult types via "import * from \\"db/postgresql\\""', async () => {
+      const loader = new ModuleLoader('/unused-lib-dir');
+      loader.registerBuiltin('io', iolibFunctions);
+      loader.registerBuiltin('db/postgresql', dblibPostgresqlFunctions, dblibTypes);
+      const interpreter = new Interpreter('/unused-base-dir', loader);
+      interpreter.registerLibrary(stdlibFunctions, stdlibTypes);
+      interpreter.registerLibrary(mutStructuresFunctions, mutStructuresTypes);
+      interpreter.registerLibrary(iolibFunctions, []);
+
+      const source = `
+        import * from "io";
+        import * from "db/postgresql";
+        async proc p() {
+          let conn = await dbConnect("postgres://localhost/test");
+          match conn with
+          | Ok c -> {
+              let result = await dbClose(c.value);
+              match result with
+              | Ok _  -> println("closed")
+              | Err e -> println("error: " + e.message);
+            }
+          | Err e -> println("connect error: " + e.message);
+        }
+        p();
+      `;
+      const ast = new Parser(new Lexer(source).lex()).parse();
+      const logs: string[] = [];
+      const originalLog = console.log;
+      console.log = (...args: any[]) => logs.push(args.map(String).join(' '));
+      try {
+        await interpreter.interpretAsync(ast, source);
+      } finally {
+        console.log = originalLog;
+      }
+      expect(logs).toEqual(['closed']);
     });
   });
 });
