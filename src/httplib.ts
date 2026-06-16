@@ -276,9 +276,10 @@ export const httplibFunctions: RegistryFunction[] = [
           };
 
           // Spawn the handler as its own task — multiple in-flight requests
-          // interleave at `await` points (see Scheduler).
-          interp.scheduler.spawn(
-            handler.executeGen([reqRecord, resRecord], interp),
+          // interleave at `await` points (see Scheduler / spawnPfunCallback).
+          interp.spawnPfunCallback(
+            handler,
+            [reqRecord, resRecord],
             (e: unknown) => {
               const message = e instanceof Error ? e.message : String(e);
               // eslint-disable-next-line no-console

@@ -654,6 +654,39 @@ export class Interpreter {
     return this._scheduler;
   }
 
+  /**
+   * Invoke a Pfun function/proc as an isolated task in response to an
+   * external (non-Pfun-driven) event — an incoming HTTP request, a future
+   * JS event-emitter callback, a timer, etc. This is the generic form of
+   * what httpListen's per-request dispatch has always done by hand:
+   *   1. Build the function's executeGen() generator from the given args.
+   *   2. Spawn it via the Scheduler, so it interleaves with other in-flight
+   *      tasks at `await` points rather than blocking the caller.
+   *   3. If the task throws/rejects without completing, route the error to
+   *      `onError` instead of letting it escape into whatever external JS
+   *      code triggered the callback (which likely has no idea what a
+   *      PfunError is and may crash, hang, or silently swallow it
+   *      depending on the calling convention).
+   *
+   * `callback` must be a PfunFunction (function or procedure) — native
+   * modules should validate this themselves before calling, so the error
+   * message can reference the specific native function name (see
+   * httplib.ts's `instanceof PfunFunction` check on `handler` for the
+   * existing pattern this replaces).
+   *
+   * Returns nothing — like Scheduler.spawn, this returns immediately; the
+   * task runs concurrently. Native code that needs to react to the
+   * callback's *result* (rather than just firing it and moving on) should
+   * pass an onError that also captures success via a side channel (closure
+   * over a `responded` flag, a promise resolve, etc.) — exactly how
+   * httpListen's send()/responded guard works today. A future iteration of
+   * this method could accept an onResult callback as well, once a second
+   * caller actually needs one.
+   */
+  spawnPfunCallback(callback: PfunFunction, args: any[], onError: TaskErrorHandler): void {
+    this.scheduler.spawn(callback.executeGen(args, this), onError);
+  }
+
   // ── Async/await (phase 6) ────────────────────────────────────────────────
   // Generic cleanup registry: long-lived resources created by native
   // functions (currently: http.Server instances from httpListen) register a

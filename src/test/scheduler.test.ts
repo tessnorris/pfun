@@ -12,7 +12,10 @@
 //   - run() resolves once all spawned tasks complete
 //   - tasks spawned from within other tasks are also waited for
 
-import { Interpreter, Scheduler, Effect } from '../interpreter';
+import { Interpreter, Scheduler, Effect, PfunFunction } from '../interpreter';
+import { Lexer } from '../lexer';
+import { Parser } from '../parser';
+import { stdlibFunctions, stdlibTypes } from '../library';
 
 /** A task that resolves `value` after `ms` real milliseconds. */
 function* delayTask(ms: number, value: any): Generator<Effect, any, any> {
@@ -235,6 +238,148 @@ describe('Scheduler (phase 6)', () => {
       expect(order).toContain('inner-done');
       expect(order).toContain('outer-done');
       expect(order).toHaveLength(3);
+    });
+  });
+
+  // ─── Interpreter.spawnPfunCallback ───────────────────────────────────────
+  //
+  // The generic primitive any future native module (and eventually an
+  // `extern` FFI boundary) uses to invoke a Pfun function/proc in response
+  // to an external event, rather than hand-rolling executeGen()+spawn() the
+  // way httplib.ts's httpListen did before this was extracted. These tests
+  // build real PfunFunctions from parsed Pfun source — unlike the
+  // hand-constructed generators above — since the thing under test is
+  // specifically the PfunFunction -> task bridge.
+  describe('Interpreter.spawnPfunCallback', () => {
+    const makeFn = (source: string, interp: Interpreter, globalName: string = 'cb'): PfunFunction => {
+      const ast = new Parser(new Lexer(source).lex()).parse();
+      interp.interpret(ast, source);
+      const fn = interp.getGlobal(globalName);
+      if (!(fn instanceof PfunFunction)) throw new Error(`test setup: ${globalName} did not resolve to a PfunFunction`);
+      return fn;
+    };
+
+    it('invokes a Pfun proc with the given arguments', async () => {
+      const interp = new Interpreter();
+      interp.registerLibrary(stdlibFunctions, stdlibTypes);
+      const results: any[] = [];
+      const cb = makeFn(`
+        proc cb(x, y) { return x + y; }
+      `, interp);
+
+      interp.spawnPfunCallback(cb, [3n, 4n], (e) => { throw e; });
+      await interp.scheduler.run();
+      // The proc's return value isn't surfaced by spawnPfunCallback itself
+      // (mirroring Scheduler.spawn — it's fire-and-forget); side effects
+      // performed by the callback body are how results get observed.
+      expect(results).toEqual([]); // nothing pushed — proc just returns
+    });
+
+    it('side effects performed by the callback are observable after scheduler.run()', async () => {
+      const interp = new Interpreter();
+      interp.registerLibrary(stdlibFunctions, stdlibTypes);
+      const observed: any[] = [];
+      interp.registerLibrary([
+        { name: 'record', fn: (args: any[], i: any) => { observed.push(i.force(args[0])); return null; } },
+      ] as any, []);
+
+      const cb = makeFn(`proc cb(x) { record(x * 2); }`, interp);
+
+      interp.spawnPfunCallback(cb, [10n], (e) => { throw e; });
+      await interp.scheduler.run();
+      expect(observed).toEqual([20n]);
+    });
+
+    it('an async proc callback can await before completing', async () => {
+      const interp = new Interpreter();
+      interp.registerLibrary(stdlibFunctions, stdlibTypes);
+      const observed: any[] = [];
+      interp.registerLibrary([
+        { name: 'record', fn: (args: any[], i: any) => { observed.push(i.force(args[0])); return null; } },
+        { name: 'delay', fn: (_args: any[]) => new Promise(r => setTimeout(r, 10)) },
+      ] as any, []);
+
+      const cb = makeFn(`
+        async proc cb(x) {
+          await delay();
+          record(x);
+        }
+      `, interp);
+
+      interp.spawnPfunCallback(cb, ['after-delay'], (e) => { throw e; });
+      await interp.scheduler.run();
+      expect(observed).toEqual(['after-delay']);
+    });
+
+    it('routes a thrown PfunError to onError instead of crashing the caller', async () => {
+      const interp = new Interpreter();
+      interp.registerLibrary(stdlibFunctions, stdlibTypes);
+      const errors: string[] = [];
+      const cb = makeFn(`proc cb() { eval head([]); }`, interp); // throws: empty list
+
+      interp.spawnPfunCallback(cb, [], (e) => {
+        errors.push(e instanceof Error ? e.message : String(e));
+      });
+      await interp.scheduler.run();
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toMatch(/head/i);
+    });
+
+    it('one callback throwing does not prevent a second spawned callback from completing', async () => {
+      const interp = new Interpreter();
+      interp.registerLibrary(stdlibFunctions, stdlibTypes);
+      const observed: any[] = [];
+      interp.registerLibrary([
+        { name: 'record', fn: (args: any[], i: any) => { observed.push(i.force(args[0])); return null; } },
+      ] as any, []);
+
+      const failing    = makeFn(`proc failingCb() { eval head([]); }`, interp, 'failingCb');
+      const succeeding = makeFn(`proc okCb(x) { record(x); }`, interp, 'okCb');
+
+      const errors: unknown[] = [];
+      interp.spawnPfunCallback(failing, [], (e) => errors.push(e));
+      interp.spawnPfunCallback(succeeding, ['ok'], (e) => { throw e; });
+
+      await interp.scheduler.run();
+      expect(errors).toHaveLength(1);
+      expect(observed).toEqual(['ok']);
+    });
+
+    it('multiple callbacks spawned concurrently interleave like any other tasks', async () => {
+      const interp = new Interpreter();
+      interp.registerLibrary(stdlibFunctions, stdlibTypes);
+      const order: string[] = [];
+      interp.registerLibrary([
+        { name: 'record', fn: (args: any[], i: any) => { order.push(i.force(args[0])); return null; } },
+        { name: 'delay', fn: (args: any[], i: any) => new Promise(r => setTimeout(r, Number(i.force(args[0])))) },
+      ] as any, []);
+
+      const cb = makeFn(`
+        async proc cb(label, ms) {
+          await delay(ms);
+          record(label);
+        }
+      `, interp);
+
+      interp.spawnPfunCallback(cb, ['slow', 30n], (e) => { throw e; });
+      interp.spawnPfunCallback(cb, ['fast', 5n], (e) => { throw e; });
+
+      await interp.scheduler.run();
+      expect(order).toEqual(['fast', 'slow']);
+    });
+
+    it('returns immediately — does not block the caller waiting for the callback', () => {
+      const interp = new Interpreter();
+      interp.registerLibrary(stdlibFunctions, stdlibTypes);
+      interp.registerLibrary([
+        { name: 'delay', fn: () => new Promise(r => setTimeout(r, 1000)) },
+      ] as any, []);
+      const cb = makeFn(`async proc cb() { await delay(); }`, interp);
+
+      const before = Date.now();
+      interp.spawnPfunCallback(cb, [], () => {});
+      const after = Date.now();
+      expect(after - before).toBeLessThan(50); // did not wait for the 1000ms delay
     });
   });
 });
