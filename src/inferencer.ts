@@ -977,6 +977,39 @@ function collectReturnExprs(body: Stmt[]): Expr[] {
 // ─── Public entry point ───────────────────────────────────────────────────────
 
 /**
+ * Registers every UnionTypeStmt in the program into `registry`, regardless
+ * of where in the statement tree it appears (top level, inside a function
+ * body, inside a block, etc.) — run as its own complete pass BEFORE the
+ * main constraint-generation walk below, so that a union type referenced
+ * earlier in the file than its own declaration still gets its variants'
+ * unionName attached correctly (e.g. `Square { 5 }`'s Named type needs
+ * `unionName: 'Shape'` even if `type Shape = { | Square: ... }` appears
+ * later in the file). Without this, registerUnion only ran when cgenStmt's
+ * own top-to-bottom walk reached the UnionTypeStmt itself, so any
+ * RecordExpr/IdentExpr referencing an earlier-used variant got a Named
+ * type with no unionName at all — silently breaking static exhaustiveness
+ * checking (typechecker.ts's checkExhaustiveness) for forward-referenced
+ * unions, since it depends on this unionName being present.
+ * UnionTypeStmt only ever appears at a statement position, never nested
+ * inside an expression, so this only needs to walk statements.
+ */
+function registerAllUnions(stmts: Stmt[], registry: CGenRegistry): void {
+  function walk(s: Stmt): void {
+    if (!s) return;
+    switch (s.type) {
+      case 'UnionTypeStmt':  registry.registerUnion(s.name, s.variants); break;
+      case 'IfStmt':         walk(s.thenBranch); if (s.elseBranch) walk(s.elseBranch); break;
+      case 'BlockStmt':      s.statements.forEach(walk); break;
+      case 'FunctionStmt':
+      case 'ProcedureStmt':  s.body.forEach(walk); break;
+      case 'ExportStmt':     walk(s.declaration); break;
+      // Every other statement type cannot contain a UnionTypeStmt.
+    }
+  }
+  for (const s of stmts) walk(s);
+}
+
+/**
  * Walk `stmts`, assign fresh TyVars to every expression, and return the
  * full constraint set.  Annotates `inferredType` on every expression node
  * (may overwrite UNKNOWN from the first-pass inferencer with a TyVar).
@@ -992,6 +1025,10 @@ export function generateConstraints(stmts: Stmt[]): ConstraintSet {
     { name: 'Some', fields: ['value'] },
     { name: 'None', fields: [] },
   ]);
+  // Pre-register every user-defined union too, before the main walk, so
+  // forward references resolve correctly — see registerAllUnions's
+  // docblock above.
+  registerAllUnions(stmts, registry);
   const cs: ConstraintSet = [];
   for (const stmt of stmts) cgenStmt(stmt, env, registry, cs);
   return cs;
