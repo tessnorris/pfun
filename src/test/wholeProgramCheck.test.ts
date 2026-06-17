@@ -1,10 +1,13 @@
 // src/test/wholeProgramCheck.test.ts
 //
-// Tests for the Stage 1 whole-program static checker (checkProgram):
-// cross-module procedure-usage (purity) checking across the import graph,
-// including named/namespace/star imports, missing modules, circular
-// imports, and the "each file parsed exactly once" guarantee. See
-// wholeProgramCheck.ts's file header for the full design.
+// Tests for the whole-program static checker (checkProgram):
+//   Stage 1 — cross-module procedure-usage (purity) checking across the
+//     import graph, including named/namespace/star imports, missing
+//     modules, circular imports, and the "each file parsed exactly once"
+//     guarantee.
+//   Stage 2 — cross-module type checking and exhaustiveness checking,
+//     layered on the same graph/ordering machinery.
+// See wholeProgramCheck.ts's file header for the full design.
 //
 // These tests use real multi-file fixtures on disk (under
 // fixtures/wholeProgramCheck/) rather than in-memory strings, since the
@@ -49,7 +52,7 @@ function check(fixtureName: string): ReturnType<typeof checkProgram> {
   return checkProgram(entry, loader);
 }
 
-describe('Whole-program static checker (checkProgram) — Stage 1: graph + purity', () => {
+describe('Whole-program static checker (checkProgram) — Stage 1: graph + purity, Stage 2: types + exhaustiveness', () => {
 
   describe('Cross-module purity violations are caught', () => {
     it('catches a proc imported by name and used as a value in a function', () => {
@@ -178,6 +181,66 @@ describe('Whole-program static checker (checkProgram) — Stage 1: graph + purit
     });
   });
 
+  describe('Cross-module TYPE errors are caught (Stage 2)', () => {
+    it('catches a cross-module type error: an imported function called with a wrong-typed argument', () => {
+      const err = check('main_type_bad.pf');
+      expect(err).not.toBeNull();
+      expect(err!.pfunMessage).toContain('Cannot unify');
+    });
+
+    it('does NOT show a file-path header when the type error is in the entry file itself', () => {
+      const err = check('main_type_bad.pf');
+      expect(err).not.toBeNull();
+      expect(err!.pfunMessage).not.toMatch(/^In .*main_type_bad\.pf/m);
+    });
+
+    it('attributes a transitive type error to the dependency file, not the entry file', () => {
+      // middle_type.pf (imported by transitive_type_entry.pf) has the
+      // actual type error; the entry file itself is clean.
+      const err = check('transitive_type_entry.pf');
+      expect(err).not.toBeNull();
+      expect(err!.pfunMessage).toContain('middle_type.pf');
+      expect(err!.pfunMessage).not.toContain('transitive_type_entry.pf');
+      expect(err!.pfunMessage).toContain('Cannot unify');
+    });
+
+    it('passes a legitimate, type-correct cross-module call', () => {
+      expect(check('main_type_good.pf')).toBeNull();
+    });
+  });
+
+  describe('Cross-module EXHAUSTIVENESS is checked (Stage 2)', () => {
+    it('catches a non-exhaustive match on an imported union variant constructor', () => {
+      // main_exhaustiveness_bad.pf imports the Square constructor by name
+      // and constructs Square { 5 } directly, then matches without
+      // covering Circle — this exercises the RecordExpr/CGenRegistry
+      // cross-module path specifically (see UnionImportTable's docblock
+      // in inferencer.ts for why that's a distinct code path from
+      // ordinary IdentExpr type lookups).
+      const err = check('main_exhaustiveness_bad.pf');
+      expect(err).not.toBeNull();
+      expect(err!.pfunMessage).toContain("Non-exhaustive match on 'Shape'");
+      expect(err!.pfunMessage).toContain("'Circle'");
+    });
+
+    it('catches a non-exhaustive match on a value obtained via a namespace-qualified call to an imported union constructor', () => {
+      // main_namespace_exhaustiveness_bad.pf imports the whole shapes_ns
+      // module as a namespace (Shapes), calls Shapes.makeSquare(5) (which
+      // constructs Square { s } INSIDE shapes_ns.pf, not in the
+      // importer), and matches the result without covering Circle —
+      // exercises namespace-qualified type resolution (GetExpr) feeding
+      // into exhaustiveness on the call's result.
+      const err = check('main_namespace_exhaustiveness_bad.pf');
+      expect(err).not.toBeNull();
+      expect(err!.pfunMessage).toContain("Non-exhaustive match on 'Shape'");
+      expect(err!.pfunMessage).toContain("'Circle'");
+    });
+
+    it('passes a legitimate, exhaustive cross-module match (both variants imported and covered)', () => {
+      expect(check('main_exhaustiveness_good.pf')).toBeNull();
+    });
+  });
+
   describe('Backward compatibility — checkProcedureUsage with no resolver is unchanged', () => {
     it('still treats imports as opaque when called without a ModuleImportResolver (existing single-module callers/tests)', () => {
       // This is procedureCheck.test.ts's territory in detail; this is a
@@ -194,6 +257,23 @@ describe('Whole-program static checker (checkProgram) — Stage 1: graph + purit
         }
       `).lex()).parse();
       expect(() => checkProcedureUsage(ast)).not.toThrow();
+    });
+
+    it('checkTypes still treats an imported name as unbound (no false positive) when called without resolvers (existing single-module callers/tests)', () => {
+      // Mirrors the checkProcedureUsage check above, for checkTypes' own
+      // default (no-resolver) behavior — inferencer.test.ts/
+      // typechecker.test.ts cover this in detail; this is a narrow smoke
+      // check that wholeProgramCheck.ts's existence hasn't altered it.
+      const { checkTypes } = require('../typechecker');
+      const { Lexer } = require('../lexer');
+      const { Parser } = require('../parser');
+      const src = `
+        import { double } from "./lib";
+        let ok = double("anything goes, no resolver supplied");
+      `;
+      const ast = new Parser(new Lexer(src).lex()).parse();
+      const errors = checkTypes(ast, src);
+      expect(errors.length).toBe(0);
     });
   });
 });

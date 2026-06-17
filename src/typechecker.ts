@@ -21,8 +21,30 @@
 //   inferTypes(ast);   // mutates nodes in place
 
 import { Expr, Stmt, PfunType } from './ast';
-import { generateConstraints, solveConstraints, applySubstitutionToAST } from './inferencer';
+import { SourcePos } from './lexer';
+import { generateConstraints, solveConstraints, applySubstitutionToAST, TypeImportResolver } from './inferencer';
 import { PfunError, buildPfunError } from './errors';
+
+/** One union's variant descriptors, exactly as UnionTypeStmt/RegistryType
+ *  already carry them — name plus its fields' names (fields' names alone
+ *  are enough to know variant *count*, which is all exhaustiveness needs;
+ *  field *types* are irrelevant here). */
+export type UnionVariants = { name: string; fields: string[] }[];
+
+/** A module's exported unions, keyed by union name — the exhaustiveness
+ *  analogue of procedureCheck.ts's ImportTable / inferencer.ts's
+ *  TypeImportTable. Supplied by the whole-program driver
+ *  (wholeProgramCheck.ts), extracted from a module's own UnionTypeStmt
+ *  exports. */
+export type UnionImportTable = Map<string, UnionVariants>;
+
+/** Resolves an import to that module's exported unions. Mirrors
+ *  procedureCheck.ts's ModuleImportResolver / inferencer.ts's
+ *  TypeImportResolver exactly (same null-means-"fall back to permissive
+ *  treatment" contract — a union this pass can't resolve cross-module
+ *  simply never gets registered, so a match on it is silently skipped,
+ *  same as today's behavior for any union this pass doesn't know about). */
+export type UnionModuleResolver = (importPath: string, pos: SourcePos | undefined) => UnionImportTable | null;
 
 // ─── Exhaustiveness-only union registry ────────────────────────────────────
 //
@@ -64,7 +86,17 @@ class UnionRegistry {
 // checking were interleaved in a single top-to-bottom walk — see project
 // history.) UnionTypeStmt only ever appears at a statement position, never
 // nested inside an expression, so this only needs to walk statements.
-function registerAllUnions(stmts: Stmt[], registry: UnionRegistry): void {
+//
+// Also registers unions reachable via ImportStmts, when `resolver` is
+// supplied (by the whole-program driver, wholeProgramCheck.ts) — the
+// cross-module analogue, needed so a match on a value of an IMPORTED
+// union type gets checked too, not just locally-declared ones. Without a
+// resolver (the default), ImportStmts are skipped entirely, preserving
+// this pass's original, pre-cross-module-exhaustiveness behavior exactly:
+// a match on an imported union's value was never statically checkable
+// before (the union's variant list was never knowable at all, since it
+// lived in another file this pass never looked at), same end state.
+function registerAllUnions(stmts: Stmt[], registry: UnionRegistry, resolver?: UnionModuleResolver): void {
   function walk(s: Stmt): void {
     if (!s) return;
     switch (s.type) {
@@ -74,6 +106,24 @@ function registerAllUnions(stmts: Stmt[], registry: UnionRegistry): void {
       case 'FunctionStmt':
       case 'ProcedureStmt':  s.body.forEach(walk); break;
       case 'ExportStmt':     walk(s.declaration); break;
+      case 'ImportStmt': {
+        if (!resolver) break;
+        const table = resolver(s.path, s.pos);
+        if (!table) break;
+        // Registering is correct for ALL import kinds (named, namespace,
+        // star) identically here, unlike procedureCheck.ts/inferencer.ts's
+        // per-kind binding logic: a union's *registration* (its name and
+        // variant list, for exhaustiveness purposes) doesn't depend on
+        // how the importing file refers to it by name — only the
+        // MatchExpr subject's resolved `unionName` (already computed by
+        // inferencer.ts, including correctly through namespace-qualified
+        // access — see inferencer.ts's GetExpr handling) determines which
+        // registered union a given match is checked against. So every
+        // union this import COULD make reachable gets registered, every
+        // time, regardless of import kind.
+        for (const [unionName, variants] of table) registry.registerUnion(unionName, variants);
+        break;
+      }
       // Every other statement type cannot contain a UnionTypeStmt.
     }
   }
@@ -84,9 +134,9 @@ function registerAllUnions(stmts: Stmt[], registry: UnionRegistry): void {
 // pass this replaces too, not a new regression):
 //   - Builtin unions (Option, DbResult, DbValue, ...) are never flagged
 //     here; only interpreter.ts's runtime check covers those.
-function checkExhaustiveness(stmts: Stmt[], source: string): PfunError[] {
+function checkExhaustiveness(stmts: Stmt[], source: string, unionResolver?: UnionModuleResolver): PfunError[] {
   const registry = new UnionRegistry();
-  registerAllUnions(stmts, registry);
+  registerAllUnions(stmts, registry, unionResolver);
   const errors: PfunError[] = [];
 
   function walkExpr(e: Expr): void {
@@ -208,14 +258,40 @@ export function inferTypes(stmts: Stmt[]): void {
  *
  * Mutates nodes in place.  Never throws.
  *
- * @param stmts   The parsed AST to annotate
- * @param source  The original source text (used for error formatting)
+ * @param stmts          The parsed AST to annotate
+ * @param source         The original source text (used for error formatting)
+ * @param typeResolver   Optional. Resolves an import to that module's
+ *   TypeImportTable (see inferencer.ts), enabling real cross-module type
+ *   checks. Omitted (the default), every import behaves exactly as before
+ *   cross-module type support existed.
+ * @param unionResolver  Optional. Resolves an import to that module's
+ *   UnionImportTable, enabling exhaustiveness checks on matches over
+ *   imported union values. Omitted (the default), behavior is unchanged.
+ * @param exportTypesOut Optional. Populated (as a side effect) with this
+ *   module's own exported names' RESOLVED types (post-substitution,
+ *   unlike inferencer.ts's exportTypesOut parameter which is
+ *   pre-substitution) — ready for the whole-program driver to feed
+ *   straight into another module's typeResolver with no further work.
+ *   Both typeResolver/unionResolver and exportTypesOut are supplied by the
+ *   whole-program driver (wholeProgramCheck.ts); existing callers (every
+ *   call site before this stage) omit all three and are unaffected.
  */
-export function checkTypes(stmts: Stmt[], source: string): PfunError[] {
-  const cs                = generateConstraints(stmts);
+export function checkTypes(
+  stmts: Stmt[],
+  source: string,
+  typeResolver?: TypeImportResolver,
+  unionResolver?: UnionModuleResolver,
+  exportTypesOut?: Map<string, PfunType>,
+): PfunError[] {
+  const rawExportTypes = new Map<string, PfunType>();
+  const cs                = generateConstraints(stmts, typeResolver, rawExportTypes, unionResolver);
   const { subst, errors } = solveConstraints(cs);
   applySubstitutionToAST(stmts, subst);
-  const exhaustivenessErrors = checkExhaustiveness(stmts, source);
+  const exhaustivenessErrors = checkExhaustiveness(stmts, source, unionResolver);
+
+  if (exportTypesOut) {
+    for (const [name, ty] of rawExportTypes) exportTypesOut.set(name, subst.apply(ty));
+  }
 
   // Format unification errors as PfunErrors with source positions
   const typeErrors = errors.map(err => {

@@ -1,0 +1,4 @@
+import * from "io";
+import { double } from "./lib";
+
+println(double(5));

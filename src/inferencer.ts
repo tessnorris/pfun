@@ -384,15 +384,128 @@ function constraint(a: PfunType, b: PfunType, pos?: SourcePos): Constraint {
 // Reuses the same scoped-chain shape as the first-pass TypeEnv, but lives
 // here so the constraint generator can be used independently.
 
+/**
+ * A module's exported names and their resolved types, as extracted by the
+ * whole-program driver (wholeProgramCheck.ts) after running
+ * generateConstraints + solveConstraints over that module and reading off
+ * each exported name's final (substituted) type. Mirrors
+ * procedureCheck.ts's ImportTable (which does the analogous thing for
+ * purity *kinds*) — kept as a separate type since the value domain differs
+ * (PfunType here, NameKind there), but the role is identical: turn an
+ * imported name from "completely opaque to this pass" into "as precisely
+ * known as if it had been declared locally."
+ *
+ * Absent entirely (the default), this module's behavior is unchanged from
+ * before cross-module type support existed: every imported name gets a
+ * fresh, unconstrained TyVar (IdentExpr's "unbound name" branch), exactly
+ * as today.
+ */
+export type TypeImportTable = Map<string, PfunType>;
+
+/**
+ * Resolves an import to that module's TypeImportTable. Supplied by the
+ * whole-program driver, which has already run generateConstraints +
+ * solveConstraints over every module in the import graph, in dependency
+ * order, before this pass runs on a module that imports from them — see
+ * wholeProgramCheck.ts for the full design. Mirrors
+ * procedureCheck.ts's ModuleImportResolver exactly (same null-means-
+ * "fall back to permissive treatment of this one import" contract).
+ */
+export type TypeImportResolver = (importPath: string, pos: SourcePos | undefined) => TypeImportTable | null;
+
+/**
+ * One union's variant descriptors. Mirrors typechecker.ts's
+ * UnionVariants exactly (same shape; redeclared rather than imported to
+ * avoid a circular dependency — typechecker.ts already imports FROM this
+ * file, see its own header comment).
+ */
+export type UnionVariants = { name: string; fields: string[] }[];
+
+/**
+ * A module's exported unions, keyed by union name. Needed for a DIFFERENT
+ * reason than TypeImportTable: importing a union's VARIANT CONSTRUCTOR
+ * name (e.g. `import { Square } from "./shapes"`, then constructing
+ * `Square { 5 }`) does not go through env.lookup at all —
+ * RecordExpr's own handling (cgenExpr's 'RecordExpr' case) looks up
+ * `registry.lookupConstructor(expr.name)` on the CGenRegistry directly, a
+ * completely separate lookup path from IdentExpr's env-based one. Without
+ * registering the imported union into THIS module's own CGenRegistry too,
+ * an imported constructor's RecordExpr would get `{ kind: 'Named', name:
+ * expr.name }` with no `unionName` at all (registry.lookupConstructor
+ * returns null for an unregistered name) — silently breaking both the
+ * type itself and, downstream, cross-module exhaustiveness checking
+ * (typechecker.ts's checkExhaustiveness reads inferredType.unionName off
+ * exactly this RecordExpr-derived type for the match subject).
+ */
+export type UnionImportTable = Map<string, UnionVariants>;
+
+/** Resolves an import to that module's exported unions, for CGenRegistry
+ *  seeding. Mirrors TypeImportResolver's contract exactly. */
+export type UnionImportResolver = (importPath: string, pos: SourcePos | undefined) => UnionImportTable | null;
+
+/**
+ * Set once at the start of each generateConstraints() call, read only by
+ * ImportStmt's handling in cgenStmt and by GetExpr's namespace-member
+ * lookup in cgenExpr — never mutated mid-walk. Module-level rather than
+ * threaded as an explicit parameter through cgenStmt/cgenExpr (~44 call
+ * sites) for the identical reason procedureCheck.ts's
+ * currentImportResolver is module-level: it is genuinely constant for the
+ * whole walk, unlike `env`/`registry`/`cs` which change per-call, so a
+ * parameter would be passed unchanged at every single call site. Safe as
+ * module state because generateConstraints is fully synchronous (no
+ * async/await/yield anywhere in this file) and has no concurrent/
+ * worker-thread callers.
+ */
+let currentTypeImportResolver: TypeImportResolver | null = null;
+
+/** Sibling to currentTypeImportResolver above, same rationale — read only
+ *  by registerAllUnions's ImportStmt handling (CGenRegistry seeding for
+ *  imported union constructors — see UnionImportTable's docblock). */
+let currentUnionImportResolver: UnionImportResolver | null = null;
+
+/** What a single name in env actually refers to: either a plain resolved
+ *  (or in-progress, pre-substitution) type, or — for a namespace import
+ *  (`import * as X from "..."`) — the whole imported module's type table,
+ *  so a later `X.foo` GetExpr can be resolved against it. Mirrors
+ *  procedureCheck.ts's ScopeEntry. */
+type CGenEnvEntry = { tag: 'type'; type: PfunType } | { tag: 'namespace'; table: TypeImportTable };
+
 class CGenEnv {
-  private bindings = new Map<string, PfunType>();
+  private bindings = new Map<string, CGenEnvEntry>();
   constructor(public parent?: CGenEnv) {}
 
-  define(name: string, type: PfunType): void { this.bindings.set(name, type); }
+  define(name: string, type: PfunType): void { this.bindings.set(name, { tag: 'type', type }); }
+
+  /** Bind `name` as a namespace import standing for an entire module's
+   *  type table (`import * as X from "..."` → defineNamespace('X', ...)). */
+  defineNamespace(name: string, table: TypeImportTable): void {
+    this.bindings.set(name, { tag: 'namespace', table });
+  }
+
+  private resolveEntry(name: string): CGenEnvEntry | undefined {
+    const found = this.bindings.get(name);
+    if (found !== undefined) return found;
+    return this.parent?.resolveEntry(name);
+  }
 
   lookup(name: string): PfunType | undefined {
-    if (this.bindings.has(name)) return this.bindings.get(name)!;
-    return this.parent?.lookup(name);
+    const entry = this.resolveEntry(name);
+    if (!entry || entry.tag === 'namespace') return undefined;
+    return entry.type;
+  }
+
+  /** Resolve `name.member`'s type when `name` is bound to a namespace
+   *  import. Returns undefined if `name` is not (in scope) a namespace
+   *  binding — the caller should fall back to ordinary GetExpr handling
+   *  in that case. A namespace binding whose table doesn't contain
+   *  `member` resolves to a fresh var, not undefined — same permissive
+   *  "don't invent a false error over something this pass can't fully
+   *  resolve" policy as everywhere else in this file (e.g. IdentExpr's
+   *  unbound-name branch). */
+  lookupMember(name: string, member: string): PfunType | undefined | null {
+    const entry = this.resolveEntry(name);
+    if (!entry || entry.tag !== 'namespace') return null;
+    return entry.table.get(member); // undefined here means "namespace known, member not found" — distinct from null ("not a namespace at all")
   }
 
   child(): CGenEnv { return new CGenEnv(this); }
@@ -662,6 +775,24 @@ function cgenExpr(
 
     // ── Get (field access) ────────────────────────────────────────────────────
     case 'GetExpr': {
+      // Namespace-qualified access: `X.foo` where X is bound via `import
+      // * as X from "..."`. If X resolves to a namespace binding, look up
+      // foo's real type in that module's table instead of falling
+      // through to the generic "field type unknown" fresh var below —
+      // this is the one case where this pass *can* know a GetExpr's type
+      // precisely, since X.foo is a top-level module export, not an
+      // arbitrary record field with no known schema.
+      if (expr.object.type === 'IdentExpr') {
+        const memberType = env.lookupMember(expr.object.name, expr.name);
+        if (memberType !== null) {
+          // X IS a namespace binding (memberType is undefined only if
+          // `foo` isn't in its table, in which case fall through to a
+          // fresh var just below, same permissive policy as elsewhere).
+          cgenExpr(expr.object, env, registry, cs);
+          t = memberType ?? freshVar();
+          break;
+        }
+      }
       cgenExpr(expr.object, env, registry, cs);
       // Field type is unknown without a record schema — fresh var
       t = freshVar();
@@ -950,6 +1081,12 @@ function cgenStmt(
       break;
 
     case 'ImportStmt':
+      // Re-bind here too (not just in seedAllImports's pre-pass) so a
+      // *nested* import (e.g. inside a function body, reached only when
+      // cgenStmt's walk actually gets there) is still bound in the
+      // correct (possibly inner, function-body) env, not just the
+      // top-level one the pre-pass seeded. See bindImport's docblock.
+      bindImport(stmt, env);
       break;
   }
 }
@@ -1003,7 +1140,88 @@ function registerAllUnions(stmts: Stmt[], registry: CGenRegistry): void {
       case 'FunctionStmt':
       case 'ProcedureStmt':  s.body.forEach(walk); break;
       case 'ExportStmt':     walk(s.declaration); break;
+      case 'ImportStmt': {
+        // Register unions reachable via this import into THIS module's
+        // own CGenRegistry too — needed so RecordExpr construction of an
+        // imported variant constructor (e.g. `Square { 5 }` after
+        // `import { Square } from "./shapes"`) resolves to a Named type
+        // WITH unionName, not just `{ kind: 'Named', name: 'Square' }` —
+        // see UnionImportTable's docblock for the full reasoning. Same
+        // permissive no-op when no resolver is supplied (the default) or
+        // resolution fails for this particular import.
+        if (!currentUnionImportResolver) break;
+        const table = currentUnionImportResolver(s.path, s.pos);
+        if (!table) break;
+        for (const [unionName, variants] of table) registry.registerUnion(unionName, variants);
+        break;
+      }
       // Every other statement type cannot contain a UnionTypeStmt.
+    }
+  }
+  for (const s of stmts) walk(s);
+}
+
+/**
+ * Bind one ImportStmt's names into `env`, using `currentTypeImportResolver`
+ * (if set) to seed real resolved types. Shared between seedAllImports's
+ * pre-pass (forward-reference safety — see its docblock) and cgenStmt's
+ * own ImportStmt case (so a *nested* import, e.g. inside a function body,
+ * still gets (re-)bound at the point cgenStmt actually reaches it; the
+ * pre-pass alone only exists to make forward references resolve and
+ * doesn't change cgenStmt's own per-node walk or its env.child() scoping
+ * for nested imports specifically).
+ */
+function bindImport(stmt: Stmt & { type: 'ImportStmt' }, env: CGenEnv): void {
+  const table = currentTypeImportResolver ? currentTypeImportResolver(stmt.path, stmt.pos) : null;
+  if (stmt.kind === 'named') {
+    for (const n of stmt.names) {
+      const bindName = n.alias ?? n.name;
+      const ty = table?.get(n.name);
+      if (ty) env.define(bindName, ty);
+      // No table, or name absent from it: leave unbound — IdentExpr's
+      // unbound-name branch will assign a fresh var when it's used, same
+      // permissive fallback as everywhere else in this pass.
+    }
+  } else if (stmt.kind === 'namespace') {
+    if (table) env.defineNamespace(stmt.alias, table);
+    // No table: leave the alias unbound. A later `X.foo` GetExpr will
+    // find X unbound (not a namespace binding) and fall through to
+    // ordinary GetExpr handling (a fresh var for the field), same as
+    // before namespace type support existed.
+  } else {
+    // 'star' — every export of the resolved module binds directly into
+    // this env, same as the runtime's own star-import binding
+    // (interpreter.ts) and procedureCheck.ts's analogous star-import
+    // handling.
+    if (table) for (const [name, ty] of table) env.define(name, ty);
+  }
+}
+
+/**
+ * Seed every ImportStmt's names into `env`, regardless of where in the
+ * statement tree the import appears — run as its own complete pre-pass
+ * BEFORE the main cgenStmt walk, mirroring registerAllUnions's rationale
+ * exactly: a name used before its own `import` statement appears later in
+ * the same file (confirmed legal — pfun's closures/function bodies
+ * resolve names lazily, not at declaration-textual-order time, the same
+ * hoisting-like behavior already established for forward-referenced
+ * unions and functions) must still resolve correctly. Without this,
+ * env.define for an imported name would only happen when cgenStmt's own
+ * top-to-bottom walk reached that ImportStmt, so any earlier use of the
+ * name would see it as unbound and get a fresh, unconstrained var instead
+ * of its real type.
+ */
+function seedAllImports(stmts: Stmt[], env: CGenEnv): void {
+  function walk(s: Stmt): void {
+    if (!s) return;
+    switch (s.type) {
+      case 'ImportStmt':     bindImport(s, env); break;
+      case 'IfStmt':         walk(s.thenBranch); if (s.elseBranch) walk(s.elseBranch); break;
+      case 'BlockStmt':      s.statements.forEach(walk); break;
+      case 'FunctionStmt':
+      case 'ProcedureStmt':  s.body.forEach(walk); break;
+      case 'ExportStmt':     walk(s.declaration); break;
+      // Every other statement type cannot contain an ImportStmt.
     }
   }
   for (const s of stmts) walk(s);
@@ -1016,8 +1234,39 @@ function registerAllUnions(stmts: Stmt[], registry: CGenRegistry): void {
  *
  * Does not solve constraints — call the Phase 4 solver on the returned
  * ConstraintSet to produce a final Substitution.
+ *
+ * @param stmts            The parsed AST to generate constraints for.
+ * @param resolver         Optional. Resolves an import path to that
+ *   module's TypeImportTable, enabling real cross-module type checks
+ *   (including through namespace imports). Omitted (the default), every
+ *   import is treated exactly as before cross-module type support
+ *   existed — every imported name is unbound, getting a fresh,
+ *   unconstrained TyVar wherever it's used. Supplied by the whole-program
+ *   driver (wholeProgramCheck.ts).
+ * @param exportTypesOut   Optional. If supplied, populated (as a side
+ *   effect) with this module's own top-level bindings' PRE-substitution
+ *   types — i.e. the raw TyVars/types env held right after this walk, not
+ *   yet resolved by the solver. The caller (wholeProgramCheck.ts) applies
+ *   the Substitution from solveConstraints() to each entry afterward to
+ *   get the final, resolved type — generateConstraints alone never solves
+ *   anything, so it cannot populate already-resolved types itself.
+ *   Existing callers (checkTypes/inferTypes in typechecker.ts, and every
+ *   test in inferencer.test.ts) omit this and are completely unaffected —
+ *   it is purely additive output, never required, never changes anything
+ *   else this function does.
+ * @param unionResolver    Optional. Resolves an import path to that
+ *   module's exported unions (UnionImportTable), so an imported union
+ *   variant constructor can be constructed (RecordExpr) with its
+ *   unionName correctly attached — see UnionImportTable's docblock for
+ *   why this needs a SEPARATE table from `resolver`/TypeImportTable
+ *   (RecordExpr's type comes from CGenRegistry, not env).
  */
-export function generateConstraints(stmts: Stmt[]): ConstraintSet {
+export function generateConstraints(
+  stmts: Stmt[],
+  resolver?: TypeImportResolver,
+  exportTypesOut?: Map<string, PfunType>,
+  unionResolver?: UnionImportResolver,
+): ConstraintSet {
   const env      = buildCGenBuiltinEnv();
   const registry = new CGenRegistry();
   // Pre-register builtin union types so their variants get unionName attached.
@@ -1025,13 +1274,81 @@ export function generateConstraints(stmts: Stmt[]): ConstraintSet {
     { name: 'Some', fields: ['value'] },
     { name: 'None', fields: [] },
   ]);
-  // Pre-register every user-defined union too, before the main walk, so
-  // forward references resolve correctly — see registerAllUnions's
-  // docblock above.
-  registerAllUnions(stmts, registry);
-  const cs: ConstraintSet = [];
-  for (const stmt of stmts) cgenStmt(stmt, env, registry, cs);
-  return cs;
+
+  currentTypeImportResolver  = resolver ?? null;
+  currentUnionImportResolver = unionResolver ?? null;
+  try {
+    // Pre-register every user-defined AND imported union, before the main
+    // walk, so forward references resolve correctly — see
+    // registerAllUnions's docblock above. Must run AFTER the resolver
+    // assignments just above, since registerAllUnions's own ImportStmt
+    // handling reads currentUnionImportResolver.
+    registerAllUnions(stmts, registry);
+    // Pre-seed every import too, before the main walk, for the identical
+    // forward-reference reason as unions above — see seedAllImports's
+    // docblock.
+    seedAllImports(stmts, env);
+    const cs: ConstraintSet = [];
+    for (const stmt of stmts) cgenStmt(stmt, env, registry, cs);
+
+    if (exportTypesOut) {
+      for (const name of collectExportNames(stmts)) {
+        const ty = env.lookup(name);
+        if (ty) exportTypesOut.set(name, ty);
+        // A name genuinely absent from env (shouldn't normally happen —
+        // every ExportStmt's declaration also defines its own name via
+        // cgenStmt) is simply omitted, not an error here; the caller
+        // treats a missing entry the same as "unresolvable", same
+        // permissive policy as everywhere else.
+      }
+    }
+
+    return cs;
+  } finally {
+    // Always clear, success or failure — mirrors
+    // procedureCheck.ts's identical try/finally around its own
+    // currentImportResolver.
+    currentTypeImportResolver  = null;
+    currentUnionImportResolver = null;
+  }
+}
+
+/**
+ * Collect the names exported by a module's own ExportStmts — used to know
+ * which env bindings to read back out for exportTypesOut. Mirrors
+ * wholeProgramCheck.ts's extractExportKinds (the purity-table analogue)
+ * exactly in shape, but only needs NAMES here (the type itself comes from
+ * env, already computed by the walk) — not kind classification.
+ */
+function collectExportNames(stmts: Stmt[]): string[] {
+  const names: string[] = [];
+  function classify(decl: Stmt): void {
+    switch (decl.type) {
+      case 'LetStmt':
+      case 'VarStmt':
+      case 'FunctionStmt':
+      case 'ProcedureStmt':
+        names.push(decl.name);
+        break;
+      case 'UnionTypeStmt':
+        for (const v of decl.variants) if (v.fields.length === 0) names.push(v.name);
+        break;
+      // TypeStmt: type-only, no value binding in env to read back.
+    }
+  }
+  function walk(s: Stmt): void {
+    if (!s) return;
+    switch (s.type) {
+      case 'ExportStmt':      classify(s.declaration); break;
+      case 'IfStmt':          walk(s.thenBranch); if (s.elseBranch) walk(s.elseBranch); break;
+      case 'BlockStmt':       s.statements.forEach(walk); break;
+      case 'FunctionStmt':
+      case 'ProcedureStmt':   s.body.forEach(walk); break;
+      // Every other statement type cannot contain an ExportStmt.
+    }
+  }
+  for (const s of stmts) walk(s);
+  return names;
 }
 
 // ─── § 7  Type schemes — let-generalisation and instantiation ────────────────

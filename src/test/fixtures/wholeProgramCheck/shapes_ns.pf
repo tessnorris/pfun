@@ -1,0 +1,5 @@
+export type Shape = { | Square: side | Circle: radius };
+
+export function makeSquare(s) {
+  return Square { s };
+}

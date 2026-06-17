@@ -1,0 +1,5 @@
+import * from "io";
+import { double } from "./lib";
+
+let bad = double("not a number");
+println(bad);

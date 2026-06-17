@@ -597,6 +597,24 @@ export class ModuleLoader {
   private builtins = new Map<string, { fns: RegistryFunction[]; types: RegistryType[] }>();
 
   /**
+   * Set by main.ts's runFile, AFTER checkProgram() has already run
+   * successfully over this loader's entire import graph (see
+   * wholeProgramCheck.ts) — never set by the REPL paths, which never call
+   * checkProgram at all (out of scope for whole-program checking; see
+   * wholeProgramCheck.ts's design notes). When true, load() below skips
+   * its own per-module checkProcedureUsage/checkTypes calls for modules
+   * loaded through this loader, since checkProgram already proved the
+   * WHOLE graph — same-module violations within a dependency included,
+   * not just cross-module misuse by importers — is error-free before any
+   * execution began; re-checking here would just repeat exactly the same
+   * work checkProgram already did, on the exact same parsed files. Stays
+   * false (the default) for the REPL's own ModuleLoader instance, where
+   * load()'s per-module checks remain the ONLY static checking a
+   * dynamically `import`ed file ever receives.
+   */
+  wholeProgramChecked = false;
+
+  /**
    * @param libDir   Directory for bare-name imports (e.g. "math" → libDir/math.pf)
    * @param setup    Called on each sub-interpreter after construction, before
    *                 running the module. Use this to register the stdlib.
@@ -658,9 +676,17 @@ export class ModuleLoader {
     try {
       const source = fs.readFileSync(resolvedPath, 'utf-8');
       const ast    = new Parser(new Lexer(source).lex()).parse();
-      checkProcedureUsage(ast);
-      const typeErrors = checkTypes(ast, source);
-      if (typeErrors.length > 0) throw typeErrors[0];
+      if (!this.wholeProgramChecked) {
+        // Skipped when checkProgram already validated this loader's
+        // ENTIRE import graph upfront (runFile path) — see
+        // wholeProgramChecked's docblock above. Still runs for the REPL's
+        // own loader (wholeProgramChecked stays false there), where this
+        // is the only static checking a dynamically `import`ed file ever
+        // gets.
+        checkProcedureUsage(ast);
+        const typeErrors = checkTypes(ast, source);
+        if (typeErrors.length > 0) throw typeErrors[0];
+      }
       const interp = new Interpreter(path.dirname(resolvedPath), this);
       this.setup(interp);
       interp.interpret(ast);

@@ -1,3 +1,4 @@
+import * from "io";
 export proc sideEffect(x) {
   println(x);
 }

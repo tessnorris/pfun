@@ -72,33 +72,48 @@ export async function runFile(filePath: string, scriptArgs: string[] = []) {
     process.exit(1);
   }
 
-  // Whole-program static procedure-usage (purity) checking: walks the
-  // entire import graph (the entry file plus everything it transitively
-  // imports), each file parsed once, and fails on the first violation
-  // found anywhere — not just in this file. Supersedes the old
-  // entry-file-only `checkProcedureUsage(ast)` call (Stage 1 of
-  // whole-program static checking — see wholeProgramCheck.ts's file
-  // header for the full design). checkProgram does its own internal
-  // parse of the entry file (and its dependencies) to build the graph;
-  // this means the entry file is parsed twice in this function (here, and
-  // again just above for `ast`) — an accepted, deliberate cost for Stage
-  // 1, removed once a shared parsed-AST cache is built in Stage 3.
+  // Whole-program static checking: walks the entire import graph (the
+  // entry file plus everything it transitively imports), each file
+  // parsed once, and runs BOTH procedure-usage/purity checking AND type/
+  // exhaustiveness checking against every module in the graph — not just
+  // this one — failing on the first violation found anywhere. Supersedes
+  // the old entry-file-only `checkProcedureUsage(ast)` call (Stage 1) and
+  // extends coverage to cross-module type/exhaustiveness errors too
+  // (Stage 2) — see wholeProgramCheck.ts's file header for the full
+  // design. checkProgram does its own internal parse of the entry file
+  // (and its dependencies) to build the graph; this means the entry file
+  // is parsed twice in this function (here, and again just above for
+  // `ast`) — an accepted, deliberate cost, removed once a shared
+  // parsed-AST cache is built in Stage 3.
   const programError = checkProgram(absolutePath, loader);
   if (programError) {
     console.error(programError.pfunMessage);
     process.exit(1);
   }
+  // checkProgram just proved this loader's ENTIRE import graph is
+  // error-free — tell the loader so its own load()-time
+  // checkProcedureUsage/checkTypes calls (interpreter.ts) skip re-doing
+  // exactly the same work on exactly the same files when dependencies
+  // actually get loaded during interpretation below. See
+  // ModuleLoader.wholeProgramChecked's docblock for why this is safe to
+  // skip here but must stay on for the REPL's own loader.
+  loader.wholeProgramChecked = true;
 
-  // Static type checking (Hindley-Milner inference via inferencer.ts,
-  // orchestrated by typechecker.ts's checkTypes). Unlike the lex/parse
-  // check above, checkTypes() never throws — it always returns an array
-  // (possibly empty) of already-formatted PfunErrors, so this is a plain
-  // check rather than a try/catch. NOTE: checkTypes here still only
-  // checks the entry file's own AST, not the whole import graph — that is
-  // Stage 2 of whole-program static checking, not yet built; cross-module
-  // type errors are not yet caught statically (same gap as before this
-  // change, for types specifically — only purity gained whole-program
-  // coverage in this stage).
+  // Re-run type inference on THIS FUNCTION'S OWN `ast` (a separate parse
+  // from checkProgram's internal one above) purely to ANNOTATE it —
+  // inferredType/missingVariants, which some interpreter codepaths read
+  // at runtime (see interpreter.ts's record-schema seeding around
+  // evaluateRecord()) — not to detect errors: checkProgram already
+  // proved the whole graph (including this file) is error-free, so this
+  // call's returned errors are never expected to be non-empty in
+  // practice. No resolvers are passed here (unlike checkProgram's
+  // internal call), so any cross-module type info doesn't make it onto
+  // THIS ast's annotations specifically — confirmed harmless: a missing
+  // resolver only ever makes an imported name's annotated type LESS
+  // precise (a permissive fresh var, never a hard error), and the
+  // interpreter's actual runtime schema registration for imported
+  // records/unions happens independently via real module evaluation
+  // (ModuleLoader.load), not solely from these static annotations.
   const typeErrors = checkTypes(ast!, source);
   if (typeErrors.length > 0) {
     for (const err of typeErrors) console.error(err.pfunMessage);

@@ -1,19 +1,18 @@
 // src/wholeProgramCheck.ts
 //
-// Stage 1 of whole-program static checking: walks a program's entire
-// import graph, parsing each file exactly once, and runs the static
-// procedure-usage checker (procedureCheck.ts) against every module in the
-// graph — not just the entry file — feeding each module real cross-module
-// kind information about what it imports.
+// Whole-program static checking driver. Walks a program's entire import
+// graph, parsing each file exactly once, and runs BOTH static checkers —
+// procedure-usage/purity (procedureCheck.ts, Stage 1) and type/
+// exhaustiveness (typechecker.ts's checkTypes, Stage 2) — against every
+// module in the graph, not just the entry file, feeding each module real
+// cross-module information about what it imports.
 //
-// This exists because a transpiler has no runtime `inPureContext` check to
-// fall back on: the static checks must become the SOLE enforcement of
-// purity, which means they must run over every file a program depends on,
-// not just the one the user invoked. See the project's whole-program
-// checking design notes for the full motivation and staging plan; this
-// file implements Stage 1 (graph + purity) only. Stage 2 (types +
-// exhaustiveness) extends this with export *type* tables, layered on top
-// of the same graph/ordering/caching machinery built here.
+// This exists because a transpiler has no runtime `inPureContext` check
+// (purity) or unification (types) to fall back on: the static checks must
+// become the SOLE enforcement of both purity AND type-correctness, which
+// means they must run over every file a program depends on, not just the
+// one the user invoked. See the project's whole-program checking design
+// notes for the full motivation and staging plan.
 //
 // ─── What "checking a program" means here ──────────────────────────────────
 //
@@ -22,31 +21,39 @@
 //   2. Order modules so every module is processed only after everything it
 //      imports has already been processed (topological order over the
 //      import graph), with circular-import detection.
-//   3. For each module, in that order: run checkProcedureUsage against it,
-//      seeded with a resolver that can answer "what kind is this imported
-//      name?" by looking up the already-computed ImportTable of whichever
-//      module it imports (always already available, since we're going
+//   3. For each module, in that order: run checkProcedureUsage AND
+//      checkTypes against it, each seeded with a resolver that can answer
+//      "what kind/type/union-shape does this imported name have?" by
+//      looking up the already-computed info for whichever module it
+//      imports (always already available, since we're going
 //      dependency-first).
-//   4. After a module's own check succeeds, extract its own ImportTable —
-//      the kind of every name it exports — by walking its ExportStmts, and
-//      cache it under that module's resolved path for anything that
-//      imports it later.
+//   4. After a module's own checks succeed, extract its own export tables
+//      — kind (purity), resolved type, and (for unions) variant shape —
+//      by walking its ExportStmts, and cache them under that module's
+//      resolved path for anything that imports it later.
 //   5. The first error encountered anywhere — whichever module, whichever
-//      violation — stops the whole walk and is reported with that module's
-//      file path attached (since the error may not be in the entry file).
+//      check, whichever violation — stops the whole walk and is reported
+//      with that module's file path attached (since the error may not be
+//      in the entry file).
 //
-// Built-in modules (io, math, ...) are leaf nodes with no .pf source: their
-// ImportTable is built directly from ModuleLoader.builtinExportNames,
-// entirely kind 'other' (see that method's docblock in interpreter.ts for
-// why this is always sound: native functions are never proc-typed).
+// Built-in modules (io, math, ...) are leaf nodes with no .pf source:
+// their export kinds come from ModuleLoader.builtinExportNames (entirely
+// kind 'other' — natives are never proc-typed); their export TYPES are
+// all `Unknown` (the Stage 2 design's deliberate choice — see the design
+// doc's "Minimal builtin type table" decision; a full hand-written `Fn`
+// signature table for the stdlib is Stage 3 work, not done here); they
+// export no unions at all (no built-in module currently defines a
+// UnionTypeStmt — they're plain JS function/type registrations).
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { Stmt, Expr } from './ast';
+import { Stmt, Expr, PfunType, UNKNOWN } from './ast';
 import { Lexer, SourcePos } from './lexer';
 import { Parser } from './parser';
 import { buildPfunError, PfunError } from './errors';
 import { checkProcedureUsage, ImportTable, ModuleImportResolver } from './procedureCheck';
+import { checkTypes } from './typechecker';
+import type { TypeImportTable, TypeImportResolver, UnionImportTable, UnionImportResolver } from './inferencer';
 import { ModuleLoader, resolveModulePath } from './interpreter';
 
 // ─── Per-module record ─────────────────────────────────────────────────────
@@ -62,10 +69,12 @@ export interface ModuleNode {
   imports: { resolvedPath: string; importPath: string; pos: SourcePos | undefined }[];
 }
 
-/** Populated for every module once its own check (or, for a builtin, its
- *  trivial table) is complete — see "What checking a program means" above. */
+/** Populated for every module once its own checks (or, for a builtin, its
+ *  trivial tables) are complete — see "What checking a program means" above. */
 interface ModuleInfo {
-  exportKinds: ImportTable;
+  exportKinds:  ImportTable;
+  exportTypes:  TypeImportTable;
+  exportUnions: UnionImportTable;
 }
 
 /** Thrown internally to unwind out of the graph walk / check loop on the
@@ -74,6 +83,19 @@ interface ModuleInfo {
 class WholeProgramError extends Error {
   constructor(message: string, public sourcePath: string, public source: string, public pos: SourcePos | undefined) {
     super(message);
+  }
+}
+
+/** Thrown internally (parallel to WholeProgramError, but for checkTypes'
+ *  errors specifically) to unwind out of the check loop on the first
+ *  type/exhaustiveness error. Unlike checkProcedureUsage's plain thrown
+ *  Error, checkTypes() returns already-fully-formatted PfunErrors — this
+ *  wrapper carries that formatted PfunError through unchanged (see
+ *  attachFilePathIfCrossFile) rather than re-deriving one from a raw
+ *  message, avoiding double-formatting. Never escapes checkProgram(). */
+class WholeProgramTypeError extends Error {
+  constructor(public original: PfunError, public sourcePath: string) {
+    super(original.message);
   }
 }
 
@@ -242,18 +264,50 @@ function extractExportKinds(stmts: Stmt[]): ImportTable {
   return table;
 }
 
+/**
+ * Build a module's UnionImportTable by walking its own statement tree for
+ * exported UnionTypeStmts, capturing each union's full variant descriptor
+ * list (name + fields) — the same shape typechecker.ts's own
+ * registerAllUnions registers locally-declared unions with. A TypeStmt
+ * (plain record) or any non-union declaration contributes nothing here;
+ * only UnionTypeStmt carries variant-shape information for exhaustiveness
+ * purposes.
+ */
+function extractExportUnions(stmts: Stmt[]): UnionImportTable {
+  const table: UnionImportTable = new Map();
+
+  function classify(decl: Stmt): void {
+    if (decl.type === 'UnionTypeStmt') table.set(decl.name, decl.variants);
+  }
+
+  function walk(s: Stmt): void {
+    if (!s) return;
+    switch (s.type) {
+      case 'ExportStmt':      classify(s.declaration); break;
+      case 'IfStmt':          walk(s.thenBranch); if (s.elseBranch) walk(s.elseBranch); break;
+      case 'BlockStmt':       s.statements.forEach(walk); break;
+      case 'FunctionStmt':
+      case 'ProcedureStmt':   s.body.forEach(walk); break;
+      // Every other statement type cannot contain an ExportStmt.
+    }
+  }
+  for (const s of stmts) walk(s);
+  return table;
+}
+
 // ─── Step 3+5: the driver ──────────────────────────────────────────────────
 
 /**
  * Check an entire program — the entry file plus everything it transitively
- * imports — for static procedure-usage (purity) violations, including
- * across module boundaries (named, namespace, and star imports).
+ * imports — for static procedure-usage (purity) violations AND type/
+ * exhaustiveness errors, including across module boundaries (named,
+ * namespace, and star imports).
  *
  * Each file is parsed exactly once. Returns null if the whole program
- * passes; returns the first PfunError encountered (from whichever file)
- * otherwise. Never throws — like checkTypes(), this is a plain check, not
- * a try/catch-driven control-flow function, so callers (main.ts) can treat
- * it uniformly.
+ * passes; returns the first PfunError encountered (from whichever file,
+ * whichever check) otherwise. Never throws — like checkTypes() itself,
+ * this is a plain check, not a try/catch-driven control-flow function, so
+ * callers (main.ts) can treat it uniformly.
  *
  * @param entryPath  Absolute path to the entry .pf file.
  * @param loader     A ModuleLoader with built-in modules already
@@ -270,32 +324,83 @@ export function checkProgram(entryPath: string, loader: ModuleLoader): PfunError
       if (node.resolvedPath.startsWith('__builtin__:')) {
         const name  = node.resolvedPath.slice('__builtin__:'.length);
         const names = loader.builtinExportNames(name) ?? [];
-        const table: ImportTable = new Map(names.map(n => [n, 'other' as const]));
-        infoByPath.set(node.resolvedPath, { exportKinds: table });
+        const kinds: ImportTable     = new Map(names.map(n => [n, 'other' as const]));
+        // Every builtin export gets type Unknown — the deliberate Stage 2
+        // choice (see this file's header); a full hand-written Fn
+        // signature table for the stdlib is Stage 3 work. Unknown
+        // unifies with anything (see ast.ts's UNKNOWN docs), so this
+        // never produces a false-positive type error — it just means a
+        // misuse of a builtin's return value isn't YET caught statically
+        // by this pass (same gap as before this stage, for builtins
+        // specifically — user-module cross-module types are the actual
+        // improvement here).
+        const types: TypeImportTable = new Map(names.map(n => [n, UNKNOWN]));
+        // No built-in module currently exports a union type (they're
+        // plain JS function/type registrations, not parsed UnionTypeStmts)
+        // — an empty table is exactly correct, not a placeholder.
+        const unions: UnionImportTable = new Map();
+        infoByPath.set(node.resolvedPath, { exportKinds: kinds, exportTypes: types, exportUnions: unions });
         continue;
       }
 
-      const resolver: ModuleImportResolver = (importPath, pos) => {
+      const fromDir = path.dirname(node.resolvedPath);
+
+      const kindResolver: ModuleImportResolver = (importPath, pos) => {
         // Re-resolve relative to *this* module's own directory — an
         // import path string is only meaningful relative to the module
         // that wrote it, never globally.
-        const fromDir = path.dirname(node.resolvedPath);
         const resolved = loader.resolve(importPath, fromDir);
         return infoByPath.get(resolved)?.exportKinds ?? null;
       };
 
       try {
-        checkProcedureUsage(node.ast!, resolver);
+        checkProcedureUsage(node.ast!, kindResolver);
       } catch (e) {
         const raw = e instanceof Error ? e : new Error(String(e));
         throw new WholeProgramError(raw.message, node.resolvedPath, node.source!, (raw as any).pos);
       }
 
-      infoByPath.set(node.resolvedPath, { exportKinds: extractExportKinds(node.ast!) });
+      const typeResolver: TypeImportResolver = (importPath, pos) => {
+        const resolved = loader.resolve(importPath, fromDir);
+        return infoByPath.get(resolved)?.exportTypes ?? null;
+      };
+      const unionResolver: UnionImportResolver = (importPath, pos) => {
+        const resolved = loader.resolve(importPath, fromDir);
+        return infoByPath.get(resolved)?.exportUnions ?? null;
+      };
+
+      const exportTypesOut = new Map<string, PfunType>();
+      const typeErrors = checkTypes(node.ast!, node.source!, typeResolver, unionResolver, exportTypesOut);
+      if (typeErrors.length > 0) {
+        // checkTypes() never throws — it returns errors — so convert its
+        // FIRST error into the same WholeProgramError-throwing shape used
+        // by checkProcedureUsage above, for uniform first-error handling
+        // across both checks and every module. typeErrors[0].pfunMessage
+        // is already fully formatted (with its own [Kind]/caret/etc.) by
+        // checkTypes' own buildPfunError call, so re-running it through
+        // buildPfunError again at the bottom of this function would
+        // double-format it — pass the already-formatted message straight
+        // through via a thin wrapper instead (see the catch block below).
+        throw new WholeProgramTypeError(typeErrors[0], node.resolvedPath);
+      }
+
+      infoByPath.set(node.resolvedPath, {
+        exportKinds:  extractExportKinds(node.ast!),
+        exportTypes:  exportTypesOut,
+        exportUnions: extractExportUnions(node.ast!),
+      });
     }
 
     return null;
   } catch (e) {
+    if (e instanceof WholeProgramTypeError) {
+      // Already a fully-formatted PfunError from checkTypes() itself —
+      // just attach the cross-file path header (same suppress-when-
+      // entry-file logic as the WholeProgramError branch below) without
+      // re-running it through buildPfunError, which would double-wrap
+      // the [Kind]/caret formatting checkTypes already produced.
+      return attachFilePathIfCrossFile(e.original, e.sourcePath, entryPath);
+    }
     if (e instanceof WholeProgramError) {
       // Only attach a file-path header when the error is in a DIFFERENT
       // file than the one the user actually ran — for the common
@@ -318,6 +423,40 @@ export function checkProgram(entryPath: string, loader: ModuleLoader): PfunError
     }
     throw e; // a genuine bug in this file, not a checked program's own error — let it surface normally
   }
+}
+
+/**
+ * Given an already-fully-formatted PfunError (as returned by checkTypes(),
+ * which this file never reformats further — see WholeProgramTypeError's
+ * docblock) and the resolved path of the file it came from, prepend an
+ * "In <path>:" header line when, and only when, that file is NOT the
+ * entry file the user actually ran (same suppress-for-the-common-case
+ * policy as the WholeProgramError/checkProcedureUsage branch, which
+ * builds its PfunError fresh via buildPfunError's filePath parameter
+ * instead — that path isn't available here because a finished PfunError
+ * instance only ever exposes its already-formatted .pfunMessage, never
+ * the raw kind/message/pos/source/bindings buildPfunError needs to
+ * reformat it; PfunError's own format() method is private and its
+ * .message getter (from the base Error class) returns the ALREADY-
+ * FORMATTED string too — there is no way to recover the original inputs
+ * from a finished instance, so this constructs a new PfunError-shaped
+ * value with the header text spliced directly into pfunMessage instead).
+ *
+ * Returns the original PfunError UNCHANGED (same identity) when no
+ * header is needed, so the overwhelmingly common single-file case is
+ * byte-for-byte identical to calling checkTypes() directly.
+ */
+function attachFilePathIfCrossFile(original: PfunError, sourcePath: string, entryPath: string): PfunError {
+  const resolvedEntry = path.resolve(entryPath);
+  if (sourcePath === resolvedEntry) return original;
+  const withHeader = `In ${displayPath(sourcePath)}:\n${original.pfunMessage}`;
+  // A plain object matching the one property callers (main.ts) actually
+  // read (`.pfunMessage`) is sufficient and avoids re-deriving kind/pos/
+  // bindings the original PfunError already computed correctly; the
+  // `as PfunError` cast reflects that this file's only real contract with
+  // its return value, end to end, is "has a .pfunMessage string" (see
+  // main.ts's sole use of checkProgram's result).
+  return { ...original, pfunMessage: withHeader } as PfunError;
 }
 
 /** Built-in sentinels and absolute paths both make poor error-message
