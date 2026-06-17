@@ -657,7 +657,29 @@ export class ModuleLoader {
    * load()'s per-module checks remain the ONLY static checking a
    * dynamically `import`ed file ever receives.
    */
-  wholeProgramChecked = false;
+  /**
+   * Set by main.ts's runFile to checkProgram()'s returned `checkedAsts`
+   * map, AFTER checkProgram() has already run successfully. Stage 3's
+   * "remove the double-parse" piece: when a resolved path has an entry
+   * here, load() below uses that already-parsed, already-checked,
+   * already-INFERREDTYPE-ANNOTATED AST directly instead of re-reading the
+   * file and re-parsing it. A NON-EMPTY map also doubles as "this
+   * loader's entire import graph was already statically checked upfront"
+   * — load()'s fallback branch (for any path NOT in this map) relies on
+   * that to decide whether to run its own checkProcedureUsage/checkTypes
+   * calls. This is sound because the only caller that ever populates
+   * this map (runFile) does so for checkProgram's WHOLE graph and exits
+   * the process before any load() call happens if checkProgram found an
+   * error — so by the time load() ever runs for that loader, this map is
+   * guaranteed complete for every module reachable in this run; an empty
+   * map at that point would only mean "this is the REPL's loader, which
+   * never calls checkProgram at all" (out of scope for whole-program
+   * checking — see wholeProgramCheck.ts's design notes), never "checking
+   * is incomplete." Stays empty (the default) for the REPL's own loader,
+   * where every load() still parses AND checks fresh, exactly as before
+   * this stage.
+   */
+  checkedAsts = new Map<string, Stmt[]>();
 
   /**
    * @param libDir   Directory for bare-name imports (e.g. "math" → libDir/math.pf)
@@ -719,18 +741,42 @@ export class ModuleLoader {
     if (!fs.existsSync(resolvedPath)) throw new Error(`Module not found: ${resolvedPath}`);
     this.loading.add(resolvedPath);
     try {
-      const source = fs.readFileSync(resolvedPath, 'utf-8');
-      const ast    = new Parser(new Lexer(source).lex()).parse();
-      if (!this.wholeProgramChecked) {
-        // Skipped when checkProgram already validated this loader's
-        // ENTIRE import graph upfront (runFile path) — see
-        // wholeProgramChecked's docblock above. Still runs for the REPL's
-        // own loader (wholeProgramChecked stays false there), where this
-        // is the only static checking a dynamically `import`ed file ever
-        // gets.
-        checkProcedureUsage(ast);
-        const typeErrors = checkTypes(ast, source);
-        if (typeErrors.length > 0) throw typeErrors[0];
+      // Stage 3: reuse checkProgram's already-parsed, already-checked,
+      // already-inferredType-ANNOTATED AST when available (runFile path
+      // — see checkedAsts's docblock above) instead of re-reading the
+      // file and re-parsing it from scratch. This is not merely cheaper:
+      // the reused AST carries real type annotations a fresh parse never
+      // would, which the interpreter's record-schema seeding can use
+      // (see evaluateRecord()'s seedTypes/seedFromExpr path) — so this is
+      // strictly better, not just faster. checkProcedureUsage/checkTypes
+      // are skipped entirely in this branch (not merely
+      // wholeProgramChecked-gated) because reusing an entry from
+      // checkedAsts means checkProgram has ALREADY run both checks
+      // against this exact AST object — re-checking would mutate
+      // already-mutated shared state a second time, which the Stage 3
+      // design notes explicitly warn against (see "no post-handoff AST
+      // mutation" in the design doc).
+      const cachedAst = this.checkedAsts.get(resolvedPath);
+      let ast: Stmt[];
+      if (cachedAst) {
+        ast = cachedAst;
+      } else {
+        const source = fs.readFileSync(resolvedPath, 'utf-8');
+        ast = new Parser(new Lexer(source).lex()).parse();
+        if (this.checkedAsts.size === 0) {
+          // Skipped when checkProgram already validated this loader's
+          // ENTIRE import graph upfront (runFile path, signaled by a
+          // non-empty checkedAsts — see its docblock above) AND this
+          // particular path just happened to have no entry there for
+          // some other reason. In practice that combination shouldn't
+          // arise for the runFile path (see the docblock); this branch's
+          // real-world audience is the REPL's own loader, where
+          // checkedAsts stays empty and this is the only static checking
+          // a dynamically `import`ed file ever gets.
+          checkProcedureUsage(ast);
+          const typeErrors = checkTypes(ast, source);
+          if (typeErrors.length > 0) throw typeErrors[0];
+        }
       }
       const interp = new Interpreter(path.dirname(resolvedPath), this);
       this.setup(interp);

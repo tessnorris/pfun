@@ -223,6 +223,39 @@ describe('runFile — real .pf files through the actual production pipeline', ()
     expect(result.stderr).toContain('[TypeCheck]');
     expect(result.stdout).toBe('');
   });
+
+  it('Stage 3: every .pf file in the program is read from disk EXACTLY ONCE — checkProgram and ModuleLoader.load no longer each parse it separately', async () => {
+    // Before Stage 3, checkProgram's own internal parse (to build the
+    // graph) and ModuleLoader.load's separate parse (when the dependency
+    // was actually `import`ed during interpretation) meant the entry
+    // file was read twice and every dependency module was read twice
+    // too. This counts real fs.readFileSync calls against actual .pf
+    // paths during a genuine end-to-end runFile() execution — both the
+    // entry file AND its one dependency should appear exactly once each,
+    // not twice.
+    const fs = require('fs');
+    const realReadFileSync = fs.readFileSync;
+    const pfReads: string[] = [];
+    const readSpy = jest.spyOn(fs, 'readFileSync').mockImplementation((p: any, ...rest: any[]) => {
+      if (typeof p === 'string' && p.endsWith('.pf')) pfReads.push(p);
+      return realReadFileSync(p, ...rest);
+    });
+
+    try {
+      const result = await runFileCaptured(path.join(FIXTURES, 'double_parse_main.pf'));
+      expect(result.stderr).toBe('');
+      expect(result.stdout).toBe('42');
+
+      const mainPath = path.join(FIXTURES, 'double_parse_main.pf');
+      const libPath  = path.join(FIXTURES, 'double_parse_lib.pf');
+      const mainReadCount = pfReads.filter(p => p === mainPath).length;
+      const libReadCount  = pfReads.filter(p => p === libPath).length;
+      expect(mainReadCount).toBe(1);
+      expect(libReadCount).toBe(1);
+    } finally {
+      readSpy.mockRestore();
+    }
+  });
 });
 
 // Captured verbatim from `node dist/main.js example.pf` with stdin

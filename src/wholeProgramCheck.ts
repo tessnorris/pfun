@@ -186,8 +186,17 @@ export function buildModuleGraph(entryPath: string, loader: ModuleLoader): Modul
     }
   }
 
-  const entrySource = fs.readFileSync(entryPath, 'utf-8');
-  visit(entryPath, entryPath, undefined, entrySource);
+  // No separate pre-read of the entry file here: the very first visit()
+  // call can never actually need an `importerSource` for error
+  // formatting (the "Circular import detected"/"Module not found"
+  // branches only fire for files OTHER than the entry file on this very
+  // first call — the entry file can't be circular or missing relative to
+  // itself before `visiting` even has an entry yet, and a missing entry
+  // file is already caught separately by runFile's own existsSync check
+  // before checkProgram ever runs). visit() reads resolvedPath itself
+  // (line 158 above) regardless, so a pre-read here would just be a
+  // second, wasted read of the exact same file.
+  visit(entryPath, entryPath, undefined, undefined);
   return order;
 }
 
@@ -303,19 +312,39 @@ function extractExportUnions(stmts: Stmt[]): UnionImportTable {
  * exhaustiveness errors, including across module boundaries (named,
  * namespace, and star imports).
  *
- * Each file is parsed exactly once. Returns null if the whole program
- * passes; returns the first PfunError encountered (from whichever file,
- * whichever check) otherwise. Never throws — like checkTypes() itself,
- * this is a plain check, not a try/catch-driven control-flow function, so
- * callers (main.ts) can treat it uniformly.
+ * Each file is parsed exactly once. Never throws — like checkTypes()
+ * itself, this is a plain check, not a try/catch-driven control-flow
+ * function, so callers (main.ts) can treat it uniformly.
  *
  * @param entryPath  Absolute path to the entry .pf file.
  * @param loader     A ModuleLoader with built-in modules already
  *                    registered (see registerBuiltinModules in main.ts) —
  *                    reused here purely for its resolve()/builtinExportNames()
  *                    methods; nothing is loaded or interpreted through it.
+ * @returns  `error` is null if the whole program passes, or the first
+ *   PfunError encountered (from whichever file, whichever check)
+ *   otherwise. `checkedAsts` maps each NON-BUILTIN module's resolved path
+ *   to its already-parsed-and-checked (and, since checkTypes mutates in
+ *   place, already INFERREDTYPE-ANNOTATED) AST — exactly the
+ *   `Map<resolvedPath, checkedAST>` the Stage 3 design calls for, so
+ *   `ModuleLoader.load` can consult it instead of re-parsing (see
+ *   ModuleLoader.checkedAsts in interpreter.ts). `checkedSources` is the
+ *   parallel map of each NON-BUILTIN module's already-read source text —
+ *   so a caller (main.ts's runFile) can get the entry file's source for
+ *   its own error-formatting needs without a second `fs.readFileSync` of
+ *   the same file. Both maps only ever contain entries for modules
+ *   reached BEFORE the first error (on failure, the graph walk stops
+ *   early — see "What checking a program means" above) — safe because a
+ *   failing program never reaches interpretation at all (main.ts exits
+ *   first), so a partial map is never actually consulted by load() in
+ *   that case. Builtins are deliberately absent from both maps;
+ *   ModuleLoader.load already has its own, separate, non-AST-based fast
+ *   path for the `__builtin__:` sentinel that doesn't need or want an
+ *   entry here.
  */
-export function checkProgram(entryPath: string, loader: ModuleLoader): PfunError | null {
+export function checkProgram(entryPath: string, loader: ModuleLoader): { error: PfunError | null; checkedAsts: Map<string, Stmt[]>; checkedSources: Map<string, string> } {
+  const checkedAsts    = new Map<string, Stmt[]>();
+  const checkedSources = new Map<string, string>();
   try {
     const graph = buildModuleGraph(entryPath, loader);
     const infoByPath = new Map<string, ModuleInfo>();
@@ -389,9 +418,16 @@ export function checkProgram(entryPath: string, loader: ModuleLoader): PfunError
         exportTypes:  exportTypesOut,
         exportUnions: extractExportUnions(node.ast!),
       });
+      // This module passed BOTH checks and is now fully annotated
+      // (checkTypes mutates node.ast! in place) — record it, and its
+      // already-read source text, so ModuleLoader.load (and runFile,
+      // for the entry file specifically) can reuse both verbatim instead
+      // of re-reading/re-parsing.
+      checkedAsts.set(node.resolvedPath, node.ast!);
+      checkedSources.set(node.resolvedPath, node.source!);
     }
 
-    return null;
+    return { error: null, checkedAsts, checkedSources };
   } catch (e) {
     if (e instanceof WholeProgramTypeError) {
       // Already a fully-formatted PfunError from checkTypes() itself —
@@ -399,7 +435,7 @@ export function checkProgram(entryPath: string, loader: ModuleLoader): PfunError
       // entry-file logic as the WholeProgramError branch below) without
       // re-running it through buildPfunError, which would double-wrap
       // the [Kind]/caret formatting checkTypes already produced.
-      return attachFilePathIfCrossFile(e.original, e.sourcePath, entryPath);
+      return { error: attachFilePathIfCrossFile(e.original, e.sourcePath, entryPath), checkedAsts, checkedSources };
     }
     if (e instanceof WholeProgramError) {
       // Only attach a file-path header when the error is in a DIFFERENT
@@ -411,7 +447,7 @@ export function checkProgram(entryPath: string, loader: ModuleLoader): PfunError
       // slash or '.' segment difference.
       const resolvedEntry = path.resolve(entryPath);
       const filePath = e.sourcePath === resolvedEntry ? undefined : displayPath(e.sourcePath);
-      return buildPfunError(
+      const error = buildPfunError(
         new Error(e.message),
         e.source,
         e.pos,
@@ -420,6 +456,7 @@ export function checkProgram(entryPath: string, loader: ModuleLoader): PfunError
         { stringify: String },
         filePath,
       );
+      return { error, checkedAsts, checkedSources };
     }
     throw e; // a genuine bug in this file, not a checked program's own error — let it surface normally
   }

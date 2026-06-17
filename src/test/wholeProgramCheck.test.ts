@@ -45,11 +45,11 @@ import { registerBuiltinModules } from '../main';
 
 const FIXTURES = path.join(__dirname, 'fixtures', 'wholeProgramCheck');
 
-function check(fixtureName: string): ReturnType<typeof checkProgram> {
+function check(fixtureName: string): import('../errors').PfunError | null {
   const entry  = path.join(FIXTURES, fixtureName);
   const loader = new ModuleLoader(FIXTURES);
   registerBuiltinModules(loader);
-  return checkProgram(entry, loader);
+  return checkProgram(entry, loader).error;
 }
 
 describe('Whole-program static checker (checkProgram) — Stage 1: graph + purity, Stage 2: types + exhaustiveness', () => {

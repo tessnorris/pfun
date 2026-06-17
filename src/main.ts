@@ -59,73 +59,48 @@ export async function runFile(filePath: string, scriptArgs: string[] = []) {
   const loader  = new ModuleLoader(path.join(baseDir, 'lib'), setupInterpreter);
   registerBuiltinModules(loader);
 
-  const source = fs.readFileSync(absolutePath, 'utf-8');
-
-  // Lex + parse — catch lexical and syntax errors here
-  let ast;
-  try {
-    ast = new Parser(new Lexer(source).lex()).parse();
-  } catch (e) {
-    const raw = e instanceof Error ? e : new Error(String(e));
-    const pfunErr = buildPfunError(raw, source, (raw as any).pos, null, () => undefined, { stringify: String });
-    console.error(pfunErr.pfunMessage);
-    process.exit(1);
-  }
-
   // Whole-program static checking: walks the entire import graph (the
-  // entry file plus everything it transitively imports), each file
-  // parsed once, and runs BOTH procedure-usage/purity checking AND type/
-  // exhaustiveness checking against every module in the graph — not just
-  // this one — failing on the first violation found anywhere. Supersedes
-  // the old entry-file-only `checkProcedureUsage(ast)` call (Stage 1) and
-  // extends coverage to cross-module type/exhaustiveness errors too
-  // (Stage 2) — see wholeProgramCheck.ts's file header for the full
-  // design. checkProgram does its own internal parse of the entry file
-  // (and its dependencies) to build the graph; this means the entry file
-  // is parsed twice in this function (here, and again just above for
-  // `ast`) — an accepted, deliberate cost, removed once a shared
-  // parsed-AST cache is built in Stage 3.
-  const programError = checkProgram(absolutePath, loader);
+  // entry file plus everything it transitively imports), parsing each
+  // file EXACTLY ONCE, and runs BOTH procedure-usage/purity checking AND
+  // type/exhaustiveness checking against every module in the graph — not
+  // just this one — failing on the first violation found anywhere
+  // (including a lex/syntax error in the entry file itself, which used
+  // to be caught by a separate try/catch here before checkProgram
+  // existed — checkProgram's own internal parsing already produces an
+  // identically-formatted [Lexical]/[Syntax] PfunError via the same
+  // buildPfunError pipeline, so that separate try/catch is gone too).
+  // See wholeProgramCheck.ts's file header for the full design.
+  //
+  // Stage 3 ("remove the double-parse"): checkProgram now returns the
+  // Map<resolvedPath, checkedAST> (and the parallel Map<resolvedPath,
+  // sourceText>) it built internally — every module's AST, already
+  // parsed, already checked, already inferredType-annotated, plus its
+  // already-read source text — so this function no longer does ANY
+  // separate parse or read of the entry file at all; `ast`/`source`
+  // below come directly from these maps.
+  const { error: programError, checkedAsts, checkedSources } = checkProgram(absolutePath, loader);
   if (programError) {
     console.error(programError.pfunMessage);
     process.exit(1);
   }
-  // checkProgram just proved this loader's ENTIRE import graph is
-  // error-free — tell the loader so its own load()-time
-  // checkProcedureUsage/checkTypes calls (interpreter.ts) skip re-doing
-  // exactly the same work on exactly the same files when dependencies
-  // actually get loaded during interpretation below. See
-  // ModuleLoader.wholeProgramChecked's docblock for why this is safe to
-  // skip here but must stay on for the REPL's own loader.
-  loader.wholeProgramChecked = true;
+  // Hand the whole map to the loader so load() (interpreter.ts), called
+  // for every `import` actually reached during interpretation below,
+  // reuses these already-checked ASTs instead of re-parsing and
+  // re-checking each dependency file a second time — the other half of
+  // the double-parse this stage removes. See ModuleLoader.checkedAsts's
+  // docblock for why a non-empty map is also a sufficient signal that the
+  // whole graph was already statically checked.
+  loader.checkedAsts = checkedAsts;
 
-  // Re-run type inference on THIS FUNCTION'S OWN `ast` (a separate parse
-  // from checkProgram's internal one above) purely to ANNOTATE it —
-  // inferredType/missingVariants, which some interpreter codepaths read
-  // at runtime (see interpreter.ts's record-schema seeding around
-  // evaluateRecord()) — not to detect errors: checkProgram already
-  // proved the whole graph (including this file) is error-free, so this
-  // call's returned errors are never expected to be non-empty in
-  // practice. No resolvers are passed here (unlike checkProgram's
-  // internal call), so any cross-module type info doesn't make it onto
-  // THIS ast's annotations specifically — confirmed harmless: a missing
-  // resolver only ever makes an imported name's annotated type LESS
-  // precise (a permissive fresh var, never a hard error), and the
-  // interpreter's actual runtime schema registration for imported
-  // records/unions happens independently via real module evaluation
-  // (ModuleLoader.load), not solely from these static annotations.
-  const typeErrors = checkTypes(ast!, source);
-  if (typeErrors.length > 0) {
-    for (const err of typeErrors) console.error(err.pfunMessage);
-    process.exit(1);
-  }
+  const ast    = checkedAsts.get(absolutePath)!;
+  const source = checkedSources.get(absolutePath)!;
 
   const interp = new Interpreter(baseDir, loader);
   interp.scriptArgs = scriptArgs;
   setupInterpreter(interp);
 
   try {
-    await interp.interpretAsync(ast!, source);
+    await interp.interpretAsync(ast, source);
   } catch (e) {
     if (e instanceof PfunError) {
       console.error(e.pfunMessage);
