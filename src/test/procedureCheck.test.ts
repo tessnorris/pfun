@@ -186,7 +186,134 @@ describe('Static procedure-usage checker', () => {
     });
   });
 
+  describe('Rule 3 — mutating a var or array/dict element from pure context is forbidden', () => {
+    it('rejects reassigning an outer var from inside a function', () => {
+      expect(() => check(`
+        var counter = 0;
+        function bad() {
+          counter = counter + 1;
+          return counter;
+        }
+      `)).toThrow("Functions cannot mutate 'counter'");
+    });
+
+    it('rejects reassigning an outer var from inside a lambda', () => {
+      expect(() => check(`
+        var total = 0;
+        let f = fn x => total = total + x;
+      `)).toThrow("Functions cannot mutate 'total'");
+    });
+
+    it('rejects reassigning an outer var from a nested function', () => {
+      expect(() => check(`
+        var n = 0;
+        function outer() {
+          function inner() {
+            n = n + 1;
+            return n;
+          }
+          return inner();
+        }
+      `)).toThrow("Functions cannot mutate 'n'");
+    });
+
+    it('rejects array element mutation from inside a function', () => {
+      expect(() => check(`
+        var arr = array { 1, 2, 3 };
+        function bad() {
+          arr[0] = 99;
+          return arr[0];
+        }
+      `)).toThrow('Functions cannot mutate arrays or dicts');
+    });
+
+    it('rejects dict element mutation from inside a function', () => {
+      expect(() => check(`
+        var d = dict { "k" -> 1 };
+        function bad() {
+          d["k"] = 99;
+          return 1;
+        }
+      `)).toThrow('Functions cannot mutate arrays or dicts');
+    });
+
+    it('rejects index-assignment from pure context even when the object is not a known var', () => {
+      // The blanket rule mirrors the interpreter's own unconditional
+      // runtime check for IndexAssignExpr — it doesn't matter what
+      // expr.object resolves to.
+      expect(() => check(`
+        function makeArray() { return array { 1, 2, 3 }; }
+        function bad() {
+          makeArray()[0] = 99;
+          return 1;
+        }
+      `)).toThrow('Functions cannot mutate arrays or dicts');
+    });
+
+    it('reports the rule-1 violation first when an assignment violates both rule 1 and rule 3', () => {
+      // `g = sideEffect;` is BOTH a var mutation (rule 3) AND a proc-as-
+      // value assignment (rule 1). Rule 1 is checked first, matching this
+      // checker's pre-existing error-priority ordering.
+      expect(() => check(`
+        proc sideEffect(x) { println(x); }
+        function bad() {
+          var g = 0;
+          g = sideEffect;
+          return 1;
+        }
+      `)).toThrow("'sideEffect' is a procedure");
+    });
+
+    it('does not flag a let-bound name (let bindings are immutable and have no AssignExpr target)', () => {
+      expect(() => check(`
+        let x = 5;
+        function ok() {
+          return x + 1;
+        }
+      `)).not.toThrow();
+    });
+
+    it('does not flag a function parameter shadowing an outer var name', () => {
+      // The parameter is a distinct, non-var binding in the inner scope;
+      // it shadows the outer var entirely, so resolving it finds 'other',
+      // not 'var'.
+      expect(() => check(`
+        var counter = 0;
+        function f(counter) {
+          return counter + 1;
+        }
+      `)).not.toThrow();
+    });
+  });
+
   describe('Legitimate uses that must NOT be rejected', () => {
+    it('allows a proc to mutate an outer var (this is exactly what var/proc exist for)', () => {
+      expect(() => check(`
+        var counter = 0;
+        proc bump() {
+          counter = counter + 1;
+          return counter;
+        }
+      `)).not.toThrow();
+    });
+
+    it('allows a proc to mutate an array/dict element', () => {
+      expect(() => check(`
+        var arr = array { 1, 2, 3 };
+        proc setFirst(v) {
+          arr[0] = v;
+          return arr[0];
+        }
+      `)).not.toThrow();
+    });
+
+    it('allows a var to be reassigned at the top level (impure/module context)', () => {
+      expect(() => check(`
+        var counter = 0;
+        counter = counter + 1;
+      `)).not.toThrow();
+    });
+
     it('allows a proc to be used as a value at the top level (impure/module context)', () => {
       // Storing or passing a proc as a value is only a problem if it could
       // be CALLED from pure code. At the top level (impure context), the
@@ -352,6 +479,21 @@ describe('Static procedure-usage checker', () => {
         import * from "io";
         function bad() {
           return 1;
+        }
+      `)).not.toThrow();
+    });
+
+    it('does not flag mutation of an imported name (rule 3 has the same same-module-only scope boundary as rules 1/2)', () => {
+      // An imported `counter` cannot be proven to be a `var` by this
+      // pass — it's treated as opaque 'other', same as rules 1/2. This
+      // misuse is still caught, but only by the interpreter's own
+      // runtime check (AssignExpr now throws on inPureContext — see
+      // interpreter.ts — exactly as IndexAssignExpr already did).
+      expect(() => check(`
+        import { counter } from "./other";
+        function bad() {
+          counter = counter + 1;
+          return counter;
         }
       `)).not.toThrow();
     });

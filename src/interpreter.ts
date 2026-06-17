@@ -1097,6 +1097,7 @@ export class Interpreter {
       }
       case 'AssignExpr': {
         this.inTailPosition = false;
+        if (this.inPureContext) throw new Error("Functions cannot mutate 'var' bindings: side-effectful mutation is not allowed in pure functions. Use a procedure instead.");
         const val = yield* this.forceGen(yield* this.evaluateExprGen(expr.value, env));
         env.assign(expr.name, val);
         return val;

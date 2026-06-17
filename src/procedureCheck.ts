@@ -43,6 +43,33 @@
 // only as a defense-in-depth safety net (see interpreter.ts), never as the
 // primary enforcement mechanism going forward.
 //
+// ─── Rule 3: mutation from pure context ────────────────────────────────────
+//
+// Mutating a `var` binding (AssignExpr) or an array/dict element
+// (IndexAssignExpr) from within a function/lambda body is also a side
+// effect, and forbidden by the same guarantee — this was a real gap, found
+// and fixed: the interpreter's runtime check already covered
+// IndexAssignExpr unconditionally and VarStmt's own declaration, but had
+// NO check at all for reassigning an already-declared `var` via AssignExpr
+// (e.g. `function f() { counter = counter + 1; }` where `counter` is an
+// outer `var` — this ran successfully with no error at all before the
+// fix). Both the runtime gap (interpreter.ts's AssignExpr evaluation) and
+// the corresponding static check below were fixed together.
+//
+//   - AssignExpr: flagged only when the assignment target resolves (via
+//     the same same-module-only StaticScope used for rules 1/2) to a name
+//     declared with `var` in this module. An imported name being mutated
+//     is not flagged here, same conservative same-module scope boundary
+//     as rules 1/2 — see "Scope of this pass" below; the interpreter's
+//     runtime check (rule 3's new AssignExpr guard) is the safety net for
+//     that case as for all cross-module cases.
+//   - IndexAssignExpr: flagged unconditionally whenever inPureContext is
+//     true, regardless of what expr.object resolves to (a var, a
+//     function-call result, a field, etc.) — this exactly mirrors the
+//     interpreter's own existing unconditional runtime check for this
+//     expression kind, which makes no attempt to inspect expr.object
+//     either.
+//
 // ─── Scope of this pass ────────────────────────────────────────────────────
 //
 // This checker is precise and complete *within a single module's own
@@ -71,7 +98,7 @@ import { Expr, Stmt, MatchArm } from './ast';
 import { SourcePos } from './lexer';
 
 /** A static, compile-time classification of what a name was declared as. */
-type NameKind = 'function' | 'proc' | 'other';
+type NameKind = 'function' | 'proc' | 'var' | 'other';
 
 /**
  * Compile-time scope chain mirroring Environment's shape, but tracking
@@ -149,9 +176,22 @@ function checkExprValue(expr: Expr, scope: StaticScope, inPureContext: boolean):
       checkExprValue(expr.expression, scope, inPureContext);
       return;
     case 'AssignExpr':
-      // expr.name is the assignment target, not a read — only the value
-      // expression is read as a value here.
+      // expr.value (rule 1 — proc-as-value) is checked before expr.name
+      // (rule 3 — var mutation) so that a program violating both at once
+      // (e.g. `g = sideEffect;` where g is a var AND sideEffect is a
+      // proc) reports the rule-1 violation first, matching this checker's
+      // pre-existing error-priority ordering and test expectations.
+      // expr.name is the assignment target, not a read — checked as a
+      // mutation target below, not via checkExprValue (which would treat
+      // it as a read).
       checkExprValue(expr.value, scope, inPureContext);
+      if (inPureContext && scope.resolve(expr.name) === 'var') {
+        procError(
+          `Functions cannot mutate '${expr.name}': '${expr.name}' is a 'var' binding and side-effectful ` +
+          `mutation is not allowed in pure functions. Use a procedure instead.`,
+          expr.pos
+        );
+      }
       return;
     case 'CallExpr': {
       checkCallExpr(expr, scope, inPureContext);
@@ -208,6 +248,20 @@ function checkExprValue(expr: Expr, scope: StaticScope, inPureContext: boolean):
       checkExprValue(expr.index, scope, inPureContext);
       return;
     case 'IndexAssignExpr':
+      // Array/dict element mutation is unconditionally forbidden in pure
+      // context, regardless of how the array/dict reference was obtained
+      // (a var, a function-call result, a field, etc.) — matching the
+      // interpreter's own existing unconditional runtime check for this
+      // expression kind (see evaluateExprGen's 'IndexAssignExpr' case in
+      // interpreter.ts, which throws whenever inPureContext is true with
+      // no further inspection of expr.object at all).
+      if (inPureContext) {
+        procError(
+          'Functions cannot mutate arrays or dicts: side-effectful mutation is not allowed in pure functions. ' +
+          'Use a procedure instead.',
+          expr.pos
+        );
+      }
       checkExprValue(expr.object, scope, inPureContext);
       checkExprValue(expr.index, scope, inPureContext);
       checkExprValue(expr.value, scope, inPureContext);
@@ -272,7 +326,7 @@ function checkStmt(stmt: Stmt, scope: StaticScope, inPureContext: boolean): void
       return;
     case 'VarStmt':
       checkExprValue(stmt.initializer, scope, inPureContext);
-      scope.define(stmt.name, 'other');
+      scope.define(stmt.name, 'var');
       return;
     case 'TypeStmt':
     case 'UnionTypeStmt':

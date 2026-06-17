@@ -233,6 +233,22 @@ describe('Interpreter Feature Tests', () => {
       `)).toThrow("Functions cannot use 'var'");
     });
 
+    it('should throw when a function reassigns an outer var', () => {
+      // Regression test: AssignExpr's evaluation previously had no
+      // inPureContext check at all (unlike VarStmt's own declaration,
+      // just above, and IndexAssignExpr, below) — reassigning an
+      // already-declared outer var from a function ran successfully with
+      // no error. The static checker (procedureCheck.ts) now also catches
+      // this for same-module cases, but this test exercises the
+      // interpreter's runtime guard directly and in isolation, since this
+      // `run` helper bypasses the static checker entirely.
+      expect(() => run(`
+        var counter = 0;
+        function bad() { counter = counter + 1; return counter; }
+        bad();
+      `)).toThrow("Functions cannot mutate 'var' bindings");
+    });
+
     it('should throw when a function calls a procedure', () => {
       expect(() => run(`
         proc sideEffect() { println("oops"); }
