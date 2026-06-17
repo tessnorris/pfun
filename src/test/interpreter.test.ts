@@ -716,6 +716,123 @@ describe('Interpreter Feature Tests', () => {
         import * as IO from "io";
       `, {})).not.toThrow();
     });
+
+    describe('Exported var bindings share live, mutable storage across modules', () => {
+      // These cover a real, pre-existing gap: an exported `var` used to be
+      // captured as a snapshotted plain VALUE at the moment its `export
+      // var ...` statement ran, with no way for an importer to observe
+      // any LATER mutation (from the exporting module's own code, or
+      // from another importer) — and, separately, the importer's own
+      // binding was hardcoded immutable regardless of the source's own
+      // var/let-ness, so the importer couldn't even reassign its local
+      // copy. Both gaps are fixed together via Environment's Cell-based
+      // internal storage (see Cell's docblock in interpreter.ts) — an
+      // exported var now shares the SAME Cell with every importer, so a
+      // mutation from any side is visible everywhere.
+
+      it('a function importing a var sees mutations the EXPORTING module makes to it AFTER the export statement ran', () => {
+        const { logs } = runWithModule(`
+          import { counter } from "./lib";
+          println(counter);
+        `, {
+          'lib.pf': `
+            export var counter = 0;
+            proc bump() { counter = counter + 1; }
+            bump();
+            bump();
+            bump();
+          `
+        });
+        expect(logs).toEqual(['3']);
+      });
+
+      it('an importer can mutate an imported var, and that mutation is visible through the SAME name imported a second time elsewhere', () => {
+        const { logs } = runWithModule(`
+          import { counter, bump } from "./lib";
+          import { getCounter } from "./middle";
+          println(counter);
+          bump();
+          println(counter);
+          println(getCounter());
+        `, {
+          'lib.pf': `
+            export var counter = 0;
+            export proc bump() { counter = counter + 1; }
+          `,
+          'middle.pf': `
+            import { counter } from "./lib";
+            export function getCounter() { return counter; }
+          `
+        });
+        // middle.pf's getCounter() reads counter via ITS OWN, separately
+        // imported binding — confirming both import sites share one Cell,
+        // not two independent copies.
+        expect(logs).toEqual(['0', '1', '1']);
+      });
+
+      it('mutating through one importer is visible to a DIFFERENT importer of the same var, via a proc imported alongside it', () => {
+        const { logs } = runWithModule(`
+          import { shared, bumpShared } from "./lib";
+          import { getShared, bumpFromOther } from "./other";
+          println(shared);
+          bumpShared();
+          println(shared);
+          println(getShared());
+          bumpFromOther();
+          println(shared);
+          println(getShared());
+        `, {
+          'lib.pf': `
+            export var shared = 0;
+            export proc bumpShared() { shared = shared + 1; }
+          `,
+          'other.pf': `
+            import { shared, bumpShared } from "./lib";
+            export function getShared() { return shared; }
+            export proc bumpFromOther() { bumpShared(); }
+          `
+        });
+        expect(logs).toEqual(['0', '1', '1', '2', '2']);
+      });
+
+      it('a namespace-qualified read (X.counter) always reflects the LIVE current value, not a snapshot taken at import time', () => {
+        const { logs } = runWithModule(`
+          import * as Lib from "./lib";
+          println(Lib.counter);
+          Lib.bump();
+          println(Lib.counter);
+          Lib.bump();
+          println(Lib.counter);
+        `, {
+          'lib.pf': `
+            export var counter = 0;
+            export proc bump() { counter = counter + 1; }
+          `
+        });
+        expect(logs).toEqual(['0', '1', '2']);
+      });
+
+      it('a star-imported var can be mutated by a proc in the importing module (the originally-broken scenario)', () => {
+        const { logs } = runWithModule(`
+          import * from "./lib";
+          proc bumpHere() { counter = counter + 1; return counter; }
+          println(bumpHere());
+        `, {
+          'lib.pf': `export var counter = 0;`
+        });
+        expect(logs).toEqual(['1']);
+      });
+
+      it('a let export is unaffected — still a plain immutable snapshot, never sharable storage', () => {
+        const { logs } = runWithModule(`
+          import { x } from "./lib";
+          println(x);
+        `, {
+          'lib.pf': `export let x = 42;`
+        });
+        expect(logs).toEqual(['42']);
+      });
+    });
   });
 
   // ─── split & join ─────────────────────────────────────────────────────────

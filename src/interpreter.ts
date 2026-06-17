@@ -93,12 +93,57 @@ export function pfunTypeToRuntimeType(t: PfunType): string | null {
   }
 }
 
+/**
+ * A single mutable memory cell: `{ value }`. Environment now stores every
+ * binding as a Cell rather than a bare value, specifically so a `var`
+ * binding's underlying storage can be SHARED BY REFERENCE — not merely
+ * copied by value — when it's exported and then imported by another
+ * module. Without this, `export var counter = 0;` followed later by
+ * `counter = counter + 1;` inside the exporting module would leave any
+ * importer holding a stale snapshot from the moment the export statement
+ * itself ran, with no way to observe later mutations (from the exporter
+ * OR from another importer) — confirmed as the actual pre-existing
+ * behavior before this fix. See ExportStmt/ImportStmt's handling below,
+ * and ModuleLoader.load's `exports` map, all of which now pass the same
+ * Cell object through end to end for a `var` export, rather than a
+ * snapshotted plain value.
+ */
+export class Cell {
+  constructor(public value: any) {}
+}
+
 export class Environment {
-  private values = new Map<string, { value: any, mutable: boolean }>();
+  private values = new Map<string, { cell: Cell, mutable: boolean }>();
   constructor(public parent?: Environment) {}
 
   define(name: string, value: any, mutable: boolean = false) {
-    this.values.set(name, { value, mutable });
+    this.values.set(name, { cell: new Cell(value), mutable });
+  }
+
+  /**
+   * Like define(), but installs an EXISTING Cell rather than wrapping
+   * `value` in a fresh one — so this binding shares its underlying
+   * storage with whatever else already holds a reference to that same
+   * Cell (e.g. the module that originally declared and exported it, or
+   * another module that previously imported it). Used by ImportStmt's
+   * handling for `var` exports specifically; every other binding kind
+   * (let, function, proc, plain imports of those) still goes through
+   * ordinary define(), getting its own fresh, unshared Cell.
+   */
+  defineCell(name: string, cell: Cell, mutable: boolean = false) {
+    this.values.set(name, { cell, mutable });
+  }
+
+  /**
+   * The underlying Cell for `name`, or undefined if not found in this
+   * frame or any parent — used by ExportStmt's handling to capture a
+   * `var`'s actual storage (for sharing with importers) rather than a
+   * snapshotted value via get(). Plain bindings (let/function/proc) never
+   * need this — get() suffices for anything that's never reassigned.
+   */
+  getCell(name: string): Cell | undefined {
+    if (this.values.has(name)) return this.values.get(name)!.cell;
+    return this.parent?.getCell(name);
   }
 
   isDefined(name: string): boolean {
@@ -113,12 +158,12 @@ export class Environment {
 
   /** True if name resolves to a NativeFunction anywhere in the chain. */
   isNative(name: string): boolean {
-    if (this.values.has(name)) return this.values.get(name)!.value instanceof NativeFunction;
+    if (this.values.has(name)) return this.values.get(name)!.cell.value instanceof NativeFunction;
     return this.parent ? this.parent.isNative(name) : false;
   }
 
   get(name: string): any {
-    if (this.values.has(name)) return this.values.get(name)!.value;
+    if (this.values.has(name)) return this.values.get(name)!.cell.value;
     if (this.parent) return this.parent.get(name);
     throw new Error(`Undefined variable '${name}'.`);
   }
@@ -127,7 +172,7 @@ export class Environment {
     if (this.values.has(name)) {
       const binding = this.values.get(name)!;
       if (!binding.mutable) throw new Error(`Cannot assign to immutable variable '${name}'.`);
-      binding.value = value;
+      binding.cell.value = value;
       return;
     }
     if (this.parent) { this.parent.assign(name, value); return; }
@@ -1020,8 +1065,24 @@ export class Interpreter {
       case 'ExportStmt': {
         yield* this.evaluateStmtGen(stmt.declaration, env);
         const decl = stmt.declaration;
-        if (decl.type === 'LetStmt' || decl.type === 'VarStmt') {
+        if (decl.type === 'LetStmt') {
+          // A let binding never changes after its own declaration, so a
+          // snapshotted value is semantically identical to a live
+          // reference — no Cell sharing needed.
           try { this.exports.set(decl.name, env.get(decl.name)); } catch {}
+        } else if (decl.type === 'VarStmt') {
+          // Export the var's ACTUAL Cell, not a snapshotted value — so a
+          // later mutation to this var (from this module's own code, or
+          // from another importer that also received this same Cell) is
+          // visible to every holder of the reference, not just frozen at
+          // the moment this export statement happened to run. See
+          // Cell's docblock for the full rationale; see ImportStmt's
+          // handling below for how an importer re-shares this Cell
+          // rather than copying its value.
+          try {
+            const cell = env.getCell(decl.name);
+            if (cell) this.exports.set(decl.name, { __varCell: cell });
+          } catch {}
         } else if (decl.type === 'FunctionStmt' || decl.type === 'ProcedureStmt') {
           try { this.exports.set(decl.name, env.get(decl.name)); } catch {}
         } else if (decl.type === 'TypeStmt') {
@@ -1065,6 +1126,14 @@ export class Interpreter {
             }
           } else if (val && val.__registryType) {
             this.registerType(val.__registryType);
+          } else if (val && val.__varCell) {
+            // Share the SAME Cell the exporting module's own `var`
+            // actually uses — so a later mutation, from either side (the
+            // exporter's own code, or any importer that also holds this
+            // Cell), is visible to everyone, not frozen at export time.
+            // See Cell's docblock in the Environment section above.
+            this.checkNameAvailable(bindName, targetEnv, 'import');
+            targetEnv.defineCell(bindName, val.__varCell, true);
           } else {
             this.checkNameAvailable(bindName, targetEnv, 'import');
             targetEnv.define(bindName, val, false);
@@ -1075,11 +1144,23 @@ export class Interpreter {
           // import * from 'path' — all exports directly into current scope
           for (const [name, val] of moduleExports) bindExport(name, val, env);
         } else if (stmt.kind === 'namespace') {
-          // import * as X from 'path' — all exports under alias object
+          // import * as X from 'path' — all exports under alias object.
+          // For a __varCell export, install a GETTER (and, since
+          // namespace-qualified assignment like `X.counter = 5` is
+          // already rejected elsewhere — see AssignExpr's "Invalid
+          // assignment target" — no setter is needed) so `X.counter`
+          // always reads the Cell's CURRENT value through GetExpr's
+          // ordinary `obj[expr.name]` property read (interpreter.ts's
+          // GetExpr case), rather than freezing whatever the value
+          // happened to be at the moment this import ran.
           const ns: any = {};
           for (const [name, val] of moduleExports) {
             if (val && val.__builtinFn) ns[name] = val.__builtinFn.fn;
             else if (val && val.__registryType) { this.registerType(val.__registryType); }
+            else if (val && val.__varCell) {
+              const cell: Cell = val.__varCell;
+              Object.defineProperty(ns, name, { enumerable: true, get: () => cell.value });
+            }
             else ns[name] = val;
           }
           env.define(stmt.alias, ns, false);
