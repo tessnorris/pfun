@@ -1,0 +1,6 @@
+import * from "io";
+import * as Lib from "./lib";
+function bad() {
+  return Lib.sideEffect(5);
+}
+println(bad());

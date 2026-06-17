@@ -1,0 +1,7 @@
+import * from "io";
+import { sideEffect } from "./lib";
+function bad() {
+  let g = sideEffect;
+  return 1;
+}
+println(bad());

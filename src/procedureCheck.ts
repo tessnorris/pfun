@@ -72,27 +72,33 @@
 //
 // ─── Scope of this pass ────────────────────────────────────────────────────
 //
-// This checker is precise and complete *within a single module's own
-// declarations*: locals, parameters, and same-file `function`/`proc` names.
-// Names that arrive via `import` are treated as opaque/unknown-kind — this
-// pass does not currently attempt to resolve an imported name's underlying
-// kind (function vs. proc) from the imported module's AST. This is a
-// deliberate, conservative scope boundary, not an oversight:
+// Within a single module's own declarations — locals, parameters, and
+// same-file `function`/`proc` names — this checker is precise and complete
+// regardless of whether a resolver is supplied.
 //
-//   - It means a *same-file* misuse (passing a local proc as a value,
-//     calling a local proc from inside a local function/lambda) is always
-//     caught.
-//   - It means a proc imported from another module and misused in the
-//     importing module is NOT currently caught by this pass — that misuse
-//     is still only caught by the interpreter's existing dynamic
-//     `inPureContext` check at the moment of invocation, exactly as before.
-//   - It never produces a false positive on an imported name.
+// Cross-module names (anything arriving via `import`) depend on whether
+// checkProcedureUsage() is called with a ModuleImportResolver:
 //
-// Closing that cross-module gap would require export metadata recording
-// each export's kind (the module system currently only ever caches
-// *runtime values* — see ModuleLoader.load — with no static kind
-// information attached) and is left as a follow-up; it is a strictly
-// larger and separable piece of work from the single-module check below.
+//   - WITHOUT one (the default — e.g. existing tests, and any caller from
+//     before cross-module support existed): imported names are treated as
+//     opaque 'other'. A proc imported from another module and misused in
+//     the importing module is NOT caught by this pass in that case — only
+//     by the interpreter's existing dynamic `inPureContext` check at the
+//     moment of invocation. This never produces a false positive.
+//   - WITH one (supplied by the whole-program driver,
+//     wholeProgramCheck.ts): named, namespace (`import * as X`, including
+//     `X.foo` member access/calls), and star imports are all resolved
+//     against the imported module's real export-kind table, and rules
+//     1/2/3 apply across the module boundary exactly as within one module.
+//     This is what makes the static checker viable as the SOLE enforcement
+//     mechanism (no runtime `inPureContext` net) for a transpiled program —
+//     see wholeProgramCheck.ts for the full graph-resolution design.
+//
+// A resolver can only ever narrow what's flagged as 'other' into something
+// more precise ('function'/'proc'/'var') for names it successfully
+// resolves; it never changes same-module behavior, and an unresolvable
+// import (the resolver returns null) falls back to the no-resolver
+// behavior for exactly that import, not the whole module.
 
 import { Expr, Stmt, MatchArm } from './ast';
 import { SourcePos } from './lexer';
@@ -101,29 +107,111 @@ import { SourcePos } from './lexer';
 type NameKind = 'function' | 'proc' | 'var' | 'other';
 
 /**
+ * Resolves an import to that module's ImportTable, for cross-module kind
+ * lookups. Supplied by the whole-program driver (wholeProgramCheck.ts),
+ * which has already parsed and checked every module in the import graph in
+ * dependency order before this pass runs on any module that imports from
+ * them — see that file for the full design.
+ *
+ * Returns null if the import can't be resolved to a known table (e.g. the
+ * whole-program driver isn't in use at all, or — defensively — a path this
+ * resolver doesn't recognize). A null result is NOT a hard error here: this
+ * pass falls back to its original, permissive 'other' treatment for that
+ * import's names, exactly as if no resolver were supplied at all. Resolution
+ * failures that SHOULD be hard errors (a genuinely missing file) are the
+ * whole-program driver's responsibility to detect and report — this pass
+ * never throws over an import it merely can't resolve, only over an actual
+ * rule violation.
+ */
+export type ModuleImportResolver = (importPath: string, pos: SourcePos | undefined) => ImportTable | null;
+
+/**
+ * Set once at the start of each checkProcedureUsage() call, read only by
+ * ImportStmt's handling in checkStmt — never mutated mid-walk. Module-level
+ * rather than threaded as an explicit parameter through all five mutually
+ * recursive check* functions (~50 call sites) because it is genuinely
+ * constant for the whole walk, unlike `scope`/`inPureContext` which change
+ * per-call; a parameter would be passed unchanged at every single call site.
+ * Safe as module state because checkProcedureUsage is fully synchronous
+ * (no await, no generators — confirmed by its plain recursive-descent
+ * structure) and Node/this codebase has no concurrent/worker-thread calls
+ * into it; both real call sites (main.ts, interpreter.ts's ModuleLoader.load)
+ * call it once, synchronously, to completion, before anything else runs.
+ */
+let currentImportResolver: ModuleImportResolver | null = null;
+
+/**
+ * A module's exported names and their kinds, as resolved by the
+ * whole-program driver (wholeProgramCheck.ts) from that module's own
+ * ExportStmts (or, for a built-in module, from ModuleLoader.builtinExportNames
+ * — always kind 'other', since natives are never proc-typed; see
+ * ModuleLoader.builtinExportNames's docblock in interpreter.ts).
+ *
+ * Absent here entirely, this checker's behavior is unchanged from before
+ * cross-module support existed: checkProcedureUsage() called with no
+ * import table (the default) treats every import as opaque 'other',
+ * exactly as today.
+ */
+export type ImportTable = Map<string, NameKind>;
+
+/** What a single name in scope actually refers to: either a plain
+ *  declaration kind, or — for a namespace import (`import * as X from
+ *  "..."`) — the whole imported module's export table, so a later
+ *  `X.foo` can be resolved against it (see StaticScope.resolveMember). */
+type ScopeEntry = { tag: 'kind'; kind: NameKind } | { tag: 'namespace'; table: ImportTable };
+
+/**
  * Compile-time scope chain mirroring Environment's shape, but tracking
- * declaration *kind* rather than runtime values.
+ * declaration *kind* (or, for namespace imports, an entire module's export
+ * table) rather than runtime values.
  */
 class StaticScope {
-  private bindings = new Map<string, NameKind>();
+  private bindings = new Map<string, ScopeEntry>();
   constructor(private parent?: StaticScope) {}
 
   define(name: string, kind: NameKind): void {
-    this.bindings.set(name, kind);
+    this.bindings.set(name, { tag: 'kind', kind });
   }
 
-  /** Resolve a name's kind by walking outward through enclosing scopes.
-   *  Names with no visible declaration (builtins, imports, undeclared —
-   *  the latter is a Name error caught elsewhere) are treated as 'other',
-   *  matching this pass's scope boundary: never flag what it cannot prove. */
-  resolve(name: string): NameKind {
+  /** Bind `name` as a namespace import standing for an entire module's
+   *  export table (`import * as X from "..."` → defineNamespace('X', ...)). */
+  defineNamespace(name: string, table: ImportTable): void {
+    this.bindings.set(name, { tag: 'namespace', table });
+  }
+
+  private resolveEntry(name: string): ScopeEntry | undefined {
     let scope: StaticScope | undefined = this;
     while (scope) {
       const found = scope.bindings.get(name);
       if (found !== undefined) return found;
       scope = scope.parent;
     }
-    return 'other';
+    return undefined;
+  }
+
+  /** Resolve a name's kind by walking outward through enclosing scopes.
+   *  Names with no visible declaration (builtins with no static table,
+   *  undeclared — the latter is a Name error caught elsewhere) are treated
+   *  as 'other', matching this pass's policy: never flag what it cannot
+   *  prove. A namespace binding itself (the bare name `X`, not `X.foo`)
+   *  also resolves as 'other' — it is not a function/proc/var value in
+   *  its own right; only `X.foo` (via resolveMember) carries real kind
+   *  information. */
+  resolve(name: string): NameKind {
+    const entry = this.resolveEntry(name);
+    if (!entry || entry.tag === 'namespace') return 'other';
+    return entry.kind;
+  }
+
+  /** Resolve `name.member`'s kind when `name` is bound to a namespace
+   *  import — used for GetExpr/namespaced-call handling (rule 1/2 across
+   *  a `import * as X from "..."` boundary). Returns null if `name` is not
+   *  a namespace binding in scope (the caller should fall back to treating
+   *  the GetExpr as an ordinary value read in that case). */
+  resolveMember(name: string, member: string): NameKind | null {
+    const entry = this.resolveEntry(name);
+    if (!entry || entry.tag !== 'namespace') return null;
+    return entry.table.get(member) ?? 'other';
   }
 
   child(): StaticScope {
@@ -217,6 +305,25 @@ function checkExprValue(expr: Expr, scope: StaticScope, inPureContext: boolean):
       for (const f of expr.fields) checkExprValue(f.value, scope, inPureContext);
       return;
     case 'GetExpr':
+      // Namespace-qualified value use: `X.foo` where X is bound via
+      // `import * as X from "..."`. If X resolves to a namespace binding
+      // and `foo` is a proc in that module's export table, this is rule 1
+      // across the module boundary — otherwise (X isn't a namespace
+      // binding, or foo isn't a proc) fall through to checking expr.object
+      // as an ordinary value read, same as before namespace support
+      // existed.
+      if (expr.object.type === 'IdentExpr') {
+        const memberKind = scope.resolveMember(expr.object.name, expr.name);
+        if (memberKind === 'proc' && inPureContext) {
+          procError(
+            `Functions cannot use '${expr.object.name}.${expr.name}' as a value: ` +
+            `'${expr.name}' is a procedure in module '${expr.object.name}'. ` +
+            `Procedures may only be called directly, e.g. '${expr.object.name}.${expr.name}(...)'.`,
+            expr.pos
+          );
+        }
+        if (memberKind !== null) return; // X is a namespace binding — handled above, nothing else to recurse into.
+      }
       checkExprValue(expr.object, scope, inPureContext);
       return;
     case 'MatchExpr':
@@ -283,10 +390,13 @@ function checkExprValue(expr: Expr, scope: StaticScope, inPureContext: boolean):
  * but if it resolves to a procedure AND we're in pure context, that's rule
  * 2 — calling a procedure from a function/lambda is itself the side effect.
  *
- * If the callee is anything other than a bare IdentExpr (a GetExpr for a
- * namespaced call, a parenthesized lambda, the result of another call,
- * etc.), it's checked in ordinary value position — this pass only tracks
- * proc-ness for plain local identifiers (see module scope boundary above).
+ * A namespaced callee (`X.foo(...)` where X is a namespace import) gets the
+ * same treatment: direct callee position, but checked against X's export
+ * table for rule 2.
+ *
+ * Any other callee shape (a parenthesized lambda, the result of another
+ * call, a GetExpr where the object isn't a namespace binding, etc.) is
+ * checked in ordinary value position.
  */
 function checkCallExpr(expr: Expr & { type: 'CallExpr' }, scope: StaticScope, inPureContext: boolean): void {
   if (expr.callee.type === 'IdentExpr') {
@@ -300,6 +410,25 @@ function checkCallExpr(expr: Expr & { type: 'CallExpr' }, scope: StaticScope, in
     }
     // Direct callee position — not a value use, so no rule-1 check here
     // even if kind === 'proc' and we're in impure context.
+  } else if (expr.callee.type === 'GetExpr' && expr.callee.object.type === 'IdentExpr') {
+    const memberKind = scope.resolveMember(expr.callee.object.name, expr.callee.name);
+    if (memberKind === 'proc' && inPureContext) {
+      procError(
+        `Functions cannot call procedures: '${expr.callee.object.name}.${expr.callee.name}' is a procedure in ` +
+        `module '${expr.callee.object.name}'. Move the call to a procedure, or convert ` +
+        `'${expr.callee.name}' to a function.`,
+        expr.pos
+      );
+    }
+    if (memberKind === null) {
+      // expr.callee.object isn't a namespace binding — fall back to
+      // ordinary value-position checking for the whole GetExpr (handles
+      // e.g. a record field that happens to hold a function value).
+      checkExprValue(expr.callee, scope, inPureContext);
+    }
+    // Direct (namespaced) callee position otherwise — same rationale as
+    // the bare-IdentExpr branch above: no rule-1 check here even if
+    // memberKind === 'proc' and we're in impure context.
   } else {
     checkExprValue(expr.callee, scope, inPureContext);
   }
@@ -382,18 +511,35 @@ function checkStmt(stmt: Stmt, scope: StaticScope, inPureContext: boolean): void
     case 'EvalStmt':
       checkExprValue(stmt.expression, scope, inPureContext);
       return;
-    case 'ImportStmt':
-      // Imported names are treated as 'other' (opaque/unknown kind) per
-      // this pass's documented scope boundary — see file header.
+    case 'ImportStmt': {
+      // Without a resolver (the default — preserves this pass's original,
+      // pre-cross-module behavior exactly), every imported name is opaque
+      // 'other', same as before cross-module support existed. With one
+      // (supplied by the whole-program driver, wholeProgramCheck.ts), look
+      // up each imported name's real kind in the resolved module's export
+      // table; a name absent from that table (e.g. it doesn't actually
+      // exist — a different error the driver/interpreter will catch
+      // elsewhere) falls back to 'other' rather than crashing this pass.
+      const table = currentImportResolver ? currentImportResolver(stmt.path, stmt.pos) : null;
       if (stmt.kind === 'named') {
-        for (const n of stmt.names) scope.define(n.alias ?? n.name, 'other');
+        for (const n of stmt.names) {
+          const bindName = n.alias ?? n.name;
+          scope.define(bindName, table?.get(n.name) ?? 'other');
+        }
       } else if (stmt.kind === 'namespace') {
-        scope.define(stmt.alias, 'other');
+        if (table) scope.defineNamespace(stmt.alias, table);
+        else scope.define(stmt.alias, 'other');
+      } else {
+        // 'star' — every export of the resolved module binds directly
+        // into this scope, same as the runtime's own star-import binding
+        // (interpreter.ts's ImportStmt evaluation, 'star' branch).
+        if (table) for (const [name, kind] of table) scope.define(name, kind);
+        // No table (no resolver, or resolution failed): nothing to define
+        // here, matching the pre-cross-module behavior exactly — an open,
+        // unenumerable set of names, none of them checkable.
       }
-      // 'star' imports bind an open set of names not statically enumerable
-      // here; nothing to define, and (per scope boundary) nothing to check
-      // for those names either.
       return;
+    }
     case 'ExportStmt':
       checkStmt(stmt.declaration, scope, inPureContext);
       return;
@@ -408,8 +554,19 @@ function checkStmt(stmt: Stmt, scope: StaticScope, inPureContext: boolean): void
  * Call this once per module, immediately after parsing and before
  * interpretation (or, eventually, before code generation) — it requires no
  * type information and is independent of the inferencer/typechecker passes.
+ *
+ * @param statements  The module's parsed top-level statements.
+ * @param resolver    Optional. Resolves an import path to that module's
+ *   ImportTable, enabling real cross-module kind checks (rule 1/2/3 across
+ *   a module boundary, including through namespace imports). Omitted (the
+ *   default), every import is treated as opaque 'other', exactly as before
+ *   cross-module support existed — so all pre-existing callers/tests are
+ *   unaffected. Supplied by the whole-program driver
+ *   (wholeProgramCheck.ts), which has already checked every module in the
+ *   import graph in dependency order before calling this on a module that
+ *   imports from them.
  */
-export function checkProcedureUsage(statements: Stmt[]): void {
+export function checkProcedureUsage(statements: Stmt[], resolver?: ModuleImportResolver): void {
   const root = new StaticScope();
   // Top level starts in impure ("procedural") context — matching
   // Interpreter.inPureContext's default of `false` and main.ts's runFile,
@@ -419,5 +576,14 @@ export function checkProcedureUsage(statements: Stmt[]): void {
   // dynamic, REPL-only policy choice with no equivalent here; this checker
   // validates a module's *own* declarations, which is unaffected by how an
   // interactive session chooses to evaluate top-level expressions.
-  for (const stmt of statements) checkStmt(stmt, root, false);
+  currentImportResolver = resolver ?? null;
+  try {
+    for (const stmt of statements) checkStmt(stmt, root, false);
+  } finally {
+    // Always clear, even if a rule violation threw — mirrors
+    // ModuleLoader.load's try/finally around its own `loading` Set cleanup
+    // (interpreter.ts), same rationale: never leave shared state stuck
+    // after an error.
+    currentImportResolver = null;
+  }
 }

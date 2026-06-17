@@ -400,9 +400,10 @@ export class PfunError extends Error {
     message: string,
     pos: SourcePos | undefined,
     sourceText: string,
-    bindings: { name: string; display: string }[]
+    bindings: { name: string; display: string }[],
+    filePath?: string
   ) {
-    const formattedMessage = PfunError.format(kind, message, pos, sourceText, bindings);
+    const formattedMessage = PfunError.format(kind, message, pos, sourceText, bindings, filePath);
     super(formattedMessage);
     this.name = 'PfunError';
     this.kind = kind;
@@ -416,11 +417,21 @@ export class PfunError extends Error {
     message: string,
     pos: SourcePos | undefined,
     sourceText: string,
-    bindings: { name: string; display: string }[]
+    bindings: { name: string; display: string }[],
+    filePath?: string
   ): string {
     const lines: string[] = [];
 
-    // Header: "[Type] Error on line N/chM:"
+    // Header: "[Type] Error on line N/chM:", optionally preceded by which
+    // file the error is in. filePath is only ever supplied by multi-file
+    // callers (wholeProgramCheck.ts) — every single-file caller (the
+    // lexer/parser/interpreter/checkTypes, all of which only ever operate
+    // on "the one file" the CLI was invoked with) omits it, so their
+    // formatted output is byte-for-byte unchanged from before this
+    // parameter existed.
+    if (filePath) {
+      lines.push(`In ${filePath}:`);
+    }
     if (pos) {
       lines.push(`[${kind}] Error on line ${pos.line}/ch${pos.col}:`);
     } else {
@@ -465,6 +476,10 @@ export class PfunError extends Error {
  * @param node       The AST node being evaluated (to extract referenced identifiers)
  * @param envLookup  A function to look up an identifier's current value
  * @param interp     The interpreter instance (needed for stringify / formatValue)
+ * @param filePath   Optional. Which file the error is in, for multi-file callers
+ *                    (wholeProgramCheck.ts) where the error may not be in "the
+ *                    one file" the CLI was invoked with. Omitted by every
+ *                    single-file caller — see PfunError.format's docs.
  */
 export function buildPfunError(
   err: Error,
@@ -472,7 +487,8 @@ export function buildPfunError(
   pos: SourcePos | undefined,
   node: Expr | Stmt | null | undefined,
   envLookup: (name: string) => any,
-  interp: { stringify(v: any): string }
+  interp: { stringify(v: any): string },
+  filePath?: string
 ): PfunError {
   const kind = classifyError(err.message);
 
@@ -503,5 +519,5 @@ export function buildPfunError(
     bindings.push({ name, display: formatValue(rawValue, interp) });
   }
 
-  return new PfunError(kind, err.message, pos, source, bindings);
+  return new PfunError(kind, err.message, pos, source, bindings, filePath);
 }

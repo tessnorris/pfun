@@ -5,8 +5,8 @@ import * as path from 'path';
 import * as readline from 'readline';
 import { Lexer } from './lexer';
 import { Parser } from './parser';
-import { checkProcedureUsage } from './procedureCheck';
 import { checkTypes } from './typechecker';
+import { checkProgram } from './wholeProgramCheck';
 import { Interpreter, ModuleLoader } from './interpreter';
 import { stdlibFunctions, stdlibTypes } from './library';
 import { mutStructuresFunctions, mutStructuresTypes } from './mutStructures';
@@ -65,7 +65,6 @@ export async function runFile(filePath: string, scriptArgs: string[] = []) {
   let ast;
   try {
     ast = new Parser(new Lexer(source).lex()).parse();
-    checkProcedureUsage(ast);
   } catch (e) {
     const raw = e instanceof Error ? e : new Error(String(e));
     const pfunErr = buildPfunError(raw, source, (raw as any).pos, null, () => undefined, { stringify: String });
@@ -73,11 +72,33 @@ export async function runFile(filePath: string, scriptArgs: string[] = []) {
     process.exit(1);
   }
 
+  // Whole-program static procedure-usage (purity) checking: walks the
+  // entire import graph (the entry file plus everything it transitively
+  // imports), each file parsed once, and fails on the first violation
+  // found anywhere — not just in this file. Supersedes the old
+  // entry-file-only `checkProcedureUsage(ast)` call (Stage 1 of
+  // whole-program static checking — see wholeProgramCheck.ts's file
+  // header for the full design). checkProgram does its own internal
+  // parse of the entry file (and its dependencies) to build the graph;
+  // this means the entry file is parsed twice in this function (here, and
+  // again just above for `ast`) — an accepted, deliberate cost for Stage
+  // 1, removed once a shared parsed-AST cache is built in Stage 3.
+  const programError = checkProgram(absolutePath, loader);
+  if (programError) {
+    console.error(programError.pfunMessage);
+    process.exit(1);
+  }
+
   // Static type checking (Hindley-Milner inference via inferencer.ts,
-  // orchestrated by typechecker.ts's checkTypes). Unlike the lex/parse/
-  // procedure-usage checks above, checkTypes() never throws — it always
-  // returns an array (possibly empty) of already-formatted PfunErrors, so
-  // this is a plain check rather than a try/catch.
+  // orchestrated by typechecker.ts's checkTypes). Unlike the lex/parse
+  // check above, checkTypes() never throws — it always returns an array
+  // (possibly empty) of already-formatted PfunErrors, so this is a plain
+  // check rather than a try/catch. NOTE: checkTypes here still only
+  // checks the entry file's own AST, not the whole import graph — that is
+  // Stage 2 of whole-program static checking, not yet built; cross-module
+  // type errors are not yet caught statically (same gap as before this
+  // change, for types specifically — only purity gained whole-program
+  // coverage in this stage).
   const typeErrors = checkTypes(ast!, source);
   if (typeErrors.length > 0) {
     for (const err of typeErrors) console.error(err.pfunMessage);

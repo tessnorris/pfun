@@ -1,0 +1,6 @@
+import * from "io";
+import * as Lib from "./lib";
+function ok() {
+  return Lib.double(5);
+}
+println(ok());

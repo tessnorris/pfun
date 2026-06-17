@@ -1,0 +1,7 @@
+export proc sideEffect(x) {
+  println(x);
+}
+export function double(x) {
+  return x * 2;
+}
+export var counter = 0;

@@ -561,6 +561,36 @@ export class StdinBuffer {
 
 // ─── Module Loader ────────────────────────────────────────────────────────────
 
+/**
+ * Resolve an import path to an absolute file path (or a `__builtin__:name`
+ * sentinel for a built-in module). Pulled out as a free function — rather
+ * than kept only as ModuleLoader.resolve — so the static whole-program
+ * checker (wholeProgramCheck.ts) can share the exact same resolution logic
+ * without needing a full ModuleLoader/Interpreter instance, per
+ * wholeProgramCheck.ts's design ("Component 1 — ModuleResolver": reuse, not
+ * duplicate). ModuleLoader.resolve below is now a thin wrapper over this.
+ *
+ * @param importPath   The raw string from an ImportStmt's `path` field.
+ * @param fromDir      The importing module's own directory (for `./`/`../`
+ *                      relative imports).
+ * @param libDir       Directory for bare-name imports (e.g. "math" →
+ *                      libDir/math.pf).
+ * @param isBuiltin    True if importPath names a registered built-in
+ *                      module (e.g. 'io').
+ */
+export function resolveModulePath(
+  importPath: string,
+  fromDir: string,
+  libDir: string,
+  isBuiltin: boolean,
+): string {
+  if (isBuiltin) return `__builtin__:${importPath}`;
+  const base = (importPath.startsWith('./') || importPath.startsWith('../'))
+    ? path.resolve(fromDir, importPath)
+    : path.resolve(libDir, importPath);
+  return base.endsWith('.pf') ? base : base + '.pf';
+}
+
 export class ModuleLoader {
   private cache   = new Map<string, Map<string, any>>();
   private loading = new Set<string>();
@@ -581,13 +611,33 @@ export class ModuleLoader {
     this.builtins.set(name, { fns, types });
   }
 
+  /** True if `name` was registered via registerBuiltin (e.g. 'io', 'math'). */
+  isBuiltin(name: string): boolean {
+    return this.builtins.has(name);
+  }
+
+  /**
+   * The names exported by a built-in module (function names and type
+   * names together) — used by the static whole-program checker
+   * (wholeProgramCheck.ts) to seed a builtin import's names into scope
+   * without needing to parse anything. Returns null if `name` was never
+   * registered.
+   *
+   * Every built-in export is unconditionally kind-'other' / type-Unknown
+   * from the static checker's perspective: RegistryFunction (see its type
+   * above) has no kind field at all, so no native stdlib function is ever
+   * proc-typed — their effects are gated at the call site by
+   * inPureContext, not by the natives themselves. See
+   * wholeProgramCheck.ts's design notes for the full reasoning.
+   */
+  builtinExportNames(name: string): string[] | null {
+    const entry = this.builtins.get(name);
+    if (!entry) return null;
+    return [...entry.fns.map(f => f.name), ...entry.types.map(t => t.name)];
+  }
+
   resolve(importPath: string, fromDir: string): string {
-    // Built-in module — use a special sentinel prefix
-    if (this.builtins.has(importPath)) return `__builtin__:${importPath}`;
-    const base = (importPath.startsWith('./') || importPath.startsWith('../'))
-      ? path.resolve(fromDir, importPath)
-      : path.resolve(this.libDir, importPath);
-    return base.endsWith('.pf') ? base : base + '.pf';
+    return resolveModulePath(importPath, fromDir, this.libDir, this.builtins.has(importPath));
   }
 
   load(resolvedPath: string): Map<string, any> {

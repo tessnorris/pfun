@@ -1,0 +1,6 @@
+import * from "io";
+import { viaA } from "./diamond_a";
+import { viaB } from "./diamond_b";
+
+println(viaA(1));
+println(viaB(1));

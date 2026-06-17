@@ -1,0 +1,7 @@
+import * from "io";
+import * from "./lib";
+function bad() {
+  counter = counter + 1;
+  return counter;
+}
+println(bad());

@@ -1,0 +1,6 @@
+import { deepSideEffect } from "./deep";
+
+export function middleViolation() {
+  let g = deepSideEffect;
+  return 1;
+}
