@@ -61,6 +61,17 @@
 // signature table for the stdlib is Stage 3 work, not done here); they
 // export no unions at all (no built-in module currently defines a
 // UnionTypeStmt — they're plain JS function/type registrations).
+//
+// Stage 3 (REPL preload routing): `checkProgram`/`buildModuleGraph` also
+// accept an optional `entrySource` override, used by main.ts's
+// `loadReplFile` (`pfun -i somefile.pf`) to route a preloaded file —
+// including everything it transitively imports — through this same
+// whole-program checker, instead of the REPL's old per-entry, no-resolver
+// checkTypes loop (which could never see across `import` boundaries, or
+// even across two of the file's own entries, since each chunk was checked
+// in total isolation). See `buildModuleGraph`'s docblock for exactly why
+// an override is needed at all (the REPL's trailing-`?` print sugar isn't
+// valid standalone .pf syntax).
 
 import * as fs from 'fs';
 import * as path from 'path';
@@ -120,13 +131,44 @@ class WholeProgramError extends Error {
  * import (mirroring ModuleLoader's existing "Circular import detected"
  * wording and try/finally-based `loading`-set cleanup).
  *
+ * @param entrySource  Stage 3 (REPL preload routing): when provided, used
+ *   as the entry file's source text INSTEAD OF reading it from disk —
+ *   every other file in the graph (anything the entry imports,
+ *   transitively) is still read from disk normally. This exists for
+ *   `pfun -i somefile.pf`: the REPL's file-preload syntax allows a
+ *   trailing `?` on an entry to print its result (see main.ts's
+ *   splitEntries/evalEntryImmediately), which is not valid standalone
+ *   .pf syntax — a plain disk-read-and-parse of such a file would fail
+ *   to lex/parse at every `?`. The caller (loadReplFile) passes a
+ *   position-preserving sanitized copy (see stripReplPrintMarkers) with
+ *   those markers blanked out in place, so checkProgram can run its real
+ *   cross-module purity/type/exhaustiveness checks over the preloaded
+ *   file exactly as it would for any other entry point, while any error
+ *   position it reports still lines up with the actual file on disk
+ *   (same length, same line breaks — only the `?` character itself, and
+ *   nothing else, differs from what's on disk).
+ * @param entryFromDir  Stage 3 (REPL preload routing): when provided,
+ *   used as the directory the ENTRY file's OWN `./`/`../`-relative
+ *   imports resolve against, instead of the entry file's actual
+ *   directory (`path.dirname(entryPath)`). Every import inside any OTHER
+ *   (nested) module always resolves relative to THAT module's own
+ *   directory regardless of this parameter — only the entry node's
+ *   import statements are affected. This exists because the REPL's
+ *   Interpreter resolves a preloaded file's top-level imports relative
+ *   to `process.cwd()`, not the preloaded file's own location (see
+ *   `runRepl`'s `baseDir`/`Interpreter` construction in main.ts) — so for
+ *   checkProgram's resolution of that SAME entry file's imports to agree
+ *   with what evaluation will actually do, it needs that same `cwd`
+ *   basis, not the file-location basis every other caller (runFile) uses
+ *   and wants.
+ *
  * Exported (beyond checkProgram, this file's only other public surface)
  * specifically so tests can verify the "each file parsed exactly once"
  * property directly — by construction, every resolved path appears as
  * exactly one ModuleNode in the returned array, which is a more direct and
  * environment-independent check than spying on fs.readFileSync.
  */
-export function buildModuleGraph(entryPath: string, loader: ModuleLoader): ModuleNode[] {
+export function buildModuleGraph(entryPath: string, loader: ModuleLoader, entrySource?: string, entryFromDir?: string): ModuleNode[] {
   const nodes    = new Map<string, ModuleNode>();   // resolvedPath -> node
   const visiting = new Set<string>();                // cycle detection
   const order: ModuleNode[] = [];                    // post-order = dependency-first
@@ -166,7 +208,14 @@ export function buildModuleGraph(entryPath: string, loader: ModuleLoader): Modul
 
     visiting.add(resolvedPath);
     try {
-      const source = fs.readFileSync(resolvedPath, 'utf-8');
+      // entrySource only ever substitutes for THIS exact path (the entry
+      // file itself, the one and only call where resolvedPath === the
+      // original entryPath argument) — anything resolvedPath could equal
+      // here for any OTHER (imported) module always reads from disk
+      // normally, same as before this parameter existed.
+      const source = (resolvedPath === entryPath && entrySource !== undefined)
+        ? entrySource
+        : fs.readFileSync(resolvedPath, 'utf-8');
       let ast: Stmt[];
       try {
         ast = new Parser(new Lexer(source).lex()).parse();
@@ -178,7 +227,15 @@ export function buildModuleGraph(entryPath: string, loader: ModuleLoader): Modul
       const node: ModuleNode = { resolvedPath, ast, source, imports: [] };
       nodes.set(resolvedPath, node);
 
-      const fromDir = path.dirname(resolvedPath);
+      // Same one-node-only override pattern as entrySource above: only
+      // the entry node's OWN imports ever use entryFromDir; every nested
+      // module's imports resolve relative to ITS OWN directory exactly
+      // as before, matching how the interpreter constructs a fresh
+      // baseDir of path.dirname(resolvedPath) for every submodule it
+      // loads regardless of where the top-level baseDir came from.
+      const fromDir = (resolvedPath === entryPath && entryFromDir !== undefined)
+        ? entryFromDir
+        : path.dirname(resolvedPath);
       for (const importStmt of collectImportStmts(ast)) {
         const childResolved = loader.resolve(importStmt.path, fromDir);
         node.imports.push({ resolvedPath: childResolved, importPath: importStmt.path, pos: importStmt.pos });
@@ -350,6 +407,14 @@ function extractExportUnions(stmts: Stmt[]): UnionImportTable {
  *                    registered (see registerBuiltinModules in main.ts) —
  *                    reused here purely for its resolve()/builtinExportNames()
  *                    methods; nothing is loaded or interpreted through it.
+ * @param entrySource  Stage 3 (REPL preload routing): forwarded verbatim
+ *   to buildModuleGraph — see that function's own docblock for the full
+ *   rationale. Omit for the normal runFile path, where the entry file's
+ *   real on-disk content is always exactly what should be checked.
+ * @param entryFromDir  Stage 3 (REPL preload routing): forwarded verbatim
+ *   to buildModuleGraph — see that function's own docblock. Omit for the
+ *   normal runFile path, where the entry file's own directory is always
+ *   the correct resolution base for its imports.
  * @returns  `errors` lists every PfunError found across the whole graph,
  *   in dependency-first order (empty if the whole program passes). `error`
  *   is a convenience alias for `errors[0] ?? null` — kept for callers (and
@@ -373,14 +438,17 @@ function extractExportUnions(stmts: Stmt[]): UnionImportTable {
  *   so a partial map is never actually consulted by load() in that case.
  *   Builtins are deliberately absent from both maps; ModuleLoader.load
  *   already has its own, separate, non-AST-based fast path for the
- *   `__builtin__:` sentinel that doesn't need or want an entry here.
+ *   `__builtin__:` sentinel that doesn't need or want an entry here. The
+ *   REPL preload path (loadReplFile) ignores both maps entirely — it
+ *   still evaluates the file through its own entry-by-entry pipeline,
+ *   unrelated to checkProgram's AST-reuse optimization for runFile.
  */
-export function checkProgram(entryPath: string, loader: ModuleLoader): { error: PfunError | null; errors: PfunError[]; checkedAsts: Map<string, Stmt[]>; checkedSources: Map<string, string> } {
+export function checkProgram(entryPath: string, loader: ModuleLoader, entrySource?: string, entryFromDir?: string): { error: PfunError | null; errors: PfunError[]; checkedAsts: Map<string, Stmt[]>; checkedSources: Map<string, string> } {
   const checkedAsts    = new Map<string, Stmt[]>();
   const checkedSources = new Map<string, string>();
   const errors: PfunError[] = [];
   try {
-    const graph = buildModuleGraph(entryPath, loader);
+    const graph = buildModuleGraph(entryPath, loader, entrySource, entryFromDir);
     const infoByPath = new Map<string, ModuleInfo>();
 
     for (const node of graph) {

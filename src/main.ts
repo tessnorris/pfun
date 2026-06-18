@@ -149,9 +149,10 @@ function isIncomplete(source: string): boolean {
 /**
  * Split source into the same top-level "entries" the interactive REPL would
  * receive one at a time: lines accumulate until bracket/string balance is
- * complete, then that chunk is one entry. Used by loadReplFile() to check
- * purity entry-by-entry (since a trailing `?` makes a chunk un-parseable as
- * a whole-file AST) and by feedSource() to evaluate them.
+ * complete, then that chunk is one entry. Used by loadReplFile() (both to
+ * build the sanitized whole-file text for checkProgram — see
+ * stripReplPrintMarkers — and to actually evaluate the file entry-by-entry
+ * afterward) and by feedSource() to evaluate interactively-typed entries.
  */
 function splitEntries(source: string): string[] {
   const lines = source.split('\n');
@@ -168,6 +169,44 @@ function splitEntries(source: string): string[] {
 }
 
 /**
+ * Stage 3 (REPL preload routing): produce a version of `source` that is
+ * valid standalone .pf syntax — suitable for checkProgram, which parses
+ * the WHOLE file (and everything it imports) as one ordinary program —
+ * by blanking out exactly the trailing `?` REPL-print markers `entries`
+ * (from splitEntries(source)) identified as "this entry wants its result
+ * printed", and nothing else.
+ *
+ * Each qualifying `?` is replaced with a single space IN PLACE, rather
+ * than removed: every other character keeps its exact original offset,
+ * so any error position checkProgram reports against the sanitized text
+ * still points at the exact same line/column the user would see by
+ * opening the real file (same length, same line breaks throughout —
+ * the lexer treats the replacement space as ordinary skippable
+ * whitespace, same as it would the `?` it replaced from the parser's
+ * point of view... except now it parses).
+ *
+ * `entries` must be exactly `splitEntries(source)`'s own output for this
+ * `source` — the caller already has it (needed separately for the actual
+ * entry-by-entry evaluation pass), so this takes it as a parameter rather
+ * than re-deriving it.
+ */
+function stripReplPrintMarkers(source: string, entries: string[]): string {
+  let sanitized  = source;
+  let searchFrom = 0;
+  for (const entry of entries) {
+    const idx = sanitized.indexOf(entry, searchFrom);
+    if (idx === -1) continue; // defensive: entries are always exact substrings of source in order
+    const trimmed = entry.trimEnd();
+    if (trimmed.endsWith('?')) {
+      const qPos = idx + trimmed.length - 1; // absolute offset of the '?' within `sanitized`
+      sanitized = sanitized.slice(0, qPos) + ' ' + sanitized.slice(qPos + 1);
+    }
+    searchFrom = idx + entry.length;
+  }
+  return sanitized;
+}
+
+/**
  * Feed pre-split entries through the REPL's evaluation pipeline. Trailing `?`
  * behaves identically whether the entries came from stdin or a file.
  */
@@ -179,29 +218,58 @@ function feedEntries(interp: Interpreter, entries: string[]): void {
  * Load a .pf file's declarations into the REPL's persistent environment
  * before the interactive prompt starts.
  *
- * The file is split into entries (see splitEntries) and each entry is
- * evaluated IMMEDIATELY via evalEntryImmediately() — unlike interactive
- * input, file entries are NOT queued waiting for a `?`. The file's contents
- * are fully known upfront, so there's nothing to gain by deferring, and a
- * file with no `?` lines should still define everything it contains.
+ * Stage 3 (REPL preload routing): the WHOLE file — including everything it
+ * transitively imports — is checked up front via checkProgram, exactly as
+ * runFile() checks an entry file. This replaces the old per-entry,
+ * no-resolver checkTypes loop, which checked each chunk in total isolation
+ * and so could never catch a type error spanning two of the file's own
+ * entries, let alone anything across an `import` boundary. Since the
+ * file's trailing-`?` print markers aren't valid standalone .pf syntax,
+ * checkProgram is given a sanitized copy (see stripReplPrintMarkers) with
+ * those markers blanked out in place — entryPath itself still points at
+ * the real file on disk, so any error position reported still lines up
+ * with what the user sees in their editor. On any error (now batched —
+ * see checkProgram's docblock — so every violation in the file or its
+ * imports is reported in one shot, not just the first), prints and exits
+ * without starting the REPL, matching runFile's fail-fast behavior.
+ *
+ * Once the whole file passes, it's split into entries (see splitEntries)
+ * and each is evaluated IMMEDIATELY via evalEntryImmediately() — unlike
+ * interactive input, file entries are NOT queued waiting for a `?`. The
+ * file's contents are fully known upfront, so there's nothing to gain by
+ * deferring, and a file with no `?` lines should still define everything
+ * it contains.
  *
  * Evaluation still happens under the `inPureContext` enforcement set up by
  * runRepl(), so any side-effecting call (println, var, array/dict mutation,
  * calling a `proc`, etc.) throws "side effects are not allowed" exactly as
- * it would if typed interactively. There's no separate static check: a
- * module full of `function`s loads regardless of what it imports, because
- * the functions are pure by construction.
+ * it would if typed interactively — checkProgram's checkProcedureUsage
+ * pass only flags genuine same-module rule violations (a `function`
+ * misusing a `proc`/`var`), never a side-effecting call by itself; it
+ * doesn't change what's loadable here, only what's caught statically
+ * up front versus at the call site during evaluation.
  *
  * Entries ending in `?` print their result immediately during load — this
  * lets a "REPL warm-up file" double as a quick smoke test (e.g.
  * `assertEquals(...)?` lines).
  *
- * On a lex/parse error, prints an error and exits without starting the REPL
- * (matching `runFile`'s fail-fast behavior). Runtime errors during loading
- * (including purity violations) are reported per-entry without aborting the
- * load — later entries still get a chance to load.
+ * Runtime errors during loading (including purity violations, which are
+ * only ever caught at the call site — see above) are reported per-entry
+ * without aborting the load — later entries still get a chance to load.
+ *
+ * @param loader,baseDir  The SAME ModuleLoader instance and baseDir
+ *   `runRepl` constructed `interp` with. These are passed in (rather than
+ *   this function building its own) specifically so checkProgram resolves
+ *   the file's own `./`/`../`-relative imports exactly the way evaluation
+ *   will actually resolve them afterward: the REPL's Interpreter always
+ *   resolves a preloaded/typed-in import relative to `process.cwd()` (see
+ *   runRepl), not relative to wherever the preloaded file happens to live
+ *   on disk — a mismatch here would mean checkProgram silently validates
+ *   against a different file than the one `import` statements will
+ *   actually hit at evaluation time (see buildModuleGraph's
+ *   `entryFromDir` parameter, which carries this baseDir through).
  */
-function loadReplFile(interp: Interpreter, filePath: string): void {
+function loadReplFile(interp: Interpreter, filePath: string, loader: ModuleLoader, baseDir: string): void {
   const absolutePath = path.resolve(filePath);
   if (!fs.existsSync(absolutePath)) {
     console.error(`File not found: ${absolutePath}`);
@@ -211,22 +279,10 @@ function loadReplFile(interp: Interpreter, filePath: string): void {
   const source  = fs.readFileSync(absolutePath, 'utf-8');
   const entries = splitEntries(source);
 
-  // Fail fast on lex/parse errors before evaluating anything.
-  for (const entry of entries) {
-    const trimmed = entry.trimEnd();
-    const withoutQ = trimmed.endsWith('?') ? trimmed.slice(0, -1) : entry;
-    try {
-      const entryAst = new Parser(new Lexer(withoutQ).lex()).parse();
-      const typeErrors = checkTypes(entryAst, withoutQ);
-      if (typeErrors.length > 0) throw typeErrors[0];
-    } catch (e) {
-      const rawErr = e instanceof Error ? e : new Error(String(e));
-      const pfunErr = rawErr instanceof PfunError
-        ? rawErr
-        : buildPfunError(rawErr, withoutQ, (rawErr as any).pos, null, () => undefined, { stringify: String });
-      console.error(pfunErr.pfunMessage);
-      process.exit(1);
-    }
+  const { errors } = checkProgram(absolutePath, loader, stripReplPrintMarkers(source, entries), baseDir);
+  if (errors.length > 0) {
+    for (const err of errors) console.error(err.pfunMessage);
+    process.exit(1);
   }
 
   feedEntries(interp, entries);
@@ -313,7 +369,7 @@ function runRepl(filePath?: string) {
 
   if (filePath) {
     console.log(`Loading '${filePath}'...`);
-    loadReplFile(interp, filePath);
+    loadReplFile(interp, filePath, loader, baseDir);
   }
 
   const rl = readline.createInterface({
