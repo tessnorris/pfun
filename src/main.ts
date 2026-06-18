@@ -63,13 +63,12 @@ export async function runFile(filePath: string, scriptArgs: string[] = []) {
   // entry file plus everything it transitively imports), parsing each
   // file EXACTLY ONCE, and runs BOTH procedure-usage/purity checking AND
   // type/exhaustiveness checking against every module in the graph — not
-  // just this one — failing on the first violation found anywhere
-  // (including a lex/syntax error in the entry file itself, which used
-  // to be caught by a separate try/catch here before checkProgram
-  // existed — checkProgram's own internal parsing already produces an
-  // identically-formatted [Lexical]/[Syntax] PfunError via the same
-  // buildPfunError pipeline, so that separate try/catch is gone too).
-  // See wholeProgramCheck.ts's file header for the full design.
+  // just this one (including a lex/syntax error in the entry file itself,
+  // which used to be caught by a separate try/catch here before
+  // checkProgram existed — checkProgram's own internal parsing already
+  // produces an identically-formatted [Lexical]/[Syntax] PfunError via
+  // the same buildPfunError pipeline, so that separate try/catch is gone
+  // too). See wholeProgramCheck.ts's file header for the full design.
   //
   // Stage 3 ("remove the double-parse"): checkProgram now returns the
   // Map<resolvedPath, checkedAST> (and the parallel Map<resolvedPath,
@@ -78,9 +77,17 @@ export async function runFile(filePath: string, scriptArgs: string[] = []) {
   // already-read source text — so this function no longer does ANY
   // separate parse or read of the entry file at all; `ast`/`source`
   // below come directly from these maps.
-  const { error: programError, checkedAsts, checkedSources } = checkProgram(absolutePath, loader);
-  if (programError) {
-    console.error(programError.pfunMessage);
+  //
+  // Stage 3 (all-errors batching): `errors` collects EVERY violation
+  // found anywhere in the whole import graph, not just the first — print
+  // all of them before exiting, so a single run surfaces everything that
+  // needs fixing instead of one error per run. (The one exception is a
+  // graph-level failure — missing file, circular import, or a lex/parse
+  // error while building the graph itself — which is unavoidably a
+  // single error; see checkProgram's docblock.)
+  const { errors: programErrors, checkedAsts, checkedSources } = checkProgram(absolutePath, loader);
+  if (programErrors.length > 0) {
+    for (const err of programErrors) console.error(err.pfunMessage);
     process.exit(1);
   }
   // Hand the whole map to the loader so load() (interpreter.ts), called

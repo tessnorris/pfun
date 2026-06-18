@@ -1,0 +1,5 @@
+export var counterB = 0;
+export function mutateB() {
+  counterB = counterB + 1;
+  return counterB;
+}

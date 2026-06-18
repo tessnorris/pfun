@@ -1,0 +1,6 @@
+import * from "io";
+import { value } from "./batch_no_cascade_lib";
+function useValue() {
+  return value() + 1;
+}
+println(useValue());

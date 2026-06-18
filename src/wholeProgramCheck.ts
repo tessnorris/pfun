@@ -31,10 +31,27 @@
 //      — kind (purity), resolved type, and (for unions) variant shape —
 //      by walking its ExportStmts, and cache them under that module's
 //      resolved path for anything that imports it later.
-//   5. The first error encountered anywhere — whichever module, whichever
-//      check, whichever violation — stops the whole walk and is reported
-//      with that module's file path attached (since the error may not be
-//      in the entry file).
+//   5. Stage 3 (all-errors batching): a module's error does NOT stop the
+//      walk. Every error from every check, in every module, is collected
+//      — each tagged with that module's file path attached (since the
+//      error may not be in the entry file) — and the whole graph is still
+//      walked to completion. A module that fails either check simply does
+//      NOT get its export tables cached (step 4 above is skipped for it),
+//      so anything that later imports it falls back to the same permissive
+//      "unresolvable import" behavior checkProcedureUsage/checkTypes
+//      already have for a missing resolver entry (every name from it reads
+//      as kind 'other' / type Unknown) — exactly as if cross-module
+//      checking didn't exist for that one edge. That fallback is what
+//      makes it safe to keep walking past a broken module instead of
+//      aborting: a downstream consumer gets permissive (never-flagged)
+//      treatment of bad info, never a false positive caused by a module
+//      that itself already failed.
+//      Graph-level errors (a missing file, a circular import, or a
+//      lex/parse failure while BUILDING the graph) are the one exception
+//      and still abort immediately, before any module-level check runs at
+//      all — there is no graph left to keep walking once parsing itself
+//      can't produce one. See `checkProgram`'s own docblock below for
+//      exactly which case is which.
 //
 // Built-in modules (io, math, ...) are leaf nodes with no .pf source:
 // their export kinds come from ModuleLoader.builtinExportNames (entirely
@@ -78,25 +95,18 @@ interface ModuleInfo {
   exportUnions: UnionImportTable;
 }
 
-/** Thrown internally to unwind out of the graph walk / check loop on the
- *  first error, carrying enough to format a `[Kind] message` PfunError
- *  pointing at the right file. Never escapes checkProgram(). */
+/** Carries enough to format a `[Kind] message` PfunError pointing at the
+ *  right file. Two uses: (1) thrown internally to unwind out of
+ *  buildModuleGraph on a graph-level error (missing file, circular import,
+ *  lex/parse failure) — those still abort the whole walk immediately,
+ *  since there is no graph to keep walking past a parse failure; and (2)
+ *  constructed (not thrown) as a plain value when checkProcedureUsage
+ *  rejects a module during the Stage 3 batching loop, so it can be pushed
+ *  onto the collected `errors` array and checking can continue with the
+ *  next module. Never escapes checkProgram() in either case.*/
 class WholeProgramError extends Error {
   constructor(message: string, public sourcePath: string, public source: string, public pos: SourcePos | undefined) {
     super(message);
-  }
-}
-
-/** Thrown internally (parallel to WholeProgramError, but for checkTypes'
- *  errors specifically) to unwind out of the check loop on the first
- *  type/exhaustiveness error. Unlike checkProcedureUsage's plain thrown
- *  Error, checkTypes() returns already-fully-formatted PfunErrors — this
- *  wrapper carries that formatted PfunError through unchanged (see
- *  attachFilePathIfCrossFile) rather than re-deriving one from a raw
- *  message, avoiding double-formatting. Never escapes checkProgram(). */
-class WholeProgramTypeError extends Error {
-  constructor(public original: PfunError, public sourcePath: string) {
-    super(original.message);
   }
 }
 
@@ -317,14 +327,35 @@ function extractExportUnions(stmts: Stmt[]): UnionImportTable {
  * itself, this is a plain check, not a try/catch-driven control-flow
  * function, so callers (main.ts) can treat it uniformly.
  *
+ * Stage 3 (all-errors batching): a violation in one module does NOT stop
+ * checking of the rest of the graph. Every module is still visited in
+ * dependency-first order and gets BOTH checkProcedureUsage and checkTypes
+ * run against it regardless of whether an earlier module already failed;
+ * every resulting error (purity, type, exhaustiveness — from every file)
+ * is collected into `errors`, each tagged with its own file path. A
+ * module that fails either check simply has its export tables withheld
+ * from `infoByPath` (see the loop body), so anything that later imports
+ * it gets the same permissive "imported name of unknown kind/type"
+ * fallback checkProcedureUsage/checkTypes already use for an unresolvable
+ * import — never a cascade of bogus secondary errors caused by one
+ * already-broken module. The one thing that still aborts immediately,
+ * before any module-level check runs at all, is a GRAPH-level failure
+ * (a missing file, a circular import, or a lex/parse error encountered
+ * while building the graph itself — see buildModuleGraph) — there is no
+ * graph left to keep walking once parsing can't produce one, so that
+ * path is unavoidably single-error.
+ *
  * @param entryPath  Absolute path to the entry .pf file.
  * @param loader     A ModuleLoader with built-in modules already
  *                    registered (see registerBuiltinModules in main.ts) —
  *                    reused here purely for its resolve()/builtinExportNames()
  *                    methods; nothing is loaded or interpreted through it.
- * @returns  `error` is null if the whole program passes, or the first
- *   PfunError encountered (from whichever file, whichever check)
- *   otherwise. `checkedAsts` maps each NON-BUILTIN module's resolved path
+ * @returns  `errors` lists every PfunError found across the whole graph,
+ *   in dependency-first order (empty if the whole program passes). `error`
+ *   is a convenience alias for `errors[0] ?? null` — kept for callers (and
+ *   tests) that only care whether *some* error occurred and what the
+ *   first one says; new callers that want the full picture should read
+ *   `errors`. `checkedAsts` maps each NON-BUILTIN module's resolved path
  *   to its already-parsed-and-checked (and, since checkTypes mutates in
  *   place, already INFERREDTYPE-ANNOTATED) AST — exactly the
  *   `Map<resolvedPath, checkedAST>` the Stage 3 design calls for, so
@@ -333,19 +364,21 @@ function extractExportUnions(stmts: Stmt[]): UnionImportTable {
  *   parallel map of each NON-BUILTIN module's already-read source text —
  *   so a caller (main.ts's runFile) can get the entry file's source for
  *   its own error-formatting needs without a second `fs.readFileSync` of
- *   the same file. Both maps only ever contain entries for modules
- *   reached BEFORE the first error (on failure, the graph walk stops
- *   early — see "What checking a program means" above) — safe because a
- *   failing program never reaches interpretation at all (main.ts exits
- *   first), so a partial map is never actually consulted by load() in
- *   that case. Builtins are deliberately absent from both maps;
- *   ModuleLoader.load already has its own, separate, non-AST-based fast
- *   path for the `__builtin__:` sentinel that doesn't need or want an
- *   entry here.
+ *   the same file. Both maps only ever contain entries for modules that
+ *   passed BOTH checks — so when `errors` is non-empty, both maps may be
+ *   incomplete (a module that itself failed, or anything appearing after
+ *   the LAST module reached if a graph-level error cut the walk short, is
+ *   simply absent) — safe because a failing program never reaches
+ *   interpretation at all (main.ts exits first on any non-empty `errors`),
+ *   so a partial map is never actually consulted by load() in that case.
+ *   Builtins are deliberately absent from both maps; ModuleLoader.load
+ *   already has its own, separate, non-AST-based fast path for the
+ *   `__builtin__:` sentinel that doesn't need or want an entry here.
  */
-export function checkProgram(entryPath: string, loader: ModuleLoader): { error: PfunError | null; checkedAsts: Map<string, Stmt[]>; checkedSources: Map<string, string> } {
+export function checkProgram(entryPath: string, loader: ModuleLoader): { error: PfunError | null; errors: PfunError[]; checkedAsts: Map<string, Stmt[]>; checkedSources: Map<string, string> } {
   const checkedAsts    = new Map<string, Stmt[]>();
   const checkedSources = new Map<string, string>();
+  const errors: PfunError[] = [];
   try {
     const graph = buildModuleGraph(entryPath, loader);
     const infoByPath = new Map<string, ModuleInfo>();
@@ -397,14 +430,6 @@ export function checkProgram(entryPath: string, loader: ModuleLoader): { error: 
         const resolved = loader.resolve(importPath, fromDir);
         return infoByPath.get(resolved)?.exportKinds ?? null;
       };
-
-      try {
-        checkProcedureUsage(node.ast!, kindResolver);
-      } catch (e) {
-        const raw = e instanceof Error ? e : new Error(String(e));
-        throw new WholeProgramError(raw.message, node.resolvedPath, node.source!, (raw as any).pos);
-      }
-
       const typeResolver: TypeImportResolver = (importPath, pos) => {
         const resolved = loader.resolve(importPath, fromDir);
         return infoByPath.get(resolved)?.exportTypes ?? null;
@@ -414,20 +439,42 @@ export function checkProgram(entryPath: string, loader: ModuleLoader): { error: 
         return infoByPath.get(resolved)?.exportUnions ?? null;
       };
 
+      // Stage 3: both checks always run for this module, regardless of
+      // whether the OTHER one already failed it — they're independent
+      // passes over the same already-parsed AST (checkProcedureUsage
+      // never mutates it; checkTypes' in-place mutation of
+      // inferredType/missingVariants is unconditional and safe either
+      // way), so running both maximizes how much real information this
+      // one pass over the file surfaces, rather than hiding a type error
+      // behind an earlier purity error in the same module. `moduleOk`
+      // gates only step 4 (export-table caching) below — never whether a
+      // check runs.
+      let moduleOk = true;
+
+      try {
+        checkProcedureUsage(node.ast!, kindResolver);
+      } catch (e) {
+        moduleOk = false;
+        const raw = e instanceof Error ? e : new Error(String(e));
+        errors.push(formatModuleError(raw.message, node.resolvedPath, node.source!, (raw as any).pos, entryPath));
+      }
+
       const exportTypesOut = new Map<string, PfunType>();
       const typeErrors = checkTypes(node.ast!, node.source!, typeResolver, unionResolver, exportTypesOut);
       if (typeErrors.length > 0) {
-        // checkTypes() never throws — it returns errors — so convert its
-        // FIRST error into the same WholeProgramError-throwing shape used
-        // by checkProcedureUsage above, for uniform first-error handling
-        // across both checks and every module. typeErrors[0].pfunMessage
-        // is already fully formatted (with its own [Kind]/caret/etc.) by
-        // checkTypes' own buildPfunError call, so re-running it through
-        // buildPfunError again at the bottom of this function would
-        // double-format it — pass the already-formatted message straight
-        // through via a thin wrapper instead (see the catch block below).
-        throw new WholeProgramTypeError(typeErrors[0], node.resolvedPath);
+        moduleOk = false;
+        // checkTypes() never throws — it returns errors, already fully
+        // formatted (with their own [Kind]/caret/etc.) by its own
+        // buildPfunError calls — so every one of them, not just the
+        // first, is pushed straight through via attachFilePathIfCrossFile
+        // (which only ever adds a header, never re-runs buildPfunError,
+        // avoiding double-formatting).
+        for (const typeErr of typeErrors) {
+          errors.push(attachFilePathIfCrossFile(typeErr, node.resolvedPath, entryPath));
+        }
       }
+
+      if (!moduleOk) continue; // see this function's docblock: withhold export info, keep walking
 
       infoByPath.set(node.resolvedPath, {
         exportKinds:  extractExportKinds(node.ast!),
@@ -443,57 +490,68 @@ export function checkProgram(entryPath: string, loader: ModuleLoader): { error: 
       checkedSources.set(node.resolvedPath, node.source!);
     }
 
-    return { error: null, checkedAsts, checkedSources };
+    return { error: errors[0] ?? null, errors, checkedAsts, checkedSources };
   } catch (e) {
-    if (e instanceof WholeProgramTypeError) {
-      // Already a fully-formatted PfunError from checkTypes() itself —
-      // just attach the cross-file path header (same suppress-when-
-      // entry-file logic as the WholeProgramError branch below) without
-      // re-running it through buildPfunError, which would double-wrap
-      // the [Kind]/caret formatting checkTypes already produced.
-      return { error: attachFilePathIfCrossFile(e.original, e.sourcePath, entryPath), checkedAsts, checkedSources };
-    }
     if (e instanceof WholeProgramError) {
-      // Only attach a file-path header when the error is in a DIFFERENT
-      // file than the one the user actually ran — for the common
-      // single-file-program case, "In <the file I just invoked>:" adds
-      // visual noise with no information (there was never any ambiguity
-      // about which file the error could be in). path.resolve normalizes
-      // both sides so the comparison isn't fooled by e.g. a trailing
-      // slash or '.' segment difference.
-      const resolvedEntry = path.resolve(entryPath);
-      const filePath = e.sourcePath === resolvedEntry ? undefined : displayPath(e.sourcePath);
-      const error = buildPfunError(
-        new Error(e.message),
-        e.source,
-        e.pos,
-        null,
-        () => undefined,
-        { stringify: String },
-        filePath,
-      );
-      return { error, checkedAsts, checkedSources };
+      // A graph-level failure (missing file / circular import / lex-parse
+      // error while BUILDING the graph) — there is no graph to keep
+      // walking past this, so it's unavoidably the program's only error.
+      const formatted = formatModuleError(e.message, e.sourcePath, e.source, e.pos, entryPath);
+      return { error: formatted, errors: [formatted], checkedAsts, checkedSources };
     }
     throw e; // a genuine bug in this file, not a checked program's own error — let it surface normally
   }
 }
 
 /**
+ * Format a raw error message (as thrown by checkProcedureUsage, or
+ * carried by a graph-level WholeProgramError) into a fully-formatted
+ * PfunError, attaching an "In <path>:" file-path header when, and only
+ * when, the error is in a DIFFERENT file than the one the user actually
+ * ran — for the common single-file-program case, "In <the file I just
+ * invoked>:" adds visual noise with no information (there was never any
+ * ambiguity about which file the error could be in). path.resolve
+ * normalizes both sides so the comparison isn't fooled by e.g. a trailing
+ * slash or '.' segment difference.
+ *
+ * Shared by both call sites that start from a raw (not yet PfunError-
+ * shaped) message: the per-module checkProcedureUsage catch in the Stage
+ * 3 batching loop above, and the graph-level WholeProgramError catch
+ * below it. checkTypes' own errors never go through this function — they
+ * arrive already fully formatted and are headered via
+ * attachFilePathIfCrossFile instead (see that function's docblock for why
+ * a finished PfunError can't be re-run through buildPfunError).
+ */
+function formatModuleError(message: string, sourcePath: string, source: string, pos: SourcePos | undefined, entryPath: string): PfunError {
+  const resolvedEntry = path.resolve(entryPath);
+  const filePath = sourcePath === resolvedEntry ? undefined : displayPath(sourcePath);
+  return buildPfunError(
+    new Error(message),
+    source,
+    pos,
+    null,
+    () => undefined,
+    { stringify: String },
+    filePath,
+  );
+}
+
+/**
  * Given an already-fully-formatted PfunError (as returned by checkTypes(),
- * which this file never reformats further — see WholeProgramTypeError's
- * docblock) and the resolved path of the file it came from, prepend an
- * "In <path>:" header line when, and only when, that file is NOT the
- * entry file the user actually ran (same suppress-for-the-common-case
- * policy as the WholeProgramError/checkProcedureUsage branch, which
- * builds its PfunError fresh via buildPfunError's filePath parameter
- * instead — that path isn't available here because a finished PfunError
- * instance only ever exposes its already-formatted .pfunMessage, never
- * the raw kind/message/pos/source/bindings buildPfunError needs to
- * reformat it; PfunError's own format() method is private and its
- * .message getter (from the base Error class) returns the ALREADY-
- * FORMATTED string too — there is no way to recover the original inputs
- * from a finished instance, so this constructs a new PfunError-shaped
- * value with the header text spliced directly into pfunMessage instead).
+ * which this file never reformats further) and the resolved path of the
+ * file it came from, prepend an "In <path>:" header line when, and only
+ * when, that file is NOT the entry file the user actually ran (same
+ * suppress-for-the-common-case policy as formatModuleError's
+ * checkProcedureUsage/graph-level branch, which builds its PfunError
+ * fresh via buildPfunError's filePath parameter instead — that path isn't
+ * available here because a finished PfunError instance only ever exposes
+ * its already-formatted .pfunMessage, never the raw kind/message/pos/
+ * source/bindings buildPfunError needs to reformat it; PfunError's own
+ * format() method is private and its .message getter (from the base
+ * Error class) returns the ALREADY-FORMATTED string too — there is no way
+ * to recover the original inputs from a finished instance, so this
+ * constructs a new PfunError-shaped value with the header text spliced
+ * directly into pfunMessage instead).
  *
  * Returns the original PfunError UNCHANGED (same identity) when no
  * header is needed, so the overwhelmingly common single-file case is
