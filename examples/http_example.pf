@@ -72,7 +72,7 @@ async proc handleRequest(req, res) {
   }
 }
 
-let port = 8080;
+let port = 7999;
 httpListen(port, handleRequest);
 println("Listening on http://localhost:" + port + " ...");
 

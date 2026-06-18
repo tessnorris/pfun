@@ -54,6 +54,7 @@ import { buildPfunError, PfunError } from './errors';
 import { checkProcedureUsage, ImportTable, ModuleImportResolver } from './procedureCheck';
 import { checkTypes } from './typechecker';
 import type { TypeImportTable, TypeImportResolver, UnionImportTable, UnionImportResolver } from './inferencer';
+import { BUILTIN_FUNCTION_TYPES } from './inferencer';
 import { ModuleLoader, resolveModulePath } from './interpreter';
 
 // ─── Per-module record ─────────────────────────────────────────────────────
@@ -354,20 +355,35 @@ export function checkProgram(entryPath: string, loader: ModuleLoader): { error: 
         const name  = node.resolvedPath.slice('__builtin__:'.length);
         const names = loader.builtinExportNames(name) ?? [];
         const kinds: ImportTable     = new Map(names.map(n => [n, 'other' as const]));
-        // Every builtin export gets type Unknown — the deliberate Stage 2
-        // choice (see this file's header); a full hand-written Fn
-        // signature table for the stdlib is Stage 3 work. Unknown
-        // unifies with anything (see ast.ts's UNKNOWN docs), so this
-        // never produces a false-positive type error — it just means a
-        // misuse of a builtin's return value isn't YET caught statically
-        // by this pass (same gap as before this stage, for builtins
-        // specifically — user-module cross-module types are the actual
-        // improvement here).
-        const types: TypeImportTable = new Map(names.map(n => [n, UNKNOWN]));
-        // No built-in module currently exports a union type (they're
-        // plain JS function/type registrations, not parsed UnionTypeStmts)
-        // — an empty table is exactly correct, not a placeholder.
-        const unions: UnionImportTable = new Map();
+        // Stage 3: real Fn signatures for every builtin export this
+        // project can express precisely — see BUILTIN_FUNCTION_TYPES's
+        // own docblock in inferencer.ts for exactly which functions are
+        // covered and which are deliberately left Unknown (genuinely
+        // polymorphic ones, e.g. mathlib's abs/min/max/clamp, where a
+        // monomorphic Fn signature would be WRONG for half their
+        // legitimate uses — Unknown there is the honest answer, not a
+        // placeholder). Unknown unifies with anything (see ast.ts's
+        // UNKNOWN docs), so a function without a table entry never
+        // produces a false-positive type error — it just means a misuse
+        // of THAT specific function's return value isn't caught
+        // statically by this pass, same as every builtin export was
+        // before this stage.
+        const types: TypeImportTable = new Map(
+          names.map(n => [n, BUILTIN_FUNCTION_TYPES.get(n) ?? UNKNOWN])
+        );
+        // Stage 3: real union variant data for builtin-module-registered
+        // unions (filelib's Result/ReadResult/..., httplib's HttpResult,
+        // dblib's DbResult/DbValue) — these are RegistryTypes (hand-coded
+        // TypeScript, not parsed UnionTypeStmts), but exhaustiveness
+        // checking only needs a name + variant list, which
+        // loader.builtinUnionTypes exposes directly from the SAME
+        // RegistryType[] the runtime itself registers from (no
+        // duplicated data to drift out of sync). Modules with no union
+        // exports (io, json, math, async) correctly get an empty list
+        // here, same as an empty UnionImportTable would.
+        const unions: UnionImportTable = new Map(
+          (loader.builtinUnionTypes(name) ?? []).map(u => [u.name, u.variants])
+        );
         infoByPath.set(node.resolvedPath, { exportKinds: kinds, exportTypes: types, exportUnions: unions });
         continue;
       }

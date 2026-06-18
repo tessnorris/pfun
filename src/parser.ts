@@ -455,7 +455,7 @@ export class Parser {
       if (this.check('WildcardToken')) {
         this.advance(); // consume '_'
         this.consume('ArrowRightToken', "Expected '->' after wildcard pattern.");
-        const body = this.check('LBraceToken') ? this.parseBlockExpr() : this.parseExpression();
+        const body = this.parseMatchArmBody();
         arms.push({ variant: null, binding: null, body });
         continue;
       }
@@ -477,11 +477,60 @@ export class Parser {
       }
 
       this.consume('ArrowRightToken', "Expected '->' after match pattern.");
-      const body = this.check('LBraceToken') ? this.parseBlockExpr() : this.parseExpression();
+      const body = this.parseMatchArmBody();
       arms.push({ variant: variantName, binding, guard, body });
     }
 
     return { type: 'MatchExpr', subject, arms, pos: subject.pos };
+  }
+
+  /**
+   * Parse a single match arm's body, with one deliberate restriction: a
+   * BARE (non-block) `match` expression is rejected here with a clear
+   * error pointing at `{ }` as the fix, rather than being silently
+   * parsed.
+   *
+   * Why this restriction exists: arms are delimited only by a leading
+   * `|` (see parseMatchExpression's own comment above) — there is no
+   * closing token marking where one match's arm list ends. If an arm's
+   * body were allowed to be a bare nested match, that INNER
+   * parseMatchExpression call's own `while (this.match('PipeToken'))`
+   * loop has no way to know it should stop once its own logical arms are
+   * exhausted — it just keeps consuming every subsequent `|`-prefixed
+   * arm, silently stealing arms that were written to belong to the OUTER
+   * match. Confirmed as a real, silent bug this restriction fixes: before
+   * it existed,
+   *   match readFile(src) with
+   *   | Ok o  -> match writeFile(dst, o.value) with
+   *   | Ok _  -> 0
+   *   | Err e -> println("write failed")
+   *   | Err e -> println("read failed")
+   * parsed with the OUTER match having only ONE arm (Ok) and the INNER
+   * match having THREE (Ok, Err, Err) — the final Err, clearly intended
+   * for the outer match's read-failure case, silently became the inner
+   * match's (unreachable, since variant names aren't unique-checked
+   * per-match) second Err arm. This is never a one-off oddity: braces
+   * (`{ match ... }`) are the ONLY unambiguous way to express a nested
+   * match inside an arm at all here, so requiring them is a strict
+   * improvement with no legitimate program ever needing the old
+   * (mis-)parse — there's no scenario where "steal the enclosing match's
+   * remaining arms" is the actually-intended behavior.
+   */
+  private parseMatchArmBody(): Expr {
+    if (this.check('LBraceToken')) return this.parseBlockExpr();
+    if (this.check('MatchToken')) {
+      const tok = this.peek();
+      throw Object.assign(
+        new Error(
+          "A nested 'match' used as a match-arm's body must be wrapped in braces: '{ match ... }'. " +
+          "Without braces, there is no way to tell where the nested match's own arms end and the " +
+          "enclosing match's remaining arms begin — the enclosing match's later arms would silently " +
+          "(and incorrectly) attach to this nested match instead."
+        ),
+        { pos: tok.pos }
+      );
+    }
+    return this.parseExpression();
   }
 
   /**

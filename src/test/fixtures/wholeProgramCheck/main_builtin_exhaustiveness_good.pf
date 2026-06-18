@@ -1,0 +1,8 @@
+import * from "io";
+import * from "file";
+
+let r = readFile("/tmp/some/path.txt");
+let v = match r with
+  | Ok content -> content
+  | Err message -> message;
+println(v);

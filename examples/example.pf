@@ -921,9 +921,11 @@ var dst = "./testdst.txt";
 
 proc copyFile(src, dst) {
   match readFile(src) with
-  | Ok o  -> match writeFile(dst, o.value) with
-  | Ok _  -> 0
-  | Err e -> println("Write failed: " + e.message)
+  | Ok o  -> {
+      match writeFile(dst, o.value) with
+      | Ok _  -> 0
+      | Err e -> println("Write failed: " + e.message);
+    }
   | Err e -> println("Read failed: " + e.message);
 }
 

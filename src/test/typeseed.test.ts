@@ -202,6 +202,23 @@ describe('Static type seeding via evaluateRecord', () => {
     expect(msg).toMatch(/Type mismatch in Container/);
   });
 
+  it('does NOT flag a valid Float field as a mismatch (regression test: getValueType used to return \'float\' for a JS number while pfunTypeToRuntimeType returned \'number\' for the same conceptual Float type — the vocabulary mismatch made the FIRST construction of any Float-field record via a forced let/var binding spuriously fail)', () => {
+    expect(() => run(`
+      type Box = { value };
+      var b1 = Box { 5.5 };
+      var b2 = Box { 7.5 };
+    `)).not.toThrow();
+  });
+
+  it('seeding works correctly for Float fields (genuine mismatch is still caught)', () => {
+    const msg = runExpectError(`
+      type Box = { value };
+      var b1 = Box { 5.5 };
+      var b2 = Box { "oops" };
+    `);
+    expect(msg).toMatch(/Type mismatch in Box/);
+  });
+
   it('does not seed when field type is Unknown — no false positives', () => {
     expect(() => run(`
       type Box = { value };

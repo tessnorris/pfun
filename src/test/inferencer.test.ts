@@ -692,6 +692,24 @@ describe('Constraint generation — unary operators', () => {
     expect((stmts[0] as any).expression.inferredType).toEqual(INT_T);
     expect(hasConstraint(cs, INT_T, INT_T)).toBe(true);
   });
+
+  it('-5.5 assigns Float WITHOUT forcing an Int constraint on the operand (fixed: previously every unary minus, including on a Float, was constrained to Int — see typechecker.test.ts for the user-facing symptom this caused)', () => {
+    const stmts = parse('-5.5;');
+    const cs = generateConstraints(stmts);
+    expect((stmts[0] as any).expression.inferredType).toEqual(FLOAT_T);
+    // No [Float, Int] constraint should ever be pushed for this case —
+    // that's exactly the old bug's mechanism (forcing the Float operand
+    // toward Int via an explicit constraint, which unification then
+    // failed on once checkTypes actually ran).
+    expect(hasConstraint(cs, FLOAT_T, INT_T)).toBe(false);
+  });
+
+  it('-someByteVar still constrains the operand to Int (Byte is a genuine type error for unary minus, not an oversight — PfunByte has no runtime negation support)', () => {
+    const stmts = parse('let b = 5b; -b;');
+    const cs = generateConstraints(stmts);
+    expect((stmts[1] as any).expression.inferredType).toEqual(INT_T);
+    expect(hasConstraint(cs, BYTE_T, INT_T)).toBe(true);
+  });
 });
 
 // ─── Binary operators ─────────────────────────────────────────────────────────

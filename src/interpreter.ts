@@ -58,7 +58,25 @@ function getValueType(v: any, schemas?: Map<string, any[]>): string {
     }
     return baseName;
   }
-  if (typeof v === 'number') return 'float';
+  // NOTE: returns 'number' (not 'float') specifically so this agrees with
+  // pfunTypeToRuntimeType's case 'Float': return 'number' — both
+  // describe the SAME conceptual runtime representation of a Pfun Float
+  // (a JS number), and TypeRegistry.instantiate() compares strings from
+  // BOTH sources directly (getValueType for the actual constructed
+  // value, pfunTypeToRuntimeType for a static inferredType-seeded
+  // expectation — see seedFromExpr above). A vocabulary mismatch here
+  // ('float' vs 'number' for the literal same thing) was a real,
+  // pre-existing bug: it made the FIRST construction of any record with
+  // a Float-typed field, reached via seedFromExpr's eager LetStmt-time
+  // seeding, spuriously fail with "Type mismatch... expected number, got
+  // float" — confirmed reproducible with a plain user-defined type
+  // (`type Box = { value }; let x = Box { 5.5 }; println(x);`), with no
+  // connection to builtins or any whole-program-checking stage; it
+  // simply required a Float-typed field AND the value actually being
+  // forced (pfun's laziness meant an unforced `let` never triggered
+  // instantiate() at all, masking this for any code that never printed
+  // the unused-but-Float-containing binding).
+  if (typeof v === 'number') return 'number';
   return typeof v;
 }
 
@@ -719,6 +737,25 @@ export class ModuleLoader {
     const entry = this.builtins.get(name);
     if (!entry) return null;
     return [...entry.fns.map(f => f.name), ...entry.types.map(t => t.name)];
+  }
+
+  /**
+   * The union-shaped RegistryTypes a built-in module registers (e.g.
+   * filelib's Result/ReadResult/FileHandle/FileMode/BufferMode) — used by
+   * the static whole-program checker (wholeProgramCheck.ts) to seed real
+   * exhaustiveness data for a builtin import, the same way it already
+   * does for a user module's parsed UnionTypeStmts. Plain (non-union)
+   * RegistryTypes (e.g. dblib's QueryResult) are intentionally excluded —
+   * they have no variants for exhaustiveness checking to ever need.
+   * Returns null if `name` was never registered (mirrors
+   * builtinExportNames's contract exactly).
+   */
+  builtinUnionTypes(name: string): { name: string; variants: { name: string; fields: string[] }[] }[] | null {
+    const entry = this.builtins.get(name);
+    if (!entry) return null;
+    return entry.types
+      .filter((t): t is RegistryType & { kind: 'union' } => t.kind === 'union')
+      .map(t => ({ name: t.name, variants: t.variants }));
   }
 
   resolve(importPath: string, fromDir: string): string {

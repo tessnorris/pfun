@@ -200,6 +200,69 @@ describe('Parser Unit Tests', () => {
       expect((ast[0] as any).type).toBe('ExprStmt');
       expect((ast[0] as any).expression.type).toBe('MatchExpr');
     });
+
+    describe('Nested match as an arm body (bare vs. braced)', () => {
+      // A bare (non-block) match used as an arm's body is genuinely
+      // ambiguous: arms are delimited only by a leading '|' (no closing
+      // token), so the inner match's own arm-consuming loop has no way
+      // to know where its own arms end and the OUTER match's remaining
+      // arms begin — it just keeps consuming every subsequent
+      // '|'-prefixed arm. This was a real, silent bug (confirmed via
+      // examples/example.pf's copyFile function, fixed alongside this
+      // parser change) where the outer match's last arm got silently
+      // mis-attached to the inner match instead. Braces give the inner
+      // match an unambiguous boundary, so they're now REQUIRED rather
+      // than merely supported.
+
+      it('rejects a bare nested match as an arm body with a clear, actionable error', () => {
+        expect(() => parse(`
+          match readResult with
+          | Ok o  -> match writeResult with
+          | Ok _  -> 0
+          | Err e -> 1
+          | Err e -> 2
+        `)).toThrow(/must be wrapped in braces/i);
+      });
+
+      it('accepts a BRACED nested match as an arm body, with arms correctly attached to the right match (outer keeps its Err, inner keeps its own two arms)', () => {
+        const ast = parse(`
+          match readResult with
+          | Ok o  -> {
+              match writeResult with
+              | Ok _  -> 0
+              | Err e -> 1;
+            }
+          | Err e -> 2;
+        `);
+        const expr = (ast[0] as any).expression;
+        expect(expr.type).toBe('MatchExpr');
+        // Outer match: exactly two arms (Ok, Err) — NOT one, which is
+        // what the old bug would have produced.
+        expect(expr.arms).toHaveLength(2);
+        expect(expr.arms[0].variant).toBe('Ok');
+        expect(expr.arms[1].variant).toBe('Err');
+        // The outer Ok arm's body is a BlockExpr (the braces), whose
+        // single statement is the inner match.
+        const okBody = expr.arms[0].body;
+        expect(okBody.type).toBe('BlockExpr');
+        const innerMatch = okBody.statements[0].expression;
+        expect(innerMatch.type).toBe('MatchExpr');
+        // Inner match: exactly its own two arms — the outer Err did NOT
+        // leak into it.
+        expect(innerMatch.arms).toHaveLength(2);
+        expect(innerMatch.arms[0].variant).toBe('Ok');
+        expect(innerMatch.arms[1].variant).toBe('Err');
+      });
+
+      it('rejects a bare nested match in a WILDCARD arm body too (same ambiguity, same fix)', () => {
+        expect(() => parse(`
+          match readResult with
+          | _ -> match writeResult with
+          | Ok _  -> 0
+          | Err e -> 1
+        `)).toThrow(/must be wrapped in braces/i);
+      });
+    });
   });
 
   describe('Procedures', () => {

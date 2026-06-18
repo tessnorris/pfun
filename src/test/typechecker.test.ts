@@ -76,10 +76,23 @@ describe('Unary operators', () => {
     expect(typeOf('-5')).toEqual({ kind: 'Int' });
   });
 
-  it('infers Int for unary minus (constraint forces Int regardless of operand)', () => {
-    // The HM pass constrains the operand to Int and returns Int.
-    // Unification of Str with Int fails silently; result type is still Int.
-    expect(typeOf('-"oops"')).toEqual({ kind: 'Int' });
+  it('infers Float for unary minus on a float (fixed: previously forced every unary minus through Int, rejecting -5.5 as a type error even though the interpreter\'s own UnaryExpr evaluation correctly negates a Float and returns a Float)', () => {
+    expect(typeOf('-5.5')).toEqual({ kind: 'Float' });
+  });
+
+  it('unary minus on a genuinely invalid operand (Str) still constrains toward Int, so checkTypes (not just typeOf\'s raw inferTypes) reports a real unification error', () => {
+    // typeOf/inferTypes alone never surfaces unification FAILURES (only
+    // the unconstrained result type) — checkTypes is what actually
+    // detects and reports them, exactly as main.ts's real pipeline does.
+    // This is the test that would have caught the original bug's
+    // user-facing symptom (a wrong type silently accepted) if it had
+    // asserted on checkTypes's errors instead of typeOf's bare result.
+    const { checkTypes } = require('../typechecker');
+    const src = '-"oops";';
+    const stmts = parse(src);
+    const errors = checkTypes(stmts, src);
+    expect(errors.length).toBeGreaterThan(0);
+    expect(errors[0].pfunMessage).toContain('Cannot unify');
   });
 });
 

@@ -275,5 +275,36 @@ describe('Whole-program static checker (checkProgram) — Stage 1: graph + purit
       const errors = checkTypes(ast, src);
       expect(errors.length).toBe(0);
     });
+  describe('Builtin type table (Stage 3): real Fn signatures for stdlib exports', () => {
+    it('catches the design doc\'s headline example: sqrt() called with a wrong-typed argument', () => {
+      const err = check('main_builtin_type_bad.pf');
+      expect(err).not.toBeNull();
+      expect(err!.pfunMessage).toContain('Cannot unify');
+    });
+
+    it('passes a legitimate, type-correct builtin call (sqrt with a Float)', () => {
+      expect(check('main_builtin_type_good.pf')).toBeNull();
+    });
+
+    it('does NOT flag a genuinely polymorphic builtin (abs) called with a Float — see BUILTIN_FUNCTION_TYPES\'s docblock for why abs/min/max/clamp/sign are deliberately absent from the table rather than given a (necessarily wrong-half-the-time) monomorphic signature', () => {
+      expect(check('main_builtin_polymorphic_good.pf')).toBeNull();
+    });
+
+    it('catches a non-exhaustive match on a UNION RETURNED BY A BUILTIN function (readFile -> Result) — previously only caught at runtime, unconditionally, regardless of which branch actually executed', () => {
+      const err = check('main_builtin_exhaustiveness_bad.pf');
+      expect(err).not.toBeNull();
+      expect(err!.pfunMessage).toContain("Non-exhaustive match on 'Result'");
+      expect(err!.pfunMessage).toContain("'Err'");
+    });
+
+    it('passes a fully exhaustive match on a builtin-returned Result', () => {
+      expect(check('main_builtin_exhaustiveness_good.pf')).toBeNull();
+    });
+
+    it('catches misuse of an awaited builtin async function\'s resolved type (await sleep(...) + Int) — requires the AwaitExpr constraint-generation fix (cgenExpr now passes through the operand\'s type instead of falling through to an unconstrained fresh var)', () => {
+      const err = check('main_await_type_bad.pf');
+      expect(err).not.toBeNull();
+      expect(err!.pfunMessage).toContain('Cannot unify');
+    });
   });
 });

@@ -214,7 +214,18 @@ export function formatType(t: PfunType): string {
     case 'Array':   return `Array<${formatType(t.element)}>`;
     case 'Option':  return `Option<${formatType(t.inner)}>`;
     case 'Dict':    return `Dict<${formatType(t.key)}, ${formatType(t.value)}>`;
-    case 'Named':   return t.unionName ? `${t.unionName}.${t.name}` : t.name;
+    case 'Named':
+      // unionName === name represents "a value of this union, specific
+      // variant not statically known" (e.g. a builtin function's
+      // Fn.ret — readFile() returns SOME Result, but which variant,
+      // Ok or Err, is only known at runtime) — as opposed to a truly
+      // known specific variant (e.g. Shape.Square), where name and
+      // unionName genuinely differ. Showing "Result.Result" in an error
+      // message would be confusing redundancy for the former case, so
+      // suppress the prefix exactly when they match; "Shape.Square"
+      // still renders normally since its name/unionName genuinely
+      // differ.
+      return (t.unionName && t.unionName !== t.name) ? `${t.unionName}.${t.name}` : t.name;
     case 'Generic': return `${t.name}<${t.params.map(formatType).join(', ')}>`;
     case 'Fn': {
       const ps = t.params.map(formatType).join(', ');
@@ -549,53 +560,246 @@ const _BOOL:  PfunType = { kind: 'Bool'  };
 const _STR:   PfunType = { kind: 'Str'   };
 const _CHAR:  PfunType = { kind: 'Char'  };
 const _BYTE:  PfunType = { kind: 'Byte'  };
+const _UNK:   PfunType = { kind: 'Unknown' };
+
+/** Shorthand for a plain Named type with no unionName — an opaque builtin
+ *  value (e.g. a DB Connection) that has no Pfun-visible variant tag. */
+function named(name: string): PfunType { return { kind: 'Named', name }; }
+
+/** Shorthand for a Named type that IS a union variant — carries unionName
+ *  so exhaustiveness checking (typechecker.ts's checkExhaustiveness) can
+ *  find it, exactly like a user-declared union's variants. */
+function variant(name: string, unionName: string): PfunType {
+  return { kind: 'Named', name, unionName };
+}
+
+/**
+ * Shorthand for "this returns SOME value of union `unionName`, but which
+ * specific variant is determined only at runtime, not statically" — e.g.
+ * readFile(path) -> Result: it's definitely a Result, but whether it's
+ * Ok or Err depends on whether the file actually exists when the program
+ * runs, which static checking cannot know. Sets BOTH name and unionName
+ * to the union's own name (Result/Result, HttpResult/HttpResult, ...)
+ * rather than to any specific variant — this is what makes
+ * checkExhaustiveness's `registry.variantsOf(subjectType.unionName)`
+ * lookup succeed for a builtin's return value the same way it would for
+ * a value built via a known variant constructor, while name===unionName
+ * specifically signals formatType (above) to suppress the otherwise-
+ * redundant "Result.Result" prefix in unrelated error messages (e.g.
+ * misusing the Result value itself in arithmetic) — see formatType's own
+ * Named case for that exact suppression logic, and this function's call
+ * sites in BUILTIN_FUNCTION_TYPES below for which builtins need this
+ * (vs. `named()`, for genuinely tag-less opaque values like a DB
+ * Connection, which has no variants to ever exhaustiveness-check).
+ */
+function unionOfUnknownVariant(unionName: string): PfunType {
+  return { kind: 'Named', name: unionName, unionName };
+}
+
+function fn(params: PfunType[], ret: PfunType): PfunType {
+  return { kind: 'Fn', params, ret };
+}
+
+const _STR_LIST:  PfunType = { kind: 'List', element: _STR  };
+const _BYTE_LIST: PfunType = { kind: 'List', element: _BYTE };
+const _STR_DICT:  PfunType = { kind: 'Dict', key: _STR, value: _STR };
+
+/**
+ * Real `Fn` (and constant) signatures for every builtin this project ships
+ * — both the always-in-scope globals (length, print, ...; previously
+ * hardcoded directly into buildCGenBuiltinEnv below) AND every statically
+ * typeable export of the `import`-able builtin modules (io, file, json,
+ * math, async, http, db/postgresql, db/mariadb) — checkProgram
+ * (wholeProgramCheck.ts) looks up THIS SAME table for a builtin module's
+ * exports, so a function's signature is identical whether it's reached
+ * via the always-in-scope path or via an explicit `import`, by
+ * construction (one shared source, not two tables that could drift).
+ *
+ * DELIBERATELY ABSENT (left for the resolver's UNKNOWN fallback — see
+ * wholeProgramCheck.ts's builtin-module branch): any function whose real
+ * behavior is GENUINELY polymorphic in a way this type system cannot
+ * express without becoming WRONG for half its legitimate uses. Concretely:
+ *   - mathlib's abs/sign/min/max/clamp: accept EITHER Int or Float and
+ *     return the SAME kind they received (confirmed via interpreter.ts's
+ *     own runtime logic and cgenBinary's parallel Int/Float-mixing
+ *     special-casing for arithmetic operators) — there is no
+ *     generics/let-polymorphism mechanism in this type system (every
+ *     TypeImportTable entry is exactly one fixed PfunType), so a
+ *     monomorphic Fn signature for these would silently reject a
+ *     perfectly valid `abs(-5.0)` (or `abs(-5)`, whichever kind wasn't
+ *     chosen) as a static type error. Unknown — which unifies with
+ *     anything, see ast.ts's UNKNOWN docs — is the honest answer here,
+ *     not a placeholder to fill in later.
+ *   - jsonDeserialize's resolved value: its real shape depends entirely on
+ *     the JSON text at runtime, which is unknowable statically by
+ *     definition — Unknown for the Option's inner type is correct, not a
+ *     gap.
+ *
+ * Builtin union variant types use `variant()` (carries unionName, so
+ * checkExhaustiveness's registry.variantsOf lookup succeeds — see
+ * wholeProgramCheck.ts's builtin-module branch for the matching
+ * UnionImportTable entries that make this resolvable at all) rather than
+ * `named()` (no unionName — used only for genuinely tag-less opaque
+ * values like a DB Connection, which has no Pfun-visible variant to match
+ * on in the first place).
+ *
+ * NAME COLLISION NOTE: filelib's readChar(handle) -> ReadResult and
+ * iolib's readChar() -> Option<Char> are DIFFERENT functions that happen
+ * to share a name. Map keys here are by name only, so only one can occupy
+ * 'readChar' — iolib's wins below (it's the one a typical
+ * `import * from "io"` program actually uses), and filelib's import path
+ * gets Unknown instead of a wrong, misleading signature. This is no worse
+ * than the runtime's own behavior: importing BOTH `io` and `file` star-
+ * style already throws "'readChar' is already defined" at import time
+ * (interpreter.ts's bindExport, pre-existing, unrelated to this table) —
+ * there is no real program where both meanings are simultaneously valid
+ * to disambiguate between in the first place.
+ */
+export const BUILTIN_FUNCTION_TYPES: Map<string, PfunType> = new Map<string, PfunType>([
+
+  // ── Always-in-scope polymorphic builtins (single-argument) ───────────────
+  // Unknown param: any argument accepted without constraint. Concrete
+  // return: callers can still resolve e.g. `length(xs)`'s result type.
+  ['length',     fn([_UNK], _INT) ],
+  ['asc',        fn([_UNK], _INT) ],
+  ['chr',        fn([_UNK], _CHAR)],
+  ['isInfinite', fn([_UNK], _BOOL)],
+  ['__str__',    fn([_UNK], _STR) ],
+
+  // ── Always-in-scope polymorphic builtins (two-argument) ──────────────────
+  ['has',   fn([_UNK, _UNK], _BOOL)],
+  ['join',  fn([_UNK, _STR], _STR) ],
+  ['split', fn([_STR, _STR], _STR_LIST)],
+
+  // ── Constants ──────────────────────────────────────────────────────────
+  ['true',  _BOOL],
+  ['false', _BOOL],
+  ['None',  variant('None', 'Option')],
+
+  // ── io ─────────────────────────────────────────────────────────────────
+  // print/println accept any type and return it unchanged (see
+  // iolib.ts) — Unknown for both is correct, not a gap: the return value
+  // IS whatever was passed in, which Unknown represents exactly as well
+  // as a (fictional) generic `T -> T` would, without needing generics.
+  ['print',       fn([_UNK], _UNK)],
+  ['println',     fn([_UNK], _UNK)],
+  ['flushStdout', fn([], _BOOL)],
+  ['readChar',    fn([], { kind: 'Option', inner: _CHAR })], // see this table's header's NAME COLLISION NOTE
+  ['readln',      fn([], { kind: 'Option', inner: _STR })],
+  ['scriptArgs',  fn([], _STR_LIST)],
+  ['getEnv',      fn([_STR], { kind: 'Option', inner: _STR })],
+  ['envVars',     fn([], _STR_DICT)],
+
+  // ── json ───────────────────────────────────────────────────────────────
+  ['jsonSerialize',   fn([_UNK], { kind: 'Option', inner: _STR })],
+  // The deserialized value's shape is unknowable statically (see this
+  // table's header) — Unknown for Option's inner is deliberate, not a gap.
+  ['jsonDeserialize', fn([_STR], { kind: 'Option', inner: _UNK })],
+
+  // ── math ───────────────────────────────────────────────────────────────
+  // abs/sign/min/max/clamp deliberately ABSENT — see this table's header.
+  ['sqrt',  fn([_FLOAT], _FLOAT)],
+  ['cbrt',  fn([_FLOAT], _FLOAT)],
+  ['exp',   fn([_FLOAT], _FLOAT)],
+  ['log',   fn([_FLOAT], _FLOAT)],
+  ['log2',  fn([_FLOAT], _FLOAT)],
+  ['log10', fn([_FLOAT], _FLOAT)],
+  ['pow',   fn([_FLOAT, _FLOAT], _FLOAT)],
+  ['hypot', fn([_FLOAT, _FLOAT], _FLOAT)],
+  ['fmod',  fn([_FLOAT, _FLOAT], _FLOAT)],
+  ['lerp',  fn([_FLOAT, _FLOAT, _FLOAT], _FLOAT)],
+  ['sin',   fn([_FLOAT], _FLOAT)],
+  ['cos',   fn([_FLOAT], _FLOAT)],
+  ['tan',   fn([_FLOAT], _FLOAT)],
+  ['asin',  fn([_FLOAT], _FLOAT)],
+  ['acos',  fn([_FLOAT], _FLOAT)],
+  ['atan',  fn([_FLOAT], _FLOAT)],
+  ['atan2', fn([_FLOAT, _FLOAT], _FLOAT)],
+  ['sinh',  fn([_FLOAT], _FLOAT)],
+  ['cosh',  fn([_FLOAT], _FLOAT)],
+  ['tanh',  fn([_FLOAT], _FLOAT)],
+  ['pi',  _FLOAT],
+  ['e',   _FLOAT],
+  ['tau', _FLOAT],
+  ['inf', _FLOAT],
+  ['nan', _FLOAT],
+
+  // ── async ──────────────────────────────────────────────────────────────
+  // ret is the POST-AWAIT resolved type (Nil) — see AwaitExpr's case in
+  // cgenExpr for why that convention is what makes this signature useful
+  // at every realistic call site (`await sleep(ms)`), not just in theory.
+  ['sleep', fn([_INT], { kind: 'Nil' })],
+
+  // ── http ───────────────────────────────────────────────────────────────
+  // httpGet/httpGetBytes's ret is likewise the post-await resolved type
+  // (HttpResult), same convention as sleep above.
+  ['httpGet',      fn([_STR], unionOfUnknownVariant('HttpResult'))],
+  ['httpGetBytes', fn([_STR], unionOfUnknownVariant('HttpResult'))],
+  // handler's required shape (async proc(req, res) with Request/Response's
+  // own nested native-function fields) isn't expressible as a parameter
+  // Fn type without modeling those nested shapes too — Unknown for that
+  // one parameter; port and the overall return (Nil) are still real.
+  ['httpListen', fn([_INT, _UNK], { kind: 'Nil' })],
+
+  // ── file ───────────────────────────────────────────────────────────────
+  ['fileExists', fn([_STR], _BOOL)],
+  ['removeFile', fn([_STR], unionOfUnknownVariant('Result'))],
+  ['touchFile',  fn([_STR], unionOfUnknownVariant('Result'))],
+  ['fileOpen',   fn([_STR, _UNK], unionOfUnknownVariant('Result'))], // mode: Read|Write|Append — a 3-variant union argument, same "no param-side union typing" gap as httpListen's handler
+  ['fileClose',  fn([_UNK], unionOfUnknownVariant('Result'))],
+  ['readLine',   fn([_UNK], unionOfUnknownVariant('ReadResult'))],
+  ['readFile',   fn([_STR], unionOfUnknownVariant('Result'))],
+  ['writeChar',  fn([_UNK, _CHAR], unionOfUnknownVariant('Result'))],
+  ['writeLine',  fn([_UNK, _STR], unionOfUnknownVariant('Result'))],
+  ['writeFile',  fn([_STR, _STR], unionOfUnknownVariant('Result'))],
+  ['readByte',   fn([_UNK], unionOfUnknownVariant('ReadResult'))],
+  ['writeByte',  fn([_UNK, _BYTE], unionOfUnknownVariant('Result'))],
+  ['readBytes',  fn([_UNK, _INT], unionOfUnknownVariant('ReadResult'))],
+  ['writeBytes', fn([_UNK, _BYTE_LIST], unionOfUnknownVariant('Result'))],
+  ['makeBuffer',     fn([_UNK], _UNK)],
+  ['readBuffer',     fn([_UNK, _INT, _UNK], unionOfUnknownVariant('Result'))],
+  ['writeBuffer',    fn([_UNK, _UNK], unionOfUnknownVariant('Result'))],
+  ['bufferToBytes',  fn([_UNK], _BYTE_LIST)],
+  ['bufferToString', fn([_UNK], _STR)],
+  ['bufferLength',   fn([_UNK], _INT)],
+
+  // ── db/postgresql, db/mariadb ──────────────────────────────────────────
+  // Identical signatures across both modules (same function names, same
+  // contract — see dblib.ts) — one shared entry serves both imports
+  // correctly; ret is the post-await resolved type, same convention as
+  // sleep/httpGet above.
+  ['dbConnect', fn([_STR], unionOfUnknownVariant('DbResult'))],
+  ['dbQuery',   fn([_UNK, _STR, _UNK], unionOfUnknownVariant('DbResult'))],
+  ['dbClose',   fn([_UNK], unionOfUnknownVariant('DbResult'))],
+]);
 
 /**
  * Build the constraint-generation environment pre-populated with builtin
- * signatures.
- *
- * Polymorphic builtins (length, asc, println, etc.) use Unknown for their
- * parameter types.  Unknown is the unification wildcard — it matches anything
- * without binding — so call sites don't cross-pollinate each other's types.
- * The return type is concrete where known (Int, Bool, etc.) so callers can
- * still resolve the result type of e.g. `length(xs)` without constraints.
+ * signatures, for the ALWAYS-IN-SCOPE subset of BUILTIN_FUNCTION_TYPES —
+ * the names a Pfun program can use without any `import` at all. Builtin
+ * MODULE exports (io, file, math, ...) are deliberately NOT seeded here:
+ * those only become available via an explicit `import`, resolved through
+ * wholeProgramCheck.ts's checkProgram (which looks up the very same
+ * BUILTIN_FUNCTION_TYPES table for a builtin module's actual exports) —
+ * seeding them here too would make them incorrectly available WITHOUT an
+ * import, which isn't how the runtime actually behaves (confirmed: e.g.
+ * `fileExists` without `import * from "file"` fails at runtime with
+ * "Undefined variable", a separate, pre-existing, harmless inconsistency
+ * this function used to have for fileExists specifically before this
+ * table existed — not reintroduced here).
  */
 function buildCGenBuiltinEnv(): CGenEnv {
   const env = new CGenEnv();
-  const UNK: PfunType = { kind: 'Unknown' };
-
-  // ── Single-argument polymorphic builtins ──────────────────────────────────
-  // Unknown param: any argument accepted without constraint.
-  // Concrete return: callers can infer the result type.
-  const oneParam: Array<[string, PfunType]> = [
-    ['length',     _INT ],
-    ['asc',        _INT ],
-    ['chr',        _CHAR],
-    ['isInfinite', _BOOL],
-    ['__str__',    _STR ],
-    ['fileExists', _BOOL],
+  const alwaysInScope = [
+    'length', 'asc', 'chr', 'isInfinite', '__str__',
+    'has', 'join', 'split',
+    'true', 'false', 'None',
+    'print', 'println', 'flushStdout', 'readln',
   ];
-  for (const [name, ret] of oneParam) {
-    env.define(name, { kind: 'Fn', params: [UNK], ret });
+  for (const name of alwaysInScope) {
+    const ty = BUILTIN_FUNCTION_TYPES.get(name);
+    if (ty) env.define(name, ty);
   }
-
-  // ── Two-argument polymorphic builtins ─────────────────────────────────────
-  env.define('has',   { kind: 'Fn', params: [UNK, UNK], ret: _BOOL });
-  env.define('join',  { kind: 'Fn', params: [UNK, _STR], ret: _STR  });
-  env.define('split', { kind: 'Fn', params: [_STR, _STR], ret: { kind: 'List', element: _STR } });
-
-  // ── IO builtins ───────────────────────────────────────────────────────────
-  // print/println accept any type and return nothing useful — Unknown for both.
-  env.define('print',      { kind: 'Fn', params: [UNK], ret: UNK });
-  env.define('println',    { kind: 'Fn', params: [UNK], ret: UNK });
-  env.define('flushStdout',{ kind: 'Fn', params: [],    ret: _BOOL });
-  env.define('readln',     { kind: 'Fn', params: [],    ret: { kind: 'Option', inner: _STR } });
-
-  // ── Constants ────────────────────────────────────────────────────────────
-  env.define('true',  _BOOL);
-  env.define('false', _BOOL);
-  env.define('None',  { kind: 'Named', name: 'None', unionName: 'Option' });
-
   return env;
 }
 
@@ -657,8 +861,32 @@ function cgenExpr(
         cs.push(constraint(rt, _BOOL, pos));
         t = _BOOL;
       } else if (expr.operator === 'MinusToken') {
-        cs.push(constraint(rt, _INT, pos));
-        t = _INT;
+        // Mirrors cgenBinary's arithmetic-operator treatment of Int/Float
+        // mixing (see that function's own docblock for the full
+        // rationale): unary minus preserves whichever numeric kind the
+        // operand actually is — interpreter.ts's own UnaryExpr evaluation
+        // does `return -val`, and JS's unary minus on a bigint (Int)
+        // produces a bigint, on a number (Float) produces a number, so
+        // -5 stays Int and -5.5 stays Float at runtime; the type checker
+        // must agree, not force every negation through Int. Byte is
+        // deliberately NOT included here (a genuine type error, not an
+        // oversight): PfunByte has no valueOf/operator overload, so
+        // `-someByteValue` at the interpreter level coerces through JS's
+        // default object-to-primitive conversion and produces nonsense
+        // (NaN-ish), not a meaningful negated byte — there is no runtime
+        // behavior worth a type checker greenlighting here.
+        if (rt.kind === 'Float') {
+          t = _FLOAT;
+        } else {
+          // Int, Unknown, or an unresolved TyVar: constrain to Int (the
+          // common case, and the safe default for an as-yet-undetermined
+          // numeric kind) — mirrors cgenBinary's own arithmetic-operator
+          // fallback, which constrains both operands to Int rather than
+          // leaving them unconstrained whenever neither side is already
+          // known to be Float.
+          cs.push(constraint(rt, _INT, pos));
+          t = _INT;
+        }
       } else {
         t = freshVar();
       }
@@ -841,6 +1069,29 @@ function cgenExpr(
       const blockEnv = env.child();
       for (const s of expr.statements) cgenStmt(s, blockEnv, registry, cs);
       t = freshVar();
+      break;
+    }
+    // ── Await ─────────────────────────────────────────────────────────────
+    // `await expr` is type-transparent: its type IS expr's type, unchanged.
+    // This relies on a deliberate convention for every async-returning
+    // builtin's Fn signature in BUILTIN_FUNCTION_TYPES below: `ret`
+    // describes the value AFTER resolution (e.g. sleep: Int -> Nil, not
+    // Int -> Promise<Nil> — PfunType has no Promise representation at
+    // all), so `await sleep(ms)` types as Nil directly through this case,
+    // with zero special-casing needed for "the type of a promise's inner
+    // value" beyond passing the operand's own type straight through. The
+    // cost: a raw, un-awaited call like `let p = sleep(ms);` (legal but
+    // unusual — p is actually a JS Promise object at runtime, not a Nil)
+    // gets the SAME Nil type as the awaited form, which is technically
+    // inaccurate for that one un-awaited case. Accepted: every realistic
+    // use of these natives is behind `await`, and the alternative (no
+    // AwaitExpr case at all, the prior behavior — see the default case
+    // below) meant `await sleep(100) + 5` only failed at RUNTIME, never
+    // statically, regardless of how precisely sleep() were typed — this
+    // case is what makes a real Fn signature for any async builtin worth
+    // writing at all.
+    case 'AwaitExpr': {
+      t = cgenExpr(expr.value, env, registry, cs);
       break;
     }
     default:

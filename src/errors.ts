@@ -87,7 +87,7 @@ export function classifyError(message: string): ErrorKind {
       m.includes("expected import") || m.includes("expected variant") ||
       m.includes("expected namespace") || m.includes("expected alias") ||
       m.includes("'then'") || m.includes("'->'") || m.includes("'=>'") ||
-      m.includes("'with'"))
+      m.includes("'with'") || m.includes("must be wrapped in braces"))
     return 'Syntax';
 
   if (m.includes("key not found") || m.includes("missing field") ||
