@@ -144,6 +144,18 @@ medium circle
 Square with side 10
 Circle with radius 5
 Rectangle 3x4
+big
+small non-negative
+negative
+hot
+not hot
+not hot
+non-negative
+negative
+on
+off
+zero vector
+vector (3, 4)
 --- 10. Option Type ---
 [6, 12, 18, 24, 30]
 0

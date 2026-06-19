@@ -11,7 +11,7 @@
 import { Lexer } from '../lexer';
 import { Parser } from '../parser';
 import { Stmt, Expr } from '../ast';
-import { inferTypes } from '../typechecker';
+import { inferTypes, checkTypes } from '../typechecker';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -243,5 +243,246 @@ describe('Missing variant ordering', () => {
       let r = match x with | B -> 2 | C -> 3;
     `);
     expect(v[0].missing).toEqual(['A']);
+  });
+});
+
+// ─── Provable-guard exhaustiveness: Bool / Int / Float / Byte ───────────────
+//
+// These use checkTypes() directly (rather than the missingVariants/
+// violations() helper above) since there's no discrete "variant" list for
+// a numeric type — the assertions are against the actual returned error
+// messages.
+
+function errorsFor(src: string): string[] {
+  const stmts = parse(src);
+  return checkTypes(stmts, src).map(e => e.pfunMessage);
+}
+
+describe('Provable-guard exhaustiveness — Bool', () => {
+  it('true/false via bare binding and negation is exhaustive with no unconditional arm', () => {
+    const errs = errorsFor(`
+      let b = true;
+      let r = match b with | b where b -> "yes" | b where !b -> "no";
+    `);
+    expect(errs.filter(m => /non-exhaustive match/i.test(m))).toHaveLength(0);
+  });
+
+  it('true/false via == true / == false is exhaustive', () => {
+    const errs = errorsFor(`
+      let b = true;
+      let r = match b with | b where b == true -> "yes" | b where b == false -> "no";
+    `);
+    expect(errs.filter(m => /non-exhaustive match/i.test(m))).toHaveLength(0);
+  });
+
+  it('flags a Bool match covering only true', () => {
+    const errs = errorsFor(`
+      let b = true;
+      let r = match b with | b where b == true -> "yes";
+    `);
+    expect(errs.some(m => /non-exhaustive match on 'bool'/i.test(m) && m.includes("'false'"))).toBe(true);
+  });
+
+  it('an unconditional arm anywhere still short-circuits (no proof needed)', () => {
+    const errs = errorsFor(`
+      let b = true;
+      let r = match b with | b where b == true -> "yes" | other -> "fallback";
+    `);
+    expect(errs.filter(m => /non-exhaustive match/i.test(m))).toHaveLength(0);
+  });
+});
+
+describe('Provable-guard exhaustiveness — numeric (Int/Float/Byte)', () => {
+  it('>= 0 and < 0 together are exhaustive over Int with no unconditional arm', () => {
+    const errs = errorsFor(`
+      let n = 5;
+      let r = match n with
+        | n where n >= 0 -> "non-negative"
+        | n where n < 0  -> "negative";
+    `);
+    expect(errs.filter(m => /non-exhaustive match/i.test(m))).toHaveLength(0);
+  });
+
+  it('reversed operand order (0 <= n) is recognized the same way', () => {
+    const errs = errorsFor(`
+      let n = 5;
+      let r = match n with
+        | n where 0 <= n -> "non-negative"
+        | n where n < 0  -> "negative";
+    `);
+    expect(errs.filter(m => /non-exhaustive match/i.test(m))).toHaveLength(0);
+  });
+
+  it('a real gap between guards is flagged with a representative value', () => {
+    const errs = errorsFor(`
+      let n = 5;
+      let r = match n with
+        | n where n < 0  -> "negative"
+        | n where n > 10 -> "big";
+    `);
+    const hit = errs.find(m => /non-exhaustive match on 'int'/i.test(m));
+    expect(hit).toBeDefined();
+    expect(hit).toMatch(/do not cover every possible value/i);
+  });
+
+  it('three arms partitioning the line are exhaustive (low/mid/high)', () => {
+    const errs = errorsFor(`
+      let n = 5;
+      let r = match n with
+        | n where n < 0   -> "negative"
+        | n where n < 100 -> "mid"
+        | n where n >= 100 -> "high";
+    `);
+    expect(errs.filter(m => /non-exhaustive match/i.test(m))).toHaveLength(0);
+  });
+
+  it('an adjacent-boundary gap at a single point is caught (n<0 / n>0 misses exactly 0)', () => {
+    const errs = errorsFor(`
+      let n = 5;
+      let r = match n with
+        | n where n < 0 -> "negative"
+        | n where n > 0 -> "positive";
+    `);
+    expect(errs.some(m => /non-exhaustive match on 'int'/i.test(m))).toBe(true);
+  });
+
+  it('negative literals are recognized', () => {
+    const errs = errorsFor(`
+      let n = 5;
+      let r = match n with
+        | n where n >= -10 -> "not too negative"
+        | n where n < -10  -> "very negative";
+    `);
+    expect(errs.filter(m => /non-exhaustive match/i.test(m))).toHaveLength(0);
+  });
+
+  it('Byte is bounded — >= 0 alone already covers the whole domain', () => {
+    const errs = errorsFor(`
+      let b = 5b;
+      let r = match b with | b where b >= 0 -> "any byte";
+    `);
+    expect(errs.filter(m => /non-exhaustive match/i.test(m))).toHaveLength(0);
+  });
+
+  it('Float gets the same treatment as Int', () => {
+    const errs = errorsFor(`
+      let f = 5.0;
+      let r = match f with
+        | f where f >= 0.0 -> "non-negative"
+        | f where f < 0.0  -> "negative";
+    `);
+    expect(errs.filter(m => /non-exhaustive match/i.test(m))).toHaveLength(0);
+  });
+
+  it('an unrecognized guard (e.g. n % 2 == 0) contributes nothing — still requires a catch-all', () => {
+    const errs = errorsFor(`
+      let n = 5;
+      let r = match n with | n where n % 2 == 0 -> "even";
+    `);
+    expect(errs.some(m => /non-exhaustive match on 'int'/i.test(m))).toBe(true);
+  });
+
+  it('a tagged arm on a numeric subject is excluded from the proof (it can never fire)', () => {
+    const errs = errorsFor(`
+      let n = 5;
+      let r = match n with
+        | Bogus x       -> 0
+        | n where n >= 0 -> 1
+        | n where n < 0  -> 2;
+    `);
+    // The tagged arm contributes nothing; the two untagged arms alone
+    // still prove exhaustiveness.
+    expect(errs.filter(m => /non-exhaustive match/i.test(m))).toHaveLength(0);
+  });
+});
+
+// ─── General non-union rule: plain records, Str, Char ───────────────────────
+
+describe('General non-union exhaustiveness rule', () => {
+  it('a plain record match with a guarded-only arm and no catch-all is flagged', () => {
+    const errs = errorsFor(`
+      type Point = { x, y }
+      let p = Point { 1, 2 };
+      let r = match p with | pt where pt.x > 0 -> "positive";
+    `);
+    expect(errs.some(m => /non-exhaustive match/i.test(m))).toBe(true);
+  });
+
+  it('a plain record match with a trailing unconditional tagged arm is fine', () => {
+    const errs = errorsFor(`
+      type Point = { x, y }
+      let p = Point { 1, 2 };
+      let r = match p with
+        | pt where pt.x > 0 -> "positive"
+        | Point pt          -> "other";
+    `);
+    expect(errs.filter(m => /non-exhaustive match/i.test(m))).toHaveLength(0);
+  });
+
+  it('a single unconditional tagged arm matching the record\'s own type is exhaustive (no guard needed)', () => {
+    const errs = errorsFor(`
+      type Point = { x, y }
+      let p = Point { 1, 2 };
+      let r = match p with | Point pt -> pt.x;
+    `);
+    expect(errs.filter(m => /non-exhaustive match/i.test(m))).toHaveLength(0);
+  });
+
+  it('a Str match with only a guarded arm is flagged', () => {
+    const errs = errorsFor(`
+      let s = "hello";
+      let r = match s with | s where length(s) > 0 -> "non-empty";
+    `);
+    expect(errs.some(m => /non-exhaustive match/i.test(m))).toBe(true);
+  });
+
+  it('a Str match with a trailing wildcard is fine', () => {
+    const errs = errorsFor(`
+      let s = "hello";
+      let r = match s with | s where length(s) > 0 -> "non-empty" | _ -> "empty";
+    `);
+    expect(errs.filter(m => /non-exhaustive match/i.test(m))).toHaveLength(0);
+  });
+
+  it('does not flag Option even with only a guarded arm — builtin unions stay runtime-only', () => {
+    const errs = errorsFor(`
+      let x = Some { 1 };
+      let r = match x with | Some s where s.value > 0 -> "positive";
+    `);
+    expect(errs.filter(m => /non-exhaustive match/i.test(m))).toHaveLength(0);
+  });
+
+  it('does not flag an Unknown-typed subject (function param) even with only a guarded arm', () => {
+    const errs = errorsFor(`
+      function f(s) {
+        return match s with | s where length(s) > 0 -> "non-empty";
+      }
+    `);
+    expect(errs.filter(m => /non-exhaustive match/i.test(m))).toHaveLength(0);
+  });
+});
+
+// ─── Regression: union exhaustiveness must not be short-circuited by a ──────
+// ─── guarded untagged arm (only a true unconditional wildcard counts) ───────
+
+describe('Union exhaustiveness gate regression (bare-binding interaction)', () => {
+  it('a guarded untagged catch-all does NOT exhaust a union on its own', () => {
+    const v = violations(`
+      type Shape = { | Square: side | Circle: radius | Rectangle: x, y }
+      let s = Square { 5 };
+      let r = match s with
+        | Square sq -> sq.side
+        | other where false -> 0;
+    `);
+    expect(v).toHaveLength(1);
+    expect(v[0].missing).toEqual(expect.arrayContaining(['Circle', 'Rectangle']));
+  });
+
+  it('a true unconditional wildcard (_) still exhausts a union as before', () => {
+    expect(violations(`
+      type Shape = { | Square: side | Circle: radius | Rectangle: x, y }
+      let s = Square { 5 };
+      let r = match s with | Square sq -> sq.side | _ -> 0;
+    `)).toHaveLength(0);
   });
 });

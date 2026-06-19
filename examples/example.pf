@@ -703,6 +703,8 @@ println(re.y);       // 4
     match <expr> with
       | <VariantName> <binding> [where <guard>] -> <result-expr>
       | <VariantName> _                         -> <result-expr>   // discard binding
+      | <VariantName>                           -> <result-expr>   // zero-field variant, no binding
+      | <binding> where <guard>                 -> <result-expr>   // NO constructor tag — binds the subject directly
       | _                                       -> <result-expr>   // wildcard
 
   Rules:
@@ -711,9 +713,26 @@ println(re.y);       // 4
       If the guard is false the arm is SKIPPED and the next arm is tried.
     - `_` as a binding discards the matched value (no name bound).
     - `| _ ->` is a wildcard arm that matches any variant.
-    - EXHAUSTIVENESS: if no wildcard arm is present, every variant of the
-      matched union must appear at least once as an arm. A missing variant
-      is a runtime error at the point the match is evaluated.
+    - A bare `<binding> where <guard> -> ...` arm has NO constructor tag —
+      it matches the subject's value directly, union-tagged or not. This
+      is what makes guard-routed dispatch on plain values (Int, Bool, Str,
+      records, ...) possible, not just on union variants. (One token of
+      lookahead disambiguates it: a bare identifier directly followed by
+      `where` is this form; directly followed by `->` it keeps its
+      original meaning — a variant tag with no binding, for zero-field
+      variants.)
+    - EXHAUSTIVENESS on a UNION subject: if no wildcard arm is present,
+      every variant of the matched union must appear at least once as an
+      arm.
+    - EXHAUSTIVENESS on any OTHER concretely-known subject (Bool, Int,
+      Float, Byte, Str, Char, or a plain non-union record): the LAST arm
+      must be unconditional (no guard) — UNLESS the guards are provably
+      exhaustive on their own, which is recognized for Bool (true/false)
+      and for numeric ranges (Int/Float/Byte) whose guards' combined
+      intervals cover the whole domain, e.g. `n >= 0` and `n < 0` together
+      need no trailing catch-all.
+    - A missing case (whichever rule above applies) is caught at compile
+      time where statically determinable, or is a runtime error otherwise.
 
   Match is an EXPRESSION — it produces a value and can appear anywhere
   an expression is valid.
@@ -776,6 +795,76 @@ printDescriptions(sq, ci, re);
 // Square with side 10
 // Circle with radius 5
 // Rectangle 3x4
+
+// ── Bare-binding arms (no constructor tag) ─────────────────────────────────
+// These bind the SUBJECT'S OWN VALUE directly, so they work on plain
+// values, not just union variants — guard-routed dispatch on Int/Bool/etc.
+
+function classify_number(n) {
+  return match n with
+    | n where n >= 100 -> "big"
+    | n where n >= 0   -> "small non-negative"
+    | n where n < 0    -> "negative";
+}
+println(classify_number(150)); // big
+println(classify_number(42));  // small non-negative
+println(classify_number(-7));  // negative
+
+// Different arms can use different binding names for the same subject —
+// `hot` and `chilly` together still provably cover the whole Int range,
+// so (as with classify_number/sign_of above) no trailing arm is needed:
+function classify_temp(t) {
+  return match t with
+    | hot    where hot >= 30    -> "hot"
+    | chilly where chilly < 30  -> "not hot";
+}
+println(classify_temp(35));  // hot
+println(classify_temp(-5));  // not hot
+println(classify_temp(15));  // not hot
+
+// `n >= 0` and `n < 0` together are PROVABLY exhaustive over Int (and
+// likewise true/false over Bool) — no trailing unconditional arm needed:
+function sign_of(n) {
+  return match n with
+    | n where n >= 0 -> "non-negative"
+    | n where n < 0  -> "negative";
+}
+println(sign_of(8));   // non-negative
+println(sign_of(-3));  // negative
+
+function describe_flag(b) {
+  return match b with
+    | b where b  -> "on"
+    | b where !b -> "off";
+}
+println(describe_flag(true));  // on
+println(describe_flag(false)); // off
+
+// A bare-binding arm can be mixed with an ordinary tagged arm too — handy
+// for special-casing one computed condition across a whole record before
+// falling through to the normal, per-field handling. (On a record type
+// like this one, with no enumerable "variant" list, exhaustiveness just
+// needs SOME arm with no guard at all — the tagged Vec2 arm below — since
+// every Vec2 value matches its own tag.)
+type Vec2 = { vx, vy };
+let zero_vec = Vec2 { 0, 0 };
+let some_vec = Vec2 { 3, 4 };
+
+function describe_vec(v) {
+  return match v with
+    | v where v.vx == 0 && v.vy == 0 -> "zero vector"
+    | Vec2 vec -> "vector (" + vec.vx + ", " + vec.vy + ")";
+}
+println(describe_vec(zero_vec)); // zero vector
+println(describe_vec(some_vec)); // vector (3, 4)
+
+// Non-exhaustive guard-only match — no trailing unconditional arm, and the
+// guard doesn't provably cover every Int on its own (uncomment to see the
+// error):
+// match 5 with | n where n > 0 -> "positive";
+// // ERROR: Non-exhaustive match on 'Int': the guards do not cover every
+// // possible value (for example, a value near -1 would not match any
+// // arm). Add an arm with no 'where' guard to handle every remaining case.
 
 // Purity violations (uncomment to see errors):
 // function bad(x) { println(x); }         // ERROR: Functions cannot use 'print'

@@ -988,11 +988,27 @@ function cgenExpr(
 
     // ── Match ─────────────────────────────────────────────────────────────────
     case 'MatchExpr': {
-      cgenExpr(expr.subject, env, registry, cs);
+      const subjectType = cgenExpr(expr.subject, env, registry, cs);
       const resultVar = freshVar();
       for (const arm of expr.arms) {
         const armEnv = env.child();
-        if (arm.binding !== null) armEnv.define(arm.binding, freshVar());
+        if (arm.binding !== null) {
+          const bindingVar = freshVar();
+          armEnv.define(arm.binding, bindingVar);
+          // A TAGGED arm's binding (`Circle c -> ...`) is really the
+          // variant's own record type, not the subject's union type —
+          // this pass doesn't track per-variant record types for
+          // bindings (same pre-existing Unknown gap as GetExpr's "field
+          // type is unknown without a record schema"), so leave it an
+          // unconstrained fresh var, same as before this case existed.
+          // An UNTAGGED arm (`n -> ...` / `n where n > 0 -> ...`) binds
+          // the subject's value directly with no check at all — so its
+          // type genuinely IS the subject's type, and unifying them here
+          // is what lets a guard like `n + "oops"` get flagged as a real
+          // type error instead of silently passing against an
+          // unconstrained var.
+          if (arm.variant === null) cs.push(constraint(bindingVar, subjectType, arm.guard?.pos ?? arm.body.pos));
+        }
         if (arm.guard) cgenExpr(arm.guard, armEnv, registry, cs);
         const armType = cgenExpr(arm.body, armEnv, registry, cs);
         cs.push(constraint(armType, resultVar, arm.body.pos));

@@ -434,14 +434,40 @@ export class Parser {
   /**
    * Parses a match expression:
    *
-   *   match <expr> {
+   *   match <expr> with
    *     | <Variant> <binding> [where <guard>] -> <expr>
    *     | <Variant> _ -> <expr>
+   *     | <Variant> -> <expr>                  // singleton variant, no fields to bind
+   *     | <binding> where <guard> -> <expr>     // NEW: no constructor tag
    *     | _ -> <expr>
-   *   }
    *
-   * Arms are tried in order. The first arm whose variant matches (and whose
-   * optional guard evaluates to truthy) wins.
+   * Arms are tried in order. The first arm whose pattern matches (and
+   * whose optional guard evaluates to truthy) wins.
+   *
+   * The fourth form (`| <binding> where <guard> -> ...`) binds the
+   * SUBJECT'S OWN VALUE directly under `binding`, with no check at all on
+   * its runtime shape — it matches anything, union-tagged or not (a
+   * scalar, a record, anything). This is what makes guard-routed
+   * dispatch on non-union types possible: `match n with | n where n > 0
+   * -> "positive" | n where n <= 0 -> "other"`.
+   *
+   * It's disambiguated from the tagged form via ONE-token lookahead keyed
+   * specifically on `where`: a bare identifier directly followed by
+   * `where` can ONLY be this new form. A bare identifier directly
+   * followed by `->` instead keeps its ORIGINAL meaning — a variant tag
+   * with no binding at all (the third form above, for singleton variants
+   * with no fields to bind, e.g. `| Red -> ...`) — since that combination
+   * is real, pre-existing, and used throughout the codebase; reassigning
+   * it would have silently broken every singleton-variant match. The
+   * combination this claims instead — a tag with a guard but no binding —
+   * was never actually used anywhere, so the reassignment is safe in
+   * practice as well as unambiguous in principle. One consequence worth
+   * knowing: there's currently no way to write a NAMED catch-all with no
+   * guard at all (only the anonymous `_` form covers that case) — adding
+   * one would need either a different disambiguation rule or new syntax,
+   * deliberately left for later. (No naming convention, e.g.
+   * capitalization, is used or relied on anywhere here — variant tags and
+   * bindings are syntactically identical IdentTokens.)
    */
   private parseMatchExpression(): Expr {
     // Parse subject at NONE precedence so 'match foo.bar with ...' works fully.
@@ -460,14 +486,35 @@ export class Parser {
         continue;
       }
 
-      const variantName = (this.consume('IdentToken', "Expected variant name or '_' in match arm.") as any).value;
-
-      // Binding: a named identifier or '_'
-      let binding: string | null = null;
-      if (this.check('WildcardToken')) {
-        this.advance(); // consume '_', binding stays null
-      } else if (this.check('IdentToken')) {
+      let variant: string | null;
+      let binding: string | null;
+      if (this.check('IdentToken') && this.peekNext().type === 'WhereToken') {
+        // Bare binding, no constructor tag — matches the subject's value
+        // directly. See this method's own docblock. Deliberately keyed on
+        // 'where' specifically, NOT 'where'/'->' together: a bare
+        // identifier directly followed by '->' must keep its ORIGINAL
+        // meaning (a variant tag with no binding at all, e.g. a singleton
+        // variant like `| Red -> ...`) — that combination is real,
+        // pre-existing, and used throughout for zero-field variants. A
+        // bare identifier followed by 'where' was never a constructible,
+        // USED combination under the old grammar (a tag with a guard but
+        // no binding), so claiming it for this new form is unambiguous in
+        // practice as well as in principle.
+        variant = null;
         binding = (this.advance() as any).value;
+      } else {
+        variant = (this.consume('IdentToken', "Expected variant name, a binding name, or '_' in match arm.") as any).value;
+        if (this.check('WildcardToken')) {
+          this.advance(); // consume '_', binding stays null
+          binding = null;
+        } else if (this.check('IdentToken')) {
+          binding = (this.advance() as any).value;
+        } else {
+          // No second token at all — a singleton variant with no
+          // fields to bind (e.g. `| Red -> ...`). Same permissive
+          // fallback as before this feature existed.
+          binding = null;
+        }
       }
 
       // Optional guard: where <expr>
@@ -478,7 +525,7 @@ export class Parser {
 
       this.consume('ArrowRightToken', "Expected '->' after match pattern.");
       const body = this.parseMatchArmBody();
-      arms.push({ variant: variantName, binding, guard, body });
+      arms.push({ variant, binding, guard, body });
     }
 
     return { type: 'MatchExpr', subject, arms, pos: subject.pos };

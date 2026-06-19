@@ -265,6 +265,91 @@ describe('Parser Unit Tests', () => {
     });
   });
 
+  describe('Bare-binding match arms (no constructor tag)', () => {
+    it('parses a bare binding with a guard as variant: null', () => {
+      const ast = parse(`
+        let result = match n with
+          | n where n >= 0 -> "non-negative"
+          | n where n < 0  -> "negative";
+      `);
+      const expr = (ast[0] as any).initializer;
+      expect(expr.arms).toHaveLength(2);
+      expect(expr.arms[0].variant).toBeNull();
+      expect(expr.arms[0].binding).toBe('n');
+      expect(expr.arms[0].guard).toBeDefined();
+      expect(expr.arms[0].guard.operator).toBe('GreaterEqualToken');
+      expect(expr.arms[1].variant).toBeNull();
+      expect(expr.arms[1].binding).toBe('n');
+    });
+
+    it('lets different arms use different binding names for the same subject', () => {
+      const ast = parse(`
+        let result = match n with
+          | big where big >= 100 -> "big"
+          | small where small < 100 -> "small";
+      `);
+      const expr = (ast[0] as any).initializer;
+      expect(expr.arms[0].binding).toBe('big');
+      expect(expr.arms[1].binding).toBe('small');
+    });
+
+    it('still parses a singleton variant (tag, no binding, no guard) the OLD way — the disambiguation does not break this', () => {
+      const ast = parse(`
+        let result = match c with
+          | Red   -> "red"
+          | Green -> "green"
+          | Blue  -> "blue";
+      `);
+      const expr = (ast[0] as any).initializer;
+      expect(expr.arms).toHaveLength(3);
+      expect(expr.arms[0].variant).toBe('Red');
+      expect(expr.arms[0].binding).toBeNull();
+      expect(expr.arms[1].variant).toBe('Green');
+      expect(expr.arms[2].variant).toBe('Blue');
+    });
+
+    it('still parses ordinary tagged arms (two-token form) unaffected', () => {
+      const ast = parse(`
+        let result = match sq with
+          | Square s -> s.side
+          | Circle _ -> 1
+          | _        -> 0;
+      `);
+      const expr = (ast[0] as any).initializer;
+      expect(expr.arms[0]).toEqual(expect.objectContaining({ variant: 'Square', binding: 's' }));
+      expect(expr.arms[1]).toEqual(expect.objectContaining({ variant: 'Circle', binding: null }));
+      expect(expr.arms[2]).toEqual(expect.objectContaining({ variant: null, binding: null }));
+    });
+
+    it('a bare binding can be mixed with ordinary tagged arms on the same match', () => {
+      const ast = parse(`
+        let result = match shape with
+          | Circle c -> c.radius
+          | s where s.side > 10 -> 1
+          | s -> 0;
+      `);
+      const expr = (ast[0] as any).initializer;
+      expect(expr.arms[0].variant).toBe('Circle');
+      expect(expr.arms[1].variant).toBeNull();
+      expect(expr.arms[1].binding).toBe('s');
+      expect(expr.arms[1].guard).toBeDefined();
+    });
+
+    it('documents the known limitation: a bare identifier directly before "->" (no guard) is parsed as a TAG with no binding, not a named catch-all', () => {
+      // This is the deliberate, documented trade-off from disambiguating
+      // via 'where' specifically — see parseMatchExpression's docblock.
+      // Writing a guardless named catch-all isn't supported yet; use '_'
+      // or add a trivial guard instead.
+      const ast = parse(`
+        let result = match n with
+          | n -> "anything";
+      `);
+      const expr = (ast[0] as any).initializer;
+      expect(expr.arms[0].variant).toBe('n');
+      expect(expr.arms[0].binding).toBeNull();
+    });
+  });
+
   describe('Procedures', () => {
     it('should parse a procedure statement', () => {
       const ast = parse('proc greet(name) { println(name); }');

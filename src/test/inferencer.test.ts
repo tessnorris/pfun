@@ -1023,6 +1023,63 @@ describe('Constraint generation — match expressions', () => {
     const letStmt = stmts[2] as any;
     expect(letStmt.inferredType.kind).toBe('TyVar');
   });
+
+  describe('bare-binding arms unify the binding with the subject type', () => {
+    it('a tagged arm binding stays an unconstrained fresh var (no regression)', () => {
+      const stmts = parse(`
+        type Shape = { | Square: side }
+        let sq = Square { 10 };
+        let r = match sq with | Square s -> s.side;
+      `);
+      const cs = generateConstraints(stmts);
+      // No constraint should pin the Square arm's binding to Shape/Square
+      // itself — this is the pre-existing Unknown-binding-type gap,
+      // unaffected by the bare-binding feature.
+      expect(hasConstraintWith(cs, { kind: 'Named', name: 'Square', unionName: 'Shape' })).toBe(false);
+    });
+
+    it('an untagged arm catches a real type error in its guard against the subject type', () => {
+      const stmts = parse(`
+        let x = 5;
+        let r = match x with | n where n + "oops" > 0 -> 1 | n where true -> 0;
+      `);
+      const cs = generateConstraints(stmts);
+      const { errors } = solveConstraints(cs);
+      expect(errors.length).toBeGreaterThan(0);
+    });
+
+    it('an untagged arm catches a real type error in its body against the subject type', () => {
+      const stmts = parse(`
+        let x = 5;
+        let r = match x with | n where true -> n + "oops" | m where true -> 0;
+      `);
+      const cs = generateConstraints(stmts);
+      const { errors } = solveConstraints(cs);
+      expect(errors.length).toBeGreaterThan(0);
+    });
+
+    it('a well-typed untagged guard against the subject produces no error', () => {
+      const stmts = parse(`
+        let x = 5;
+        let r = match x with | n where n >= 0 -> "non-negative" | n where n < 0 -> "negative";
+      `);
+      const cs = generateConstraints(stmts);
+      const { errors } = solveConstraints(cs);
+      expect(errors).toHaveLength(0);
+    });
+
+    it('different binding names across arms all unify with the same subject type', () => {
+      const stmts = parse(`
+        let x = 5;
+        let r = match x with
+          | big where big >= 100 -> "big"
+          | small where small + "oops" < 100 -> "small";
+      `);
+      const cs = generateConstraints(stmts);
+      const { errors } = solveConstraints(cs);
+      expect(errors.length).toBeGreaterThan(0);
+    });
+  });
 });
 
 // ─── No crashes on complex programs ──────────────────────────────────────────

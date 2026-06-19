@@ -564,6 +564,73 @@ describe('Interpreter Feature Tests', () => {
       `);
       expect(logs).toEqual(['9']);
     });
+
+    describe('Bare-binding arms (no constructor tag) — guard-routed dispatch', () => {
+      it('routes an Int value through guard-only arms with no variant tags', () => {
+        const { logs } = run(`
+          let n = 7;
+          let result = match n with
+            | n where n > 10 -> "big"
+            | n where n > 5  -> "medium"
+            | n where true   -> "small";
+          println(result);
+        `);
+        expect(logs).toEqual(['medium']);
+      });
+
+      it('different binding names per arm all refer to the same subject value', () => {
+        const { logs } = run(`
+          let n = -3;
+          let result = match n with
+            | big where big >= 0 -> "non-negative"
+            | small where small < 0 -> "negative";
+          println(result);
+        `);
+        expect(logs).toEqual(['negative']);
+      });
+
+      it('mixes ordinary tagged arms with a bare-binding fallback on a union subject', () => {
+        const { logs } = run(`
+          ${SHAPE_DEF}
+          var ci = Circle { 20 };
+          let result = match ci with
+            | Square s -> "square"
+            | other where true -> "fallback";
+          println(result);
+        `);
+        expect(logs).toEqual(['fallback']);
+      });
+
+      it('throws the expected runtime error when every guard fails and no arm matches', () => {
+        expect(() => run(`
+          let n = 100;
+          match n with
+            | n where n < 0 -> "negative"
+            | n where n == 0 -> "zero";
+        `)).toThrow("Non-exhaustive match: no arm matched value of type");
+      });
+
+      it('binds the subject value itself, not a copy of some other expression', () => {
+        const { logs } = run(`
+          type Point = { x, y }
+          let p = Point { 3, 4 };
+          let result = match p with | pt where pt.x > 0 -> pt.x + pt.y;
+          println(result);
+        `);
+        expect(logs).toEqual(['7']);
+      });
+
+      it('a guard referencing a Bool subject directly (bare reference / negation) works at runtime', () => {
+        const { logs } = run(`
+          let flag = false;
+          let result = match flag with
+            | b where b  -> "on"
+            | b where !b -> "off";
+          println(result);
+        `);
+        expect(logs).toEqual(['off']);
+      });
+    });
   });
 
   // ─── Chars & Strings ───────────────────────────────────────────────────────

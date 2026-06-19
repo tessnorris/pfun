@@ -134,6 +134,235 @@ function registerAllUnions(stmts: Stmt[], registry: UnionRegistry, resolver?: Un
 // pass this replaces too, not a new regression):
 //   - Builtin unions (Option, DbResult, DbValue, ...) are never flagged
 //     here; only interpreter.ts's runtime check covers those.
+// ─── Provable-guard exhaustiveness for non-union subjects ─────────────────
+//
+// The union-coverage check above only ever applies to a known union. For
+// every other CONCRETELY KNOWN subject type (Bool, Int, Float, Byte, Str,
+// Char, or a plain non-union record), there's no enumerable "variant" list
+// to check coverage against — but a match can still run out of arms at
+// runtime if every guard fails. The baseline policy is purely syntactic
+// and type-agnostic: such a match is exhaustive if SOME arm (anywhere,
+// tagged or not) has no guard at all, since reaching that arm always
+// succeeds — see hasUnconditionalArm below.
+//
+// For Bool/Int/Float/Byte specifically, that baseline is relaxed one step
+// further: a small, deliberately CONSERVATIVE grammar of guard shapes is
+// recognized (single comparisons against a literal, plus boolean identity
+// checks — see recognizeBoolGuard/recognizeNumericGuard), and their
+// combined coverage is checked against the type's actual domain. This is
+// what lets `| b -> ... | !b -> ...` or `| n where n >= 0 -> ... | n where
+// n < 0 -> ...` be accepted as exhaustive without a final unconditional
+// arm. Anything outside that grammar (compound `&&`/`||` guards, calls,
+// field access, comparisons between two different bindings, `!=`, ...)
+// is simply UNRECOGNIZED — it contributes nothing to the proof rather
+// than something that might be wrong, and the guard still works fine at
+// runtime either way. The risk this is guarding against is a prover that
+// wrongly claims exhaustiveness — far worse than one that occasionally
+// asks for a redundant catch-all arm — so it's built to be sound (never
+// wrongly approve) rather than complete (always recognize everything that
+// actually is exhaustive). One known, accepted consequence: Int is
+// reasoned about as if it were continuous, exactly like Float, which can
+// occasionally demand a redundant arm for an integer-only edge case (e.g.
+// `n <= 3` and `n >= 4` together ARE exhaustive over integers specifically
+// — no integer falls strictly between 3 and 4 — but this prover doesn't
+// know that and will still ask for a catch-all). Compound `&&`/`||`
+// guards are deliberately out of scope for now; a guard using them is
+// just unrecognized, same as any other unrecognized shape.
+
+/** Subject kinds eligible for the interval/boolean coverage proof. */
+const PROVABLE_GUARD_KINDS = new Set(['Bool', 'Int', 'Float', 'Byte']);
+
+/** A closed-or-open interval over the reals, using JS's native Infinity
+ *  for unbounded sides. Reused for Int/Float/Byte alike — see this
+ *  section's docblock for why treating Int as continuous is an accepted,
+ *  deliberately conservative simplification. */
+type Interval = { lo: number; loIncl: boolean; hi: number; hiIncl: boolean };
+
+/** Unwraps redundant parens so a guard like `(n >= 0)` is recognized the
+ *  same as `n >= 0`. */
+function unwrapGroup(e: Expr): Expr {
+  return e.type === 'GroupExpr' ? unwrapGroup(e.expression) : e;
+}
+
+/** Extracts a numeric literal value, including a negative literal (which
+ *  parses as a UnaryExpr wrapping the literal, not its own token) and
+ *  redundant parens. Returns null for anything else. Converts Int's
+ *  bigint to a JS number — a deliberate, accepted precision tradeoff for
+ *  guard literals, which are always small, hand-written boundary values
+ *  in practice; this is a proof aid, not a runtime computation. */
+function literalNumber(e: Expr): number | null {
+  const x = unwrapGroup(e);
+  if (x.type === 'IntExpr')   return Number(x.value);
+  if (x.type === 'FloatExpr') return x.value;
+  if (x.type === 'ByteExpr')  return x.value;
+  if (x.type === 'UnaryExpr' && x.operator === 'MinusToken') {
+    const inner = literalNumber(x.right);
+    return inner === null ? null : -inner;
+  }
+  return null;
+}
+
+/** Extracts a boolean literal, including redundant parens. */
+function literalBool(e: Expr): boolean | null {
+  const x = unwrapGroup(e);
+  return x.type === 'BoolExpr' ? x.value : null;
+}
+
+/** Reverses a comparison operator's sense — needed when the literal
+ *  appears on the LEFT of the binding (`0 <= n` means the same thing as
+ *  `n >= 0`). EqualToken/NotEqualToken are their own reverse. */
+const FLIP_COMPARISON: Record<string, string> = {
+  GreaterToken:      'LessToken',
+  GreaterEqualToken: 'LessEqualToken',
+  LessToken:         'GreaterToken',
+  LessEqualToken:    'GreaterEqualToken',
+  EqualToken:        'EqualToken',
+  NotEqualToken:     'NotEqualToken',
+};
+
+/** Recognizes ONE comparison between `bindingName` and a numeric literal
+ *  — `binding OP literal` or `literal OP binding`, OP one of `< <= > >=
+ *  ==` — and converts it to an Interval. `!=` is deliberately NOT
+ *  recognized: it describes the domain minus a single point, which isn't
+ *  representable as one contiguous Interval (out of scope for now, same
+ *  as compound `&&`/`||` guards — see this section's docblock). Returns
+ *  null for anything outside that grammar. */
+function recognizeNumericGuard(guard: Expr, bindingName: string): Interval | null {
+  const g = unwrapGroup(guard);
+  if (g.type !== 'BinaryExpr' || !(g.operator in FLIP_COMPARISON)) return null;
+
+  let op = g.operator;
+  let litExpr: Expr;
+  const left = unwrapGroup(g.left), right = unwrapGroup(g.right);
+  if (left.type === 'IdentExpr' && left.name === bindingName) {
+    litExpr = g.right;
+  } else if (right.type === 'IdentExpr' && right.name === bindingName) {
+    litExpr = g.left;
+    op = FLIP_COMPARISON[op];
+  } else {
+    return null;
+  }
+
+  const lit = literalNumber(litExpr);
+  if (lit === null) return null;
+
+  switch (op) {
+    case 'GreaterToken':      return { lo: lit,        loIncl: false, hi: Infinity,  hiIncl: false };
+    case 'GreaterEqualToken': return { lo: lit,        loIncl: true,  hi: Infinity,  hiIncl: false };
+    case 'LessToken':         return { lo: -Infinity,  loIncl: false, hi: lit,       hiIncl: false };
+    case 'LessEqualToken':    return { lo: -Infinity,  loIncl: false, hi: lit,       hiIncl: true  };
+    case 'EqualToken':        return { lo: lit,        loIncl: true,  hi: lit,       hiIncl: true  };
+    default:                  return null; // NotEqualToken
+  }
+}
+
+/** Recognizes a boolean identity guard on `bindingName` — a bare
+ *  reference (`b`), negation (`!b`), or an equality/inequality against a
+ *  literal (`b == true`, `b != false`, ...), operand order either way —
+ *  and returns the set of boolean values that make it true. Returns null
+ *  for anything outside that grammar. */
+function recognizeBoolGuard(guard: Expr, bindingName: string): Set<boolean> | null {
+  const g = unwrapGroup(guard);
+  if (g.type === 'IdentExpr' && g.name === bindingName) return new Set([true]);
+  if (g.type === 'UnaryExpr' && g.operator === 'BooleanNot') {
+    const inner = unwrapGroup(g.right);
+    if (inner.type === 'IdentExpr' && inner.name === bindingName) return new Set([false]);
+    return null;
+  }
+  if (g.type === 'BinaryExpr' && (g.operator === 'EqualToken' || g.operator === 'NotEqualToken')) {
+    const left = unwrapGroup(g.left), right = unwrapGroup(g.right);
+    let litExpr: Expr | null = null;
+    if (left.type === 'IdentExpr' && left.name === bindingName) litExpr = g.right;
+    else if (right.type === 'IdentExpr' && right.name === bindingName) litExpr = g.left;
+    if (litExpr) {
+      const lit = literalBool(litExpr);
+      if (lit !== null) return new Set([g.operator === 'EqualToken' ? lit : !lit]);
+    }
+  }
+  return null;
+}
+
+/** True if `p` lies inside at least one of `intervals`. */
+function pointCoveredByIntervals(p: number, intervals: Interval[]): boolean {
+  return intervals.some(iv =>
+    (iv.loIncl ? p >= iv.lo : p > iv.lo) &&
+    (iv.hiIncl ? p <= iv.hi : p < iv.hi)
+  );
+}
+
+/**
+ * Returns null if `intervals`' union covers all of [domainLo, domainHi]
+ * with no gaps; otherwise a representative value that's NOT covered (a
+ * witness, not necessarily "the" gap — proof enough that one exists).
+ *
+ * Works by reducing the domain to a finite set of probe points: every
+ * interval endpoint that falls inside the domain, plus the domain's own
+ * (finite) bounds, plus one representative point in each open segment
+ * between consecutive such points — including the two unbounded outer
+ * segments, if the domain itself is unbounded, using a point just past
+ * the outermost finite breakpoint as the probe (an actual midpoint isn't
+ * computable against real Infinity). Because every interval's own
+ * endpoints are already in that point set by construction, no interval
+ * can have a boundary strictly inside any one segment — so a single probe
+ * point per segment is enough to know whether the WHOLE segment is
+ * covered, not just that one point.
+ */
+function findCoverageGap(intervals: Interval[], domainLo: number, domainHi: number): number | null {
+  const finitePoints = new Set<number>();
+  for (const iv of intervals) {
+    if (Number.isFinite(iv.lo) && iv.lo >= domainLo && iv.lo <= domainHi) finitePoints.add(iv.lo);
+    if (Number.isFinite(iv.hi) && iv.hi >= domainLo && iv.hi <= domainHi) finitePoints.add(iv.hi);
+  }
+  if (Number.isFinite(domainLo)) finitePoints.add(domainLo);
+  if (Number.isFinite(domainHi)) finitePoints.add(domainHi);
+
+  const sorted = [...finitePoints].sort((a, b) => a - b);
+  if (sorted.length === 0) {
+    // Domain is unbounded on both sides with no finite breakpoint
+    // anywhere — 0 is always a safe representative probe.
+    return pointCoveredByIntervals(0, intervals) ? null : 0;
+  }
+
+  if (domainLo === -Infinity) {
+    const probe = sorted[0] - 1;
+    if (!pointCoveredByIntervals(probe, intervals)) return probe;
+  }
+  if (domainHi === Infinity) {
+    const probe = sorted[sorted.length - 1] + 1;
+    if (!pointCoveredByIntervals(probe, intervals)) return probe;
+  }
+  for (const p of sorted) {
+    if (!pointCoveredByIntervals(p, intervals)) return p;
+  }
+  for (let i = 0; i < sorted.length - 1; i++) {
+    const probe = (sorted[i] + sorted[i + 1]) / 2;
+    if (!pointCoveredByIntervals(probe, intervals)) return probe;
+  }
+  return null;
+}
+
+/** The value domain to prove coverage over, per provable kind. Byte is
+ *  genuinely bounded ([0, 255]); Int and Float are both treated as
+ *  unbounded reals (see this section's docblock re: Int). */
+function domainBoundsFor(kind: string): [number, number] {
+  return kind === 'Byte' ? [0, 255] : [-Infinity, Infinity];
+}
+
+/** True for the OTHER concretely-known, non-union types this pass has
+ *  enough visibility into to apply the baseline "some arm must be
+ *  unconditional" rule to: a plain (non-union) record, Str, or Char.
+ *  Deliberately excludes Option and other builtin unions (kind !==
+ *  'Named', and excluded from static checking on purpose elsewhere in
+ *  this file too — see UnionRegistry's docblock), List/Array/Dict/
+ *  Generic/Fn (unusual match subjects this pass has no real confidence
+ *  reasoning about), and Unknown/TyVar (genuinely no information — must
+ *  stay permissive, the same policy already used everywhere else in this
+ *  file for unresolved types). */
+function isPlainRecordOrSimpleKind(t: PfunType): boolean {
+  if (t.kind === 'Named') return t.unionName === undefined;
+  return t.kind === 'Str' || t.kind === 'Char';
+}
+
 function checkExhaustiveness(stmts: Stmt[], source: string, unionResolver?: UnionModuleResolver): PfunError[] {
   const registry = new UnionRegistry();
   registerAllUnions(stmts, registry, unionResolver);
@@ -144,10 +373,32 @@ function checkExhaustiveness(stmts: Stmt[], source: string, unionResolver?: Unio
     switch (e.type) {
       case 'MatchExpr': {
         walkExpr(e.subject);
-        for (const arm of e.arms) walkExpr(arm.body);
+        for (const arm of e.arms) {
+          if (arm.guard) walkExpr(arm.guard);
+          walkExpr(arm.body);
+        }
         const subjectType = e.subject.inferredType;
-        const hasWildcard = e.arms.some(a => a.variant === null);
-        if (!hasWildcard &&
+
+        // An arm — tagged or not — with NO guard always matches once
+        // reached, so its mere presence rules out a runtime "no arm
+        // matched" crash, regardless of position (anything after it is
+        // merely unreachable — a separate dead-arm concern this pass
+        // doesn't flag). Used below as the baseline short-circuit for
+        // every non-union branch.
+        const hasUnconditionalArm = e.arms.some(a => !a.guard);
+        // Stricter, UNION-specific gate: only a true wildcard/untagged
+        // arm with no guard short-circuits per-variant coverage
+        // checking. Before bare-binding patterns existed, EVERY
+        // variant === null arm necessarily had no guard too (the
+        // wildcard form had no guard syntax at all), so this and a
+        // plain "any variant === null arm" check were equivalent. They
+        // diverge now that an untagged arm CAN carry a guard (`| n
+        // where n > 5 -> ...`) — such an arm must NOT be treated as a
+        // catch-all for union purposes, only for the non-union
+        // baseline above.
+        const hasUnconditionalWildcard = e.arms.some(a => a.variant === null && !a.guard);
+
+        if (!hasUnconditionalWildcard &&
             subjectType &&
             subjectType.kind === 'Named' &&
             subjectType.unionName !== undefined) {
@@ -176,6 +427,53 @@ function checkExhaustiveness(stmts: Stmt[], source: string, unionResolver?: Unio
               ));
             }
           }
+        } else if (!hasUnconditionalArm && subjectType && PROVABLE_GUARD_KINDS.has(subjectType.kind)) {
+          // Tagged arms can never actually fire against a Bool/Int/Float/
+          // Byte value (none of these carry a runtime __type tag) —
+          // exclude them from the proof entirely rather than let their
+          // mere presence be miscounted as coverage.
+          const untagged = e.arms.filter(a => a.variant === null);
+
+          if (subjectType.kind === 'Bool') {
+            const covered = new Set<boolean>();
+            for (const arm of untagged) {
+              if (!arm.guard || arm.binding === null) continue;
+              const vals = recognizeBoolGuard(arm.guard, arm.binding);
+              if (vals) for (const v of vals) covered.add(v);
+            }
+            const missing = [true, false].filter(v => !covered.has(v));
+            if (missing.length > 0) {
+              e.missingVariants = missing.map(String);
+              const message = `Non-exhaustive match on 'Bool': missing arm(s) for ${missing.map(v => `'${v}'`).join(', ')}. ` +
+                `Add an arm with no 'where' guard to handle every remaining case.`;
+              const raw = Object.assign(new Error(message), { pos: e.pos });
+              errors.push(buildPfunError(raw, source, e.pos, null, () => undefined, { stringify: String }));
+            }
+          } else {
+            const intervals: Interval[] = [];
+            for (const arm of untagged) {
+              if (!arm.guard || arm.binding === null) continue;
+              const iv = recognizeNumericGuard(arm.guard, arm.binding);
+              if (iv) intervals.push(iv);
+            }
+            const [domainLo, domainHi] = domainBoundsFor(subjectType.kind);
+            const gap = findCoverageGap(intervals, domainLo, domainHi);
+            if (gap !== null) {
+              const message = `Non-exhaustive match on '${subjectType.kind}': the guards do not cover every possible value ` +
+                `(for example, a value near ${gap} would not match any arm). ` +
+                `Add an arm with no 'where' guard to handle every remaining case.`;
+              const raw = Object.assign(new Error(message), { pos: e.pos });
+              errors.push(buildPfunError(raw, source, e.pos, null, () => undefined, { stringify: String }));
+            }
+          }
+        } else if (!hasUnconditionalArm && subjectType && isPlainRecordOrSimpleKind(subjectType)) {
+          // No interval/boolean proof attempted here — just the
+          // baseline syntactic rule (see this file's "Provable-guard
+          // exhaustiveness" section).
+          const message = `Non-exhaustive match: the last arm has a 'where' guard, so this match isn't ` +
+            `guaranteed to handle every case. Add a final arm with no guard to handle whatever the guards above it don't.`;
+          const raw = Object.assign(new Error(message), { pos: e.pos });
+          errors.push(buildPfunError(raw, source, e.pos, null, () => undefined, { stringify: String }));
         }
         break;
       }
