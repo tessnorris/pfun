@@ -835,6 +835,48 @@ export class ModuleLoader {
   }
 }
 
+// ─── Mutable-structure constructor detection (for the LetStmt 'var' guard) ──
+//
+// `dict { }` and `array { }` have dedicated literal AST node types
+// (DictExpr/ArrayExpr) that LetStmt below checks structurally. Buffers have
+// no literal syntax at all — they're only ever constructed by calling a
+// builtin (makeBuffer/makeStringBuffer) — and dictionaries can ALSO be built
+// via a builtin call (toDict/listToDict) rather than the dict { } literal.
+// Those paths are plain CallExprs, so they bypass the DictExpr/ArrayExpr
+// check entirely and are caught here by callee name instead.
+//
+// This is safe against shadowing: these names are core builtins, and Rule 1
+// of checkNameAvailable forbids ever redefining a native function anywhere
+// in a program, so a CallExpr whose callee is one of these names can only
+// ever refer to the real builtin — never a user override.
+//
+// NOTE: toArray() has the same gap for PfunArray (a `let`-bound array built
+// via toArray() rather than the array { } literal silently loses mutations
+// across statements) but is not covered here.
+
+const DICT_CONSTRUCTOR_CALLS   = new Set(['toDict', 'listToDict']);
+const BUFFER_CONSTRUCTOR_CALLS = new Set(['makeBuffer', 'makeStringBuffer']);
+
+/** Unwraps GroupExpr wrappers, e.g. `let d = (toDict(x));`. */
+function unwrapGroup(expr: Expr): Expr {
+  while (expr.type === 'GroupExpr') expr = expr.expression;
+  return expr;
+}
+
+/**
+ * If `expr` (after unwrapping any parens) is a direct call to one of
+ * `names`, returns the callee name; otherwise returns null. Only matches
+ * direct identifier calls (`toDict(x)`), not namespace-qualified or
+ * computed callees — core builtins are never called any other way.
+ */
+function matchedConstructorCall(expr: Expr, names: Set<string>): string | null {
+  const e = unwrapGroup(expr);
+  if (e.type === 'CallExpr' && e.callee.type === 'IdentExpr' && names.has(e.callee.name)) {
+    return e.callee.name;
+  }
+  return null;
+}
+
 // ─── Interpreter ──────────────────────────────────────────────────────────────
 
 export class Interpreter {
@@ -1112,6 +1154,16 @@ export class Interpreter {
         }
         if (stmt.initializer.type === 'ArrayExpr') {
           throw new Error(`Arrays must be declared with 'var', not 'let'. Use: var ${stmt.name} = array { ... }`);
+        }
+        {
+          const dictCall = matchedConstructorCall(stmt.initializer, DICT_CONSTRUCTOR_CALLS);
+          if (dictCall) {
+            throw new Error(`Dictionaries must be declared with 'var', not 'let'. Use: var ${stmt.name} = ${dictCall}(...)`);
+          }
+          const bufferCall = matchedConstructorCall(stmt.initializer, BUFFER_CONSTRUCTOR_CALLS);
+          if (bufferCall) {
+            throw new Error(`Buffers must be declared with 'var', not 'let'. Use: var ${stmt.name} = ${bufferCall}(...)`);
+          }
         }
         this.checkNameAvailable(stmt.name, env, 'let');
         // Seed TypeRegistry from static type annotations on RecordExpr initializers

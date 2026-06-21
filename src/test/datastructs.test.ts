@@ -225,6 +225,49 @@ describe('Data Structure Tests', () => {
       `)).toThrow("Dictionaries must be declared with 'var'");
     });
 
+    it('should throw when declaring a dict built via toDict() with let', () => {
+      expect(() => run(`
+        var a = array { "x", "y" };
+        let d = toDict(a);
+      `)).toThrow("Dictionaries must be declared with 'var'");
+    });
+
+    it('should throw when declaring a dict built via listToDict() with let', () => {
+      expect(() => run(`
+        let d = listToDict([Pair { "k", 1 }]);
+      `)).toThrow("Dictionaries must be declared with 'var'");
+    });
+
+    it('should throw when declaring a dict built via toDict() with let, even wrapped in parens', () => {
+      expect(() => run(`
+        var a = array { "x" };
+        let d = (toDict(a));
+      `)).toThrow("Dictionaries must be declared with 'var'");
+    });
+
+    it('error message names the actual constructor that was used (toDict)', () => {
+      expect(() => run(`
+        var a = array { "x" };
+        let d = toDict(a);
+      `)).toThrow('var d = toDict(...)');
+    });
+
+    it('error message names the actual constructor that was used (listToDict)', () => {
+      expect(() => run(`
+        let d = listToDict([]);
+      `)).toThrow('var d = listToDict(...)');
+    });
+
+    it('toDict() works fine when declared with var', () => {
+      const { logs } = run(`
+        var a = array { "x", "y" };
+        var d = toDict(a);
+        println(d[0]);
+        println(d[1]);
+      `);
+      expect(logs).toEqual(['x', 'y']);
+    });
+
     it('should support boolean keys', () => {
       const { logs } = run(`
         var d = dict { true -> "yes", false -> "no" };
@@ -877,6 +920,21 @@ describe('Data Structure Tests', () => {
         `);
         expect(logs).toEqual(['0']);
       });
+
+      it('throws when declared with let', () => {
+        expect(() => run(`let b = makeBuffer(ByteMode);`))
+          .toThrow("Buffers must be declared with 'var'");
+      });
+
+      it('throws when declared with let, even wrapped in parens', () => {
+        expect(() => run(`let b = (makeBuffer(CharMode));`))
+          .toThrow("Buffers must be declared with 'var'");
+      });
+
+      it('error message names the actual constructor that was used', () => {
+        expect(() => run(`let b = makeBuffer(ByteMode);`))
+          .toThrow('var b = makeBuffer(...)');
+      });
     });
 
     describe('makeStringBuffer', () => {
@@ -912,6 +970,16 @@ describe('Data Structure Tests', () => {
       it('throws on a non-string argument', () => {
         expect(() => run(`eval makeStringBuffer(42);`))
           .toThrow('makeStringBuffer: argument must be a string.');
+      });
+
+      it('throws when declared with let', () => {
+        expect(() => run(`let b = makeStringBuffer("x");`))
+          .toThrow("Buffers must be declared with 'var'");
+      });
+
+      it('error message names the actual constructor that was used', () => {
+        expect(() => run(`let b = makeStringBuffer("x");`))
+          .toThrow('var b = makeStringBuffer(...)');
       });
     });
 
@@ -1226,6 +1294,64 @@ describe('Data Structure Tests', () => {
           p();
         `);
         expect(logs).toEqual(['ok']);
+      });
+    });
+
+    describe('let vs var: the guard turns a silent footgun into a loud error', () => {
+      // Before this guard existed, `let b = makeBuffer(...)` would silently
+      // re-evaluate the constructor on every access (Pfun's `let` is
+      // call-by-name, not memoized) — so a later statement mutating `b`
+      // would mutate a throwaway buffer that nothing ever reads again,
+      // while a subsequent read re-constructs a fresh, unmutated buffer.
+      // The guard rejects the let-binding outright at the point of
+      // declaration instead of letting that silently wrong behavior occur.
+      it('rejects the exact pattern that used to silently lose mutations (makeStringBuffer)', () => {
+        expect(() => run(`
+          proc p() {
+            let b = makeStringBuffer("Hello");
+            appendString(b, ", world");
+            println(bufferToString(b));
+          }
+          p();
+        `)).toThrow("Buffers must be declared with 'var'");
+      });
+
+      it('the var-based equivalent of the above genuinely works end-to-end', () => {
+        const { logs } = run(`
+          proc p() {
+            var b = makeStringBuffer("Hello");
+            appendString(b, ", world");
+            println(bufferToString(b));
+          }
+          p();
+        `);
+        expect(logs).toEqual(['Hello, world']);
+      });
+
+      it('rejects the exact pattern that used to silently lose mutations (toDict)', () => {
+        expect(() => run(`
+          proc p() {
+            var a = array { "x", "y" };
+            let d = toDict(a);
+            d[2] = "z";
+            println(keys(d));
+          }
+          p();
+        `)).toThrow("Dictionaries must be declared with 'var'");
+      });
+
+      it('the var-based equivalent of the above genuinely works end-to-end', () => {
+        const { logs } = run(`
+          proc p() {
+            var a = array { "x", "y" };
+            var d = toDict(a);
+            d[2] = "z";
+            println(d[0]);
+            println(d[2]);
+          }
+          p();
+        `);
+        expect(logs).toEqual(['x', 'z']);
       });
     });
   });

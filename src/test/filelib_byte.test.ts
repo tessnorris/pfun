@@ -382,17 +382,22 @@ describe('PfunBuffer (native)', () => {
 
 describe('makeBuffer', () => {
   it('makeBuffer(ByteMode) creates a byte buffer', () => {
-    const { interp } = run(`let b = makeBuffer(ByteMode);`);
+    const { interp } = run(`var b = makeBuffer(ByteMode);`);
     const b = interp.force(interp.getGlobal('b'));
     expect(b).toBeInstanceOf(PfunBuffer);
     expect((b as PfunBuffer).mode).toBe('byte');
   });
 
   it('makeBuffer(CharMode) creates a char buffer', () => {
-    const { interp } = run(`let b = makeBuffer(CharMode);`);
+    const { interp } = run(`var b = makeBuffer(CharMode);`);
     const b = interp.force(interp.getGlobal('b'));
     expect(b).toBeInstanceOf(PfunBuffer);
     expect((b as PfunBuffer).mode).toBe('char');
+  });
+
+  it('throws when declared with let', () => {
+    expect(() => run(`let b = makeBuffer(ByteMode);`))
+      .toThrow("Buffers must be declared with 'var'");
   });
 });
 
@@ -524,7 +529,7 @@ describe('readBuffer / writeBuffer', () => {
 
 describe('bufferLength', () => {
   it('returns 0 for a fresh buffer', () => {
-    const { interp } = run(`let b = makeBuffer(ByteMode);`);
+    const { interp } = run(`var b = makeBuffer(ByteMode);`);
     const b = interp.force(interp.getGlobal('b'));
     expect((b as PfunBuffer).pos).toBe(0);
   });
