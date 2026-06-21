@@ -16,13 +16,83 @@
 
 import {
   Interpreter, RegistryFunction, RegistryType,
-  PfunChar, PfunDict, PfunArray
+  PfunChar, PfunByte, PfunDict, PfunArray
 } from './interpreter';
 
 // ─── Built-in Types ───────────────────────────────────────────────────────────
-// (none — Pair stays in library.ts/stdlibTypes)
+// (Pair stays in library.ts/stdlibTypes — see note above)
 
-export const mutStructuresTypes: RegistryType[] = [];
+// BufferMode: whether a Buffer holds raw bytes or UTF-8 chars.
+// Moved here from filelib.ts so Buffer is a core mutable structure, usable
+// without `import * from "file"` — only the file-handle-specific readBuffer/
+// writeBuffer operations remain gated behind the file module.
+export const mutStructuresTypes: RegistryType[] = [
+  {
+    kind: 'union',
+    name: 'BufferMode',
+    variants: [
+      { name: 'ByteMode', fields: [] },
+      { name: 'CharMode', fields: [] },
+    ],
+  },
+];
+
+// ─── Buffer runtime object ────────────────────────────────────────────────────
+//
+// PfunBuffer is a mutable byte/char buffer. The `mode` field ('byte' | 'char')
+// is fixed at construction and determines whether read/write operations work in
+// raw byte or UTF-8 char units. Not accessible from Pfun code directly — only
+// passed around as an opaque value via makeBuffer/appendBuffer/readBuffer/
+// writeBuffer/bufferToBytes/bufferToString/bufferLength.
+//
+// Moved here from filelib.ts: filelib's readBuffer/writeBuffer still use it
+// (imported from here), but construction and in-memory manipulation no longer
+// require a file handle, so they live alongside PfunArray/PfunDict as a core
+// mutable structure.
+
+export class PfunBuffer {
+  public data: Buffer;
+  public pos:  number = 0;  // current read/write position
+
+  constructor(
+    public mode: 'byte' | 'char',
+    capacity: number = 4096,
+  ) {
+    this.data = Buffer.alloc(capacity);
+  }
+
+  static fromBytes(bytes: PfunByte[]): PfunBuffer {
+    const buf = new PfunBuffer('byte', bytes.length);
+    for (let i = 0; i < bytes.length; i++) buf.data[i] = bytes[i].value;
+    buf.pos = bytes.length;
+    return buf;
+  }
+
+  toByteList(): PfunByte[] {
+    const out: PfunByte[] = [];
+    for (let i = 0; i < this.pos; i++) out.push(new PfunByte(this.data[i]));
+    return out;
+  }
+
+  /**
+   * Appends raw bytes to the buffer, growing capacity (doubling, possibly
+   * more than once) as needed to fit the incoming chunk in one call.
+   * Generalized from readBuffer's old inline single-char growth step, which
+   * only ever needed to double once since it only ever appended one decoded
+   * UTF-8 char (1-4 bytes) at a time.
+   */
+  append(bytes: Buffer): void {
+    if (this.pos + bytes.length > this.data.length) {
+      let newCap = this.data.length * 2 || 16;
+      while (newCap < this.pos + bytes.length) newCap *= 2;
+      const grown = Buffer.alloc(newCap);
+      this.data.copy(grown);
+      this.data = grown;
+    }
+    bytes.copy(this.data, this.pos);
+    this.pos += bytes.length;
+  }
+}
 
 // ─── Built-in Functions ───────────────────────────────────────────────────────
 
@@ -191,5 +261,66 @@ export const mutStructuresFunctions: RegistryFunction[] = [
       map.set(PfunDict.keyOf(interp.force(pair.key)), interp.force(pair.value));
     }
     return new PfunDict(map);
+  }},
+
+  // ─── Buffer Operations ─────────────────────────────────────────────────────
+  //
+  // A Buffer is a mutable byte/char accumulator backed by PfunBuffer.
+  // Moved here from filelib.ts — filelib's readBuffer/writeBuffer still
+  // produce/consume PfunBuffer values (imported from here), but construction
+  // and in-memory manipulation no longer require a file handle.
+  //
+  // makeBuffer(mode) — creates a new empty buffer. mode: ByteMode | CharMode.
+  // appendBuffer(buffer, bytes) — appends a List<Byte>, growing capacity as
+  //   needed. Mutates in place; returns the buffer (same convention as append()
+  //   on arrays above).
+  // bufferToBytes(buffer) — returns a List<Byte> copy of the buffer's raw bytes.
+  // bufferToString(buffer) — returns a String (CharMode buffers only, though
+  //   works on ByteMode too via raw UTF-8 decode).
+  // bufferLength(buffer) — number of bytes currently in the buffer.
+
+  { name: 'makeBuffer', fn: (args, interp) => {
+    const mode = interp.force(args[0]);
+    if (!mode || (mode.__type !== 'ByteMode' && mode.__type !== 'CharMode'))
+      throw new Error("makeBuffer: mode must be ByteMode or CharMode.");
+    return new PfunBuffer(mode.__type === 'ByteMode' ? 'byte' : 'char');
+  }},
+
+  // appendBuffer(buffer, bytes) — appends a List<Byte> to the buffer, growing
+  // capacity as needed. Mutates in place; returns the buffer. Unlike
+  // writeBuffer (which can fail on a filesystem error), appending to an
+  // in-memory buffer can't fail, so this returns the buffer directly rather
+  // than Result.
+  { name: 'appendBuffer', arity: 2, fn: (args, interp) => {
+    if (interp.inPureContext) throw new Error("Functions cannot use 'appendBuffer': side effects not allowed in pure functions.");
+    const pbuf  = interp.force(args[0]);
+    const bytes = interp.force(args[1]);
+    if (!(pbuf instanceof PfunBuffer)) throw new Error("appendBuffer: first argument must be a Buffer.");
+    if (!Array.isArray(bytes) || !bytes.every((b: any) => b instanceof PfunByte))
+      throw new Error("appendBuffer: second argument must be a List<Byte>.");
+    pbuf.append(Buffer.from(bytes.map((b: PfunByte) => b.value)));
+    return pbuf;
+  }},
+
+  // bufferToBytes(buffer) — returns a List<Byte> copy of the buffer's raw bytes.
+  { name: 'bufferToBytes', fn: (args, interp) => {
+    const pbuf = interp.force(args[0]);
+    if (!(pbuf instanceof PfunBuffer)) throw new Error("bufferToBytes: argument must be a Buffer.");
+    return pbuf.toByteList();
+  }},
+
+  // bufferToString(buffer) — returns the buffer contents decoded as UTF-8 string.
+  // Intended for CharMode buffers; works on ByteMode too (raw UTF-8 decode).
+  { name: 'bufferToString', fn: (args, interp) => {
+    const pbuf = interp.force(args[0]);
+    if (!(pbuf instanceof PfunBuffer)) throw new Error("bufferToString: argument must be a Buffer.");
+    return pbuf.data.toString('utf8', 0, pbuf.pos);
+  }},
+
+  // bufferLength(buffer) — number of bytes currently written into the buffer.
+  { name: 'bufferLength', fn: (args, interp) => {
+    const pbuf = interp.force(args[0]);
+    if (!(pbuf instanceof PfunBuffer)) throw new Error("bufferLength: argument must be a Buffer.");
+    return BigInt(pbuf.pos);
   }},
 ];

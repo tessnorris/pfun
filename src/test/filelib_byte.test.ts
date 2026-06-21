@@ -5,7 +5,7 @@
 import { Lexer } from '../lexer';
 import { Parser } from '../parser';
 import { Interpreter, PfunByte } from '../interpreter';
-import { PfunBuffer } from '../filelib';
+import { PfunBuffer, mutStructuresFunctions, mutStructuresTypes } from '../mutStructures';
 import * as os from 'os';
 import * as nodePath from 'path';
 import * as nodeFs from 'fs';
@@ -19,6 +19,7 @@ const run = (source: string) => {
   const ast = new Parser(new Lexer(source).lex()).parse();
   const interp = new Interpreter();
   interp.registerLibrary(stdlibFunctions, stdlibTypes);
+  interp.registerLibrary(mutStructuresFunctions, mutStructuresTypes);
   interp.registerLibrary(iolibFunctions, []);
   interp.registerLibrary(filelibFunctions, filelibTypes);
   const logs: string[] = [];
