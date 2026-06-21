@@ -1,0 +1,39 @@
+import * from "io";
+
+// Int arithmetic — all four ops plus modulo
+let a = 10;
+let b = 3;
+println(a + b);
+println(a - b);
+println(a * b);
+println(a / b);
+println(a % b);
+
+// Negative literals and unary minus
+let neg = -7;
+println(neg);
+println(-neg);
+
+// Float arithmetic
+let x = 3.5;
+let y = 1.5;
+println(x + y);
+println(x * y);
+
+// String concatenation
+let greeting = "hello" + ", " + "world";
+println(greeting);
+
+// Bool literals
+println(true);
+println(false);
+
+// Comparison operators
+println(10 > 3);
+println(10 < 3);
+println(10 == 10);
+println(10 != 3);
+
+// Boolean operators
+println(true && false);
+println(true || false);

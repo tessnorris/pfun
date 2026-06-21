@@ -1,0 +1,68 @@
+import * from "io";
+
+// Plain record
+type Point = { x, y };
+let p = Point { 3, 4 };
+println(p.x);
+println(p.y);
+
+// Union type
+type Shape = {
+  | Circle: radius
+  | Rectangle: width, height
+  | Dot
+};
+
+let circ = Circle { 5 };
+let rect = Rectangle { 3, 4 };
+let dot  = Dot;
+
+// match on tagged variants
+function describe(shape) {
+  return match shape with
+    | Circle c     -> "circle r=" + c.radius
+    | Rectangle r  -> "rect " + r.width + "x" + r.height
+    | Dot          -> "dot";
+}
+println(describe(circ));
+println(describe(rect));
+println(describe(dot));
+
+// match with where guard on tagged arm
+function classify_circle(shape) {
+  return match shape with
+    | Circle c where c.radius > 10 -> "big circle"
+    | Circle c                     -> "small circle"
+    | Rectangle _                  -> "not a circle"
+    | Dot                          -> "not a circle";
+}
+println(classify_circle(Circle { 3 }));
+println(classify_circle(Circle { 20 }));
+
+// Guard-routed match on a plain value (bare-binding arms).
+// The four arms together prove exhaustive: s>=90, s>=80 and s<90,
+// s>=70 and s<80, and s<70 (anything else) — the last arm has no guard
+// so the match is unconditionally exhaustive by the baseline rule.
+function grade(score) {
+  return match score with
+    | s where s >= 90 -> "A"
+    | s where s >= 80 -> "B"
+    | s where s >= 70 -> "C"
+    | _ -> "F";
+}
+println(grade(95));
+println(grade(82));
+println(grade(71));
+println(grade(55));
+
+// Option (builtin union)
+let some_val = Some { 42 };
+let no_val   = None;
+
+function unwrap_or(opt, default_val) {
+  return match opt with
+    | Some s -> s.value
+    | None   -> default_val;
+}
+println(unwrap_or(some_val, 0));
+println(unwrap_or(no_val, 99));

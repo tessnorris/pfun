@@ -20,6 +20,7 @@ import { dblibTypes } from './dblib';
 import { dblibPostgresqlFunctions } from './dblibPostgresql';
 import { dblibMariadbFunctions } from './dblibMariadb';
 import { PfunError, buildPfunError } from './errors';
+import { transpile } from './transpiler';
 
 /**
  * Sets up a fresh interpreter with the core standard library.
@@ -599,9 +600,34 @@ if (require.main === module) {
     // Any non-flag argument is treated as a file to pre-load into the session.
     const fileArg = args.find(a => a !== '-i' && a !== '--interactive');
     runRepl(fileArg);
+  } else if (args.includes('-c') || args.includes('--compile')) {
+    // Transpile a single .pf file to JavaScript.
+    const flags = new Set(['-c', '--compile']);
+    const fileArg = args.find(a => !flags.has(a));
+    if (!fileArg) {
+      console.error('Usage: pfun -c <script.pf>');
+      process.exit(1);
+    }
+    const absolutePath = path.resolve(fileArg);
+    if (!fs.existsSync(absolutePath)) {
+      console.error(`File not found: ${absolutePath}`);
+      process.exit(1);
+    }
+    const source = fs.readFileSync(absolutePath, 'utf-8');
+    const stmts  = new Parser(new Lexer(source).lex()).parse();
+    const errors = checkTypes(stmts, source);
+    if (errors.length > 0) {
+      for (const e of errors) console.error(e.pfunMessage);
+      process.exit(1);
+    }
+    const js     = transpile(stmts, source);
+    const outPath = absolutePath.replace(/\.pf$/, '.js');
+    fs.writeFileSync(outPath, js, 'utf-8');
+    console.log(`Compiled to ${outPath}`);
   } else if (args.length === 0) {
     console.log('Usage: pfun <script.pf>');
     console.log('       pfun -i [script.pf]   (interactive mode, optionally pre-loading a file)');
+    console.log('       pfun -c <script.pf>   (compile to JavaScript)');
     process.exit(1);
   } else {
     runFile(args[0], args.slice(1)).catch(e => {
