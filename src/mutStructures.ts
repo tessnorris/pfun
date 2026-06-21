@@ -271,9 +271,12 @@ export const mutStructuresFunctions: RegistryFunction[] = [
   // and in-memory manipulation no longer require a file handle.
   //
   // makeBuffer(mode) — creates a new empty buffer. mode: ByteMode | CharMode.
+  // makeStringBuffer(str) — creates a new CharMode buffer pre-populated with str.
   // appendBuffer(buffer, bytes) — appends a List<Byte>, growing capacity as
   //   needed. Mutates in place; returns the buffer (same convention as append()
   //   on arrays above).
+  // appendChar(buffer, char) — UTF-8 encodes and appends a single char.
+  // appendString(buffer, str) — UTF-8 encodes and appends a string.
   // bufferToBytes(buffer) — returns a List<Byte> copy of the buffer's raw bytes.
   // bufferToString(buffer) — returns a String (CharMode buffers only, though
   //   works on ByteMode too via raw UTF-8 decode).
@@ -284,6 +287,18 @@ export const mutStructuresFunctions: RegistryFunction[] = [
     if (!mode || (mode.__type !== 'ByteMode' && mode.__type !== 'CharMode'))
       throw new Error("makeBuffer: mode must be ByteMode or CharMode.");
     return new PfunBuffer(mode.__type === 'ByteMode' ? 'byte' : 'char');
+  }},
+
+  // makeStringBuffer(str) — creates a new CharMode buffer pre-populated with
+  // str's UTF-8 bytes. Shorthand for makeBuffer(CharMode) + appendString,
+  // for the common case of seeding a buffer with existing content before
+  // accumulating more onto it.
+  { name: 'makeStringBuffer', fn: (args, interp) => {
+    const str = interp.force(args[0]);
+    if (typeof str !== 'string') throw new Error("makeStringBuffer: argument must be a string.");
+    const pbuf = new PfunBuffer('char', 16);
+    pbuf.append(Buffer.from(str, 'utf8'));
+    return pbuf;
   }},
 
   // appendBuffer(buffer, bytes) — appends a List<Byte> to the buffer, growing
@@ -299,6 +314,30 @@ export const mutStructuresFunctions: RegistryFunction[] = [
     if (!Array.isArray(bytes) || !bytes.every((b: any) => b instanceof PfunByte))
       throw new Error("appendBuffer: second argument must be a List<Byte>.");
     pbuf.append(Buffer.from(bytes.map((b: PfunByte) => b.value)));
+    return pbuf;
+  }},
+
+  // appendChar(buffer, char) — UTF-8 encodes a single char and appends it,
+  // growing capacity as needed. Mutates in place; returns the buffer.
+  { name: 'appendChar', arity: 2, fn: (args, interp) => {
+    if (interp.inPureContext) throw new Error("Functions cannot use 'appendChar': side effects not allowed in pure functions.");
+    const pbuf = interp.force(args[0]);
+    const c    = interp.force(args[1]);
+    if (!(pbuf instanceof PfunBuffer)) throw new Error("appendChar: first argument must be a Buffer.");
+    if (!(c instanceof PfunChar)) throw new Error("appendChar: second argument must be a char.");
+    pbuf.append(Buffer.from(c.value, 'utf8'));
+    return pbuf;
+  }},
+
+  // appendString(buffer, str) — UTF-8 encodes a string and appends it,
+  // growing capacity as needed. Mutates in place; returns the buffer.
+  { name: 'appendString', arity: 2, fn: (args, interp) => {
+    if (interp.inPureContext) throw new Error("Functions cannot use 'appendString': side effects not allowed in pure functions.");
+    const pbuf = interp.force(args[0]);
+    const str  = interp.force(args[1]);
+    if (!(pbuf instanceof PfunBuffer)) throw new Error("appendString: first argument must be a Buffer.");
+    if (typeof str !== 'string') throw new Error("appendString: second argument must be a string.");
+    pbuf.append(Buffer.from(str, 'utf8'));
     return pbuf;
   }},
 

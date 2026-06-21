@@ -3,7 +3,7 @@ import { Lexer } from '../lexer';
 import { Parser } from '../parser';
 import { Interpreter, PfunArray } from '../interpreter';
 import { stdlibFunctions, stdlibTypes } from '../library';
-import { mutStructuresFunctions, mutStructuresTypes } from '../mutStructures';
+import { mutStructuresFunctions, mutStructuresTypes, PfunBuffer } from '../mutStructures';
 import { iolibFunctions } from '../iolib';
 
 const run = (source: string) => {
@@ -835,6 +835,446 @@ describe('Data Structure Tests', () => {
         type Foo = { x };
         eval listToDict([Foo { 1 }]);
       `)).toThrow();
+    });
+  });
+
+  // ─── Buffer Operations ───────────────────────────────────────────────────────
+  //
+  // Buffer (PfunBuffer) moved here from filelib.ts so it's a core mutable
+  // structure, usable without `import * from "file"` — the run() helper at the
+  // top of this file registers only stdlib + mutStructures + iolib (no
+  // filelib), so every passing test in this section is itself proof the move
+  // worked: nothing here needs the file module. readBuffer/writeBuffer
+  // (file-handle-bound, stayed in filelib.ts) are tested separately in
+  // filelib_byte_test.ts.
+
+  describe('Buffers', () => {
+    describe('makeBuffer', () => {
+      it('creates an empty ByteMode buffer', () => {
+        const { interpreter } = run(`var b = makeBuffer(ByteMode);`);
+        const b = interpreter.getGlobal('b');
+        expect(b).toBeInstanceOf(PfunBuffer);
+        expect(b.mode).toBe('byte');
+        expect(b.pos).toBe(0);
+      });
+
+      it('creates an empty CharMode buffer', () => {
+        const { interpreter } = run(`var b = makeBuffer(CharMode);`);
+        const b = interpreter.getGlobal('b');
+        expect(b).toBeInstanceOf(PfunBuffer);
+        expect(b.mode).toBe('char');
+      });
+
+      it('throws on an invalid mode', () => {
+        expect(() => run(`eval makeBuffer(42);`))
+          .toThrow('makeBuffer: mode must be ByteMode or CharMode.');
+      });
+
+      it('bufferLength() of a fresh buffer is 0', () => {
+        const { logs } = run(`
+          var b = makeBuffer(ByteMode);
+          println(bufferLength(b));
+        `);
+        expect(logs).toEqual(['0']);
+      });
+    });
+
+    describe('makeStringBuffer', () => {
+      it('seeds a CharMode buffer with the given string', () => {
+        const { logs } = run(`
+          var b = makeStringBuffer("Hello");
+          println(bufferToString(b));
+          println(bufferLength(b));
+        `);
+        expect(logs).toEqual(['Hello', '5']);
+      });
+
+      it('handles an empty string', () => {
+        const { logs } = run(`
+          var b = makeStringBuffer("");
+          println(bufferLength(b));
+        `);
+        expect(logs).toEqual(['0']);
+      });
+
+      it('produces a buffer that can still be appended to afterward', () => {
+        const { logs } = run(`
+          proc p() {
+            var b = makeStringBuffer("");
+            appendString(b, "later");
+            println(bufferToString(b));
+          }
+          p();
+        `);
+        expect(logs).toEqual(['later']);
+      });
+
+      it('throws on a non-string argument', () => {
+        expect(() => run(`eval makeStringBuffer(42);`))
+          .toThrow('makeStringBuffer: argument must be a string.');
+      });
+    });
+
+    describe('appendBuffer', () => {
+      it('appends a List<Byte> and mutates in place', () => {
+        const { logs } = run(`
+          proc p() {
+            var b = makeBuffer(ByteMode);
+            appendBuffer(b, [72b, 105b]);
+            println(bufferLength(b));
+            println(bufferToString(b));
+          }
+          p();
+        `);
+        expect(logs).toEqual(['2', 'Hi']);
+      });
+
+      it('returns the buffer, enabling chained calls', () => {
+        const { logs } = run(`
+          proc p() {
+            var b = appendBuffer(appendBuffer(makeBuffer(ByteMode), [72b]), [105b]);
+            println(bufferToString(b));
+          }
+          p();
+        `);
+        expect(logs).toEqual(['Hi']);
+      });
+
+      it('throws on a non-Buffer first argument', () => {
+        expect(() => run(`
+          proc p() { appendBuffer("not a buffer", [72b]); }
+          p();
+        `)).toThrow('appendBuffer: first argument must be a Buffer.');
+      });
+
+      it('throws on a non-List<Byte> second argument', () => {
+        expect(() => run(`
+          proc p() { appendBuffer(makeBuffer(ByteMode), "not bytes"); }
+          p();
+        `)).toThrow('appendBuffer: second argument must be a List<Byte>.');
+      });
+
+      it('throws in a pure function', () => {
+        expect(() => run(`
+          proc setup() { return makeBuffer(ByteMode); }
+          function bad(b) {
+            appendBuffer(b, [72b]);
+            return b;
+          }
+          bad(setup());
+        `)).toThrow("Functions cannot use 'appendBuffer'");
+      });
+    });
+
+    describe('appendChar', () => {
+      it('UTF-8 encodes and appends a single char', () => {
+        const { logs } = run(`
+          proc p() {
+            var b = makeStringBuffer("Hi");
+            appendChar(b, '!');
+            println(bufferToString(b));
+          }
+          p();
+        `);
+        expect(logs).toEqual(['Hi!']);
+      });
+
+      it('handles a multi-byte UTF-8 char', () => {
+        const { logs } = run(`
+          proc p() {
+            var b = makeBuffer(CharMode);
+            appendChar(b, 'é');
+            println(bufferLength(b));
+            println(bufferToString(b));
+          }
+          p();
+        `);
+        expect(logs).toEqual(['2', 'é']); // é is 2 bytes in UTF-8
+      });
+
+      it('returns the buffer, enabling chained calls', () => {
+        const { logs } = run(`
+          proc p() {
+            var b = appendChar(appendChar(makeBuffer(CharMode), 'h'), 'i');
+            println(bufferToString(b));
+          }
+          p();
+        `);
+        expect(logs).toEqual(['hi']);
+      });
+
+      it('throws on a non-Buffer first argument', () => {
+        expect(() => run(`
+          proc p() { appendChar("not a buffer", 'x'); }
+          p();
+        `)).toThrow('appendChar: first argument must be a Buffer.');
+      });
+
+      it('throws on a non-char second argument', () => {
+        expect(() => run(`
+          proc p() { appendChar(makeBuffer(CharMode), "not a char"); }
+          p();
+        `)).toThrow('appendChar: second argument must be a char.');
+      });
+
+      it('throws in a pure function', () => {
+        expect(() => run(`
+          proc setup() { return makeBuffer(CharMode); }
+          function bad(b) {
+            appendChar(b, 'x');
+            return b;
+          }
+          bad(setup());
+        `)).toThrow("Functions cannot use 'appendChar'");
+      });
+    });
+
+    describe('appendString', () => {
+      it('UTF-8 encodes and appends a string, mutating in place', () => {
+        const { logs } = run(`
+          proc p() {
+            var b = makeStringBuffer("Hello");
+            appendString(b, ", world");
+            println(bufferToString(b));
+            println(bufferLength(b));
+          }
+          p();
+        `);
+        expect(logs).toEqual(['Hello, world', '12']);
+      });
+
+      it('appending an empty string is a no-op', () => {
+        const { logs } = run(`
+          proc p() {
+            var b = makeStringBuffer("x");
+            appendString(b, "");
+            println(bufferToString(b));
+            println(bufferLength(b));
+          }
+          p();
+        `);
+        expect(logs).toEqual(['x', '1']);
+      });
+
+      it('returns the buffer, enabling chained calls', () => {
+        const { logs } = run(`
+          proc p() {
+            var b = appendString(appendString(makeBuffer(CharMode), "foo"), "bar");
+            println(bufferToString(b));
+          }
+          p();
+        `);
+        expect(logs).toEqual(['foobar']);
+      });
+
+      it('compounds correctly across several separate calls on the same var-bound buffer', () => {
+        const expected = 'ab'.repeat(20); // 40 chars
+        const { logs } = run(`
+          proc p() {
+            var b = makeBuffer(CharMode);
+            proc loop(i) {
+              if i < 20 then {
+                appendString(b, "ab");
+                loop(i + 1);
+              } else 0;
+            }
+            loop(0);
+            println(bufferLength(b));
+            println(bufferToString(b) == "${expected}");
+          }
+          p();
+        `);
+        expect(logs).toEqual(['40', 'true']);
+      });
+
+      it('grows capacity correctly for a single chunk larger than the default 4096-byte capacity', () => {
+        const longStr = 'ab'.repeat(2500); // 5000 bytes
+        const { logs } = run(`
+          proc p() {
+            var b = makeBuffer(CharMode);
+            appendString(b, "${longStr}");
+            println(bufferLength(b));
+            println(bufferToString(b) == "${longStr}");
+          }
+          p();
+        `);
+        expect(logs).toEqual(['5000', 'true']);
+      });
+
+      it('throws on a non-Buffer first argument', () => {
+        expect(() => run(`
+          proc p() { appendString("not a buffer", "x"); }
+          p();
+        `)).toThrow('appendString: first argument must be a Buffer.');
+      });
+
+      it('throws on a non-string second argument', () => {
+        expect(() => run(`
+          proc p() { appendString(makeBuffer(CharMode), 42); }
+          p();
+        `)).toThrow('appendString: second argument must be a string.');
+      });
+
+      it('throws in a pure function', () => {
+        expect(() => run(`
+          proc setup() { return makeBuffer(CharMode); }
+          function bad(b) {
+            appendString(b, "x");
+            return b;
+          }
+          bad(setup());
+        `)).toThrow("Functions cannot use 'appendString'");
+      });
+    });
+
+    describe('mixing appendBuffer/appendChar/appendString on the same buffer', () => {
+      it('all three interoperate regardless of buffer mode', () => {
+        const { logs } = run(`
+          proc p() {
+            var b = makeBuffer(ByteMode);
+            appendString(b, "ab");
+            appendChar(b, 'c');
+            appendBuffer(b, [100b]); // 'd'
+            println(bufferToString(b));
+            println(bufferLength(b));
+          }
+          p();
+        `);
+        expect(logs).toEqual(['abcd', '4']);
+      });
+    });
+
+    describe('bufferToBytes', () => {
+      it('returns a List<Byte> copy of the buffer contents', () => {
+        const { logs } = run(`
+          proc p() {
+            var b = makeBuffer(ByteMode);
+            appendBuffer(b, [10b, 20b, 30b]);
+            let bytes = bufferToBytes(b);
+            println(length(bytes));
+            println(nth(bytes, 0));
+            println(nth(bytes, 2));
+          }
+          p();
+        `);
+        expect(logs).toEqual(['3', '10', '30']);
+      });
+
+      it('throws on a non-Buffer argument', () => {
+        expect(() => run(`eval bufferToBytes("not a buffer");`))
+          .toThrow('bufferToBytes: argument must be a Buffer.');
+      });
+    });
+
+    describe('bufferToString', () => {
+      it('decodes a CharMode buffer as UTF-8, including multi-byte chars', () => {
+        const { logs } = run(`
+          var b = makeStringBuffer("café");
+          println(bufferToString(b));
+        `);
+        expect(logs).toEqual(['café']);
+      });
+
+      it('also works on a ByteMode buffer (raw UTF-8 decode)', () => {
+        const { logs } = run(`
+          proc p() {
+            var b = makeBuffer(ByteMode);
+            appendBuffer(b, [104b, 105b]); // "hi"
+            println(bufferToString(b));
+          }
+          p();
+        `);
+        expect(logs).toEqual(['hi']);
+      });
+
+      it('throws on a non-Buffer argument', () => {
+        expect(() => run(`eval bufferToString(42);`))
+          .toThrow('bufferToString: argument must be a Buffer.');
+      });
+    });
+
+    describe('bufferLength', () => {
+      it('tracks length as content is appended', () => {
+        const { logs } = run(`
+          proc p() {
+            var b = makeBuffer(CharMode);
+            println(bufferLength(b));
+            appendString(b, "abc");
+            println(bufferLength(b));
+          }
+          p();
+        `);
+        expect(logs).toEqual(['0', '3']);
+      });
+
+      it('throws on a non-Buffer argument', () => {
+        expect(() => run(`eval bufferLength(true);`))
+          .toThrow('bufferLength: argument must be a Buffer.');
+      });
+    });
+
+    describe('Buffer is available without importing "file"', () => {
+      it('construction and manipulation work with only stdlib+mutStructures+iolib registered', () => {
+        // run() above never registers filelibFunctions/filelibTypes — this
+        // test passing is itself proof that Buffer no longer requires
+        // `import * from "file"`, now that it lives in mutStructures.ts.
+        const { logs } = run(`
+          proc p() {
+            var b = makeStringBuffer("ok");
+            println(bufferToString(b));
+          }
+          p();
+        `);
+        expect(logs).toEqual(['ok']);
+      });
+    });
+  });
+
+  // ─── PfunBuffer.append() — native growth logic ─────────────────────────────
+  //
+  // Direct TS-level tests of the growth/append mechanism generalized from
+  // readBuffer's old inline single-char doubling step (see filelib.ts).
+  // Pfun-level behavior is covered above via appendBuffer/appendChar/appendString;
+  // these tests pin down the exact capacity math.
+
+  describe('PfunBuffer.append (native)', () => {
+    it('appends bytes within existing capacity without growing', () => {
+      const buf = new PfunBuffer('byte', 16);
+      buf.append(Buffer.from([1, 2, 3]));
+      expect(buf.pos).toBe(3);
+      expect(buf.data.length).toBe(16);
+    });
+
+    it('doubles capacity exactly once when a chunk slightly exceeds capacity', () => {
+      const buf = new PfunBuffer('byte', 4);
+      buf.append(Buffer.from([1, 2, 3, 4, 5])); // 5 bytes > 4 capacity
+      expect(buf.pos).toBe(5);
+      expect(buf.data.length).toBe(8); // doubled once: 4 -> 8
+    });
+
+    it('doubles capacity multiple times in a single call when needed', () => {
+      const buf = new PfunBuffer('byte', 4);
+      const chunk = Buffer.alloc(100, 7);
+      buf.append(chunk); // needs 4 -> 8 -> 16 -> 32 -> 64 -> 128
+      expect(buf.pos).toBe(100);
+      expect(buf.data.length).toBe(128);
+      expect(buf.data.subarray(0, 100)).toEqual(chunk);
+    });
+
+    it('appending an empty chunk is a no-op', () => {
+      const buf = new PfunBuffer('byte', 16);
+      buf.append(Buffer.from([]));
+      expect(buf.pos).toBe(0);
+      expect(buf.data.length).toBe(16);
+    });
+
+    it('multiple sequential appends accumulate correctly', () => {
+      const buf = new PfunBuffer('char', 4);
+      buf.append(Buffer.from('ab', 'utf8'));
+      buf.append(Buffer.from('cd', 'utf8'));
+      buf.append(Buffer.from('ef', 'utf8'));
+      expect(buf.pos).toBe(6);
+      expect(buf.data.toString('utf8', 0, buf.pos)).toBe('abcdef');
     });
   });
 });
