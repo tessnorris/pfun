@@ -6,7 +6,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { Lexer } from './lexer';
 import { Parser } from './parser';
-import { checkProcedureUsage } from './procedureCheck';
+import { checkProcedureUsage, DICT_CONSTRUCTOR_CALLS, BUFFER_CONSTRUCTOR_CALLS, matchedConstructorCall } from './procedureCheck';
 import { checkTypes } from './typechecker';
 
 // ─── Registry Types ───────────────────────────────────────────────────────────
@@ -835,47 +835,14 @@ export class ModuleLoader {
   }
 }
 
-// ─── Mutable-structure constructor detection (for the LetStmt 'var' guard) ──
-//
-// `dict { }` and `array { }` have dedicated literal AST node types
-// (DictExpr/ArrayExpr) that LetStmt below checks structurally. Buffers have
-// no literal syntax at all — they're only ever constructed by calling a
-// builtin (makeBuffer/makeStringBuffer) — and dictionaries can ALSO be built
-// via a builtin call (toDict/listToDict) rather than the dict { } literal.
-// Those paths are plain CallExprs, so they bypass the DictExpr/ArrayExpr
-// check entirely and are caught here by callee name instead.
-//
-// This is safe against shadowing: these names are core builtins, and Rule 1
-// of checkNameAvailable forbids ever redefining a native function anywhere
-// in a program, so a CallExpr whose callee is one of these names can only
-// ever refer to the real builtin — never a user override.
-//
-// NOTE: toArray() has the same gap for PfunArray (a `let`-bound array built
-// via toArray() rather than the array { } literal silently loses mutations
-// across statements) but is not covered here.
-
-const DICT_CONSTRUCTOR_CALLS   = new Set(['toDict', 'listToDict']);
-const BUFFER_CONSTRUCTOR_CALLS = new Set(['makeBuffer', 'makeStringBuffer']);
-
-/** Unwraps GroupExpr wrappers, e.g. `let d = (toDict(x));`. */
-function unwrapGroup(expr: Expr): Expr {
-  while (expr.type === 'GroupExpr') expr = expr.expression;
-  return expr;
-}
-
-/**
- * If `expr` (after unwrapping any parens) is a direct call to one of
- * `names`, returns the callee name; otherwise returns null. Only matches
- * direct identifier calls (`toDict(x)`), not namespace-qualified or
- * computed callees — core builtins are never called any other way.
- */
-function matchedConstructorCall(expr: Expr, names: Set<string>): string | null {
-  const e = unwrapGroup(expr);
-  if (e.type === 'CallExpr' && e.callee.type === 'IdentExpr' && names.has(e.callee.name)) {
-    return e.callee.name;
-  }
-  return null;
-}
+// The DICT_CONSTRUCTOR_CALLS/BUFFER_CONSTRUCTOR_CALLS name sets and the
+// matchedConstructorCall() helper used by LetStmt's runtime guard below now
+// live in procedureCheck.ts (imported above), which also runs the same
+// check statically via checkMutableLetUsage — see that file's header for
+// the full rationale. Sharing one definition here avoids the two checks
+// silently drifting apart; this direction (interpreter.ts importing FROM
+// procedureCheck.ts) introduces no new dependency, since interpreter.ts
+// already imports checkProcedureUsage from the same module.
 
 // ─── Interpreter ──────────────────────────────────────────────────────────────
 

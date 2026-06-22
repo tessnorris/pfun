@@ -127,6 +127,10 @@ export class Substitution {
       case 'Generic': return { kind: 'Generic',
                                name:   t.name,
                                params: t.params.map(p => this.apply(p))         };
+      case 'Named':
+        return t.fieldTypes
+          ? { ...t, fieldTypes: t.fieldTypes.map(ft => this.apply(ft)) }
+          : t;
       default:        return t;
     }
   }
@@ -190,6 +194,7 @@ function collectFree(t: PfunType, acc: Set<number>): void {
     case 'Dict':     collectFree(t.key, acc); collectFree(t.value, acc); break;
     case 'Fn':       t.params.forEach(p => collectFree(p, acc)); collectFree(t.ret, acc); break;
     case 'Generic':  t.params.forEach(p => collectFree(p, acc)); break;
+    case 'Named':    if (t.fieldTypes) t.fieldTypes.forEach(ft => collectFree(ft, acc)); break;
   }
 }
 
@@ -915,9 +920,39 @@ function cgenExpr(
     // ── List literals ────────────────────────────────────────────────────────
     case 'ListExpr': {
       const elemVar = freshVar();
+      // For record elements: track the first occurrence's fieldTypes per
+      // record name so we can push field-by-field constraints on each
+      // subsequent occurrence with the same name. This is what catches
+      // [Pair{"k1","v1"}, Pair{1,2}] — the name-level elemVar constraint
+      // (below) would trivially succeed (both are Named{Pair}), but the
+      // field constraints catch the Str-vs-Int disagreement.
+      // Only applied to plain records (no unionName) — union variants with
+      // the same union are deliberately allowed to coexist in a list (see
+      // Named case in unify(): [Square{5}, Circle{3}] is valid List<Shape>).
+      const firstFieldTypes = new Map<string, PfunType[]>();
+
       for (const el of expr.elements) {
         const et = cgenExpr(el, env, registry, cs);
         cs.push(constraint(et, elemVar, el.pos));
+
+        // Field-by-field cross-element constraint for plain records
+        if (et.kind === 'Named' && et.unionName === undefined && et.fieldTypes && et.fieldTypes.length > 0) {
+          const seen = firstFieldTypes.get(et.name);
+          if (seen === undefined) {
+            firstFieldTypes.set(et.name, et.fieldTypes);
+          } else if (seen.length === et.fieldTypes.length) {
+            // Same record name seen before — constrain field-by-field against
+            // the first occurrence. The solver reports each mismatch
+            // independently, naming the position just like any other type error.
+            for (let i = 0; i < seen.length; i++) {
+              cs.push(constraint(seen[i], et.fieldTypes[i], el.pos));
+            }
+          }
+          // Field-count mismatch (seen.length !== et.fieldTypes.length) is
+          // left to the existing name-level elemVar unification — both are
+          // Named{Pair} and unify fine there, but the interpreter will catch
+          // the wrong-arity construction at runtime, same as today.
+        }
       }
       t = { kind: 'List', element: elemVar };
       break;
@@ -925,11 +960,26 @@ function cgenExpr(
 
     // ── Record / union variant constructors ──────────────────────────────────
     case 'RecordExpr': {
-      for (const f of expr.fields) cgenExpr(f.value, env, registry, cs);
+      // Collect each field's inferred type — previously discarded, now kept
+      // so that ListExpr can do field-by-field cross-element comparison for
+      // records in the same list literal (see ListExpr case below).
+      // Only attached for plain (non-union) records; union variants carry a
+      // unionName that already participates in unification via the Named case,
+      // and their field-type consistency is enforced separately at runtime.
+      const fieldTypes = expr.fields.map(f => cgenExpr(f.value, env, registry, cs));
       const entry = registry.lookupConstructor(expr.name);
-      t = entry
-        ? { kind: 'Named', name: entry.name, unionName: entry.unionName }
-        : { kind: 'Named', name: expr.name };
+      if (entry) {
+        t = { kind: 'Named', name: entry.name, unionName: entry.unionName };
+      } else {
+        // Unknown constructor (e.g. cross-module import not yet resolved) —
+        // still attach fieldTypes so the list check below can use them if
+        // other elements in the same list do have full type info.
+        t = { kind: 'Named', name: expr.name, fieldTypes };
+      }
+      if (!entry || entry.unionName === undefined) {
+        // Plain record (not a union variant): attach field types.
+        (t as any).fieldTypes = fieldTypes;
+      }
       break;
     }
 
@@ -1713,6 +1763,9 @@ function applyMap(t: PfunType, map: Map<number, PfunType>): PfunType {
     case 'Dict':    return { kind: 'Dict',    key: applyMap(t.key, map), value: applyMap(t.value, map) };
     case 'Fn':      return { kind: 'Fn', params: t.params.map(p => applyMap(p, map)), ret: applyMap(t.ret, map) };
     case 'Generic': return { kind: 'Generic', name: t.name, params: t.params.map(p => applyMap(p, map)) };
+    case 'Named':   return t.fieldTypes
+      ? { ...t, fieldTypes: t.fieldTypes.map(ft => applyMap(ft, map)) }
+      : t;
     default:        return t;
   }
 }
@@ -1864,7 +1917,13 @@ export function applySubstitutionToAST(stmts: Stmt[], subst: Substitution): void
       case 'ListExpr':
         e.elements.forEach(applyExpr); break;
       case 'RecordExpr':
-        e.fields.forEach(f => applyExpr(f.value)); break;
+        e.fields.forEach(f => applyExpr(f.value));
+        // Also resolve fieldTypes TyVars — they may be constrained by the
+        // solver after RecordExpr cgenExpr ran.
+        if (e.inferredType && e.inferredType.kind === 'Named' && e.inferredType.fieldTypes) {
+          e.inferredType.fieldTypes = e.inferredType.fieldTypes.map(ft => subst.apply(ft));
+        }
+        break;
       case 'GetExpr':
         applyExpr(e.object); break;
       case 'AssignExpr':

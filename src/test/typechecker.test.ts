@@ -2,10 +2,16 @@
 import { Lexer } from '../lexer';
 import { Parser } from '../parser';
 import { Stmt, Expr, PfunType } from '../ast';
-import { inferTypes } from '../typechecker';
+import { inferTypes, checkTypes } from '../typechecker';
+import { PfunError } from '../errors';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+/** Run checkTypes() and return the array of PfunErrors (may be empty). */
+function check(src: string): PfunError[] {
+  const stmts = new Parser(new Lexer(src).lex()).parse();
+  return checkTypes(stmts, src);
+}
 function parse(src: string): Stmt[] {
   return new Parser(new Lexer(src).lex()).parse();
 }
@@ -484,8 +490,11 @@ describe('Record and union construction', () => {
       type Point = { x, y };
       let p = Point { 1, 2 };
     `);
+    // fieldTypes now carries the resolved field types (Int, Int here) —
+    // used by ListExpr for cross-element field-by-field comparison.
     expect((stmts[1] as any).inferredType).toEqual({
       kind: 'Named', name: 'Point', unionName: undefined,
+      fieldTypes: [{ kind: 'Int' }, { kind: 'Int' }],
     });
   });
 
@@ -494,6 +503,9 @@ describe('Record and union construction', () => {
       type Shape = { | Square: side | Circle: radius }
       let s = Square { 10 };
     `);
+    // Union variants do NOT carry fieldTypes — their consistency is
+    // handled differently (union-variant mixing in lists is intentionally
+    // allowed via the unionName check in unify()'s Named case).
     expect((stmts[1] as any).inferredType).toEqual({
       kind: 'Named', name: 'Square', unionName: 'Shape',
     });
@@ -525,13 +537,15 @@ describe('Record and union construction', () => {
 
   it('constructor used before type declaration falls back to no unionName', () => {
     // RecordExpr for Foo appears before TypeStmt for Foo — registry is empty
-    // at that point, so unionName is absent.  This is expected and acceptable.
+    // at that point, so unionName is absent.  fieldTypes is still present
+    // since field values were inferred even though the type is not registered.
     const stmts = infer(`
       let x = Unknown { 1 };
       type Unknown = { value };
     `);
     expect((stmts[0] as any).inferredType).toEqual({
       kind: 'Named', name: 'Unknown',
+      fieldTypes: [{ kind: 'Int' }],
     });
   });
 
@@ -541,8 +555,11 @@ describe('Record and union construction', () => {
       let p = Pair { 1, 2 };
       let q = p;
     `);
+    // q's inferredType is derived from p — it propagates the full Named
+    // shape including fieldTypes.
     expect((stmts[2] as any).inferredType).toEqual({
       kind: 'Named', name: 'Pair', unionName: undefined,
+      fieldTypes: [{ kind: 'Int' }, { kind: 'Int' }],
     });
   });
 });
@@ -693,5 +710,127 @@ describe('Robustness', () => {
     `);
     expect((stmts[2] as any).inferredType).toEqual({ kind: 'Int' });
     expect((stmts[3] as any).inferredType).toEqual({ kind: 'Int' });
+  });
+});
+
+// ─── Field-level type checking in list literals ───────────────────────────────
+//
+// Stage 1 of the record-list feature: when the same plain record name appears
+// more than once in a single list literal, the inferencer now pushes field-by-
+// field constraints between occurrences, catching mixed-instantiation records
+// that would previously slip through (name-level unification trivially
+// succeeded since both elements are Named{Pair} regardless of field types).
+
+describe('Field-level type checking in list literals (Stage 1)', () => {
+  it('catches two records with the same name but different field types in one list', () => {
+    const errors = check(`
+      type Pair = { first, second };
+      let pairs = [Pair { 1, 2 }, Pair { "a", "b" }];
+    `);
+    expect(errors.length).toBeGreaterThan(0);
+    expect(errors[0].pfunMessage).toContain('Cannot unify');
+  });
+
+  it('catches a single mismatched field (second field differs)', () => {
+    const errors = check(`
+      type Pair = { first, second };
+      let pairs = [Pair { "k1", 1 }, Pair { "k2", "v2" }];
+    `);
+    expect(errors.length).toBeGreaterThan(0);
+    expect(errors[0].pfunMessage).toContain('Cannot unify');
+  });
+
+  it('accepts a list where all records have the same field types', () => {
+    const errors = check(`
+      type Pair = { first, second };
+      let pairs = [Pair { "k1", "v1" }, Pair { "k2", "v2" }, Pair { "k3", "v3" }];
+    `);
+    expect(errors).toHaveLength(0);
+  });
+
+  it('accepts a list with exactly one record element (no cross-element comparison)', () => {
+    const errors = check(`
+      type Pair = { first, second };
+      let pairs = [Pair { "key", "value" }];
+    `);
+    expect(errors).toHaveLength(0);
+  });
+
+  it('accepts an empty list (no elements to compare)', () => {
+    const errors = check(`
+      type Pair = { first, second };
+      let pairs = [];
+    `);
+    expect(errors).toHaveLength(0);
+  });
+
+  it('accepts a mixed-field list when record types have different names', () => {
+    // Two different record types in the same list is caught by name-level
+    // unification (both elements must be the same Named type), not field-
+    // level comparison — this is existing behavior, unchanged by Stage 1.
+    const errors = check(`
+      type Point = { x, y };
+      type Size  = { w, h };
+      let mixed = [Point { 1, 2 }, Size { 3, 4 }];
+    `);
+    // These DO produce an error — the name-level elemVar unification catches
+    // Point vs Size. We confirm the error exists (regression guard) but don't
+    // assert on its exact message, since it comes from the existing path.
+    expect(errors.length).toBeGreaterThan(0);
+  });
+
+  it('does NOT flag union variants with the same unionName mixing in a list', () => {
+    // [Square{5}, Circle{3}] is a valid List<Shape> — existing behavior,
+    // must be untouched by Stage 1. fieldTypes is deliberately NOT attached
+    // to union variants, so the new cross-element logic never fires here.
+    const errors = check(`
+      type Shape = { | Square: side | Circle: radius }
+      let shapes = [Square { 5 }, Circle { 3 }];
+    `);
+    expect(errors).toHaveLength(0);
+  });
+
+  it('catches the mismatch even when a correct record appears third', () => {
+    // The constraint is between the FIRST occurrence and each subsequent one.
+    // A third element that matches the first but not the second still catches
+    // the second.
+    const errors = check(`
+      type Pair = { first, second };
+      let pairs = [Pair { "k", "v" }, Pair { "k", 99 }, Pair { "k2", "v2" }];
+    `);
+    expect(errors.length).toBeGreaterThan(0);
+  });
+
+  it('field types propagate through substitution (first field constrained by later use)', () => {
+    // The first element has Int fields (from literal values), which then
+    // constrains a subsequent element's Str fields via the field constraints.
+    const errors = check(`
+      type Box = { value };
+      let boxes = [Box { 42 }, Box { "hello" }];
+    `);
+    expect(errors.length).toBeGreaterThan(0);
+    expect(errors[0].pfunMessage).toContain('Cannot unify');
+  });
+
+  it('a list with three matching records produces no errors', () => {
+    const errors = check(`
+      type Triple = { a, b, c };
+      let ts = [Triple { 1, 2, 3 }, Triple { 4, 5, 6 }, Triple { 7, 8, 9 }];
+    `);
+    expect(errors).toHaveLength(0);
+  });
+
+  it('fieldTypes on the Named type are resolved after substitution', () => {
+    // After inference, fieldTypes TyVars should be resolved to concrete types,
+    // not remain as TyVars — confirms applySubstitutionToAST threads through them.
+    const stmts = infer(`
+      type Pair = { first, second };
+      let p = Pair { 1, "hello" };
+    `);
+    const t = (stmts[1] as any).inferredType;
+    expect(t.kind).toBe('Named');
+    expect(t.fieldTypes).toBeDefined();
+    expect(t.fieldTypes[0]).toEqual({ kind: 'Int' });
+    expect(t.fieldTypes[1]).toEqual({ kind: 'Str' });
   });
 });

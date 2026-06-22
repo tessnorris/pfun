@@ -31,7 +31,19 @@ export type PfunType =
   | { kind: 'Dict';    key: PfunType; value: PfunType }
   | { kind: 'Fn';      params: PfunType[]; ret: PfunType }
   | { kind: 'Generic'; name: string; params: PfunType[] }
-  | { kind: 'Named';   name: string; unionName?: string }
+  | { kind: 'Named';   name: string; unionName?: string;
+      /**
+       * Field types for plain (non-union) record constructors, populated by
+       * the inferencer's RecordExpr case and consumed ONLY by the ListExpr
+       * case to catch mixed-instantiation records within a single list literal.
+       *
+       * Deliberately NOT read by unify()'s Named case — name-only comparison
+       * is preserved everywhere else in the type system, so that different
+       * instantiations of the same generic record in different places (e.g.
+       * Box{5.5} here, Box{"x"} there) remain legal. This field tightens
+       * only the within-one-list-literal constraint.
+       */
+      fieldTypes?: PfunType[] }
   | { kind: 'TyVar';   id: number }
   | { kind: 'Unknown' };
 

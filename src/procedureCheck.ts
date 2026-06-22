@@ -99,6 +99,39 @@
 // resolves; it never changes same-module behavior, and an unresolvable
 // import (the resolver returns null) falls back to the no-resolver
 // behavior for exactly that import, not the whole module.
+//
+// ─── Unrelated concern, same file: let/var for mutable-structure constructors ──
+//
+// checkMutableLetUsage (below) is NOT part of the purity guarantee above —
+// it has nothing to do with `inPureContext` and fires identically in pure
+// or impure code. It enforces a different, narrower correctness property:
+// a `let` binding may never construct a mutable structure (dict/array/
+// buffer), whether via literal syntax (`dict { }` / `array { }`) or a
+// builtin constructor call (`toDict`/`listToDict`/`makeBuffer`/
+// `makeStringBuffer`).
+//
+// Why: Pfun's `let` is call-by-name, not memoized (see interpreter.ts's
+// Thunk/forceGen — force() re-evaluates the initializer expression on
+// every access, it never caches the result). That's invisible for pure
+// expressions, but silently wrong for anything mutable: a later statement
+// that mutates the binding mutates a fresh, throwaway instance that
+// nothing else ever sees, and any subsequent read re-constructs yet
+// another fresh, unmutated instance — `bufferToString`/`arrayLength`/etc.
+// silently report stale/empty results instead of erroring. `var` evaluates
+// its initializer eagerly, once, and stores the actual value, so it
+// doesn't have this problem — see VarStmt's handling in interpreter.ts.
+//
+// interpreter.ts's own LetStmt evaluation has the same guard at runtime
+// (and imports the constructor-name lists/helper below from here, rather
+// than keeping a duplicate copy, since interpreter.ts already depends on
+// this module for checkProcedureUsage — adding a couple more named
+// imports from the same module introduces no new dependency or cycle).
+// This static copy exists because the runtime guard only fires for code
+// that's actually interpreted: a transpiled program has no runtime LetStmt
+// evaluation to fall back on at all, and even within the interpreter, a
+// violation inside a branch or function that's never executed would stay
+// latent forever. Running this at check time, over the whole module
+// (including dead code and uncalled functions), closes both gaps.
 
 import { Expr, Stmt, MatchArm } from './ast';
 import { SourcePos } from './lexer';
@@ -226,6 +259,76 @@ function procError(message: string, pos: SourcePos | undefined): never {
   const err = new Error(message);
   (err as any).pos = pos;
   throw err;
+}
+
+// ─── Mutable-structure constructor detection (let/var check, see file header) ──
+//
+// `dict { }` and `array { }` have dedicated literal AST node types
+// (DictExpr/ArrayExpr), checked structurally below. Buffers have no
+// literal syntax at all — they're only ever constructed by calling a
+// builtin (makeBuffer/makeStringBuffer) — and dictionaries can ALSO be
+// built via a builtin call (toDict/listToDict) rather than the dict { }
+// literal. Those paths are plain CallExprs, so they're caught here by
+// callee name instead.
+//
+// Exported so interpreter.ts can import this single source of truth for
+// its own runtime LetStmt guard rather than keeping a duplicate copy.
+//
+// Safe against shadowing: these names are core builtins, and the
+// interpreter's checkNameAvailable forbids ever redefining a native
+// function anywhere in a program, so a CallExpr whose callee is one of
+// these names can only ever refer to the real builtin — never a user
+// override.
+//
+// NOTE: toArray() has the same gap for PfunArray (a `let`-bound array
+// built via toArray() rather than the array { } literal silently loses
+// mutations across statements) but is not covered here.
+
+export const DICT_CONSTRUCTOR_CALLS   = new Set(['toDict', 'listToDict']);
+export const BUFFER_CONSTRUCTOR_CALLS = new Set(['makeBuffer', 'makeStringBuffer']);
+
+/** Unwraps GroupExpr wrappers, e.g. `let d = (toDict(x));`. */
+export function unwrapGroup(expr: Expr): Expr {
+  while (expr.type === 'GroupExpr') expr = expr.expression;
+  return expr;
+}
+
+/**
+ * If `expr` (after unwrapping any parens) is a direct call to one of
+ * `names`, returns the callee name; otherwise returns null. Only matches
+ * direct identifier calls (`toDict(x)`), not namespace-qualified or
+ * computed callees — core builtins are never called any other way.
+ */
+export function matchedConstructorCall(expr: Expr, names: Set<string>): string | null {
+  const e = unwrapGroup(expr);
+  if (e.type === 'CallExpr' && e.callee.type === 'IdentExpr' && names.has(e.callee.name)) {
+    return e.callee.name;
+  }
+  return null;
+}
+
+/**
+ * Checks a single LetStmt's initializer for the mutable-structure-
+ * construction rule described in this file's header. Throws via
+ * procError on a violation; otherwise returns normally. Purely syntactic
+ * — no scope, no resolver, no cross-module awareness needed, since the
+ * rule only ever looks at the shape of the initializer expression itself.
+ */
+function checkMutableLetUsage(name: string, initializer: Expr, pos: SourcePos | undefined): void {
+  if (initializer.type === 'DictExpr') {
+    procError(`Dictionaries must be declared with 'var', not 'let'. Use: var ${name} = dict { ... }`, pos);
+  }
+  if (initializer.type === 'ArrayExpr') {
+    procError(`Arrays must be declared with 'var', not 'let'. Use: var ${name} = array { ... }`, pos);
+  }
+  const dictCall = matchedConstructorCall(initializer, DICT_CONSTRUCTOR_CALLS);
+  if (dictCall) {
+    procError(`Dictionaries must be declared with 'var', not 'let'. Use: var ${name} = ${dictCall}(...)`, pos);
+  }
+  const bufferCall = matchedConstructorCall(initializer, BUFFER_CONSTRUCTOR_CALLS);
+  if (bufferCall) {
+    procError(`Buffers must be declared with 'var', not 'let'. Use: var ${name} = ${bufferCall}(...)`, pos);
+  }
 }
 
 /**
@@ -450,7 +553,14 @@ function checkMatchArm(arm: MatchArm, scope: StaticScope, inPureContext: boolean
 function checkStmt(stmt: Stmt, scope: StaticScope, inPureContext: boolean): void {
   switch (stmt.type) {
     case 'LetStmt':
+      // checkExprValue (rule 1 — proc-as-value) runs before
+      // checkMutableLetUsage so that a statement violating both at once
+      // (e.g. `let a = array { sideEffect };` — a proc embedded in an
+      // array literal that also needs 'var') reports the rule-1 violation
+      // first, matching this checker's existing error-priority convention
+      // (see AssignExpr's handling below for the same ordering rationale).
       checkExprValue(stmt.initializer, scope, inPureContext);
+      checkMutableLetUsage(stmt.name, stmt.initializer, stmt.pos);
       scope.define(stmt.name, 'other');
       return;
     case 'VarStmt':

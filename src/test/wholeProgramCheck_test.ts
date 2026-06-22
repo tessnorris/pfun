@@ -1,0 +1,343 @@
+// src/test/wholeProgramCheck.test.ts
+//
+// Tests for the whole-program static checker (checkProgram):
+//   Stage 1 — cross-module procedure-usage (purity) checking across the
+//     import graph, including named/namespace/star imports, missing
+//     modules, circular imports, and the "each file parsed exactly once"
+//     guarantee.
+//   Stage 2 — cross-module type checking and exhaustiveness checking,
+//     layered on the same graph/ordering machinery.
+// See wholeProgramCheck.ts's file header for the full design.
+//
+// These tests use real multi-file fixtures on disk (under
+// fixtures/wholeProgramCheck/) rather than in-memory strings, since the
+// whole point of this pass is resolving and parsing real files across a
+// real import graph — an in-memory single-AST test couldn't exercise that.
+
+// This file imports registerBuiltinModules from main.ts, which transitively
+// imports dblibPostgresql.ts/dblibMariadb.ts, which import the real 'pg'/
+// 'mysql2' packages. Without mocking them here too, this file's real,
+// unmocked 'pg'/'mysql2' module instances can collide with
+// dblibPostgresql.test.ts's/dblibMariadb.test.ts's own jest.mock()'d
+// versions of those same packages when both run in the same Jest worker —
+// the established fix (see mainModuleRegistration.test.ts, which hit the
+// identical issue for the identical reason) is to mock them here too,
+// removing the conflicting module identity entirely.
+jest.mock('pg', () => ({
+  Client: jest.fn().mockImplementation(() => ({
+    connect: jest.fn(() => Promise.resolve()),
+    query: jest.fn(() => Promise.resolve({ rows: [], rowCount: 0 })),
+    end: jest.fn(() => Promise.resolve()),
+  })),
+}), { virtual: true });
+
+jest.mock('mysql2/promise', () => ({
+  createConnection: jest.fn(() => Promise.resolve({
+    execute: jest.fn(() => Promise.resolve([[], []])),
+    end: jest.fn(() => Promise.resolve()),
+  })),
+}), { virtual: true });
+
+import * as path from 'path';
+import { ModuleLoader } from '../interpreter';
+import { checkProgram } from '../wholeProgramCheck';
+import { registerBuiltinModules } from '../main';
+
+const FIXTURES = path.join(__dirname, 'fixtures', 'wholeProgramCheck');
+
+function check(fixtureName: string): import('../errors').PfunError | null {
+  const entry  = path.join(FIXTURES, fixtureName);
+  const loader = new ModuleLoader(FIXTURES);
+  registerBuiltinModules(loader);
+  return checkProgram(entry, loader).error;
+}
+
+describe('Whole-program static checker (checkProgram) — Stage 1: graph + purity, Stage 2: types + exhaustiveness', () => {
+
+  describe('Cross-module purity violations are caught', () => {
+    it('catches a proc imported by name and used as a value in a function', () => {
+      const err = check('main_bad.pf');
+      expect(err).not.toBeNull();
+      expect(err!.pfunMessage).toContain("Functions cannot use 'sideEffect' as a value");
+    });
+
+    it('does NOT show a file-path header when the violation is in the entry file itself (no ambiguity to resolve)', () => {
+      const err = check('main_bad.pf');
+      expect(err).not.toBeNull();
+      // The entry file's own basename should not appear as an "In ...:"
+      // attribution line — only cross-file errors get one (see the next
+      // describe block's "attributes the error to the dependency file"
+      // test for the contrasting case).
+      expect(err!.pfunMessage).not.toMatch(/^In .*main_bad\.pf/m);
+    });
+
+    it('catches a namespace-qualified proc used as a value (import * as X)', () => {
+      const err = check('main_namespace_bad.pf');
+      expect(err).not.toBeNull();
+      expect(err!.pfunMessage).toContain("Functions cannot use 'Lib.sideEffect' as a value");
+    });
+
+    it('catches a namespace-qualified proc call (import * as X)', () => {
+      const err = check('main_namespace_call_bad.pf');
+      expect(err).not.toBeNull();
+      expect(err!.pfunMessage).toContain('Functions cannot call procedures');
+      expect(err!.pfunMessage).toContain("'Lib.sideEffect'");
+    });
+
+    it('catches a star-imported var mutated from a function (rule 3 across import * from)', () => {
+      const err = check('main_star_bad.pf');
+      expect(err).not.toBeNull();
+      expect(err!.pfunMessage).toContain("Functions cannot mutate 'counter'");
+    });
+
+    it('attributes the error to the dependency file, not the entry file, for a transitive violation', () => {
+      // middle.pf (imported by transitive_violation_entry.pf) has the
+      // actual violation; the entry file itself is clean. The reported
+      // error must point at middle.pf.
+      const err = check('transitive_violation_entry.pf');
+      expect(err).not.toBeNull();
+      expect(err!.pfunMessage).toContain('middle.pf');
+      expect(err!.pfunMessage).not.toContain('transitive_violation_entry.pf');
+      expect(err!.pfunMessage).toContain("Functions cannot use 'deepSideEffect' as a value");
+    });
+  });
+
+  describe('Mutable-structure let/var check propagates through checkProgram (unrelated to purity rules above)', () => {
+    // This rule needs no cross-module resolution at all — it's purely
+    // syntactic (procedureCheck.ts's checkMutableLetUsage, invoked from
+    // checkStmt's existing LetStmt case) — so it requires zero changes to
+    // this file's checkProgram to participate in whole-program checking;
+    // it rides along for free wherever checkProcedureUsage already runs.
+    // These tests exist to confirm that's actually true end-to-end,
+    // through real fixture files, not just asserted.
+    it('catches a let-bound buffer constructor at the entry-file top level', () => {
+      const err = check('main_mutable_let_bad.pf');
+      expect(err).not.toBeNull();
+      expect(err!.pfunMessage).toContain("Buffers must be declared with 'var'");
+    });
+
+    it('passes the var-correct equivalent', () => {
+      expect(check('main_mutable_let_good.pf')).toBeNull();
+    });
+
+    it('attributes the error to the dependency file, not the entry file, for a transitive violation', () => {
+      // transitive_mutable_let_dep.pf (imported by
+      // transitive_mutable_let_entry.pf) has the actual violation inside
+      // an exported function; the entry file itself only imports and
+      // calls it. The reported error must point at the dependency file,
+      // matching the existing transitive-attribution test above for the
+      // purity rules.
+      const err = check('transitive_mutable_let_entry.pf');
+      expect(err).not.toBeNull();
+      expect(err!.pfunMessage).toContain('transitive_mutable_let_dep.pf');
+      expect(err!.pfunMessage).not.toContain('transitive_mutable_let_entry.pf');
+      expect(err!.pfunMessage).toContain("Buffers must be declared with 'var'");
+    });
+  });
+
+  describe('Legitimate cross-module uses are NOT flagged', () => {
+    it('passes a function imported by name and called from another function', () => {
+      expect(check('main_good.pf')).toBeNull();
+    });
+
+    it('passes a namespace-qualified function call', () => {
+      expect(check('main_namespace_good.pf')).toBeNull();
+    });
+
+    it('passes a top-level (impure context) call to an imported proc', () => {
+      expect(check('main_builtin_proc_good.pf')).toBeNull();
+    });
+
+    it('passes a star-imported var mutated from a proc (legitimate var/proc use across import *)', () => {
+      expect(check('main_star_good.pf')).toBeNull();
+    });
+
+    it('passes a diamond-shaped import graph with no violations', () => {
+      expect(check('diamond_entry.pf')).toBeNull();
+    });
+  });
+
+  describe('Graph resolution errors', () => {
+    it('reports a missing module with the resolved path and the importing position', () => {
+      const err = check('main_missing.pf');
+      expect(err).not.toBeNull();
+      expect(err!.pfunMessage).toContain('Module not found');
+      expect(err!.pfunMessage).toContain('doesnotexist.pf');
+    });
+
+    it('detects a circular import', () => {
+      const err = check('cycle_a.pf');
+      expect(err).not.toBeNull();
+      expect(err!.pfunMessage).toContain('Circular import detected');
+    });
+  });
+
+  describe('Each file is parsed exactly once', () => {
+    it('produces exactly one graph node per resolved path even in a diamond-shaped import graph', () => {
+      // diamond_entry.pf imports BOTH diamond_a.pf and diamond_b.pf, which
+      // both import lib.pf — lib.pf must appear as exactly one node, not
+      // two, despite being reachable via two different import paths.
+      const { buildModuleGraph } = require('../wholeProgramCheck');
+      const entry  = path.join(FIXTURES, 'diamond_entry.pf');
+      const loader = new ModuleLoader(FIXTURES);
+      registerBuiltinModules(loader);
+      const graph = buildModuleGraph(entry, loader);
+
+      const resolvedPaths = graph.map((n: any) => n.resolvedPath);
+      const counts = new Map<string, number>();
+      for (const p of resolvedPaths) counts.set(p, (counts.get(p) ?? 0) + 1);
+
+      const libPath = path.join(FIXTURES, 'lib.pf');
+      expect(counts.get(libPath)).toBe(1);
+      // And the property holds for every node, not just lib.pf.
+      for (const [, n] of counts) expect(n).toBe(1);
+    });
+
+    it('orders the graph dependency-first: lib.pf appears before both diamond_a.pf and diamond_b.pf, which appear before diamond_entry.pf', () => {
+      const { buildModuleGraph } = require('../wholeProgramCheck');
+      const entry  = path.join(FIXTURES, 'diamond_entry.pf');
+      const loader = new ModuleLoader(FIXTURES);
+      registerBuiltinModules(loader);
+      const graph = buildModuleGraph(entry, loader);
+
+      const indexOf = (name: string) => graph.findIndex((n: any) => n.resolvedPath === path.join(FIXTURES, name));
+      const libIdx     = indexOf('lib.pf');
+      const aIdx        = indexOf('diamond_a.pf');
+      const bIdx        = indexOf('diamond_b.pf');
+      const entryIdx    = indexOf('diamond_entry.pf');
+
+      expect(libIdx).toBeGreaterThanOrEqual(0);
+      expect(libIdx).toBeLessThan(aIdx);
+      expect(libIdx).toBeLessThan(bIdx);
+      expect(aIdx).toBeLessThan(entryIdx);
+      expect(bIdx).toBeLessThan(entryIdx);
+    });
+  });
+
+  describe('Cross-module TYPE errors are caught (Stage 2)', () => {
+    it('catches a cross-module type error: an imported function called with a wrong-typed argument', () => {
+      const err = check('main_type_bad.pf');
+      expect(err).not.toBeNull();
+      expect(err!.pfunMessage).toContain('Cannot unify');
+    });
+
+    it('does NOT show a file-path header when the type error is in the entry file itself', () => {
+      const err = check('main_type_bad.pf');
+      expect(err).not.toBeNull();
+      expect(err!.pfunMessage).not.toMatch(/^In .*main_type_bad\.pf/m);
+    });
+
+    it('attributes a transitive type error to the dependency file, not the entry file', () => {
+      // middle_type.pf (imported by transitive_type_entry.pf) has the
+      // actual type error; the entry file itself is clean.
+      const err = check('transitive_type_entry.pf');
+      expect(err).not.toBeNull();
+      expect(err!.pfunMessage).toContain('middle_type.pf');
+      expect(err!.pfunMessage).not.toContain('transitive_type_entry.pf');
+      expect(err!.pfunMessage).toContain('Cannot unify');
+    });
+
+    it('passes a legitimate, type-correct cross-module call', () => {
+      expect(check('main_type_good.pf')).toBeNull();
+    });
+  });
+
+  describe('Cross-module EXHAUSTIVENESS is checked (Stage 2)', () => {
+    it('catches a non-exhaustive match on an imported union variant constructor', () => {
+      // main_exhaustiveness_bad.pf imports the Square constructor by name
+      // and constructs Square { 5 } directly, then matches without
+      // covering Circle — this exercises the RecordExpr/CGenRegistry
+      // cross-module path specifically (see UnionImportTable's docblock
+      // in inferencer.ts for why that's a distinct code path from
+      // ordinary IdentExpr type lookups).
+      const err = check('main_exhaustiveness_bad.pf');
+      expect(err).not.toBeNull();
+      expect(err!.pfunMessage).toContain("Non-exhaustive match on 'Shape'");
+      expect(err!.pfunMessage).toContain("'Circle'");
+    });
+
+    it('catches a non-exhaustive match on a value obtained via a namespace-qualified call to an imported union constructor', () => {
+      // main_namespace_exhaustiveness_bad.pf imports the whole shapes_ns
+      // module as a namespace (Shapes), calls Shapes.makeSquare(5) (which
+      // constructs Square { s } INSIDE shapes_ns.pf, not in the
+      // importer), and matches the result without covering Circle —
+      // exercises namespace-qualified type resolution (GetExpr) feeding
+      // into exhaustiveness on the call's result.
+      const err = check('main_namespace_exhaustiveness_bad.pf');
+      expect(err).not.toBeNull();
+      expect(err!.pfunMessage).toContain("Non-exhaustive match on 'Shape'");
+      expect(err!.pfunMessage).toContain("'Circle'");
+    });
+
+    it('passes a legitimate, exhaustive cross-module match (both variants imported and covered)', () => {
+      expect(check('main_exhaustiveness_good.pf')).toBeNull();
+    });
+  });
+
+  describe('Backward compatibility — checkProcedureUsage with no resolver is unchanged', () => {
+    it('still treats imports as opaque when called without a ModuleImportResolver (existing single-module callers/tests)', () => {
+      // This is procedureCheck.test.ts's territory in detail; this is a
+      // narrow smoke check that wholeProgramCheck.ts's existence hasn't
+      // altered checkProcedureUsage's default (no-resolver) behavior.
+      const { checkProcedureUsage } = require('../procedureCheck');
+      const { Lexer } = require('../lexer');
+      const { Parser } = require('../parser');
+      const ast = new Parser(new Lexer(`
+        import { something } from "./other";
+        function bad() {
+          let g = something;
+          return 1;
+        }
+      `).lex()).parse();
+      expect(() => checkProcedureUsage(ast)).not.toThrow();
+    });
+
+    it('checkTypes still treats an imported name as unbound (no false positive) when called without resolvers (existing single-module callers/tests)', () => {
+      // Mirrors the checkProcedureUsage check above, for checkTypes' own
+      // default (no-resolver) behavior — inferencer.test.ts/
+      // typechecker.test.ts cover this in detail; this is a narrow smoke
+      // check that wholeProgramCheck.ts's existence hasn't altered it.
+      const { checkTypes } = require('../typechecker');
+      const { Lexer } = require('../lexer');
+      const { Parser } = require('../parser');
+      const src = `
+        import { double } from "./lib";
+        let ok = double("anything goes, no resolver supplied");
+      `;
+      const ast = new Parser(new Lexer(src).lex()).parse();
+      const errors = checkTypes(ast, src);
+      expect(errors.length).toBe(0);
+    });
+  describe('Builtin type table (Stage 3): real Fn signatures for stdlib exports', () => {
+    it('catches the design doc\'s headline example: sqrt() called with a wrong-typed argument', () => {
+      const err = check('main_builtin_type_bad.pf');
+      expect(err).not.toBeNull();
+      expect(err!.pfunMessage).toContain('Cannot unify');
+    });
+
+    it('passes a legitimate, type-correct builtin call (sqrt with a Float)', () => {
+      expect(check('main_builtin_type_good.pf')).toBeNull();
+    });
+
+    it('does NOT flag a genuinely polymorphic builtin (abs) called with a Float — see BUILTIN_FUNCTION_TYPES\'s docblock for why abs/min/max/clamp/sign are deliberately absent from the table rather than given a (necessarily wrong-half-the-time) monomorphic signature', () => {
+      expect(check('main_builtin_polymorphic_good.pf')).toBeNull();
+    });
+
+    it('catches a non-exhaustive match on a UNION RETURNED BY A BUILTIN function (readFile -> Result) — previously only caught at runtime, unconditionally, regardless of which branch actually executed', () => {
+      const err = check('main_builtin_exhaustiveness_bad.pf');
+      expect(err).not.toBeNull();
+      expect(err!.pfunMessage).toContain("Non-exhaustive match on 'Result'");
+      expect(err!.pfunMessage).toContain("'Err'");
+    });
+
+    it('passes a fully exhaustive match on a builtin-returned Result', () => {
+      expect(check('main_builtin_exhaustiveness_good.pf')).toBeNull();
+    });
+
+    it('catches misuse of an awaited builtin async function\'s resolved type (await sleep(...) + Int) — requires the AwaitExpr constraint-generation fix (cgenExpr now passes through the operand\'s type instead of falling through to an unconstrained fresh var)', () => {
+      const err = check('main_await_type_bad.pf');
+      expect(err).not.toBeNull();
+      expect(err!.pfunMessage).toContain('Cannot unify');
+    });
+  });
+});
