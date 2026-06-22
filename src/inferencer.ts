@@ -536,8 +536,14 @@ class CGenEnv {
 class CGenRegistry {
   private constructors = new Map<string, string | undefined>();
   private singletons   = new Map<string, string>();
+  // Stage 2: field arity for plain records, so ListExpr can mint fresh
+  // TyVars for the element type of an empty typed-list literal (Pair []).
+  private plainArity   = new Map<string, number>();
 
-  registerPlain(name: string): void { this.constructors.set(name, undefined); }
+  registerPlain(name: string, arity: number): void {
+    this.constructors.set(name, undefined);
+    this.plainArity.set(name, arity);
+  }
 
   registerUnion(unionName: string, variants: { name: string; fields: string[] }[]): void {
     for (const v of variants) {
@@ -554,6 +560,11 @@ class CGenRegistry {
   lookupSingleton(name: string): { name: string; unionName: string } | null {
     const u = this.singletons.get(name);
     return u ? { name, unionName: u } : null;
+  }
+
+  /** Returns the field count for a plain record, or null if unknown. */
+  lookupArity(name: string): number | null {
+    return this.plainArity.has(name) ? this.plainArity.get(name)! : null;
   }
 }
 
@@ -920,40 +931,52 @@ function cgenExpr(
     // ── List literals ────────────────────────────────────────────────────────
     case 'ListExpr': {
       const elemVar = freshVar();
-      // For record elements: track the first occurrence's fieldTypes per
-      // record name so we can push field-by-field constraints on each
-      // subsequent occurrence with the same name. This is what catches
-      // [Pair{"k1","v1"}, Pair{1,2}] — the name-level elemVar constraint
-      // (below) would trivially succeed (both are Named{Pair}), but the
-      // field constraints catch the Str-vs-Int disagreement.
-      // Only applied to plain records (no unionName) — union variants with
-      // the same union are deliberately allowed to coexist in a list (see
-      // Named case in unify(): [Square{5}, Circle{3}] is valid List<Shape>).
-      const firstFieldTypes = new Map<string, PfunType[]>();
 
-      for (const el of expr.elements) {
-        const et = cgenExpr(el, env, registry, cs);
-        cs.push(constraint(et, elemVar, el.pos));
+      if (expr.elements.length === 0) {
+        // Stage 2: empty typed-list literal — Pair [] or similar.
+        // If a recordTypeHint is present and the type is registered (arity
+        // known), seed elemVar to a Named{name, fieldTypes:[TyVars...]} so
+        // later uses (e.g. cons(wrongType, dataset)) unify against a real
+        // record type rather than an unconstrained free TyVar.
+        // Falls back to plain free TyVar if the hint is absent or the type
+        // hasn't been registered yet (forward-reference, same permissive
+        // behaviour as bare []).
+        const hint = (expr as any).recordTypeHint as string | undefined;
+        if (hint) {
+          const arity = registry.lookupArity(hint);
+          if (arity !== null) {
+            const fieldTypes = Array.from({ length: arity }, () => freshVar());
+            const seededElem: PfunType = { kind: 'Named', name: hint, fieldTypes };
+            cs.push(constraint(elemVar, seededElem, expr.pos));
+          }
+        }
+      } else {
+        // Stage 1: non-empty list — field-by-field cross-element constraints
+        // for plain records, catching mixed-instantiation records that slip
+        // through name-level elemVar unification (both elements are Named{Pair}
+        // so name-level trivially succeeds; field types catch the mismatch).
+        // Only plain records (no unionName) — union variants with the same
+        // unionName are deliberately allowed to coexist ([Square{5}, Circle{3}]
+        // is a valid List<Shape>), handled by unify()'s Named case.
+        const firstFieldTypes = new Map<string, PfunType[]>();
 
-        // Field-by-field cross-element constraint for plain records
-        if (et.kind === 'Named' && et.unionName === undefined && et.fieldTypes && et.fieldTypes.length > 0) {
-          const seen = firstFieldTypes.get(et.name);
-          if (seen === undefined) {
-            firstFieldTypes.set(et.name, et.fieldTypes);
-          } else if (seen.length === et.fieldTypes.length) {
-            // Same record name seen before — constrain field-by-field against
-            // the first occurrence. The solver reports each mismatch
-            // independently, naming the position just like any other type error.
-            for (let i = 0; i < seen.length; i++) {
-              cs.push(constraint(seen[i], et.fieldTypes[i], el.pos));
+        for (const el of expr.elements) {
+          const et = cgenExpr(el, env, registry, cs);
+          cs.push(constraint(et, elemVar, el.pos));
+
+          if (et.kind === 'Named' && et.unionName === undefined && et.fieldTypes && et.fieldTypes.length > 0) {
+            const seen = firstFieldTypes.get(et.name);
+            if (seen === undefined) {
+              firstFieldTypes.set(et.name, et.fieldTypes);
+            } else if (seen.length === et.fieldTypes.length) {
+              for (let i = 0; i < seen.length; i++) {
+                cs.push(constraint(seen[i], et.fieldTypes[i], el.pos));
+              }
             }
           }
-          // Field-count mismatch (seen.length !== et.fieldTypes.length) is
-          // left to the existing name-level elemVar unification — both are
-          // Named{Pair} and unify fine there, but the interpreter will catch
-          // the wrong-arity construction at runtime, same as today.
         }
       }
+
       t = { kind: 'List', element: elemVar };
       break;
     }
@@ -962,23 +985,20 @@ function cgenExpr(
     case 'RecordExpr': {
       // Collect each field's inferred type — previously discarded, now kept
       // so that ListExpr can do field-by-field cross-element comparison for
-      // records in the same list literal (see ListExpr case below).
+      // records in the same list literal (Stage 1).
       // Only attached for plain (non-union) records; union variants carry a
       // unionName that already participates in unification via the Named case,
       // and their field-type consistency is enforced separately at runtime.
       const fieldTypes = expr.fields.map(f => cgenExpr(f.value, env, registry, cs));
       const entry = registry.lookupConstructor(expr.name);
-      if (entry) {
+      if (entry && entry.unionName !== undefined) {
+        // Union variant — no fieldTypes attached (intentional, see above).
         t = { kind: 'Named', name: entry.name, unionName: entry.unionName };
       } else {
-        // Unknown constructor (e.g. cross-module import not yet resolved) —
-        // still attach fieldTypes so the list check below can use them if
-        // other elements in the same list do have full type info.
-        t = { kind: 'Named', name: expr.name, fieldTypes };
-      }
-      if (!entry || entry.unionName === undefined) {
-        // Plain record (not a union variant): attach field types.
-        (t as any).fieldTypes = fieldTypes;
+        // Plain record (registered or unknown) — attach fieldTypes.
+        t = { kind: 'Named', name: expr.name,
+              unionName: entry ? entry.unionName : undefined,
+              fieldTypes };
       }
       break;
     }
@@ -1390,7 +1410,7 @@ function cgenStmt(
       break;
 
     case 'TypeStmt':
-      registry.registerPlain(stmt.name);
+      registry.registerPlain(stmt.name, stmt.fields.length);
       break;
 
     case 'UnionTypeStmt':
@@ -1918,8 +1938,6 @@ export function applySubstitutionToAST(stmts: Stmt[], subst: Substitution): void
         e.elements.forEach(applyExpr); break;
       case 'RecordExpr':
         e.fields.forEach(f => applyExpr(f.value));
-        // Also resolve fieldTypes TyVars — they may be constrained by the
-        // solver after RecordExpr cgenExpr ran.
         if (e.inferredType && e.inferredType.kind === 'Named' && e.inferredType.fieldTypes) {
           e.inferredType.fieldTypes = e.inferredType.fieldTypes.map(ft => subst.apply(ft));
         }

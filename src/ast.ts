@@ -93,7 +93,17 @@ export type Expr =
   | { type: 'CallExpr';   callee: Expr; args: Expr[]; pos?: SourcePos; inferredType?: PfunType }
   | { type: 'LambdaExpr'; params: string[]; body: Expr; pos?: SourcePos; inferredType?: PfunType }
   | { type: 'TernaryExpr'; condition: Expr; thenBranch: Expr; elseBranch: Expr; pos?: SourcePos; inferredType?: PfunType }
-  | { type: 'ListExpr';   elements: Expr[]; pos?: SourcePos; inferredType?: PfunType }
+  | { type: 'ListExpr';   elements: Expr[];
+      /**
+       * Set by the parser for typed empty-list syntax: `Pair []` produces a
+       * ListExpr with recordTypeHint='Pair' and elements=[]. The inferencer's
+       * ListExpr case uses this to seed the element type with a real Named type
+       * (with fresh TyVar field slots) rather than a fully-free TyVar, so that
+       * later uses like cons(wrongType, dataset) catch the mismatch statically.
+       * Never set on ordinary list literals — only on the Pair [] / Name []
+       * sugar form.
+       */
+      recordTypeHint?: string; pos?: SourcePos; inferredType?: PfunType }
   | { type: 'RecordExpr'; name: string; fields: { key: string | null; value: Expr }[]; pos?: SourcePos; inferredType?: PfunType }
   | { type: 'GetExpr';    object: Expr; name: string; pos?: SourcePos; inferredType?: PfunType }
   | { type: 'MatchExpr';  subject: Expr; arms: MatchArm[]; pos?: SourcePos; inferredType?: PfunType; missingVariants?: string[] }

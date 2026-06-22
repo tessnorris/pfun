@@ -271,6 +271,30 @@ export class Parser {
     return { type: 'IfStmt', condition, thenBranch, elseBranch, pos: stmtPos };
   }
 
+  /**
+   * Parse the field list for a record constructor, starting AFTER the opening
+   * '{' has already been consumed. Returns a complete RecordExpr node.
+   * Used both by the original `Name { ... }` path and by each element of the
+   * new `Name [{ ... }, { ... }]` list-literal sugar.
+   */
+  private parseRecordFields(name: string, pos: any): Expr {
+    const fields: { key: string | null, value: Expr }[] = [];
+    if (!this.check('RBraceToken')) {
+      do {
+        // Peek ahead to distinguish named (ident =) from positional
+        if (this.check('IdentToken') && this.peekNext().type === 'AssignToken') {
+          const key = (this.advance() as any).value;
+          this.advance(); // consume '='
+          fields.push({ key, value: this.parseExpression() });
+        } else {
+          fields.push({ key: null, value: this.parseExpression() });
+        }
+      } while (this.match('CommaToken'));
+    }
+    this.consume('RBraceToken', "Expected '}' after record fields.");
+    return { type: 'RecordExpr', name, fields, pos };
+  }
+
   private parseBlockExpr(): Expr {
     // Parses { stmt; stmt; expr } as a BlockExpr — evaluates stmts, returns last value.
     const exprPos = this.pos();
@@ -332,31 +356,44 @@ export class Parser {
       case 'ByteToken': return { type: 'ByteExpr', value: token.value, pos: token.pos ?? exprPos };
       case 'RawStrToken': return { type: 'StrExpr', value: token.value, pos: token.pos ?? exprPos };
       case 'DollarToken': return this.parseFormatString(token.pos ?? exprPos);
-      case 'IdentToken':
+      case 'IdentToken': {
+        // Record-list literal: Name [{...}, {...}] or Name []
+        // Consumed only when '[' is immediately followed by '{' or ']' —
+        // this is the one-token lookahead that distinguishes Name[i] (plain
+        // IndexExpr, handled by the Pratt infix loop below) from Name[{...}]
+        // (record-list sugar). Must be checked BEFORE falling through to
+        // IdentExpr, so the '[' is consumed here rather than in parseInfix.
+        if (this.check('LBracketToken') &&
+            (this.peekNext().type === 'LBraceToken' ||
+             this.peekNext().type === 'RBracketToken')) {
+          this.advance(); // consume '['
+          const elements: Expr[] = [];
+          if (!this.check('RBracketToken')) {
+            do {
+              this.consume('LBraceToken', `Expected '{' for ${token.value} record field list.`);
+              elements.push(this.parseRecordFields(token.value, token.pos ?? exprPos));
+            } while (this.match('CommaToken'));
+          }
+          this.consume('RBracketToken', `Expected ']' after ${token.value} record list.`);
+          return {
+            type: 'ListExpr',
+            elements,
+            recordTypeHint: token.value,
+            pos: token.pos ?? exprPos,
+          };
+        }
+
         // Positional / Named Record Constructor: Point { 1, 2 } or Point { x=1, y=2 }
         // Guard: do NOT treat '{ |' or '{ }' as a constructor — those are match bodies
         // or empty blocks, not record field lists.
         if (this.check('LBraceToken') &&
             this.peekNext().type !== 'PipeToken' &&
             this.peekNext().type !== 'RBraceToken') {
-          this.advance();
-          const fields: { key: string | null, value: Expr }[] = [];
-          if (!this.check('RBraceToken')) {
-            do {
-              // Peek ahead to distinguish named (ident =) from positional
-              if (this.check('IdentToken') && this.peekNext().type === 'AssignToken') {
-                const key = (this.advance() as any).value;
-                this.advance(); // consume '='
-                fields.push({ key, value: this.parseExpression() });
-              } else {
-                fields.push({ key: null, value: this.parseExpression() });
-              }
-            } while (this.match('CommaToken'));
-          }
-          this.consume('RBraceToken', "Expected '}' after record fields.");
-          return { type: 'RecordExpr', name: token.value, fields, pos: token.pos ?? exprPos };
+          this.advance(); // consume '{'
+          return this.parseRecordFields(token.value, token.pos ?? exprPos);
         }
         return { type: 'IdentExpr', name: token.value, pos: token.pos ?? exprPos };
+      }
       case 'BooleanNot': case 'MinusToken':
         return { type: 'UnaryExpr', operator: token.type, right: this.parseExpression(Precedence.UNARY), pos: token.pos ?? exprPos };
       // ── Async/await (phase 1) ────────────────────────────────────────────

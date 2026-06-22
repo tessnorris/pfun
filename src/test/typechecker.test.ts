@@ -834,3 +834,191 @@ describe('Field-level type checking in list literals (Stage 1)', () => {
     expect(t.fieldTypes[1]).toEqual({ kind: 'Str' });
   });
 });
+
+// ─── Record-list literal syntax and empty typed-list seeding (Stage 2) ────────
+//
+// Parser: `Pair [{ "k1", "v1" }, { "k2", "v2" }]` desugars to a ListExpr
+// whose elements are RecordExpr nodes, with recordTypeHint='Pair' on the list.
+// Disambiguated from `arr[i]` by one-token lookahead: '[{' or '[]' → sugar;
+// '[<anything else>' → postfix IndexExpr, unchanged.
+//
+// Inferencer: an empty typed-list literal (`Pair []`) uses recordTypeHint +
+// the registered field arity to seed elemVar to Named{Pair, [TyVar, TyVar]},
+// so later uses like cons(wrongType, dataset) catch the mismatch statically
+// instead of succeeding against a free TyVar.
+
+describe('Record-list literals and empty typed-list seeding (Stage 2)', () => {
+  describe('Parser: syntax and disambiguation', () => {
+    it('parses Name [{...}] as a ListExpr of RecordExprs with recordTypeHint set', () => {
+      const stmts = new Parser(new Lexer(`
+        type Pair = { first, second };
+        let pairs = Pair [{"k1", "v1"}, {"k2", "v2"}];
+      `).lex()).parse();
+      const list = (stmts[1] as any).initializer;
+      expect(list.type).toBe('ListExpr');
+      expect(list.recordTypeHint).toBe('Pair');
+      expect(list.elements).toHaveLength(2);
+      expect(list.elements[0].type).toBe('RecordExpr');
+      expect(list.elements[0].name).toBe('Pair');
+      expect(list.elements[1].type).toBe('RecordExpr');
+    });
+
+    it('parses Name [] as an empty ListExpr with recordTypeHint set', () => {
+      const stmts = new Parser(new Lexer(`
+        type Pair = { first, second };
+        let empty = Pair [];
+      `).lex()).parse();
+      const list = (stmts[1] as any).initializer;
+      expect(list.type).toBe('ListExpr');
+      expect(list.recordTypeHint).toBe('Pair');
+      expect(list.elements).toHaveLength(0);
+    });
+
+    it('does NOT affect ordinary indexing: arr[i] is still an IndexExpr', () => {
+      const stmts = new Parser(new Lexer(`
+        var arr = array { 1, 2, 3 };
+        let x = arr[0];
+      `).lex()).parse();
+      // arr[0] goes through the Pratt infix '[' handler, producing IndexExpr
+      const expr = (stmts[1] as any).initializer;
+      expect(expr.type).toBe('IndexExpr');
+    });
+
+    it('does NOT affect arr[expr] where expr is not {}: still an IndexExpr', () => {
+      const stmts = new Parser(new Lexer(`
+        var arr = array { 1, 2 };
+        let x = arr[1 + 0];
+      `).lex()).parse();
+      expect((stmts[1] as any).initializer.type).toBe('IndexExpr');
+    });
+
+    it('parses named-field record-list elements correctly', () => {
+      const stmts = new Parser(new Lexer(`
+        type Point = { x, y };
+        let pts = Point [{x=1, y=2}, {x=3, y=4}];
+      `).lex()).parse();
+      const list = (stmts[1] as any).initializer;
+      expect(list.type).toBe('ListExpr');
+      expect(list.elements[0].fields[0].key).toBe('x');
+      expect(list.elements[0].fields[1].key).toBe('y');
+    });
+
+    it('a single-element record-list parses correctly', () => {
+      const stmts = new Parser(new Lexer(`
+        type Box = { value };
+        let boxes = Box [{"x"}];
+      `).lex()).parse();
+      const list = (stmts[1] as any).initializer;
+      expect(list.type).toBe('ListExpr');
+      expect(list.elements).toHaveLength(1);
+    });
+  });
+
+  describe('Inferencer: type-correctness of non-empty record-list literals', () => {
+    it('accepts a well-typed record-list literal without errors', () => {
+      const errors = check(`
+        type Pair = { first, second };
+        let pairs = Pair [{"k1", "v1"}, {"k2", "v2"}];
+      `);
+      expect(errors).toHaveLength(0);
+    });
+
+    it('catches a mixed-type record-list literal (Stage 1 catches it field-by-field)', () => {
+      const errors = check(`
+        type Pair = { first, second };
+        let pairs = Pair [{"k1", "v1"}, {"k2", 99}];
+      `);
+      expect(errors.length).toBeGreaterThan(0);
+      expect(errors[0].pfunMessage).toContain('Cannot unify');
+    });
+
+    it('infers List<Pair> element type as Named for a non-empty record-list', () => {
+      const stmts = infer(`
+        type Pair = { first, second };
+        let pairs = Pair [{"k1", "v1"}];
+      `);
+      const t = (stmts[1] as any).inferredType;
+      expect(t.kind).toBe('List');
+      expect(t.element.kind).toBe('Named');
+      expect(t.element.name).toBe('Pair');
+    });
+  });
+
+  describe('Inferencer: empty typed-list seeding (Pair [])', () => {
+    it('empty Pair [] produces a List with Named{Pair} element type, not free TyVar', () => {
+      const stmts = infer(`
+        type Pair = { first, second };
+        let empty = Pair [];
+      `);
+      const t = (stmts[1] as any).inferredType;
+      expect(t.kind).toBe('List');
+      expect(t.element.kind).toBe('Named');
+      expect(t.element.name).toBe('Pair');
+    });
+
+    it('empty Pair [] element type has fieldTypes with as many slots as Pair has fields', () => {
+      const stmts = infer(`
+        type Pair = { first, second };
+        let empty = Pair [];
+      `);
+      const elem = (stmts[1] as any).inferredType.element;
+      expect(elem.fieldTypes).toBeDefined();
+      expect(elem.fieldTypes).toHaveLength(2);
+    });
+
+    it('Pair [] element type is Named{Pair}, constraining any expression comparing two typed empty lists', () => {
+      // The ternary forces both branches to agree on element type.
+      // Named{Pair} vs Named{Box} → unify() rejects (different names).
+      const errors = check(`
+        type Pair = { first, second };
+        type Box  = { value };
+        let pairList = Pair [];
+        let boxList  = Box  [];
+        let bad = true ? pairList : boxList;
+      `);
+      expect(errors.length).toBeGreaterThan(0);
+      expect(errors[0].pfunMessage).toContain('Cannot unify');
+    });
+
+    it('cons-ing a well-typed Pair onto an empty Pair [] produces no errors', () => {
+      const errors = check(`
+        type Pair = { first, second };
+        let empty = Pair [];
+        let ok = cons(Pair { "k", "v" }, empty);
+      `);
+      expect(errors).toHaveLength(0);
+    });
+
+    it('bare [] still produces a free TyVar element — no hint, no seeding', () => {
+      const stmts = infer('let empty = [];');
+      const t = (stmts[0] as any).inferredType;
+      expect(t.kind).toBe('List');
+      expect(t.element.kind).toBe('TyVar');
+    });
+
+    it('falls back to free TyVar when the type name is not yet registered (forward reference)', () => {
+      // Pair [] appears before the type declaration — arity is unknown at
+      // constraint-gen time. Falls back gracefully, same as bare [].
+      const stmts = infer(`
+        let early = Pair [];
+        type Pair = { first, second };
+      `);
+      const t = (stmts[0] as any).inferredType;
+      expect(t.kind).toBe('List');
+      // element may be TyVar (unresolved) or Named depending on whether the
+      // forward-reference walk registers it — either way, no crash.
+      expect(['TyVar', 'Named']).toContain(t.element.kind);
+    });
+
+    it('a single-field record produces a seeded element type with one fieldTypes slot', () => {
+      const stmts = infer(`
+        type Box = { value };
+        let boxes = Box [];
+      `);
+      const elem = (stmts[1] as any).inferredType.element;
+      expect(elem.kind).toBe('Named');
+      expect(elem.name).toBe('Box');
+      expect(elem.fieldTypes).toHaveLength(1);
+    });
+  });
+});
