@@ -383,22 +383,56 @@ function emitExpr(e: Expr): Node {
 // Extended as the runtime stdlib grows.
 
 const STDLIB_MAP: Record<string, string> = {
-  println: '$println',
-  print:   '$println',  // print in Pfun doesn't add newline, but close enough for v1
-  length:  '$length',
-  head:    '$head',
-  tail:    '$tail',
-  map:     '$map',
-  filter:  '$filter',
-  reduce:  '$reduce',
-  reverse: '$reverse',
-  join:    '$join',
-  split:   '$split',
-  range:   '$range',
-  cons:    '$cons',
-  take:    '$take',
-  drop:    '$drop',
-  nth:     '$nth',
+  // Output
+  println:     '$println',
+  print:       '$println',  // print in Pfun doesn't add newline, but close enough for v1
+
+  // Core list ops
+  length:      '$length',
+  head:        '$head',
+  tail:        '$tail',
+  map:         '$map',
+  filter:      '$filter',
+  reduce:      '$reduce',
+  reverse:     '$reverse',
+  join:        '$join',
+  split:       '$split',
+  range:       '$range',
+  cons:        '$cons',
+  take:        '$take',
+  drop:        '$drop',
+  nth:         '$nth',
+
+  // Extended list ops
+  slice:       '$slice',
+  find:        '$find',
+  findSlice:   '$findSlice',
+
+  // Lazy sequences
+  iterate:     '$iterate',
+  repeat:      '$repeat',
+  cycle:       '$cycle',
+  isInfinite:  '$isInfinite',
+
+  // Char / String
+  asc:         '$asc',
+  chr:         '$chr',
+  __str__:     '$__str__',
+
+  // Numeric casts & predicates
+  toFloat:     '$toFloat',
+  toInt:       '$toInt',
+  floor:       '$floor',
+  ceil:        '$ceil',
+  round:       '$round',
+  isNaN:       '$isNaN',
+  isFinite:    '$isFinite',
+
+  // Byte / Char conversions
+  toByte:      '$toByte',
+  toChar:      '$toChar',
+  charBytes:   '$charBytes',
+  bytesToChar: '$bytesToChar',
 };
 
 // ─── Match lowering ───────────────────────────────────────────────────────────
@@ -518,15 +552,172 @@ function emitStmt(s: Stmt): Node[] {
       // not inline — emit nothing here.
       return [];
 
-    case 'ImportStmt':
-      // Single-file v1: import statements are silently dropped.  The stdlib
-      // functions they would provide are already wired directly via STDLIB_MAP
-      // and the runtime exports.  Full module support is deferred.
-      return [];
+    case 'ImportStmt': {
+      const imp = s as any;
 
-    case 'ExportStmt':
-      // Single-file v1: exports are not supported.
-      throw new Error(`Transpiler: export statements are not supported in v1 (single-file programs only).`);
+      // ── `import * from "io"` ──────────────────────────────────────────────
+      // io functions are already in pfun-runtime.js; nothing needed.
+      if (imp.path === 'io') return [];
+
+      // ── Builtin module mapping ────────────────────────────────────────────
+      const BUILTIN_MODULES: Record<string, { file: string; names: string[] }> = {
+        'math': { file: 'pfun-math', names: [
+          'pi','e','tau','inf','nan',
+          'abs','sign','min','max','clamp','lerp',
+          'sqrt','cbrt','exp','log','log2','log10','pow','hypot','fmod',
+          'sin','cos','tan','asin','acos','atan','atan2',
+          'sinh','cosh','tanh',
+        ]},
+        'json': { file: 'pfun-json', names: ['jsonSerialize','jsonDeserialize'] },
+        'file': { file: 'pfun-file', names: [
+          'fileExists','removeFile','touchFile','readFile','writeFile',
+          'fileOpen','fileClose',
+          'readChar','readLine','writeChar','writeLine',
+          'readByte','writeByte','readBytes','writeBytes',
+          'readBuffer','writeBuffer',
+          'Read','Write','Append',
+        ]},
+        'async': { file: 'pfun-async', names: ['sleep','asyncAll','asyncRace'] },
+        'http':  { file: 'pfun-http',  names: ['httpGet','httpPost','httpPut','httpDelete','httpRequest'] },
+        'db/postgresql': { file: 'pfun-db-postgresql', names: ['dbConnect','dbQuery','dbExecute','dbClose'] },
+        'db/mariadb':    { file: 'pfun-db-mariadb',    names: ['dbConnect','dbQuery','dbExecute','dbClose'] },
+      };
+
+      const builtin = BUILTIN_MODULES[imp.path];
+      if (builtin) {
+        const requireCall = call(id('require'), [str(`./${builtin.file}`)]);
+
+        if (imp.kind === 'namespace') {
+          // import * as M from "math"  →  const M = require('./pfun-math');
+          return [{
+            type: 'VariableDeclaration', kind: 'const',
+            declarations: [{
+              type: 'VariableDeclarator',
+              id: id(mangle(imp.alias)),
+              init: requireCall,
+            }],
+          }];
+        }
+
+        if (imp.kind === 'named') {
+          // import { sqrt, sin } from "math"  →  const { sqrt, sin } = require('./pfun-math');
+          const props = imp.names.map((n: any) => ({
+            type: 'Property', kind: 'init', computed: false,
+            shorthand: !n.alias,
+            key: id(n.name), value: id(mangle(n.alias ?? n.name)), method: false,
+          }));
+          return [{
+            type: 'VariableDeclaration', kind: 'const',
+            declarations: [{
+              type: 'VariableDeclarator',
+              id: { type: 'ObjectPattern', properties: props },
+              init: requireCall,
+            }],
+          }];
+        }
+
+        // imp.kind === 'star': import * from "math"
+        // Destructure all known names into scope.
+        const props = builtin.names.map(name => ({
+          type: 'Property', kind: 'init', computed: false, shorthand: true,
+          key: id(name), value: id(name), method: false,
+        }));
+        return [{
+          type: 'VariableDeclaration', kind: 'const',
+          declarations: [{
+            type: 'VariableDeclarator',
+            id: { type: 'ObjectPattern', properties: props },
+            init: requireCall,
+          }],
+        }];
+      }
+
+      // ── User module: relative path ────────────────────────────────────────
+      // Emit require() + spread exports into local scope via Object.assign on
+      // a local proxy object (not globalThis — cleaner scoping). Since compiled
+      // Pfun top-level is flat (no wrapping function), we use a with-statement
+      // equivalent via a local const spread pattern.
+      // Simpler approach that works for flat top-level programs: emit the require
+      // as a spread into the enclosing scope using a variable declaration, then
+      // use Object.keys to surface names. For now: store in a temp var, and
+      // individual names will be resolved by the interpreter's own scope when
+      // running the compiled output — this means star-imported user module names
+      // are only accessible via the namespace (use named or namespace imports for
+      // user modules until a full scope-injection solution is in place).
+      const userPath = imp.path.endsWith('.pf') ? imp.path.slice(0, -3) : imp.path;
+      const requireCall = call(id('require'), [str(userPath)]);
+
+      if (imp.kind === 'namespace') {
+        return [{
+          type: 'VariableDeclaration', kind: 'const',
+          declarations: [{
+            type: 'VariableDeclarator',
+            id: id(mangle(imp.alias)),
+            init: requireCall,
+          }],
+        }];
+      }
+
+      if (imp.kind === 'named') {
+        const props = imp.names.map((n: any) => ({
+          type: 'Property', kind: 'init', computed: false,
+          shorthand: !n.alias,
+          key: id(n.name), value: id(mangle(n.alias ?? n.name)), method: false,
+        }));
+        return [{
+          type: 'VariableDeclaration', kind: 'const',
+          declarations: [{
+            type: 'VariableDeclarator',
+            id: { type: 'ObjectPattern', properties: props },
+            init: requireCall,
+          }],
+        }];
+      }
+
+      // star import of user module — spread all exports into global scope.
+      // This is the only practical approach for flat compiled programs; a future
+      // module-scope solution would use a wrapping function per file.
+      const modVar = '$_mod_' + userPath.replace(/[^a-zA-Z0-9]/g, '_') + '$';
+      return [
+        {
+          type: 'VariableDeclaration', kind: 'const',
+          declarations: [{
+            type: 'VariableDeclarator',
+            id: id(modVar),
+            init: requireCall,
+          }],
+        },
+        exprStmt(call(
+          member(id('Object'), id('assign')),
+          [id('globalThis'), id(modVar)],
+        )),
+      ];
+    }
+
+    case 'ExportStmt': {
+      // Emit the declaration normally, then append a module.exports assignment
+      // so other compiled files can require() it.
+      const decl = (s as any).declaration;
+      const emitted = emitStmt(decl);
+      // Collect the exported name(s)
+      const exportedNames: string[] = [];
+      if (decl.type === 'FunctionStmt' || decl.type === 'ProcedureStmt') {
+        exportedNames.push(decl.name);
+      } else if (decl.type === 'LetStmt' || decl.type === 'VarStmt') {
+        exportedNames.push(decl.name);
+      } else if (decl.type === 'TypeStmt' || decl.type === 'UnionTypeStmt') {
+        // Type declarations don't produce runtime values; skip export.
+        return emitted;
+      }
+      // module.exports = { ...module.exports, name: mangledName, ... }
+      const exportAssignments = exportedNames.map(name =>
+        exprStmt(assign(
+          member(member(id('module'), id('exports')), id(name)),
+          id(mangle(name)),
+        ))
+      );
+      return [...emitted, ...exportAssignments];
+    }
 
     default:
       throw new Error(`Transpiler: unhandled statement type '${(s as any).type}'`);
@@ -575,8 +766,19 @@ export function transpileToEstree(stmts: Stmt[]): any {
             '$bitAnd','$bitOr','$shl','$shr',
             '$get','$index','$indexSet',
             '$match',
+            // Core list ops
             '$length','$head','$tail','$map','$filter','$reduce',
             '$reverse','$join','$split','$range','$cons','$take','$drop','$nth',
+            // Extended list ops
+            '$slice','$find','$findSlice',
+            // Lazy sequences
+            '$iterate','$repeat','$cycle','$isInfinite',
+            // Char / String
+            '$asc','$chr','$__str__',
+            // Numeric casts & predicates
+            '$toFloat','$toInt','$floor','$ceil','$round','$isNaN','$isFinite',
+            // Byte / Char conversions
+            '$toByte','$toChar','$charBytes','$bytesToChar',
             'None','Some',
           ].map(name => ({
             type: 'Property', kind: 'init', computed: false, shorthand: true,

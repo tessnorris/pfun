@@ -601,29 +601,62 @@ if (require.main === module) {
     const fileArg = args.find(a => a !== '-i' && a !== '--interactive');
     runRepl(fileArg);
   } else if (args.includes('-c') || args.includes('--compile')) {
-    // Transpile a single .pf file to JavaScript.
+    // Transpile a .pf file (and all its user-module dependencies) to JavaScript.
+    // Dependencies are compiled first (depth-first), so when the entry file's
+    // compiled output does require('./dep'), dep.js already exists.
     const flags = new Set(['-c', '--compile']);
     const fileArg = args.find(a => !flags.has(a));
     if (!fileArg) {
       console.error('Usage: pfun -c <script.pf>');
       process.exit(1);
     }
-    const absolutePath = path.resolve(fileArg);
-    if (!fs.existsSync(absolutePath)) {
-      console.error(`File not found: ${absolutePath}`);
+    const entryPath = path.resolve(fileArg);
+    if (!fs.existsSync(entryPath)) {
+      console.error(`File not found: ${entryPath}`);
       process.exit(1);
     }
-    const source = fs.readFileSync(absolutePath, 'utf-8');
-    const stmts  = new Parser(new Lexer(source).lex()).parse();
-    const errors = checkTypes(stmts, source);
-    if (errors.length > 0) {
-      for (const e of errors) console.error(e.pfunMessage);
-      process.exit(1);
+
+    // Builtins are handled by separate pfun-*.js runtime modules; skip them.
+    const BUILTIN_PATHS = new Set(['io','file','math','json','async','http','db/postgresql','db/mariadb']);
+
+    // Compiled set prevents recompiling a file twice in a diamond dependency.
+    const compiled = new Set<string>();
+
+    function compileFile(absolutePath: string): void {
+      if (compiled.has(absolutePath)) return;
+      compiled.add(absolutePath);
+
+      const source = fs.readFileSync(absolutePath, 'utf-8');
+      const stmts  = new Parser(new Lexer(source).lex()).parse();
+
+      // Recursively compile dependencies first.
+      const dir = path.dirname(absolutePath);
+      for (const stmt of stmts) {
+        if (stmt.type !== 'ImportStmt') continue;
+        const imp = stmt as any;
+        if (BUILTIN_PATHS.has(imp.path)) continue;
+        // Relative user-module import.
+        const depPf = imp.path.endsWith('.pf') ? imp.path : imp.path + '.pf';
+        const depPath = path.resolve(dir, depPf);
+        if (!fs.existsSync(depPath)) {
+          console.error(`Module not found: ${depPath} (imported by ${absolutePath})`);
+          process.exit(1);
+        }
+        compileFile(depPath);
+      }
+
+      const errors = checkTypes(stmts, source);
+      if (errors.length > 0) {
+        for (const e of errors) console.error(e.pfunMessage);
+        process.exit(1);
+      }
+      const js      = transpile(stmts, source);
+      const outPath = absolutePath.replace(/\.pf$/, '.js');
+      fs.writeFileSync(outPath, js, 'utf-8');
+      console.log(`Compiled to ${outPath}`);
     }
-    const js     = transpile(stmts, source);
-    const outPath = absolutePath.replace(/\.pf$/, '.js');
-    fs.writeFileSync(outPath, js, 'utf-8');
-    console.log(`Compiled to ${outPath}`);
+
+    compileFile(entryPath);
   } else if (args.length === 0) {
     console.log('Usage: pfun <script.pf>');
     console.log('       pfun -i [script.pf]   (interactive mode, optionally pre-loading a file)');
