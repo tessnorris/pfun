@@ -601,26 +601,158 @@ if (require.main === module) {
     const fileArg = args.find(a => a !== '-i' && a !== '--interactive');
     runRepl(fileArg);
   } else if (args.includes('-c') || args.includes('--compile')) {
-    // Transpile a .pf file (and all its user-module dependencies) to JavaScript.
-    // Dependencies are compiled first (depth-first), so when the entry file's
-    // compiled output does require('./dep'), dep.js already exists.
-    const flags = new Set(['-c', '--compile']);
-    const fileArg = args.find(a => !flags.has(a));
-    if (!fileArg) {
-      console.error('Usage: pfun -c <script.pf>');
+    // ── Parse compile flags ─────────────────────────────────────────────────
+    const compileFlags = new Set(['-c', '--compile', '--inline']);
+    const oIdx = args.indexOf('-o');
+    const hasInline = args.includes('--inline');
+
+    // Strip all known flags/options to find the positional file argument.
+    const positional = args.filter((a, i) => {
+      if (compileFlags.has(a)) return false;
+      if (a === '-o') return false;
+      if (i > 0 && args[i - 1] === '-o') return false;
+      return true;
+    });
+
+    if (positional.length === 0) {
+      console.error('Usage: pfun -c <script.pf> [-o <dir|file.js|dir/file.js>] [--inline]');
       process.exit(1);
     }
-    const entryPath = path.resolve(fileArg);
+
+    const entryPath = path.resolve(positional[0]);
     if (!fs.existsSync(entryPath)) {
       console.error(`File not found: ${entryPath}`);
       process.exit(1);
     }
 
-    // Builtins are handled by separate pfun-*.js runtime modules; skip them.
-    const BUILTIN_PATHS = new Set(['io','file','math','json','async','http','db/postgresql','db/mariadb']);
+    // ── Directory layout ────────────────────────────────────────────────────
+    // -o can be:
+    //   <dir>           — output tree mirrored under dir/
+    //   <file.js>       — entry compiled to exactly this file; deps in same dir
+    //   <dir/file.js>   — entry compiled to dir/file.js; deps in dir/
+    //
+    // Default output root: <cwd>/output
+    const cwd = process.cwd();
+    const oArg = oIdx !== -1 ? args[oIdx + 1] : undefined;
 
-    // Compiled set prevents recompiling a file twice in a diamond dependency.
-    const compiled = new Set<string>();
+    // Determine whether -o names a file or a directory.
+    // It's a file if it ends with .js; otherwise treat as a directory.
+    const oIsFile   = !!oArg && oArg.endsWith('.js');
+    const oResolved = oArg ? path.resolve(oArg) : undefined;
+
+    // outDir: the directory compiled files land in (entry's dir for file-o).
+    // entryOutPath: explicit output path for the entry file (null = use tree).
+    const outDir      = oResolved
+      ? (oIsFile ? path.dirname(oResolved) : oResolved)
+      : path.join(cwd, 'output');
+    const entryOutPath = oIsFile ? oResolved! : null;
+
+    const libDir = path.join(outDir, 'lib');
+
+    // Ensure output directories exist.
+    fs.mkdirSync(outDir,  { recursive: true });
+    fs.mkdirSync(libDir, { recursive: true });
+
+    // Builtins are handled by separate pfun-*.js runtime modules; skip them.
+    const BUILTIN_PATHS = new Set([
+      'io','file','math','json','async','http','db/postgresql','db/mariadb',
+    ]);
+
+    // Maps pfun module name → libs filename (without path).
+    const BUILTIN_LIB_FILES: Record<string, string> = {
+      'math': 'pfun-math.js',
+      'json': 'pfun-json.js',
+      'file': 'pfun-file.js',
+      'async': 'pfun-async.js',
+      'http': 'pfun-http.js',
+      'db/postgresql': 'pfun-db-postgresql.js',
+      'db/mariadb': 'pfun-db-mariadb.js',
+    };
+
+    // ── Inline support ──────────────────────────────────────────────────────
+    // Map from lib name (e.g. 'pfun-runtime') to its absolute source path.
+    // Resolved lazily when needed; cached here.
+    const libSourcePaths: Record<string, string> = {};
+
+    // Canonical source for runtime .js files is src/runtime/.
+    // Falls back to output/lib/ (already-copied files) then the project root
+    // (legacy location / symlinks from earlier workflow).
+    const srcRuntimeDir = path.join(cwd, 'src', 'runtime');
+
+    function resolveLibPath(libName: string): string | null {
+      if (libSourcePaths[libName]) return libSourcePaths[libName];
+      const candidates = [
+        path.join(srcRuntimeDir, `${libName}.js`),  // src/runtime/ (canonical source)
+        path.join(libDir,       `${libName}.js`),  // output/lib/ (already deployed)
+        path.join(cwd,           `${libName}.js`),  // project root (legacy / symlinked)
+      ];
+      for (const c of candidates) {
+        if (fs.existsSync(c)) { libSourcePaths[libName] = c; return c; }
+      }
+      return null;
+    }
+
+    // For --inline: strip all require('./pfun-*') calls and prepend the
+    // raw file contents instead. Also strips require() calls to compiled
+    // user modules, inlining those too.
+    function stripLibBoilerplate(code: string): string {
+      return code
+        .replace(/^'use strict';\s*/gm, '')
+        .replace(/^module\.exports\s*=\s*\{[^}]*\};\s*/gms, '');
+    }
+
+    function inlineRequires(jsCode: string, inlinedLibs: Set<string>, inlinedModules: Set<string>): string {
+      // Match require() with either single or double quotes.
+      const requirePattern = /const\s+(?:\{[^}]*\}|\w+)\s*=\s*require\(['"]([^'"]+)['"]\);?/g;
+      return jsCode.replace(requirePattern, (match, reqPath) => {
+        const baseName = path.basename(reqPath);
+        if (baseName.startsWith('pfun-')) {
+          const libName = baseName.replace(/\.js$/, '');
+          if (!inlinedLibs.has(libName)) {
+            inlinedLibs.add(libName);
+            const src = resolveLibPath(libName);
+            if (src) {
+              const libContent = fs.readFileSync(src, 'utf-8');
+              const cleaned = stripLibBoilerplate(libContent);
+              // Inline at this position, recursively stripping nested requires.
+              return inlineRequires(cleaned, inlinedLibs, inlinedModules);
+            }
+          }
+          // Already inlined — just remove the require.
+          return `// (already inlined: ${libName})`;
+        }
+        // User module require — inline the compiled .js at this position.
+        const absModPath = path.resolve(outDir, reqPath.replace(/\.js$/, '') + '.js');
+        const modKey = absModPath;
+        if (!inlinedModules.has(modKey) && fs.existsSync(absModPath)) {
+          inlinedModules.add(modKey);
+          const modJs = fs.readFileSync(absModPath, 'utf-8');
+          return inlineRequires(stripLibBoilerplate(modJs), inlinedLibs, inlinedModules);
+        }
+        return `// (already inlined or not found: ${reqPath})`;
+      });
+    }
+
+    // ── Compile function ────────────────────────────────────────────────────
+    // compiled: prevents recompiling a source file twice in a diamond.
+    // outPaths: maps absoluteSourcePath → absoluteOutputPath for post-processing.
+    const compiled   = new Set<string>();
+    const outPaths   = new Map<string, string>();
+
+    function sourceToOutPath(sourcePath: string): string {
+      // If -o named a specific .js file, the entry goes there; all deps
+      // mirror into the same directory (outDir) using their base names.
+      if (entryOutPath) {
+        if (sourcePath === entryPath) return entryOutPath;
+        // Dependency: place next to the entry output, mirroring from the
+        // source file's position relative to the entry's source directory.
+        const rel = path.relative(path.dirname(entryPath), sourcePath);
+        return path.join(path.dirname(entryOutPath), rel.replace(/\.pf$/, '.js'));
+      }
+      // Default: mirror source tree under outDir.
+      const rel = path.relative(cwd, sourcePath);
+      return path.join(outDir, rel.replace(/\.pf$/, '.js'));
+    }
 
     function compileFile(absolutePath: string): void {
       if (compiled.has(absolutePath)) return;
@@ -629,15 +761,14 @@ if (require.main === module) {
       const source = fs.readFileSync(absolutePath, 'utf-8');
       const stmts  = new Parser(new Lexer(source).lex()).parse();
 
-      // Recursively compile dependencies first.
-      const dir = path.dirname(absolutePath);
+      // Recurse into user-module dependencies first.
+      const srcDir = path.dirname(absolutePath);
       for (const stmt of stmts) {
         if (stmt.type !== 'ImportStmt') continue;
         const imp = stmt as any;
         if (BUILTIN_PATHS.has(imp.path)) continue;
-        // Relative user-module import.
-        const depPf = imp.path.endsWith('.pf') ? imp.path : imp.path + '.pf';
-        const depPath = path.resolve(dir, depPf);
+        const depPf   = imp.path.endsWith('.pf') ? imp.path : imp.path + '.pf';
+        const depPath = path.resolve(srcDir, depPf);
         if (!fs.existsSync(depPath)) {
           console.error(`Module not found: ${depPath} (imported by ${absolutePath})`);
           process.exit(1);
@@ -650,13 +781,86 @@ if (require.main === module) {
         for (const e of errors) console.error(e.pfunMessage);
         process.exit(1);
       }
-      const js      = transpile(stmts, source);
-      const outPath = absolutePath.replace(/\.pf$/, '.js');
+
+      // Compute the output path for this file.
+      const outPath = sourceToOutPath(absolutePath);
+      outPaths.set(absolutePath, outPath);
+      fs.mkdirSync(path.dirname(outPath), { recursive: true });
+
+      // Compute relative path from the output .js file to libs dir.
+      const rawRel = path.relative(path.dirname(outPath), libDir).replace(/\\/g, '/');
+      const relToLibs = rawRel.startsWith('.') ? rawRel : './' + rawRel;
+      const runtimeRequirePath = relToLibs + '/pfun-runtime';
+
+      // Build builtinRequirePaths in the same way.
+      const builtinRequirePaths: Record<string, string> = {};
+      for (const [modName, libFile] of Object.entries(BUILTIN_LIB_FILES)) {
+        builtinRequirePaths[modName] = relToLibs + '/' + libFile.replace(/\.js$/, '');
+      }
+
+      // For user-module require() paths: compute relative path from outPath
+      // to each dep's output path.
+      // This is handled automatically by the transpiler since it emits the
+      // original import path (e.g. './mathutils') and the output mirrors the
+      // source tree — so the relative path between two output files is the
+      // same as between two source files.
+
+      const js = transpile(stmts, source, { runtimeRequirePath, builtinRequirePaths });
       fs.writeFileSync(outPath, js, 'utf-8');
-      console.log(`Compiled to ${outPath}`);
+      console.log(`Compiled: ${path.relative(cwd, absolutePath)} → ${path.relative(cwd, outPath)}`);
     }
 
     compileFile(entryPath);
+
+    // ── Copy runtime libs to output/lib ────────────────────────────────────
+    // Lib names to copy: pfun-runtime always, plus any builtin modules used.
+    const usedBuiltinMods = new Set<string>();
+    for (const absPath of compiled) {
+      const source = fs.readFileSync(absPath, 'utf-8');
+      const stmts  = new Parser(new Lexer(source).lex()).parse();
+      for (const stmt of stmts) {
+        if (stmt.type !== 'ImportStmt') continue;
+        const imp = stmt as any;
+        if (BUILTIN_PATHS.has(imp.path) && imp.path !== 'io') {
+          usedBuiltinMods.add(imp.path);
+        }
+      }
+    }
+
+    // pfun-runtime always needed (unless --inline).
+    const libsToCopy = ['pfun-runtime', ...Array.from(usedBuiltinMods).map(m => BUILTIN_LIB_FILES[m]?.replace(/\.js$/, '') ?? '')].filter(Boolean);
+
+    if (!hasInline) {
+      for (const libName of libsToCopy) {
+        const src = resolveLibPath(libName);
+        if (!src) {
+          console.warn(`Warning: could not find ${libName}.js — you may need to copy it to output/lib/ manually.`);
+          continue;
+        }
+        const dest = path.join(libDir, `${libName}.js`);
+        if (src !== dest) fs.copyFileSync(src, dest);
+      }
+    }
+
+    // ── --inline: rewrite entry output to a single self-contained file ──────
+    if (hasInline) {
+      const entryOut = outPaths.get(entryPath)!;
+      const raw = fs.readFileSync(entryOut, 'utf-8');
+      const inlinedLibs = new Set<string>();
+      const inlinedMods = new Set<string>();
+      const inlined = inlineRequires(raw, inlinedLibs, inlinedMods);
+
+      // Output path: honour -o <file.js> if given; otherwise derive from entry name.
+      const singleOut = entryOutPath
+        ?? path.join(outDir, path.basename(entryPath, '.pf') + '.js');
+      fs.writeFileSync(singleOut, inlined, 'utf-8');
+
+      // Clean up intermediate per-module files that are now inlined.
+      for (const absOut of outPaths.values()) {
+        if (absOut !== singleOut && fs.existsSync(absOut)) fs.unlinkSync(absOut);
+      }
+      console.log(`Inlined to: ${path.relative(cwd, singleOut)}`);
+    }
   } else if (args.length === 0) {
     console.log('Usage: pfun <script.pf>');
     console.log('       pfun -i [script.pf]   (interactive mode, optionally pre-loading a file)');

@@ -80,11 +80,12 @@ const obj      = (props: { key: string; value: Node }[]): Node => ({
 const arrExpr  = (elems: Node[]):            Node => ({ type: 'ArrayExpression', elements: elems });
 const ifNode   = (test: Node, cons: Node, alt?: Node): Node =>
   ({ type: 'IfStatement', test, consequent: cons, alternate: alt ?? null });
-const fnDecl   = (name: string, params: string[], body: Node[]): Node => ({
+const fnDecl   = (name: string, params: string[], body: Node[], isAsync = false): Node => ({
   type: 'FunctionDeclaration',
   id: id(mangle(name)),
   params: params.map(p => id(mangle(p))),
   body: block(body),
+  async: isAsync,
 });
 const rtCall   = (fn: string, args: Node[]): Node => call(id(fn), args);
 
@@ -350,13 +351,11 @@ function emitExpr(e: Expr): Node {
       return arrExpr(((e as any).elements as Expr[]).map(emitExpr));
 
     case 'ArrayExpr':
-      // PfunArray is a distinct class; wrap
-      return call(
-        member(id('$rt_PfunArray'), id('from'), false),
-        [arrExpr(((e as any).elements as Expr[]).map(emitExpr))],
-      );
+      // array { 1, 2, 3 } → $array_from([1n, 2n, 3n])
+      return rtCall('$array_from', [arrExpr(((e as any).elements as Expr[]).map(emitExpr))]);
 
     case 'DictExpr': {
+      // dict { k -> v, ... } → $dict_from([[k, v], ...])
       const entries = ((e as any).entries as any[]).map(en =>
         arrExpr([emitExpr(en.key), emitExpr(en.value)])
       );
@@ -368,6 +367,9 @@ function emitExpr(e: Expr): Node {
 
     case 'ComprehensionExpr':
       return emitComprehension(e as any);
+
+    case 'AwaitExpr':
+      return { type: 'AwaitExpression', argument: emitExpr((e as any).value) };
 
     case 'BlockExpr':
       // Block used as an expression: wrap in an IIFE
@@ -382,57 +384,99 @@ function emitExpr(e: Expr): Node {
 // Pfun stdlib function names → runtime helper names.
 // Extended as the runtime stdlib grows.
 
+// ─── Transpile options ────────────────────────────────────────────────────────
+
+export interface TranspileOptions {
+  /** Path for the require('./pfun-runtime') call. Default: './pfun-runtime'. */
+  runtimeRequirePath?: string;
+  /** Require paths to use for each builtin module name (e.g. 'math' → path). */
+  builtinRequirePaths?: Record<string, string>;
+}
+
+// Module-level options set by transpile() before each emit pass so that
+// emitStmt/emitExpr can access them without threading through every call.
+let _currentOptions: TranspileOptions = {};
+
 const STDLIB_MAP: Record<string, string> = {
-  // Output
-  println:     '$println',
-  print:       '$println',  // print in Pfun doesn't add newline, but close enough for v1
+  // Output — print does NOT add a newline; println does
+  println:       '$println',
+  print:         '$print',
 
   // Core list ops
-  length:      '$length',
-  head:        '$head',
-  tail:        '$tail',
-  map:         '$map',
-  filter:      '$filter',
-  reduce:      '$reduce',
-  reverse:     '$reverse',
-  join:        '$join',
-  split:       '$split',
-  range:       '$range',
-  cons:        '$cons',
-  take:        '$take',
-  drop:        '$drop',
-  nth:         '$nth',
+  length:        '$length',
+  head:          '$head',
+  tail:          '$tail',
+  map:           '$map',
+  filter:        '$filter',
+  reduce:        '$reduce',
+  reverse:       '$reverse',
+  join:          '$join',
+  split:         '$split',
+  range:         '$range',
+  cons:          '$cons',
+  take:          '$take',
+  drop:          '$drop',
+  nth:           '$nth',
 
   // Extended list ops
-  slice:       '$slice',
-  find:        '$find',
-  findSlice:   '$findSlice',
+  slice:         '$slice',
+  find:          '$find',
+  findSlice:     '$findSlice',
 
   // Lazy sequences
-  iterate:     '$iterate',
-  repeat:      '$repeat',
-  cycle:       '$cycle',
-  isInfinite:  '$isInfinite',
+  iterate:       '$iterate',
+  repeat:        '$repeat',
+  cycle:         '$cycle',
+  isInfinite:    '$isInfinite',
 
   // Char / String
-  asc:         '$asc',
-  chr:         '$chr',
-  __str__:     '$__str__',
+  asc:           '$asc',
+  chr:           '$chr',
+  __str__:       '$__str__',
 
   // Numeric casts & predicates
-  toFloat:     '$toFloat',
-  toInt:       '$toInt',
-  floor:       '$floor',
-  ceil:        '$ceil',
-  round:       '$round',
-  isNaN:       '$isNaN',
-  isFinite:    '$isFinite',
+  toFloat:       '$toFloat',
+  toInt:         '$toInt',
+  floor:         '$floor',
+  ceil:          '$ceil',
+  round:         '$round',
+  isNaN:         '$isNaN',
+  isFinite:      '$isFinite',
 
   // Byte / Char conversions
-  toByte:      '$toByte',
-  toChar:      '$toChar',
-  charBytes:   '$charBytes',
-  bytesToChar: '$bytesToChar',
+  toByte:        '$toByte',
+  toChar:        '$toChar',
+  charBytes:     '$charBytes',
+  bytesToChar:   '$bytesToChar',
+
+  // Mutable array operations (mutStructures — globally registered, no import)
+  arrayLength:   '$arrayLength',
+  append:        '$append',
+  removeAt:      '$removeAt',
+  insertAt:      '$insertAt',
+  toList:        '$toList',
+  toArray:       '$toArray',
+  toDict:        '$toDict',
+
+  // Dict operations
+  has:           '$has',
+  remove:        '$remove',
+  keys:          '$keys',
+  values:        '$values',
+
+  // Dict / Pair conversions
+  dictToList:    '$dictToList',
+  listToDict:    '$listToDict',
+
+  // Buffer operations (mutStructures — globally registered, no import)
+  makeBuffer:        '$makeBuffer',
+  makeStringBuffer:  '$makeStringBuffer',
+  appendBuffer:      '$appendBuffer',
+  appendChar:        '$appendChar',
+  appendString:      '$appendString',
+  bufferToBytes:     '$bufferToBytes',
+  bufferToString:    '$bufferToString',
+  bufferLength:      '$bufferLength',
 };
 
 // ─── Match lowering ───────────────────────────────────────────────────────────
@@ -532,8 +576,10 @@ function emitStmt(s: Stmt): Node[] {
     case 'FunctionStmt':
     case 'ProcedureStmt': {
       // Purity distinction is statically checked; emitted as a JS function.
+      // async flag carried through from the Pfun declaration.
+      const isAsync = !!(s as any).async;
       const body = emitFunctionBody((s as any).body);
-      return [fnDecl((s as any).name, (s as any).params, body)];
+      return [fnDecl((s as any).name, (s as any).params, body, isAsync)];
     }
 
     case 'IfStmt': {
@@ -560,16 +606,17 @@ function emitStmt(s: Stmt): Node[] {
       if (imp.path === 'io') return [];
 
       // ── Builtin module mapping ────────────────────────────────────────────
+      const _bpaths = _currentOptions.builtinRequirePaths ?? {};
       const BUILTIN_MODULES: Record<string, { file: string; names: string[] }> = {
-        'math': { file: 'pfun-math', names: [
+        'math': { file: _bpaths['math'] ?? 'pfun-math', names: [
           'pi','e','tau','inf','nan',
           'abs','sign','min','max','clamp','lerp',
           'sqrt','cbrt','exp','log','log2','log10','pow','hypot','fmod',
           'sin','cos','tan','asin','acos','atan','atan2',
           'sinh','cosh','tanh',
         ]},
-        'json': { file: 'pfun-json', names: ['jsonSerialize','jsonDeserialize'] },
-        'file': { file: 'pfun-file', names: [
+        'json': { file: _bpaths['json'] ?? 'pfun-json', names: ['jsonSerialize','jsonDeserialize'] },
+        'file': { file: _bpaths['file'] ?? 'pfun-file', names: [
           'fileExists','removeFile','touchFile','readFile','writeFile',
           'fileOpen','fileClose',
           'readChar','readLine','writeChar','writeLine',
@@ -577,10 +624,10 @@ function emitStmt(s: Stmt): Node[] {
           'readBuffer','writeBuffer',
           'Read','Write','Append',
         ]},
-        'async': { file: 'pfun-async', names: ['sleep','asyncAll','asyncRace'] },
-        'http':  { file: 'pfun-http',  names: ['httpGet','httpPost','httpPut','httpDelete','httpRequest'] },
-        'db/postgresql': { file: 'pfun-db-postgresql', names: ['dbConnect','dbQuery','dbExecute','dbClose'] },
-        'db/mariadb':    { file: 'pfun-db-mariadb',    names: ['dbConnect','dbQuery','dbExecute','dbClose'] },
+        'async': { file: _bpaths['async'] ?? 'pfun-async', names: ['sleep','asyncAll','asyncRace'] },
+        'http':  { file: _bpaths['http']  ?? 'pfun-http',  names: ['httpGet','httpPost','httpPut','httpDelete','httpRequest'] },
+        'db/postgresql': { file: _bpaths['db/postgresql'] ?? 'pfun-db-postgresql', names: ['dbConnect','dbQuery','dbExecute','dbClose'] },
+        'db/mariadb':    { file: _bpaths['db/mariadb']    ?? 'pfun-db-mariadb',    names: ['dbConnect','dbQuery','dbExecute','dbClose'] },
       };
 
       const builtin = BUILTIN_MODULES[imp.path];
@@ -746,8 +793,14 @@ function emitFunctionBody(stmts: Stmt[]): Node[] {
 
 // ─── Program emitter ──────────────────────────────────────────────────────────
 // Produces a full estree Program node with a require preamble.
+//
+// options.runtimeRequirePath — path used in the require('./pfun-runtime') call.
+//   Defaults to './pfun-runtime'. Pass a relative path from the output file to
+//   the libs directory, e.g. '../../output/libs/pfun-runtime'.
 
-export function transpileToEstree(stmts: Stmt[]): any {
+export function transpileToEstree(stmts: Stmt[], options: TranspileOptions = {}): any {
+  const runtimePath = options.runtimeRequirePath ?? './pfun-runtime';
+
   const preamble: Node[] = [
     // const { $println, $add, ... } = require('./pfun-runtime');
     {
@@ -757,9 +810,9 @@ export function transpileToEstree(stmts: Stmt[]): any {
         id: {
           type: 'ObjectPattern',
           properties: [
-            'PfunChar','PfunByte','PfunArray','PfunDict',
+            'PfunChar','PfunByte','PfunArray','PfunDict','PfunBuffer',
             '$char','$byte','$record','$registerType',
-            '$stringify','$println','$truthy',
+            '$stringify','$println','$print','$truthy',
             '$ck',
             '$add','$sub','$mul','$div','$mod','$neg',
             '$eq','$neq','$lt','$lte','$gt','$gte',
@@ -779,13 +832,21 @@ export function transpileToEstree(stmts: Stmt[]): any {
             '$toFloat','$toInt','$floor','$ceil','$round','$isNaN','$isFinite',
             // Byte / Char conversions
             '$toByte','$toChar','$charBytes','$bytesToChar',
+            // Mutable structures
+            '$array_from','$dict_from',
+            '$arrayLength','$append','$removeAt','$insertAt','$toList','$toArray','$toDict',
+            '$has','$remove','$keys','$values',
+            '$dictToList','$listToDict',
+            '$makeBuffer','$makeStringBuffer','$appendBuffer','$appendChar','$appendString',
+            '$bufferToBytes','$bufferToString','$bufferLength',
+            'ByteMode','CharMode',
             'None','Some',
           ].map(name => ({
             type: 'Property', kind: 'init', computed: false, shorthand: true,
             key: id(name), value: id(name), method: false,
           })),
         },
-        init: call(id('require'), [str('./pfun-runtime')]),
+        init: call(id('require'), [str(runtimePath)]),
       }],
     },
   ];
@@ -825,7 +886,9 @@ export function transpileToEstree(stmts: Stmt[]): any {
 
 // ─── Public entry point ───────────────────────────────────────────────────────
 
-export function transpile(stmts: Stmt[], _source?: string): string {
-  const program = transpileToEstree(stmts);
+export function transpile(stmts: Stmt[], _source?: string, options: TranspileOptions = {}): string {
+  _currentOptions = options;
+  const program = transpileToEstree(stmts, options);
+  _currentOptions = {};
   return generate(program);
 }
