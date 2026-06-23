@@ -4,6 +4,11 @@ module.exports = {
   roots: ['<rootDir>/src/test'],
   testMatch: ['**/*.test.ts'],
   setupFilesAfterEnv: ['<rootDir>/jest.setup.js'],
+  // Cap parallelism: the integration tests (runFile, transpiler, repl) spawn
+  // real child processes and do file/network I/O. Without a worker limit,
+  // running all 32 suites simultaneously saturates the machine.
+  // 4 workers is a safe default; increase if your machine has spare cores.
+  maxWorkers: 4,
   transform: {
     '^.+\\.ts$': ['ts-jest', {
       tsconfig: { target: 'ES2020', module: 'CommonJS', esModuleInterop: true, strict: true },

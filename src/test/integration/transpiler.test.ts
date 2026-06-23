@@ -47,7 +47,7 @@ import { runFile }    from '../../main';
 // ─── Paths ────────────────────────────────────────────────────────────────────
 
 const FIXTURES_DIR = path.join(__dirname, 'fixtures', 'transpiler');
-const RUNTIME_JS   = path.join(__dirname, '..', '..', '..', 'pfun-runtime.js');
+const RUNTIME_JS   = path.join(__dirname, '..', '..', 'runtime', 'pfun-runtime.js');
 
 // ─── Interpreter runner ───────────────────────────────────────────────────────
 // Runs a .pf file in-process via the same runFile() the real CLI uses,
@@ -95,8 +95,8 @@ async function runInterpreter(pfPath: string): Promise<{ stdout: string; stderr:
 
 // ─── Transpiler runner ────────────────────────────────────────────────────────
 // Parses and type-checks the .pf source, transpiles it to JS, writes a
-// temp file next to pfun-runtime.js, runs it under Node, and returns the
-// captured output.
+// temp file next to src/runtime/pfun-runtime.js, runs it under Node, and
+// returns the captured output.
 
 function runTranspiled(pfPath: string): { stdout: string; stderr: string; exitCode: number | null } {
   const source = fs.readFileSync(pfPath, 'utf-8');
@@ -108,7 +108,7 @@ function runTranspiled(pfPath: string): { stdout: string; stderr: string; exitCo
   }
   const jsSource = transpile(stmts, source);
 
-  // Write temp JS alongside pfun-runtime.js so require('./pfun-runtime') works
+  // Write temp JS alongside src/runtime/pfun-runtime.js so require('./pfun-runtime') works
   const tmpDir = path.dirname(RUNTIME_JS);
   const tmpFile = path.join(tmpDir, `_pfun_transpiler_test_${Date.now()}.js`);
   try {

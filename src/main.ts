@@ -733,6 +733,48 @@ if (require.main === module) {
       });
     }
 
+    // ── Builtin module union resolver ───────────────────────────────────────
+    // Tells the type inferencer which union types each builtin module exports,
+    // so that `import * from "db/mariadb"` makes DbValue variants known as
+    // union constructors with unionName set — same information wholeProgramCheck
+    // gets from loader.builtinUnionTypes(). Without this, DbInt/DbFloat/etc.
+    // have no unionName and [DbText{"x"}, DbFloat{1.0}] is falsely rejected.
+    const BUILTIN_UNION_TABLE: Record<string, Array<{
+      name: string; variants: { name: string; fields: string[] }[]
+    }>> = {
+      'file': [
+        { name: 'FileHandle',  variants: [{ name: 'ReadHandle', fields: [] }, { name: 'WriteHandle', fields: [] }] },
+        { name: 'FileMode',    variants: [{ name: 'Read', fields: [] }, { name: 'Write', fields: [] }, { name: 'Append', fields: [] }] },
+        { name: 'Result',      variants: [{ name: 'Ok', fields: ['value'] }, { name: 'Err', fields: ['message'] }] },
+        { name: 'ReadResult',  variants: [{ name: 'Ok', fields: ['value'] }, { name: 'Err', fields: ['message'] }, { name: 'Eof', fields: [] }] },
+        { name: 'BufferMode',  variants: [{ name: 'ByteMode', fields: [] }, { name: 'CharMode', fields: [] }] },
+      ],
+      'http': [
+        { name: 'HttpResult', variants: [{ name: 'Ok', fields: ['value'] }, { name: 'Err', fields: ['message'] }] },
+      ],
+      'db/postgresql': [
+        { name: 'DbResult', variants: [{ name: 'Ok', fields: ['value'] }, { name: 'Err', fields: ['message'] }] },
+        { name: 'DbValue',  variants: [
+          { name: 'DbInt', fields: ['value'] }, { name: 'DbFloat', fields: ['value'] },
+          { name: 'DbText', fields: ['value'] }, { name: 'DbBool', fields: ['value'] },
+          { name: 'DbBytes', fields: ['value'] }, { name: 'DbNull', fields: [] },
+        ]},
+      ],
+      'db/mariadb': [
+        { name: 'DbResult', variants: [{ name: 'Ok', fields: ['value'] }, { name: 'Err', fields: ['message'] }] },
+        { name: 'DbValue',  variants: [
+          { name: 'DbInt', fields: ['value'] }, { name: 'DbFloat', fields: ['value'] },
+          { name: 'DbText', fields: ['value'] }, { name: 'DbBool', fields: ['value'] },
+          { name: 'DbBytes', fields: ['value'] }, { name: 'DbNull', fields: [] },
+        ]},
+      ],
+    };
+    const builtinUnionResolver = (importPath: string) => {
+      const unions = BUILTIN_UNION_TABLE[importPath];
+      if (!unions) return null;
+      return new Map(unions.map(u => [u.name, u.variants]));
+    };
+
     // ── Compile function ────────────────────────────────────────────────────
     // compiled: prevents recompiling a source file twice in a diamond.
     // outPaths: maps absoluteSourcePath → absoluteOutputPath for post-processing.
@@ -776,7 +818,7 @@ if (require.main === module) {
         compileFile(depPath);
       }
 
-      const errors = checkTypes(stmts, source);
+      const errors = checkTypes(stmts, source, undefined, builtinUnionResolver);
       if (errors.length > 0) {
         for (const e of errors) console.error(e.pfunMessage);
         process.exit(1);

@@ -34,6 +34,39 @@ class PfunDict {
   }
 }
 
+// ─── Currying support ─────────────────────────────────────────────────────────
+// $curry(fn, arity) wraps a function so partial application returns a closure
+// expecting the remaining arguments, matching Pfun's interpreter behaviour.
+// Single-argument functions are returned as-is (no overhead).
+
+function $curry(fn, arity) {
+  if (arity <= 1) return fn;
+  function curried(...args) {
+    if (args.length >= arity) return fn(...args);
+    return $curry((...more) => curried(...args, ...more), arity - args.length);
+  }
+  return curried;
+}
+
+// $memoize(fn) — wraps fn with a Map-based cache keyed by a JSON
+// serialisation of the arguments (matching the interpreter's getCacheKey).
+// Applied after $curry so partial applications don't bypass the cache.
+function $memoize(fn) {
+  const cache = new Map();
+  function memoized(...args) {
+    const key = JSON.stringify(args, (_, v) => {
+      if (typeof v === 'bigint') return v.toString() + 'n';
+      if (typeof v === 'number') return 'f:' + v.toString();
+      return v;
+    });
+    if (cache.has(key)) return cache.get(key);
+    const result = fn(...args);
+    cache.set(key, result);
+    return result;
+  }
+  return memoized;
+}
+
 // ─── Value constructors ──────────────────────────────────────────────────────
 
 function $char(s)  { return new PfunChar(String(s)); }
@@ -73,11 +106,20 @@ function $record(typeName, fields) {
 // Core types (Pair, Option, Result, etc.) are pre-seeded here so they're
 // available even without an explicit TypeStmt in user code.
 const $schema = {
-  Pair:  { fields: ['key', 'value'], unionName: null },
-  Some:  { fields: ['value'],        unionName: 'Option' },
-  None:  { fields: [],               unionName: 'Option' },
-  Ok:    { fields: ['value'],        unionName: 'Result' },
-  Err:   { fields: ['message'],      unionName: 'Result' },
+  Pair:    { fields: ['key', 'value'],   unionName: null },
+  Some:    { fields: ['value'],          unionName: 'Option' },
+  None:    { fields: [],                 unionName: 'Option' },
+  Ok:      { fields: ['value'],          unionName: 'Result' },
+  Err:     { fields: ['message'],        unionName: 'Result' },
+  // DbResult — used by both db/postgresql and db/mariadb
+  // Ok/Err already cover DbResult's variants (same names, same fields).
+  // DbValue variants
+  DbInt:   { fields: ['value'],  unionName: 'DbValue' },
+  DbFloat: { fields: ['value'],  unionName: 'DbValue' },
+  DbText:  { fields: ['value'],  unionName: 'DbValue' },
+  DbBool:  { fields: ['value'],  unionName: 'DbValue' },
+  DbBytes: { fields: ['value'],  unionName: 'DbValue' },
+  DbNull:  { fields: [],         unionName: 'DbValue' },
 };
 function $registerType(typeName, fields, unionName) {
   $schema[typeName] = { fields, unionName: unionName ?? null };
@@ -121,6 +163,67 @@ function $println(value) {
 }
 function $print(value) {
   process.stdout.write($stringify(value));
+}
+function $flushStdout() {
+  // Node's stdout is synchronous when writing to a terminal or pipe;
+  // no explicit flush is needed, but we honour the call as a no-op.
+}
+
+// ─── Synchronous stdin ───────────────────────────────────────────────────────
+// Compiled Pfun programs can read from stdin synchronously using fd 0.
+// This works in CLI programs; it does NOT work in async/event-loop contexts.
+
+let _stdinBuf = '';
+let _stdinEOF = false;
+
+function _stdinReadMore() {
+  if (_stdinEOF) return;
+  try {
+    const buf = Buffer.alloc(4096);
+    const n = require('fs').readSync(0, buf, 0, 4096, null);
+    if (n === 0) { _stdinEOF = true; return; }
+    _stdinBuf += buf.toString('utf8', 0, n);
+  } catch { _stdinEOF = true; }
+}
+
+function $readChar() {
+  while (_stdinBuf.length === 0 && !_stdinEOF) _stdinReadMore();
+  if (_stdinBuf.length === 0) return { __type: 'None', __union: 'Option' };
+  const ch = _stdinBuf[0];
+  _stdinBuf = _stdinBuf.slice(1);
+  return { __type: 'Some', __union: 'Option', value: new PfunChar(ch) };
+}
+
+function $readln() {
+  while (!_stdinBuf.includes('\n') && !_stdinEOF) _stdinReadMore();
+  const nl = _stdinBuf.indexOf('\n');
+  if (nl === -1) {
+    if (_stdinBuf.length === 0) return { __type: 'None', __union: 'Option' };
+    const line = _stdinBuf;
+    _stdinBuf = '';
+    return { __type: 'Some', __union: 'Option', value: line };
+  }
+  const line = _stdinBuf.slice(0, nl);
+  _stdinBuf = _stdinBuf.slice(nl + 1);
+  return { __type: 'Some', __union: 'Option', value: line };
+}
+
+function $scriptArgs() {
+  // process.argv = ['node', 'script.js', ...userArgs]
+  return process.argv.slice(2);
+}
+
+function $getEnv(name) {
+  if (typeof name !== 'string') throw new Error('getEnv() requires a string argument.');
+  const v = process.env[name];
+  return v === undefined
+    ? { __type: 'None', __union: 'Option' }
+    : { __type: 'Some', __union: 'Option', value: v };
+}
+
+function $envVars() {
+  return Object.entries(process.env).map(([k, v]) =>
+    ({ __type: 'Pair', key: k, value: v ?? '' }));
 }
 
 // ─── Truthiness ──────────────────────────────────────────────────────────────
@@ -292,6 +395,8 @@ function $get(obj, field) {
     if (!(field in obj)) throw new Error(`Field '${field}' not found on '${obj.__type}'.`);
     return obj[field];
   }
+  // Plain JS object (e.g. the inner value of Ok { status, headers, body })
+  if (obj && typeof obj === 'object' && field in obj) return obj[field];
   throw new Error(`Cannot access field '${field}' on non-record value.`);
 }
 
@@ -370,16 +475,42 @@ function $head(v) {
     return new PfunChar([...v][0]);
   }
   if (Array.isArray(v) && v.length > 0) return v[0];
+  if ($isLazy(v)) {
+    const first = $materialize(1n, v);
+    if (first.length === 0) throw new Error('head() called on empty lazy sequence.');
+    return first[0];
+  }
   throw new Error('head() called on empty list.');
 }
 
 function $tail(v) {
   if (typeof v === 'string') return v.slice(1);
   if (Array.isArray(v)) return v.slice(1);
+  if ($isLazy(v)) return new $LazyTail(v);
   throw new Error('tail() requires a list or string.');
 }
 
+// ─── Lazy sequence classes ────────────────────────────────────────────────────
+// Defined here (before $map/$filter/$cons which reference them) because
+// class declarations are not hoisted like function declarations.
+
+class $LazyIterate { constructor(f, seed) { this.f = f; this.seed = seed; } }
+class $LazyRepeat  { constructor(value)   { this.value = value; } }
+class $LazyCycle   { constructor(source)  { this.source = source; } }
+class $LazyFilter  { constructor(f, source)  { this.f = f; this.source = source; } }
+class $LazyMap     { constructor(f, source)  { this.f = f; this.source = source; } }
+class $LazyCons    { constructor(h, tail)    { this.h = h; this.tail = tail; } }
+class $LazyTail    { constructor(source)     { this.source = source; } }
+
+function $isLazy(v) {
+  return v instanceof $LazyIterate || v instanceof $LazyRepeat
+      || v instanceof $LazyCycle   || v instanceof $LazyFilter
+      || v instanceof $LazyMap     || v instanceof $LazyCons
+      || v instanceof $LazyTail;
+}
+
 function $map(f, v) {
+  if ($isLazy(v)) return new $LazyMap(f, v);
   if (typeof v === 'string') {
     const mapped = [...v].map(c => f(new PfunChar(c)));
     if (mapped.every(x => x instanceof PfunChar)) return mapped.map(x => x.value).join('');
@@ -390,16 +521,17 @@ function $map(f, v) {
     if (mapped.every(x => x instanceof PfunChar)) return mapped.map(x => x.value).join('');
     return mapped;
   }
-  throw new Error('map() requires a list or string.');
+  throw new Error('map() requires a list, string, or lazy sequence.');
 }
 
 function $filter(f, v) {
+  if ($isLazy(v)) return new $LazyFilter(f, v);
   if (typeof v === 'string') {
     const filtered = [...v].map(c => new PfunChar(c)).filter(c => $truthy(f(c)));
     return filtered.map(c => c.value).join('');
   }
   if (Array.isArray(v)) return v.filter(x => $truthy(f(x)));
-  throw new Error('filter() requires a list or string.');
+  throw new Error('filter() requires a list, string, or lazy sequence.');
 }
 
 function $reduce(f, init, v) {
@@ -424,7 +556,7 @@ function $join(v, sep) {
 function $split(s, sep) {
   if (typeof s !== 'string') throw new Error('split() requires a string as first argument.');
   const d = typeof sep === 'string' ? sep : (sep instanceof PfunChar ? sep.value : $stringify(sep));
-  if (d === '') return [...s].map(c => new PfunChar(c));
+  if (d === '') return s.split('');  // plain strings, matching interpreter behavior
   return s.split(d);
 }
 
@@ -436,34 +568,26 @@ function $range(lo, hi) {
 }
 
 function $cons(h, t) {
+  if ($isLazy(t)) return new $LazyCons(h, t);
   // char cons'd onto a string → string
   if (h instanceof PfunChar && typeof t === 'string') return h.value + t;
   // char cons'd onto empty list → string
   if (h instanceof PfunChar && Array.isArray(t) && t.length === 0) return h.value;
-  // char cons'd onto char list → string (maybeJoin)
-  if (!Array.isArray(t) && typeof t !== 'string') throw new Error('cons() tail must be a list or string.');
+  if (!Array.isArray(t) && typeof t !== 'string') throw new Error('cons() tail must be a list, string, or lazy sequence.');
   const arr = typeof t === 'string' ? [...t].map(c => new PfunChar(c)) : t;
   const result = [h, ...arr];
-  // If all chars, join back to string
   if (result.every(x => x instanceof PfunChar)) return result.map(x => x.value).join('');
   return result;
 }
 
 function $take(n, v) {
   if (typeof n !== 'bigint') throw new Error('take() requires an Int count.');
-  const count = Number(n);
-  if (typeof v === 'string') return v.slice(0, count);
-  if (Array.isArray(v)) return v.slice(0, count);
-  // Lazy sequences
-  if (v instanceof $LazyIterate) {
-    const result = []; let cur = v.seed;
-    for (let i = 0; i < count; i++) { result.push(cur); cur = v.f(cur); }
-    return result;
-  }
-  if (v instanceof $LazyRepeat) return Array.from({ length: count }, () => v.value);
-  if (v instanceof $LazyCycle) {
-    const src = v.source; if (!src.length) return [];
-    return Array.from({ length: count }, (_, i) => src[i % src.length]);
+  if (typeof v === 'string') return v.slice(0, Number(n));
+  if (Array.isArray(v)) return v.slice(0, Number(n));
+  // Any lazy sequence — materialise
+  if ($isInfinite(v) || v instanceof $LazyFilter || v instanceof $LazyMap
+      || v instanceof $LazyCons || v instanceof $LazyTail) {
+    return $materialize(n, v);
   }
   throw new Error('take() requires a list, string, or lazy sequence.');
 }
@@ -473,21 +597,40 @@ function $drop(n, v) {
   const count = Number(n);
   if (typeof v === 'string') return v.slice(count);
   if (Array.isArray(v)) return v.slice(count);
-  if (v instanceof $LazyIterate) { let cur = v.seed; for (let i = 0; i < count; i++) cur = v.f(cur); return new $LazyIterate(v.f, cur); }
-  if (v instanceof $LazyRepeat) return v;
-  if (v instanceof $LazyCycle) return v;
+  if (v instanceof $LazyIterate) {
+    let cur = v.seed;
+    for (let i = 0; i < count; i++) cur = v.f(cur);
+    return new $LazyIterate(v.f, cur);
+  }
+  if (v instanceof $LazyRepeat || v instanceof $LazyCycle) return v;
+  if (v instanceof $LazyFilter || v instanceof $LazyMap
+      || v instanceof $LazyCons || v instanceof $LazyTail) {
+    // Materialise enough to skip, then return remaining as array
+    // For infinite lazy sequences this is safe since drop(n) is finite
+    const big = $materialize(BigInt(count + 10000), v);
+    return big.slice(count);
+  }
   throw new Error('drop() requires a list, string, or lazy sequence.');
 }
 
 function $nth(v, n) {
-  // Pfun: nth(list, index) — list first, index second
   if (typeof n !== 'bigint') throw new Error('nth() requires an Int index.');
+  const i = Number(n);
   if (Array.isArray(v)) {
-    const i = Number(n);
-    if (i < 0 || i >= v.length) throw new Error(`nth(): index ${i} out of range.`);
+    if (i < 0 || i >= v.length) return false;
     return v[i];
   }
-  throw new Error('nth() requires a list.');
+  if (typeof v === 'string') {
+    const chars = [...v];
+    if (i < 0 || i >= chars.length) return false;
+    return new PfunChar(chars[i]);
+  }
+  if ($isLazy(v)) {
+    const materialized = $materialize(BigInt(i + 1), v);
+    if (i >= materialized.length) return false;
+    return materialized[i];
+  }
+  throw new Error('nth() requires a list, string, or lazy sequence.');
 }
 
 // ─── Char / String ────────────────────────────────────────────────────────────
@@ -510,7 +653,8 @@ function $slice(start, count, list) {
   const s = Number(start), c = Number(count);
   if (typeof list === 'string') return list.slice(s, s + c);
   if (Array.isArray(list)) return list.slice(s, s + c);
-  throw new Error('slice() requires a list or string.');
+  if ($isLazy(list)) return $take(BigInt(c), $drop(BigInt(s), list));
+  throw new Error('slice() requires a list, string, or lazy sequence.');
 }
 
 function _valEqual(a, b) {
@@ -557,16 +701,54 @@ function $findSlice(list, pattern) {
   return { __type: 'None', __union: 'Option' };
 }
 
-// ─── Lazy list classes ────────────────────────────────────────────────────────
-
-class $LazyIterate { constructor(f, seed) { this.f = f; this.seed = seed; } }
-class $LazyRepeat  { constructor(value)   { this.value = value; } }
-class $LazyCycle   { constructor(source)  { this.source = source; } }
+// ─── Lazy sequence constructors ───────────────────────────────────────────────
+// Classes are defined above (before $map/$filter which reference them).
 
 function $iterate(f, seed) { return new $LazyIterate(f, seed); }
 function $repeat(value)    { return new $LazyRepeat(value); }
 function $cycle(source)    { return new $LazyCycle(source); }
-function $isInfinite(v)    { return v instanceof $LazyIterate || v instanceof $LazyRepeat || v instanceof $LazyCycle; }
+function $isInfinite(v)    { return $isLazy(v); }
+
+// Materialise exactly `n` elements from any sequence (lazy or eager).
+function $materialize(n, v) {
+  if (typeof n !== 'bigint') throw new Error('take() requires an Int count.');
+  const count = Number(n);
+  if (typeof v === 'string') return v.slice(0, count);
+  if (Array.isArray(v)) return v.slice(0, count);
+
+  // For lazy sequences, use a generator to pull elements one at a time.
+  function* gen(seq) {
+    if (seq instanceof $LazyIterate) {
+      let cur = seq.seed;
+      while (true) { yield cur; cur = seq.f(cur); }
+    } else if (seq instanceof $LazyRepeat) {
+      while (true) yield seq.value;
+    } else if (seq instanceof $LazyCycle) {
+      const src = seq.source; if (!src.length) return;
+      let i = 0;
+      while (true) { yield src[i % src.length]; i++; }
+    } else if (seq instanceof $LazyFilter) {
+      for (const x of gen(seq.source)) { if ($truthy(seq.f(x))) yield x; }
+    } else if (seq instanceof $LazyMap) {
+      for (const x of gen(seq.source)) yield seq.f(x);
+    } else if (seq instanceof $LazyCons) {
+      yield seq.h;
+      yield* gen(seq.tail);
+    } else if (seq instanceof $LazyTail) {
+      let first = true;
+      for (const x of gen(seq.source)) { if (first) { first = false; continue; } yield x; }
+    } else if (Array.isArray(seq)) {
+      yield* seq;
+    }
+  }
+
+  const result = [];
+  for (const x of gen(v)) {
+    result.push(x);
+    if (result.length >= count) break;
+  }
+  return result;
+}
 
 // ─── Numeric casts & predicates ───────────────────────────────────────────────
 
@@ -890,22 +1072,38 @@ function Some(value) { return $record('Some', [value]); }
 // ─── Exports ─────────────────────────────────────────────────────────────────
 module.exports = {
   PfunChar, PfunByte, PfunArray, PfunDict, PfunBuffer,
+  $curry, $memoize,
   $char, $byte, $record, $registerType, $schema,
-  $stringify, $println, $print, $truthy,
+  $stringify, $println, $print, $flushStdout, $truthy,
+  $readln, $readChar, $scriptArgs, $getEnv, $envVars,
   $ck,
   $add, $sub, $mul, $div, $mod, $neg,
   $eq, $neq, $lt, $lte, $gt, $gte,
   $bitAnd, $bitOr, $shl, $shr,
   $get, $index, $indexSet,
   $match,
-  // Core list ops
-  $length, $head, $tail, $map, $filter, $reduce,
-  $reverse, $join, $split, $range, $cons, $take, $drop, $nth,
+  // Core list ops — multi-arg ones wrapped for currying
+  $length,
+  $head, $tail, $reverse,
+  $map:      $curry($map, 2),
+  $filter:   $curry($filter, 2),
+  $reduce:   $curry($reduce, 3),
+  $join:     $curry($join, 2),
+  $split:    $curry($split, 2),
+  $range:    $curry($range, 2),
+  $cons:     $curry($cons, 2),
+  $take:     $curry($take, 2),
+  $drop:     $curry($drop, 2),
+  $nth:      $curry($nth, 2),
   // Extended list ops
-  $slice, $find, $findSlice,
+  $slice:    $curry($slice, 3),
+  $find:     $curry($find, 2),
+  $findSlice:$curry($findSlice, 2),
   // Lazy sequences
-  $iterate, $repeat, $cycle, $isInfinite,
+  $iterate:  $curry($iterate, 2),
+  $repeat, $cycle, $isInfinite, $isLazy,
   $LazyIterate, $LazyRepeat, $LazyCycle,
+  $LazyFilter, $LazyMap, $LazyCons, $LazyTail,
   // Char / String
   $asc, $chr, $__str__,
   // Numeric casts & predicates
@@ -914,14 +1112,23 @@ module.exports = {
   $toByte, $toChar, $charBytes, $bytesToChar,
   // Mutable array construction
   $array_from, $dict_from,
-  // Array operations
-  $arrayLength, $append, $removeAt, $insertAt, $toList, $toArray, $toDict,
+  // Array operations — multi-arg wrapped
+  $arrayLength,
+  $toList, $toArray, $toDict,
+  $append:   $curry($append, 2),
+  $removeAt: $curry($removeAt, 2),
+  $insertAt: $curry($insertAt, 3),
   // Dict operations
-  $has, $remove, $keys, $values,
+  $has:      $curry($has, 2),
+  $remove:   $curry($remove, 2),
+  $keys, $values,
   // Dict / Pair conversions
   $dictToList, $listToDict,
   // Buffer operations
-  $makeBuffer, $makeStringBuffer, $appendBuffer, $appendChar, $appendString,
+  $makeBuffer, $makeStringBuffer,
+  $appendBuffer: $curry($appendBuffer, 2),
+  $appendChar:   $curry($appendChar, 2),
+  $appendString: $curry($appendString, 2),
   $bufferToBytes, $bufferToString, $bufferLength,
   ByteMode, CharMode,
   None, Some,

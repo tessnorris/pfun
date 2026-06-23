@@ -91,7 +91,14 @@ export type Expr =
   | { type: 'GroupExpr';  expression: Expr; pos?: SourcePos; inferredType?: PfunType }
   | { type: 'AssignExpr'; name: string; value: Expr; pos?: SourcePos; inferredType?: PfunType }
   | { type: 'CallExpr';   callee: Expr; args: Expr[]; pos?: SourcePos; inferredType?: PfunType }
-  | { type: 'LambdaExpr'; params: string[]; body: Expr; pos?: SourcePos; inferredType?: PfunType }
+  | { type: 'LambdaExpr'; params: string[];
+      /**
+       * Resolved parameter types, set by the inferencer after substitution.
+       * Same length as `params`. Used by the transpiler to specialize binary
+       * ops inside the lambda body without runtime dispatch.
+       */
+      paramTypes?: PfunType[];
+      body: Expr; pos?: SourcePos; inferredType?: PfunType }
   | { type: 'TernaryExpr'; condition: Expr; thenBranch: Expr; elseBranch: Expr; pos?: SourcePos; inferredType?: PfunType }
   | { type: 'ListExpr';   elements: Expr[];
       /**

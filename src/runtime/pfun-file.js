@@ -12,7 +12,7 @@
 // operations that require a file descriptor.
 
 const fs  = require('fs');
-const { PfunChar, PfunByte, $registerType } = require('./pfun-runtime');
+const { PfunChar, PfunByte, PfunBuffer, $registerType } = require('./pfun-runtime');
 
 // ─── Register union types ─────────────────────────────────────────────────────
 $registerType('ReadHandle',  [], 'FileHandle');
@@ -73,35 +73,6 @@ function readLineFromFd(fd) {
 
 // ─── PfunBuffer class ─────────────────────────────────────────────────────────
 // Mutable byte/char buffer for readBuffer/writeBuffer.
-// In the interpreter this lives in mutStructures.ts; here it's a local class
-// matching the same runtime shape.
-
-class PfunBuffer {
-  constructor(mode, capacity = 4096) {
-    this.mode = mode;  // 'byte' | 'char'
-    this.data = Buffer.alloc(capacity);
-    this.pos  = 0;
-  }
-
-  append(bytes) {
-    if (this.pos + bytes.length > this.data.length) {
-      let newCap = this.data.length * 2 || 16;
-      while (newCap < this.pos + bytes.length) newCap *= 2;
-      const grown = Buffer.alloc(newCap);
-      this.data.copy(grown);
-      this.data = grown;
-    }
-    bytes.copy(this.data, this.pos);
-    this.pos += bytes.length;
-  }
-
-  toByteList() {
-    const out = [];
-    for (let i = 0; i < this.pos; i++) out.push(new PfunByte(this.data[i]));
-    return out;
-  }
-}
-
 // ─── Exported functions ───────────────────────────────────────────────────────
 
 function fileExists(p) {

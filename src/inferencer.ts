@@ -536,8 +536,6 @@ class CGenEnv {
 class CGenRegistry {
   private constructors = new Map<string, string | undefined>();
   private singletons   = new Map<string, string>();
-  // Stage 2: field arity for plain records, so ListExpr can mint fresh
-  // TyVars for the element type of an empty typed-list literal (Pair []).
   private plainArity   = new Map<string, number>();
 
   registerPlain(name: string, arity: number): void {
@@ -562,7 +560,6 @@ class CGenRegistry {
     return u ? { name, unionName: u } : null;
   }
 
-  /** Returns the field count for a plain record, or null if unknown. */
   lookupArity(name: string): number | null {
     return this.plainArity.has(name) ? this.plainArity.get(name)! : null;
   }
@@ -933,14 +930,6 @@ function cgenExpr(
       const elemVar = freshVar();
 
       if (expr.elements.length === 0) {
-        // Stage 2: empty typed-list literal — Pair [] or similar.
-        // If a recordTypeHint is present and the type is registered (arity
-        // known), seed elemVar to a Named{name, fieldTypes:[TyVars...]} so
-        // later uses (e.g. cons(wrongType, dataset)) unify against a real
-        // record type rather than an unconstrained free TyVar.
-        // Falls back to plain free TyVar if the hint is absent or the type
-        // hasn't been registered yet (forward-reference, same permissive
-        // behaviour as bare []).
         const hint = (expr as any).recordTypeHint as string | undefined;
         if (hint) {
           const arity = registry.lookupArity(hint);
@@ -951,19 +940,10 @@ function cgenExpr(
           }
         }
       } else {
-        // Stage 1: non-empty list — field-by-field cross-element constraints
-        // for plain records, catching mixed-instantiation records that slip
-        // through name-level elemVar unification (both elements are Named{Pair}
-        // so name-level trivially succeeds; field types catch the mismatch).
-        // Only plain records (no unionName) — union variants with the same
-        // unionName are deliberately allowed to coexist ([Square{5}, Circle{3}]
-        // is a valid List<Shape>), handled by unify()'s Named case.
         const firstFieldTypes = new Map<string, PfunType[]>();
-
         for (const el of expr.elements) {
           const et = cgenExpr(el, env, registry, cs);
           cs.push(constraint(et, elemVar, el.pos));
-
           if (et.kind === 'Named' && et.unionName === undefined && et.fieldTypes && et.fieldTypes.length > 0) {
             const seen = firstFieldTypes.get(et.name);
             if (seen === undefined) {
@@ -983,19 +963,11 @@ function cgenExpr(
 
     // ── Record / union variant constructors ──────────────────────────────────
     case 'RecordExpr': {
-      // Collect each field's inferred type — previously discarded, now kept
-      // so that ListExpr can do field-by-field cross-element comparison for
-      // records in the same list literal (Stage 1).
-      // Only attached for plain (non-union) records; union variants carry a
-      // unionName that already participates in unification via the Named case,
-      // and their field-type consistency is enforced separately at runtime.
       const fieldTypes = expr.fields.map(f => cgenExpr(f.value, env, registry, cs));
       const entry = registry.lookupConstructor(expr.name);
       if (entry && entry.unionName !== undefined) {
-        // Union variant — no fieldTypes attached (intentional, see above).
         t = { kind: 'Named', name: entry.name, unionName: entry.unionName };
       } else {
-        // Plain record (registered or unknown) — attach fieldTypes.
         t = { kind: 'Named', name: expr.name,
               unionName: entry ? entry.unionName : undefined,
               fieldTypes };
@@ -1021,6 +993,9 @@ function cgenExpr(
         return v;
       });
       const retType = cgenExpr(expr.body, lambdaEnv, registry, cs);
+      // Store the param type vars on the node so applySubstitutionToAST
+      // can resolve them and the transpiler can read the concrete types.
+      (expr as any).paramTypes = paramTypes;
       t = { kind: 'Fn', params: paramTypes, ret: retType };
       break;
     }
@@ -1933,6 +1908,7 @@ export function applySubstitutionToAST(stmts: Stmt[], subst: Substitution): void
       case 'CallExpr':
         applyExpr(e.callee); e.args.forEach(applyExpr); break;
       case 'LambdaExpr':
+        if ((e as any).paramTypes) (e as any).paramTypes = (e as any).paramTypes.map((pt: PfunType) => subst.apply(pt));
         applyExpr(e.body); break;
       case 'ListExpr':
         e.elements.forEach(applyExpr); break;
