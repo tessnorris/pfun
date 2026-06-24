@@ -1,0 +1,166 @@
+/*
+  client.pf — Pfun browser client for the full-stack example.
+
+  Sends ClientMsg values to the server (server.pf on port 3171),
+  displays the ServerMsg responses.
+
+  Start server first:  pfun examples/server.pf
+  Then client:         pfun --serve examples/client.pf
+  Open:                http://localhost:3170/
+*/
+
+import * from "io";
+import * from "./htmllib";
+import * from "./viewlib";
+import * from "./tea";
+import * from "./protocol";
+
+// ── Model ─────────────────────────────────────────────────────────────────────
+
+type Model = { lastResponse, echoText, addA, addB }
+  // lastResponse : Option<String>
+  // echoText     : String
+  // addA, addB   : String (parsed to Int on send)
+
+type UpdateResult = { model, cmd }
+
+function noCmd(model)        { UpdateResult { model, cmdNone() }; }
+function withCmd(model, cmd) { UpdateResult { model, cmd }; }
+
+function init() {
+  let m = Model { None, "", "3", "4" };
+  UpdateResult { m, cmdNone() };
+}
+
+// ── Msg ───────────────────────────────────────────────────────────────────────
+
+type Msg = {
+  | SendPing
+  | SendEcho
+  | SendAdd
+  | EchoTextChanged  : value
+  | AddAChanged      : value
+  | AddBChanged      : value
+  | ServerReplied    : reply    // reply : ServerMsg
+  | ServerFailed     : reason   // reason : String
+}
+
+// ── Update ────────────────────────────────────────────────────────────────────
+
+function wrapReply(reply) {
+  match reply with
+  | Ok r    -> ServerReplied { r.value }
+  | Err e   -> ServerFailed  { e.message };
+}
+
+function onReply(response) {
+  ServerReplied { response };
+}
+
+function onFail(reason) {
+  ServerFailed { reason };
+}
+
+let serverUrl = "http://localhost:3171/api";
+
+function sendCmd(msg) { Send { msg, onReply, serverUrl }; }
+
+function update(msg, model) {
+  match msg with
+  | SendPing ->
+      withCmd(model, sendCmd(clientPing()))
+  | SendEcho ->
+      withCmd(model, sendCmd(ClientEcho { model.echoText }))
+  | SendAdd -> {
+      let a = toInt(toFloat(model.addA));
+      let b = toInt(toFloat(model.addB));
+      withCmd(model, sendCmd(ClientAdd { a, b }));
+    }
+  | EchoTextChanged v -> {
+      let m = Model { model.lastResponse, v.value, model.addA, model.addB };
+      noCmd(m);
+    }
+  | AddAChanged v -> {
+      let m = Model { model.lastResponse, model.echoText, v.value, model.addB };
+      noCmd(m);
+    }
+  | AddBChanged v -> {
+      let m = Model { model.lastResponse, model.echoText, model.addA, v.value };
+      noCmd(m);
+    }
+  | ServerReplied r -> {
+      let text = match r.reply with
+        | ServerPong _    -> "Pong!"
+        | ServerEchoed e  -> "Echoed: \"" + e.text + "\""
+        | ServerSum s     -> "Sum: " + __str__(s.value)
+        | ServerBadMsg b  -> "Error from server: " + b.reason;
+      let m = Model { Some { text }, model.echoText, model.addA, model.addB };
+      noCmd(m);
+    }
+  | ServerFailed e -> {
+      let m = Model { Some { "Request failed: " + e.reason }, model.echoText, model.addA, model.addB };
+      noCmd(m);
+    };
+}
+
+// ── View ──────────────────────────────────────────────────────────────────────
+
+function viewResponse(model) {
+  match model.lastResponse with
+  | Some r -> vcontent(Para { [
+      Strong { [text("Server replied: ")] },
+      text(r.value)
+    ] })
+  | None -> vcontent(Para { [emph([text("No response yet.")])] });
+}
+
+function view(model) {
+  vdiv([
+    vcontent(Section {
+      [text("Pfun full-stack demo")],
+      [Para { [
+        text("Each button sends a "), code("ClientMsg"), text(" to the server as "),
+        code("__pfun"), text("-tagged JSON, receives a "), code("ServerMsg"),
+        text(" response, and updates the view via the "), code("Cmd"),
+        text(" / "), code("Send"), text(" mechanism in "), code("tea.pf"), text(".")
+      ] },
+      Para { [
+        text("Both "), code("ClientMsg"), text(" and "), code("ServerMsg"),
+        text(" are defined in "), code("protocol.pf"),
+        text(" — imported by both client and server. Adding a variant without"),
+        text(" handling it on both sides is a compile error.")
+      ] }]
+    }),
+    vcontent(RawHtml {
+      "<style>\n" +
+      "  .response { background:#313244; border-left:3px solid #89b4fa;\n" +
+      "    padding:0.6rem 1rem; margin:1rem 0; border-radius:0 4px 4px 0; min-height:2rem; }\n" +
+      "  .row { display:flex; gap:0.75rem; align-items:center; margin:0.5rem 0; flex-wrap:wrap; }\n" +
+      "  .row button { background:#313244; color:#cdd6f4; border:1px solid #45475a;\n" +
+      "    border-radius:4px; padding:0.35rem 0.9rem; cursor:pointer;\n" +
+      "    font-family:inherit; font-size:inherit; }\n" +
+      "  .row button:hover { background:#45475a; }\n" +
+      "  .row input { background:#1e1e2e; color:#cdd6f4; border:1px solid #45475a;\n" +
+      "    border-radius:4px; padding:0.3rem 0.5rem; font-family:inherit;\n" +
+      "    font-size:inherit; width:12rem; }\n" +
+      "  code { background:#181825; padding:0.1rem 0.3rem; border-radius:3px; font-size:0.9rem; }\n" +
+      "</style>\n"
+    }),
+    viewResponse(model),
+    vdivClass(["row"], [vbutton("Ping", SendPing)]),
+    vdivClass(["row"], [
+      vinput("echo", model.echoText, "text to echo", fn v => EchoTextChanged { v }),
+      vbutton("Echo", SendEcho)
+    ]),
+    vdivClass(["row"], [
+      vinput("addA", model.addA, "a", fn v => AddAChanged { v }),
+      vtext(" + "),
+      vinput("addB", model.addB, "b", fn v => AddBChanged { v }),
+      vbutton("Add", SendAdd)
+    ])
+  ]);
+}
+
+// ── Run ───────────────────────────────────────────────────────────────────────
+
+run(init(), view, update);

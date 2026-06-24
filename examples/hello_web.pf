@@ -27,8 +27,13 @@ type Page = {
 
 type Model = { page, count }
 
+type UpdateResult = { model, cmd }
+
+function noCmd(model) { UpdateResult { model, cmdNone() }; }
+
 function init() {
-  Model { PageAbout, 0 };
+  let m = Model { PageAbout, 0 };
+  UpdateResult { m, cmdNone() };
 }
 
 // ── Msg ───────────────────────────────────────────────────────────────────────
@@ -44,10 +49,10 @@ type Msg = {
 
 function update(msg, model) {
   match msg with
-  | GoTo n    -> Model { n.page, model.count }
-  | Increment -> Model { model.page, model.count + 1 }
-  | Decrement -> Model { model.page, model.count - 1 }
-  | Reset     -> Model { model.page, 0 };
+  | GoTo n    -> noCmd(Model { n.page, model.count })
+  | Increment -> noCmd(Model { model.page, model.count + 1 })
+  | Decrement -> noCmd(Model { model.page, model.count - 1 })
+  | Reset     -> noCmd(Model { model.page, 0 });
 }
 
 // ── Static content blocks ─────────────────────────────────────────────────────

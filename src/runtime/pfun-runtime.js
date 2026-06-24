@@ -171,6 +171,10 @@ function $flushStdout() {
 // $clearOutput and $attachDomHandler are browser-only; no-ops in Node.
 function $clearOutput() {}
 function $attachDomHandler(_key, _fn) {}
+// $httpPost is browser-only (uses window.fetch); not available in Node.
+async function $httpPost(_url, _value) {
+  return { __type: 'Err', __union: 'HttpResult', message: 'httpPost() is browser-only.' };
+}
 // Use pfun-runtime-browser.js for the real implementation.
 function $mountHtml(_html) { /* no-op in Node */ }
 
@@ -1081,7 +1085,7 @@ module.exports = {
   PfunChar, PfunByte, PfunArray, PfunDict, PfunBuffer,
   $curry, $memoize,
   $char, $byte, $record, $registerType, $schema,
-  $stringify, $println, $print, $flushStdout, $mountHtml, $clearOutput, $attachDomHandler, $truthy,
+  $stringify, $println, $print, $flushStdout, $mountHtml, $clearOutput, $attachDomHandler, $httpPost, $truthy,
   $readln, $readChar, $scriptArgs, $getEnv, $envVars,
   $ck,
   $add, $sub, $mul, $div, $mod, $neg,

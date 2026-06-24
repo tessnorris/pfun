@@ -1,30 +1,49 @@
 /*
   tea.pf — The Elm Architecture runtime loop for Pfun browser applications.
 
+  update now returns { model, cmd } instead of just a model.
+  Cmd is a closed union of effects the runtime can execute:
+
+    CmdNone          — no effect
+    Send { msg }     — POST msg as JSON to /api, dispatch response as a Msg
+
   Usage:
     import * from "io";
     import * from "./viewlib";
     import * from "./tea";
 
     type Model = { ... }
-    type Msg   = { | Increment | TextChanged : value | ... }
+    type Msg   = { | Increment | ServerReplied : reply | ... }
 
-    function init()             { Model { ... }; }
+    function init()             { { model = Model { ... }, cmd = CmdNone }; }
     function view(model)        { vdiv([...]); }
-    function update(msg, model) { match msg with | Increment -> ... | ...; }
+    function update(msg, model) {
+      match msg with
+      | ClickPing -> { model = model, cmd = Send { Ping } }
+      | ...;
+    }
 
     run(init(), view, update);
 
-  run() is the one proc that owns all mutation.  view and update stay pure.
-  The full view is re-rendered on every Msg — simple and always correct.
+  view and update stay pure.  run() is the one proc that owns all mutation.
 */
 
 import * from "io";
 import * from "./viewlib";
 
+// ── Cmd ───────────────────────────────────────────────────────────────────────
+
+export type Cmd = {
+  | CmdNone : unit
+  | Send    : msg, onReply, url
+                      // msg     : value — posted as JSON to url
+                      // onReply : fn response -> Msg
+                      // url     : String
+}
+
+export function cmdNone() { CmdNone { 0 }; }
+
 // ── Handler collection ────────────────────────────────────────────────────────
-// Walk the View tree, collect { key, handler } records.
-// key matches the data-pfun-* attribute value rendered into the HTML.
 
 export type Handler = { key, handler }
 
@@ -41,9 +60,23 @@ export function collectHandlers(view) {
 
 // ── Runtime ───────────────────────────────────────────────────────────────────
 
-// render: mount the view and attach all event handlers.
-// Each handler calls dispatch with a Msg; dispatch re-renders with the
-// new model.  All mutation lives here.
+// executeCmd: run an effect after update returns.
+// Calls back into render with the result so the loop continues.
+async proc executeCmd(cmd, model, viewFn, updateFn) {
+  match cmd with
+  | CmdNone _ -> {}
+  | Send s   -> {
+      let result = await httpPost(s.url, s.msg);
+      match result with
+      | Ok response -> {
+          let msg  = s.onReply(response.value);
+          let next = updateFn(msg, model);
+          render(next.model, viewFn, updateFn);
+          executeCmd(next.cmd, next.model, viewFn, updateFn);
+        }
+      | Err e -> println("Server error: " + e.message);
+    };
+}
 
 proc render(model, viewFn, updateFn) {
   let tree     = viewFn(model);
@@ -59,15 +92,17 @@ proc attachAll(handlers, updateFn, model, viewFn) {
     let h    = head(handlers);
     let rest = tail(handlers);
     attachDomHandler(h.key, fn value => {
-      let msg      = h.handler(value);
-      let newModel = updateFn(msg, model);
-      render(newModel, viewFn, updateFn);
+      let msg  = h.handler(value);
+      let next = updateFn(msg, model);
+      render(next.model, viewFn, updateFn);
+      executeCmd(next.cmd, next.model, viewFn, updateFn);
     });
     attachAll(rest, updateFn, model, viewFn);
   }
 }
 
-// run: entry point.  Call this from your program.
+// run: entry point.  init is { model, cmd } so any startup effect is possible.
 export proc run(init, viewFn, updateFn) {
-  render(init, viewFn, updateFn);
+  render(init.model, viewFn, updateFn);
+  executeCmd(init.cmd, init.model, viewFn, updateFn);
 }

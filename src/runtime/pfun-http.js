@@ -132,11 +132,17 @@ function httpListen(port, handler) {
       };
 
       let responded = false;
+      const corsHeaders = {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type',
+      };
+
       const send = (status, contentType, payload) => {
         if (responded) return;
         responded = true;
         if (typeof status !== 'bigint') throw new Error('Response status code must be an integer.');
-        nodeRes.writeHead(Number(status), { 'Content-Type': contentType });
+        nodeRes.writeHead(Number(status), { 'Content-Type': contentType, ...corsHeaders });
         nodeRes.end(payload);
       };
 

@@ -1049,7 +1049,7 @@ if (require.main === module) {
       'PfunChar','PfunByte','PfunArray','PfunDict','PfunBuffer',
       '$curry','$memoize',
       '$char','$byte','$record','$registerType',
-      '$stringify','$println','$print','$flushStdout','$mountHtml','$clearOutput','$attachDomHandler','$truthy',
+      '$stringify','$println','$print','$flushStdout','$mountHtml','$clearOutput','$attachDomHandler','$httpPost','$truthy',
       '$readln','$readChar','$scriptArgs','$getEnv','$envVars',
       '$ck',
       '$add','$sub','$mul','$div','$mod','$neg',

@@ -466,6 +466,7 @@ const STDLIB_MAP: Record<string, string> = {
   mountHtml:        '$mountHtml',
   clearOutput:      '$clearOutput',
   attachDomHandler: '$attachDomHandler',
+  httpPost:         '$httpPost',
 
   // Interactive I/O (synchronous stdin — works in compiled CLI programs)
   readln:        '$readln',
@@ -962,7 +963,7 @@ export function transpileToEstree(stmts: Stmt[], options: TranspileOptions = {})
             'PfunChar','PfunByte','PfunArray','PfunDict','PfunBuffer',
             '$curry','$memoize',
             '$char','$byte','$record','$registerType',
-            '$stringify','$println','$print','$flushStdout','$mountHtml','$clearOutput','$attachDomHandler','$truthy',
+            '$stringify','$println','$print','$flushStdout','$mountHtml','$clearOutput','$attachDomHandler','$httpPost','$truthy',
             '$readln','$readChar','$scriptArgs','$getEnv','$envVars',
             '$ck',
             '$add','$sub','$mul','$div','$mod','$neg',

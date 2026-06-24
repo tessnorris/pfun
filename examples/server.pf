@@ -1,0 +1,42 @@
+/*
+  server.pf — Pfun HTTP server for the full-stack example.
+
+  Receives ClientMsg JSON at POST /api, responds with ServerMsg JSON.
+  Run with:  pfun examples/server.pf
+
+  The client (client.pf) connects via:  pfun --serve examples/client.pf
+  Run server on 3171, client on 3170 (default).
+*/
+
+import * from "io";
+import * from "http";
+import * from "json";
+import * from "./protocol";
+
+let port = 3171;
+
+async proc handleRequest(req, res) {
+  if req.method == "OPTIONS" then {
+    res.text(200, "");
+  } else if req.method == "POST" && req.path == "/api" then {
+    let parsed = jsonDeserialize(req.body);
+    match parsed with
+    | Some msg -> {
+        let reply = dispatch(msg.value);
+        res.json(200, reply);
+      }
+    | None -> res.json(400, ServerBadMsg { "Could not parse request body" });
+  } else {
+    res.json(404, ServerBadMsg { "Not found: " + req.path });
+  }
+}
+
+function dispatch(msg) {
+  match msg with
+  | ClientPing _  -> serverPong()
+  | ClientEcho e  -> ServerEchoed { e.text }
+  | ClientAdd a   -> ServerSum { a.a + a.b };
+}
+
+println("Server listening on http://localhost:" + __str__(port) + "/api");
+httpListen(port, handleRequest);

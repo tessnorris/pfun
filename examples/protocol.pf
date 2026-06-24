@@ -1,0 +1,29 @@
+/*
+  protocol.pf — Shared wire types for client/server communication.
+
+  Both server.pf and client.pf import this file.  The exhaustiveness
+  checker sees both ends of the protocol simultaneously: adding a variant
+  to ClientMsg without handling it on the server is a compile error.
+
+  Note: all variants have at least one field to avoid interpreter-scope
+  collisions with zero-field (singleton) variants.
+
+  Wire format: __pfun-tagged JSON (same as jsonlib / pfun-http.js).
+*/
+
+export type ClientMsg = {
+  | ClientPing  : unit        // unit : Int (always 0; just carries a field)
+  | ClientEcho  : text        // text : String
+  | ClientAdd   : a, b        // a, b : Int
+}
+
+export type ServerMsg = {
+  | ServerPong    : unit      // unit : Int (always 0)
+  | ServerEchoed  : text      // text : String
+  | ServerSum     : value     // value : Int
+  | ServerBadMsg  : reason    // reason : String
+}
+
+// Convenience constructors for the unit-field variants
+export function clientPing()    { ClientPing  { 0 }; }
+export function serverPong()    { ServerPong  { 0 }; }
