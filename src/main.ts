@@ -596,6 +596,64 @@ function flushQueue(interp: Interpreter, queue: string[]): void {
 // no-arguments branch would kill the importing process/test runner.
 if (require.main === module) {
   const args = process.argv.slice(2);
+
+  // ── Builtin module union table ────────────────────────────────────────────
+  // Used by both -c and --serve to tell the type inferencer which union types
+  // each builtin module exports — mirrors loader.builtinUnionTypes().
+  const BUILTIN_UNION_TABLE: Record<string, Array<{
+    name: string; variants: { name: string; fields: string[] }[]
+  }>> = {
+    'file': [
+      { name: 'FileHandle',  variants: [{ name: 'ReadHandle', fields: [] }, { name: 'WriteHandle', fields: [] }] },
+      { name: 'FileMode',    variants: [{ name: 'Read', fields: [] }, { name: 'Write', fields: [] }, { name: 'Append', fields: [] }] },
+      { name: 'Result',      variants: [{ name: 'Ok', fields: ['value'] }, { name: 'Err', fields: ['message'] }] },
+      { name: 'ReadResult',  variants: [{ name: 'Ok', fields: ['value'] }, { name: 'Err', fields: ['message'] }, { name: 'Eof', fields: [] }] },
+      { name: 'BufferMode',  variants: [{ name: 'ByteMode', fields: [] }, { name: 'CharMode', fields: [] }] },
+    ],
+    'http': [
+      { name: 'HttpResult', variants: [{ name: 'Ok', fields: ['value'] }, { name: 'Err', fields: ['message'] }] },
+    ],
+    'db/postgresql': [
+      { name: 'DbResult', variants: [{ name: 'Ok', fields: ['value'] }, { name: 'Err', fields: ['message'] }] },
+      { name: 'DbValue',  variants: [
+        { name: 'DbInt', fields: ['value'] }, { name: 'DbFloat', fields: ['value'] },
+        { name: 'DbText', fields: ['value'] }, { name: 'DbBool', fields: ['value'] },
+        { name: 'DbBytes', fields: ['value'] }, { name: 'DbNull', fields: [] },
+      ]},
+    ],
+    'db/mariadb': [
+      { name: 'DbResult', variants: [{ name: 'Ok', fields: ['value'] }, { name: 'Err', fields: ['message'] }] },
+      { name: 'DbValue',  variants: [
+        { name: 'DbInt', fields: ['value'] }, { name: 'DbFloat', fields: ['value'] },
+        { name: 'DbText', fields: ['value'] }, { name: 'DbBool', fields: ['value'] },
+        { name: 'DbBytes', fields: ['value'] }, { name: 'DbNull', fields: [] },
+      ]},
+    ],
+  };
+  const builtinUnionResolver = (importPath: string) => {
+    const unions = BUILTIN_UNION_TABLE[importPath];
+    if (!unions) return null;
+    return new Map(unions.map(u => [u.name, u.variants]));
+  };
+
+  // Extract union type declarations from a parsed module's statements.
+  // Used to build a per-file union resolver for cross-module type checking.
+  function extractUnions(stmts: any[]): Array<{ name: string; variants: { name: string; fields: string[] }[] }> {
+    const result: Array<{ name: string; variants: { name: string; fields: string[] }[] }> = [];
+    for (let s of stmts) {
+      if (s.type === 'ExportStmt' && s.declaration) s = s.declaration;
+      // UnionTypeStmt: type Foo = { | A: x | B: y }
+      if (s.type === 'UnionTypeStmt' && s.name && Array.isArray(s.variants)) {
+        result.push({ name: s.name, variants: s.variants });
+      }
+      // TypeStmt with variants (discriminated union shorthand, if used)
+      if (s.type === 'TypeStmt' && Array.isArray(s.variants) && s.variants.length > 0) {
+        result.push({ name: s.name, variants: s.variants });
+      }
+    }
+    return result;
+  }
+
   if (args.includes('-i') || args.includes('--interactive')) {
     // Any non-flag argument is treated as a file to pre-load into the session.
     const fileArg = args.find(a => a !== '-i' && a !== '--interactive');
@@ -739,42 +797,6 @@ if (require.main === module) {
     // union constructors with unionName set — same information wholeProgramCheck
     // gets from loader.builtinUnionTypes(). Without this, DbInt/DbFloat/etc.
     // have no unionName and [DbText{"x"}, DbFloat{1.0}] is falsely rejected.
-    const BUILTIN_UNION_TABLE: Record<string, Array<{
-      name: string; variants: { name: string; fields: string[] }[]
-    }>> = {
-      'file': [
-        { name: 'FileHandle',  variants: [{ name: 'ReadHandle', fields: [] }, { name: 'WriteHandle', fields: [] }] },
-        { name: 'FileMode',    variants: [{ name: 'Read', fields: [] }, { name: 'Write', fields: [] }, { name: 'Append', fields: [] }] },
-        { name: 'Result',      variants: [{ name: 'Ok', fields: ['value'] }, { name: 'Err', fields: ['message'] }] },
-        { name: 'ReadResult',  variants: [{ name: 'Ok', fields: ['value'] }, { name: 'Err', fields: ['message'] }, { name: 'Eof', fields: [] }] },
-        { name: 'BufferMode',  variants: [{ name: 'ByteMode', fields: [] }, { name: 'CharMode', fields: [] }] },
-      ],
-      'http': [
-        { name: 'HttpResult', variants: [{ name: 'Ok', fields: ['value'] }, { name: 'Err', fields: ['message'] }] },
-      ],
-      'db/postgresql': [
-        { name: 'DbResult', variants: [{ name: 'Ok', fields: ['value'] }, { name: 'Err', fields: ['message'] }] },
-        { name: 'DbValue',  variants: [
-          { name: 'DbInt', fields: ['value'] }, { name: 'DbFloat', fields: ['value'] },
-          { name: 'DbText', fields: ['value'] }, { name: 'DbBool', fields: ['value'] },
-          { name: 'DbBytes', fields: ['value'] }, { name: 'DbNull', fields: [] },
-        ]},
-      ],
-      'db/mariadb': [
-        { name: 'DbResult', variants: [{ name: 'Ok', fields: ['value'] }, { name: 'Err', fields: ['message'] }] },
-        { name: 'DbValue',  variants: [
-          { name: 'DbInt', fields: ['value'] }, { name: 'DbFloat', fields: ['value'] },
-          { name: 'DbText', fields: ['value'] }, { name: 'DbBool', fields: ['value'] },
-          { name: 'DbBytes', fields: ['value'] }, { name: 'DbNull', fields: [] },
-        ]},
-      ],
-    };
-    const builtinUnionResolver = (importPath: string) => {
-      const unions = BUILTIN_UNION_TABLE[importPath];
-      if (!unions) return null;
-      return new Map(unions.map(u => [u.name, u.variants]));
-    };
-
     // ── Compile function ────────────────────────────────────────────────────
     // compiled: prevents recompiling a source file twice in a diamond.
     // outPaths: maps absoluteSourcePath → absoluteOutputPath for post-processing.
@@ -794,6 +816,25 @@ if (require.main === module) {
       // Default: mirror source tree under outDir.
       const rel = path.relative(cwd, sourcePath);
       return path.join(outDir, rel.replace(/\.pf$/, '.js'));
+    }
+
+    // Maps absolutePath → union declarations from that module's TypeStmt/UnionTypeStmt.
+    // Built during compilation so each module can resolve types from its imports.
+    const userModuleUnions = new Map<string, Array<{ name: string; variants: { name: string; fields: string[] }[] }>>();
+
+    function makeUnionResolver(forFile: string) {
+      return (importPath: string) => {
+        // Builtin modules
+        const builtin = BUILTIN_UNION_TABLE[importPath];
+        if (builtin) return new Map(builtin.map((u: any) => [u.name, u.variants]));
+        // User modules — resolve the path and look up its declarations
+        const srcDir = path.dirname(forFile);
+        const depPf   = importPath.endsWith('.pf') ? importPath : importPath + '.pf';
+        const depPath = path.resolve(srcDir, depPf);
+        const unions  = userModuleUnions.get(depPath);
+        if (!unions || unions.length === 0) return null;
+        return new Map(unions.map(u => [u.name, u.variants]));
+      };
     }
 
     function compileFile(absolutePath: string): void {
@@ -818,7 +859,10 @@ if (require.main === module) {
         compileFile(depPath);
       }
 
-      const errors = checkTypes(stmts, source, undefined, builtinUnionResolver);
+      // Register this file's union declarations for use by its importers
+      userModuleUnions.set(absolutePath, extractUnions(stmts));
+
+      const errors = checkTypes(stmts, source, undefined, makeUnionResolver(absolutePath));
       if (errors.length > 0) {
         for (const e of errors) console.error(e.pfunMessage);
         process.exit(1);
@@ -903,10 +947,242 @@ if (require.main === module) {
       }
       console.log(`Inlined to: ${path.relative(cwd, singleOut)}`);
     }
+  } else if (args.includes('--serve')) {
+    // ── Browser serve mode ──────────────────────────────────────────────────
+    // pfun --serve <script.pf> [--port N]
+    //
+    // Compiles the program and all user-module dependencies, bundles everything
+    // into a single self-contained index.html, and serves it on localhost.
+    // println() output appears in a <div> on the page.
+
+    const portIdx = args.indexOf('--port');
+    const port = portIdx !== -1 ? parseInt(args[portIdx + 1], 10) : 3170;
+
+    const positional = args.filter((a, i) => {
+      if (a === '--serve' || a === '--port') return false;
+      if (i > 0 && args[i - 1] === '--port') return false;
+      return true;
+    });
+
+    if (positional.length === 0) {
+      console.error('Usage: pfun --serve <script.pf> [--port N]');
+      process.exit(1);
+    }
+
+    const entryPath = path.resolve(positional[0]);
+    if (!fs.existsSync(entryPath)) {
+      console.error(`File not found: ${entryPath}`);
+      process.exit(1);
+    }
+
+    const cwd       = process.cwd();
+    const srcRtDir  = path.join(cwd, 'src', 'runtime');
+    const browserRt = path.join(srcRtDir, 'pfun-runtime-browser.js');
+
+    if (!fs.existsSync(browserRt)) {
+      console.error(`Browser runtime not found: ${browserRt}`);
+      console.error('Expected: src/runtime/pfun-runtime-browser.js');
+      process.exit(1);
+    }
+
+    const BUILTIN_PATHS_BROWSER = new Set([
+      'io','file','math','json','async','http','db/postgresql','db/mariadb',
+    ]);
+
+    const builtinUnionResolverForServe = builtinUnionResolver;
+
+    // Compile each .pf file to JS in dependency order (deps before entry).
+    const compiledServe = new Set<string>();
+    const serveModules: Array<{ js: string }> = [];
+    const serveUserUnions = new Map<string, Array<{ name: string; variants: { name: string; fields: string[] }[] }>>();
+
+    function makeServeUnionResolver(forFile: string) {
+      return (importPath: string) => {
+        const builtin = BUILTIN_UNION_TABLE[importPath];
+        if (builtin) return new Map(builtin.map((u: any) => [u.name, u.variants]));
+        const srcDir = path.dirname(forFile);
+        const depPf   = importPath.endsWith('.pf') ? importPath : importPath + '.pf';
+        const depPath = path.resolve(srcDir, depPf);
+        const unions  = serveUserUnions.get(depPath);
+        if (!unions || unions.length === 0) return null;
+        return new Map(unions.map(u => [u.name, u.variants]));
+      };
+    }
+
+    function compileBrowserFile(absPath: string): void {
+      if (compiledServe.has(absPath)) return;
+      compiledServe.add(absPath);
+
+      const src   = fs.readFileSync(absPath, 'utf-8');
+      const stmts = new Parser(new Lexer(src).lex()).parse();
+
+      // Recurse into user-module dependencies first
+      const srcDir = path.dirname(absPath);
+      for (const stmt of stmts) {
+        if (stmt.type !== 'ImportStmt') continue;
+        const imp = stmt as any;
+        if (BUILTIN_PATHS_BROWSER.has(imp.path)) continue;
+        const depPf   = imp.path.endsWith('.pf') ? imp.path : imp.path + '.pf';
+        const depPath = path.resolve(srcDir, depPf);
+        if (!fs.existsSync(depPath)) {
+          console.error(`Module not found: ${depPath} (imported by ${absPath})`);
+          process.exit(1);
+        }
+        compileBrowserFile(depPath);
+      }
+
+      serveUserUnions.set(absPath, extractUnions(stmts));
+
+      const errors = checkTypes(stmts, src, undefined, makeServeUnionResolver(absPath));
+      if (errors.length > 0) {
+        for (const e of errors) console.error(e.pfunMessage);
+        process.exit(1);
+      }
+
+      serveModules.push({ js: transpile(stmts, src) });
+    }
+
+    compileBrowserFile(entryPath);
+
+    // Runtime destructure — reads from window.__pfunRuntime instead of require()
+    const runtimeDestructure = 'const {' + [
+      'PfunChar','PfunByte','PfunArray','PfunDict','PfunBuffer',
+      '$curry','$memoize',
+      '$char','$byte','$record','$registerType',
+      '$stringify','$println','$print','$flushStdout','$mountHtml','$clearOutput','$attachDomHandler','$truthy',
+      '$readln','$readChar','$scriptArgs','$getEnv','$envVars',
+      '$ck',
+      '$add','$sub','$mul','$div','$mod','$neg',
+      '$eq','$neq','$lt','$lte','$gt','$gte',
+      '$bitAnd','$bitOr','$shl','$shr',
+      '$get','$index','$indexSet',
+      '$match',
+      '$length','$head','$tail','$map','$filter','$reduce',
+      '$reverse','$join','$split','$range','$cons','$take','$drop','$nth',
+      '$slice','$find','$findSlice',
+      '$iterate','$repeat','$cycle','$isInfinite','$isLazy',
+      '$LazyIterate','$LazyRepeat','$LazyCycle','$LazyFilter','$LazyMap','$LazyCons','$LazyTail',
+      '$asc','$chr','$__str__',
+      '$toFloat','$toInt','$floor','$ceil','$round','$isNaN','$isFinite',
+      '$toByte','$toChar','$charBytes','$bytesToChar',
+      '$array_from','$dict_from',
+      '$arrayLength','$append','$removeAt','$insertAt','$toList','$toArray','$toDict',
+      '$has','$remove','$keys','$values','$dictToList','$listToDict',
+      '$makeBuffer','$makeStringBuffer','$appendBuffer','$appendChar','$appendString',
+      '$bufferToBytes','$bufferToString','$bufferLength',
+      'ByteMode','CharMode','None','Some',
+    ].join(',') + '} = window.__pfunRuntime;';
+
+    function browserifyModule(js: string, isFirst: boolean): string {
+      let result = js;
+      // Replace pfun-runtime require with browser destructure (first module only)
+      result = result.replace(
+        /^const\s+\{[^}]+\}\s*=\s*require\("[^"]*pfun-runtime[^"]*"\);\n?/m,
+        isFirst ? runtimeDestructure + '\n' : '',
+      );
+      // Strip all remaining require() calls (may be indented inside async IIFE).
+      result = result.replace(
+        /^\s*const\s+(?:\{[^}]*\}|[^\s=]+)\s*=\s*require\(['"][^'"]+['"]\);\n?(?:\s*Object\.assign\(globalThis,[^)]+\);\n?)?/gm,
+        '',
+      );
+      // Strip module.exports assignments
+      result = result.replace(/^\s*module\.exports\s*=\s*\{[^}]*\};\s*\n?/gm, '');
+      result = result.replace(/^\s*module\.exports\.\w+\s*=\s*\w+;\s*\n?/gm, '');
+      // Browser-safe error handler
+      result = result.replace(
+        /process\.stderr\.write\([^)]+\);\s*\n\s*process\.exit\(1\);/g,
+        'console.error($e$.message);',
+      );
+      // Strip the per-module async IIFE wrapper line by line.
+      // The transpiler always emits this exact 4-line shell around the module body:
+      //   (async () => {        ← line 1
+      //   try {                 ← line 2 (indented 2)
+      //     ...body...
+      //   } catch ($e$) {      ← second-to-last pair
+      //     console.error(...)
+      //   }
+      //   })();                ← last line
+      // We strip lines 1, 2, and the last 4 lines (catch block + closing).
+      // This is robust against nested try/catch inside the body.
+      const lines = result.split('\n');
+      const firstIife = lines.findIndex(l => /^\(async \(\) => \{/.test(l));
+      const lastClose = lines.map((l, i) => [l, i]).filter(([l]) => /^\}\)\(\);/.test(l as string)).pop();
+      if (firstIife !== -1 && lastClose) {
+        const closeIdx = lastClose[1] as number;
+        // Remove from closeIdx back to the "} catch" line
+        // The catch block is always: "  } catch ($e$) {", error line, "  }"
+        // So remove lines closeIdx-3 through closeIdx (inclusive)
+        // and lines firstIife and firstIife+1 (the "(async" and "try {" lines)
+        const withoutClose = [
+          ...lines.slice(0, firstIife),                  // before IIFE
+          ...lines.slice(firstIife + 2, closeIdx - 3),   // body (skip "(async" + "try {")
+          ...lines.slice(closeIdx + 1),                  // after IIFE
+        ];
+        result = withoutClose.join('\n');
+      }
+      return result;
+    }
+
+    // Strip the shared runtime destructure from non-first modules (it's already in the first)
+    const rawModules = serveModules.map(({ js }, i) => browserifyModule(js, i === 0));
+
+    // Wrap everything in a single async IIFE so all module functions share one scope
+    const innerCode = rawModules.join('\n');
+    const bundledJs = `(async () => {\ntry {\n${innerCode}\n} catch ($e$) {\nconsole.error($e$.message);\n}\n})();`;
+
+    const runtimeJs = fs.readFileSync(browserRt, 'utf-8');
+    const entryName = path.basename(entryPath, '.pf');
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${entryName}</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #1e1e2e;
+      color: #cdd6f4;
+      font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+      font-size: 14px;
+      padding: 1.5rem;
+    }
+    #pfun-output {
+      white-space: pre-wrap;
+      line-height: 1.6;
+    }
+    #pfun-output div:empty::before { content: '\\00a0'; }
+  </style>
+</head>
+<body>
+  <div id="pfun-output"></div>
+  <script>
+${runtimeJs}
+  </script>
+  <script>
+document.addEventListener('DOMContentLoaded', function() {
+${bundledJs}
+});
+  </script>
+</body>
+</html>`;
+
+    const http = require('http');
+    const server = http.createServer((_req: any, res: any) => {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(html);
+    });
+
+    server.listen(port, '127.0.0.1', () => {
+      console.log(`Serving ${path.relative(cwd, entryPath)} at http://localhost:${port}/`);
+      console.log('Press Ctrl+C to stop.');
+    });
+
   } else if (args.length === 0) {
     console.log('Usage: pfun <script.pf>');
     console.log('       pfun -i [script.pf]   (interactive mode, optionally pre-loading a file)');
     console.log('       pfun -c <script.pf>   (compile to JavaScript)');
+    console.log('       pfun --serve <script.pf> [--port N]   (serve in browser, default port 3170)');
     process.exit(1);
   } else {
     runFile(args[0], args.slice(1)).catch(e => {

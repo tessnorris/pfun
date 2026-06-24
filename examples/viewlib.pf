@@ -1,0 +1,126 @@
+/*
+  viewlib.pf — Interactive View ADT for Pfun TEA-style applications.
+
+  A View is what the pure `view` function returns.  It describes interactive
+  UI: buttons that emit Msg values, inputs that transform their value into a
+  Msg, and containers.  Static document content (Block nodes from htmllib) can
+  be embedded via VContent.
+
+  Msg is whatever closed union the application defines.  The View type carries
+  Msg values or transformer functions (fn Str -> Msg) at event sites.
+
+  The runtime loop (tea.pf) owns all mutation: it calls view(), renders the
+  tree to HTML + event listeners, and re-renders on every state change.
+*/
+
+import * from "./htmllib";
+
+// ── View ─────────────────────────────────────────────────────────────────────
+
+export type View = {
+  | VText     : value                      // plain text node
+  | VEl       : tag, attrs, children       // generic container element
+  | VButton   : label, attrs, onClick      // <button> with optional attrs
+                                           //   onClick : Msg (any value)
+  | VTextInput: name, value, placeholder, onInput
+                                           // <input type="text">
+                                           //   onInput : fn Str -> Msg
+  | VCheckbox : name, checked, label, onToggle
+                                           // <input type="checkbox">
+                                           //   onToggle : fn Bool -> Msg
+  | VSelect   : name, choices, selected, onChange
+                                           // <select>
+                                           //   choices : List<Choice>
+                                           //   onChange : fn Str -> Msg
+  | VContent  : block                      // embed a Block from htmllib
+}
+
+// ── Constructors ──────────────────────────────────────────────────────────────
+
+export function vtext(value) { VText { value }; }
+
+// vbutton: plain button with no extra attributes
+export function vbutton(label, onClick) { VButton { label, noAttrs, onClick }; }
+
+// vbuttonClass: button with a CSS class (for active/inactive tab styling etc.)
+export function vbuttonClass(label, classes, onClick) {
+  VButton { label, Attrs { None, classes, None }, onClick };
+}
+
+export function vdiv(children)  { VEl { "div",  noAttrs, children }; }
+export function vspan(children) { VEl { "span", noAttrs, children }; }
+export function vp(children)    { VEl { "p",    noAttrs, children }; }
+export function vh(level, label) { VEl { "h" + __str__(level), noAttrs, [vtext(label)] }; }
+
+export function vdivClass(classes, children) {
+  VEl { "div", Attrs { None, classes, None }, children };
+}
+export function vdivId(id, children) {
+  VEl { "div", Attrs { Some { id }, [], None }, children };
+}
+export function vspanId(id, children) {
+  VEl { "span", Attrs { Some { id }, [], None }, children };
+}
+
+export function vinput(name, value, placeholder, onInput) {
+  VTextInput { name, value, placeholder, onInput };
+}
+export function vcheckbox(name, checked, label, onToggle) {
+  VCheckbox { name, checked, label, onToggle };
+}
+export function vselect(name, choices, selected, onChange) {
+  VSelect { name, choices, selected, onChange };
+}
+export function vcontent(block) { VContent { block }; }
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+export function boolStr(cond, s) {
+  if cond then s else "";
+}
+
+// ── Rendering ─────────────────────────────────────────────────────────────────
+
+export function renderViews(views, prefix) {
+  join(map(fn v => renderView(v, prefix), views), "");
+}
+
+export function renderView(view, prefix) {
+  match view with
+  | VText t      -> escapeHtml(t.value)
+  | VEl el       -> {
+      let a = renderAttrs(el.attrs);
+      "<" + el.tag + a + ">" + renderViews(el.children, prefix) + "</" + el.tag + ">\n";
+    }
+  | VButton b    -> {
+      let a = renderAttrs(b.attrs);
+      "<button" + a + " data-pfun-click=\"" + prefix + "click_" + escapeAttr(b.label) + "\">" +
+      escapeHtml(b.label) + "</button>\n";
+    }
+  | VTextInput i -> {
+      "<input type=\"text\" data-pfun-input=\"" + prefix + "input_" + escapeAttr(i.name) + "\"" +
+      " name=\"" + escapeAttr(i.name) + "\"" +
+      " value=\"" + escapeAttr(i.value) + "\"" +
+      " placeholder=\"" + escapeAttr(i.placeholder) + "\">\n";
+    }
+  | VCheckbox c  -> {
+      "<input type=\"checkbox\" data-pfun-check=\"" + prefix + "check_" + escapeAttr(c.name) + "\"" +
+      " name=\"" + escapeAttr(c.name) + "\"" +
+      boolStr(c.checked, " checked") + ">" +
+      "<label>" + escapeHtml(c.label) + "</label>\n";
+    }
+  | VSelect s    -> {
+      "<select data-pfun-change=\"" + prefix + "change_" + escapeAttr(s.name) + "\"" +
+      " name=\"" + escapeAttr(s.name) + "\">\n" +
+      join(map(fn c => renderViewChoice(c, s.selected), s.choices), "") +
+      "</select>\n";
+    }
+  | VContent c   -> renderBlock(c.block, 0);
+}
+
+export function renderViewChoice(c, selected) {
+  let selectedAttr = boolStr(c.value == selected, " selected");
+  "<option value=\"" + escapeAttr(c.value) + "\"" +
+  selectedAttr + ">" +
+  escapeHtml(c.label) + "</option>\n";
+}

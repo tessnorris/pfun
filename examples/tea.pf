@@ -1,0 +1,73 @@
+/*
+  tea.pf — The Elm Architecture runtime loop for Pfun browser applications.
+
+  Usage:
+    import * from "io";
+    import * from "./viewlib";
+    import * from "./tea";
+
+    type Model = { ... }
+    type Msg   = { | Increment | TextChanged : value | ... }
+
+    function init()             { Model { ... }; }
+    function view(model)        { vdiv([...]); }
+    function update(msg, model) { match msg with | Increment -> ... | ...; }
+
+    run(init(), view, update);
+
+  run() is the one proc that owns all mutation.  view and update stay pure.
+  The full view is re-rendered on every Msg — simple and always correct.
+*/
+
+import * from "io";
+import * from "./viewlib";
+
+// ── Handler collection ────────────────────────────────────────────────────────
+// Walk the View tree, collect { key, handler } records.
+// key matches the data-pfun-* attribute value rendered into the HTML.
+
+export type Handler = { key, handler }
+
+export function collectHandlers(view) {
+  match view with
+  | VButton b    -> [Handler { "click_"  + b.label,  fn ignored => b.onClick  }]
+  | VTextInput i -> [Handler { "input_"  + i.name,   i.onInput  }]
+  | VCheckbox c  -> [Handler { "check_"  + c.name,   c.onToggle }]
+  | VSelect s    -> [Handler { "change_" + s.name,   s.onChange }]
+  | VEl el       -> reduce(fn acc, child => acc + collectHandlers(child), [], el.children)
+  | VText _      -> []
+  | VContent _   -> [];
+}
+
+// ── Runtime ───────────────────────────────────────────────────────────────────
+
+// render: mount the view and attach all event handlers.
+// Each handler calls dispatch with a Msg; dispatch re-renders with the
+// new model.  All mutation lives here.
+
+proc render(model, viewFn, updateFn) {
+  let tree     = viewFn(model);
+  let html     = renderView(tree, "");
+  clearOutput();
+  mountHtml(html);
+  let handlers = collectHandlers(tree);
+  attachAll(handlers, updateFn, model, viewFn);
+}
+
+proc attachAll(handlers, updateFn, model, viewFn) {
+  if length(handlers) > 0 then {
+    let h    = head(handlers);
+    let rest = tail(handlers);
+    attachDomHandler(h.key, fn value => {
+      let msg      = h.handler(value);
+      let newModel = updateFn(msg, model);
+      render(newModel, viewFn, updateFn);
+    });
+    attachAll(rest, updateFn, model, viewFn);
+  }
+}
+
+// run: entry point.  Call this from your program.
+export proc run(init, viewFn, updateFn) {
+  render(init, viewFn, updateFn);
+}

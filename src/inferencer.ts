@@ -681,8 +681,8 @@ export const BUILTIN_FUNCTION_TYPES: Map<string, PfunType> = new Map<string, Pfu
 
   // ── Always-in-scope polymorphic builtins (two-argument) ──────────────────
   ['has',   fn([_UNK, _UNK], _BOOL)],
-  ['join',  fn([_UNK, _STR], _STR) ],
-  ['split', fn([_STR, _STR], _STR_LIST)],
+  ['join',  fn([{ kind: 'List', element: _UNK }, _STR], _STR) ],
+  ['split', fn([_STR, _STR], { kind: 'List', element: _STR })],
 
   // ── Constants ──────────────────────────────────────────────────────────
   ['true',  _BOOL],

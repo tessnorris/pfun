@@ -168,6 +168,11 @@ function $flushStdout() {
   // Node's stdout is synchronous when writing to a terminal or pipe;
   // no explicit flush is needed, but we honour the call as a no-op.
 }
+// $clearOutput and $attachDomHandler are browser-only; no-ops in Node.
+function $clearOutput() {}
+function $attachDomHandler(_key, _fn) {}
+// Use pfun-runtime-browser.js for the real implementation.
+function $mountHtml(_html) { /* no-op in Node */ }
 
 // ─── Synchronous stdin ───────────────────────────────────────────────────────
 // Compiled Pfun programs can read from stdin synchronously using fd 0.
@@ -268,6 +273,8 @@ function $add(l, r) {
   if (lStr || lChar || lCL || rStr || rChar || rCL) return $stringify(l) + $stringify(r);
   const lF = typeof l === 'number', rF = typeof r === 'number';
   if (lF || rF) return _checkFloat((lF ? l : Number(l)) + (rF ? r : Number(r)), '+');
+  // List concatenation
+  if (Array.isArray(l) && Array.isArray(r)) return [...l, ...r];
   return l + r;  // bigint + bigint
 }
 
@@ -1074,7 +1081,7 @@ module.exports = {
   PfunChar, PfunByte, PfunArray, PfunDict, PfunBuffer,
   $curry, $memoize,
   $char, $byte, $record, $registerType, $schema,
-  $stringify, $println, $print, $flushStdout, $truthy,
+  $stringify, $println, $print, $flushStdout, $mountHtml, $clearOutput, $attachDomHandler, $truthy,
   $readln, $readChar, $scriptArgs, $getEnv, $envVars,
   $ck,
   $add, $sub, $mul, $div, $mod, $neg,

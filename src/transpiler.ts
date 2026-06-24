@@ -229,7 +229,9 @@ function collectSchemaStmts(stmts: Stmt[]): Node[] {
   singletonVariants.add('None');
 
   const calls: Node[] = [];
-  for (const s of stmts) {
+  for (let s of stmts) {
+    // Unwrap export declarations
+    if (s.type === 'ExportStmt') s = (s as any).declaration;
     if (s.type === 'UnionTypeStmt') {
       for (const v of (s as any).variants) {
         if (v.fields.length === 0) singletonVariants.add(v.name);
@@ -461,6 +463,9 @@ const STDLIB_MAP: Record<string, string> = {
   println:       '$println',
   print:         '$print',
   flushStdout:   '$flushStdout',
+  mountHtml:        '$mountHtml',
+  clearOutput:      '$clearOutput',
+  attachDomHandler: '$attachDomHandler',
 
   // Interactive I/O (synchronous stdin — works in compiled CLI programs)
   readln:        '$readln',
@@ -957,7 +962,7 @@ export function transpileToEstree(stmts: Stmt[], options: TranspileOptions = {})
             'PfunChar','PfunByte','PfunArray','PfunDict','PfunBuffer',
             '$curry','$memoize',
             '$char','$byte','$record','$registerType',
-            '$stringify','$println','$print','$flushStdout','$truthy',
+            '$stringify','$println','$print','$flushStdout','$mountHtml','$clearOutput','$attachDomHandler','$truthy',
             '$readln','$readChar','$scriptArgs','$getEnv','$envVars',
             '$ck',
             '$add','$sub','$mul','$div','$mod','$neg',
