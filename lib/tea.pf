@@ -34,14 +34,14 @@ import * from "./viewlib";
 // ── Cmd ───────────────────────────────────────────────────────────────────────
 
 export type Cmd = {
-  | CmdNone : unit
+  | CmdNone              // no effect
   | Send    : msg, onReply, url
-                      // msg     : value — posted as JSON to url
-                      // onReply : fn response -> Msg
-                      // url     : String
+                         // msg     : value — posted as JSON to url
+                         // onReply : fn response -> Msg
+                         // url     : String
 }
 
-export function cmdNone() { CmdNone { 0 }; }
+export function cmdNone() { CmdNone; }
 
 // ── Handler collection ────────────────────────────────────────────────────────
 
@@ -64,7 +64,7 @@ export function collectHandlers(view) {
 // Calls back into render with the result so the loop continues.
 async proc executeCmd(cmd, model, viewFn, updateFn) {
   match cmd with
-  | CmdNone _ -> {}
+  | CmdNone  -> {}
   | Send s   -> {
       let result = await httpPost(s.url, s.msg);
       match result with

@@ -1,0 +1,548 @@
+/*
+  dbschema.pf — PostgreSQL schema metadata reader.
+
+  Queries information_schema to build a structured ADT describing the tables,
+  columns, and constraints in a given schema.
+
+  Usage:
+    import * from "./dbschema";
+
+    async proc main() {
+      let conn = await dbConnect(CONNECTION_STRING);
+      match conn with
+      | Err e -> println("Connect failed: " + e.message)
+      | Ok c  -> {
+          let meta = await loadSchema(c.value, "public");
+          match meta with
+          | Err e -> println("Schema load failed: " + e.message)
+          | Ok s  -> printSchema(s.value);
+        };
+    }
+*/
+
+import * from "io";
+import * from "db/postgresql";
+
+// ── Data type enum ────────────────────────────────────────────────────────────
+// Maps Postgres type names to a closed Pfun union.
+// PgOther covers any type not explicitly listed.
+
+export type PgType = {
+  | PgText
+  | PgVarchar
+  | PgChar
+  | PgInteger
+  | PgBigInt
+  | PgSmallInt
+  | PgNumeric
+  | PgReal
+  | PgDouble
+  | PgBoolean
+  | PgTimestamp
+  | PgTimestampTz
+  | PgDate
+  | PgTime
+  | PgJson
+  | PgJsonb
+  | PgUuid
+  | PgBytea
+  | PgSerial
+  | PgBigSerial
+  | PgOther : typeName   // typeName : String
+}
+
+// ── Column ────────────────────────────────────────────────────────────────────
+
+export type Column = {
+  name,        // String — column name
+  pgType,      // PgType
+  rawType,     // String — original Postgres type name
+  nullable,    // Bool
+  defaultVal   // Option<String>
+}
+
+// ── Constraints ───────────────────────────────────────────────────────────────
+
+export type Constraint = {
+  | PrimaryKey  : name, columns                              // columns : List<String>
+  | ForeignKey  : name, columns, refTable, refColumns        // refTable : String, refColumns : List<String>
+  | Unique      : name, columns
+  | Check       : name, expression                           // expression : String
+}
+
+// ── Table ─────────────────────────────────────────────────────────────────────
+
+export type Table = {
+  schema,      // String
+  name,        // String
+  columns,     // List<Column>
+  constraints  // List<Constraint>
+}
+
+// ── Schema metadata ───────────────────────────────────────────────────────────
+
+export type SchemaMetadata = {
+  schemaName,  // String
+  tables       // List<Table>
+}
+
+// ── MaybeId ───────────────────────────────────────────────────────────────────
+// Used as the primary key field in all generated data model records.
+// New = not yet persisted (insert will populate the id).
+// Id  = persisted (the DB-assigned primary key value).
+
+export type MaybeId = {
+  | New
+  | Id : value  // value : Int
+}
+
+// ── Generic-style result types ────────────────────────────────────────────────
+// Structurally generic via untyped fields — same principle as Pair.
+// model holds the returned data model record.
+
+export type InsertResult = { | InsertOk : model | InsertErr : message }
+export type FindResult   = { | FindOk   : model | FindErr   : message }
+export type MutResult    = { | MutOk            | MutErr    : message }
+export type IoResult     = { | IoOk             | IoErr     : message }
+
+// ── Internal helper types ─────────────────────────────────────────────────────
+
+export type FkResult = { | FkFound : refTable, refCols | FkNotFound }
+
+export function pgTypeFromString(s) {
+  if s == "text"                        then PgText
+  else if s == "character varying"      then PgVarchar
+  else if s == "character"              then PgChar
+  else if s == "integer"                then PgInteger
+  else if s == "bigint"                 then PgBigInt
+  else if s == "smallint"               then PgSmallInt
+  else if s == "numeric"                then PgNumeric
+  else if s == "real"                   then PgReal
+  else if s == "double precision"       then PgDouble
+  else if s == "boolean"                then PgBoolean
+  else if s == "timestamp without time zone" then PgTimestamp
+  else if s == "timestamp with time zone"    then PgTimestampTz
+  else if s == "date"                   then PgDate
+  else if s == "time without time zone" then PgTime
+  else if s == "json"                   then PgJson
+  else if s == "jsonb"                  then PgJsonb
+  else if s == "uuid"                   then PgUuid
+  else if s == "bytea"                  then PgBytea
+  else PgOther { s };
+}
+
+export function pgTypeName(t) {
+  match t with
+  | PgText        -> "text"
+  | PgVarchar     -> "varchar"
+  | PgChar        -> "char"
+  | PgInteger     -> "integer"
+  | PgBigInt      -> "bigint"
+  | PgSmallInt    -> "smallint"
+  | PgNumeric     -> "numeric"
+  | PgReal        -> "real"
+  | PgDouble      -> "double precision"
+  | PgBoolean     -> "boolean"
+  | PgTimestamp   -> "timestamp"
+  | PgTimestampTz -> "timestamptz"
+  | PgDate        -> "date"
+  | PgTime        -> "time"
+  | PgJson        -> "json"
+  | PgJsonb       -> "jsonb"
+  | PgUuid        -> "uuid"
+  | PgBytea       -> "bytea"
+  | PgSerial      -> "serial"
+  | PgBigSerial   -> "bigserial"
+  | PgOther o     -> o.typeName;
+}
+
+// ── Row helpers ───────────────────────────────────────────────────────────────
+// Extract a typed value from a query row (list of Pair<String, DbValue>).
+
+export function getStr(row, colName) {
+  let pairs = filter(fn p => p.key == colName, row);
+  if length(pairs) == 0 then "" else {
+    match head(pairs).value with
+    | DbText t -> t.value
+    | DbNull   -> ""
+    | _        -> "";
+  }
+}
+
+export function getInt(row, colName) {
+  let pairs = filter(fn p => p.key == colName, row);
+  if length(pairs) == 0 then 0 else {
+    match head(pairs).value with
+    | DbInt n -> n.value
+    | DbNull  -> 0
+    | _       -> 0;
+  }
+}
+
+export function getFloat(row, colName) {
+  let pairs = filter(fn p => p.key == colName, row);
+  if length(pairs) == 0 then 0.0 else {
+    match head(pairs).value with
+    | DbFloat f -> f.value
+    | DbInt n   -> toFloat(n.value)
+    | DbNull    -> 0.0
+    | _         -> 0.0;
+  }
+}
+
+export function getBool(row, colName) {
+  let pairs = filter(fn p => p.key == colName, row);
+  if length(pairs) == 0 then false else {
+    match head(pairs).value with
+    | DbBool b -> b.value
+    | _        -> false;
+  }
+}
+
+export function getOptStr(row, colName) {
+  let pairs = filter(fn p => p.key == colName, row);
+  if length(pairs) == 0 then None else {
+    match head(pairs).value with
+    | DbText t -> Some { t.value }
+    | DbNull   -> None
+    | _        -> None;
+  }
+}
+
+export function getOptInt(row, colName) {
+  let pairs = filter(fn p => p.key == colName, row);
+  if length(pairs) == 0 then None else {
+    match head(pairs).value with
+    | DbInt n -> Some { n.value }
+    | DbNull  -> None
+    | _       -> None;
+  }
+}
+
+// ── Named result types ────────────────────────────────────────────────────────
+// Using Ok/Err directly causes HM inference to unify all Ok.value types across
+// the file. Dedicated result types keep each return type separate.
+
+export type ColsResult  = { | ColsOk  : columns  | ColsErr  : message }
+export type ConsResult  = { | ConsOk  : cons     | ConsErr  : message }
+export type TableResult = { | TableOk : table    | TableErr : message }
+export type SchemaResult= { | SchemaOk: meta     | SchemaErr: message }
+
+// ── Column loader ─────────────────────────────────────────────────────────────
+
+export async proc loadColumns(conn, schemaName, tableName) {
+  let result = await dbQuery(conn,
+    "SELECT column_name, data_type, is_nullable, column_default " +
+    "FROM information_schema.columns " +
+    "WHERE table_schema = $1 AND table_name = $2 " +
+    "ORDER BY ordinal_position",
+    [DbText { schemaName }, DbText { tableName }]
+  );
+  match result with
+  | Err e -> ColsErr { e.message }
+  | Ok r  -> {
+      let cols = map(fn row => {
+        let rawType = getStr(row, "data_type");
+        Column {
+          getStr(row, "column_name"),
+          pgTypeFromString(rawType),
+          rawType,
+          getStr(row, "is_nullable") == "YES",
+          getOptStr(row, "column_default")
+        };
+      }, r.value.rows);
+      ColsOk { cols };
+    }
+}
+
+// ── Constraint loader ─────────────────────────────────────────────────────────
+
+export async proc loadConstraints(conn, schemaName, tableName) {
+  let ctResult = await dbQuery(conn,
+    "SELECT tc.constraint_name, tc.constraint_type " +
+    "FROM information_schema.table_constraints tc " +
+    "WHERE tc.table_schema = $1 AND tc.table_name = $2 " +
+    "  AND tc.constraint_type IN ('PRIMARY KEY','FOREIGN KEY','UNIQUE','CHECK')",
+    [DbText { schemaName }, DbText { tableName }]
+  );
+  match ctResult with
+  | Err e    -> ConsErr { e.message }
+  | Ok ctRows -> {
+      let constraints = await loadConstraintDetails(conn, schemaName, tableName, ctRows.value.rows);
+      ConsOk { constraints };
+    }
+}
+
+export async proc loadConstraintDetails(conn, schemaName, tableName, ctRows) {
+  if length(ctRows) == 0 then [] else {
+    let row        = head(ctRows);
+    let rest       = tail(ctRows);
+    let cname      = getStr(row, "constraint_name");
+    let ctype      = getStr(row, "constraint_type");
+    let thisList   = await loadOneConstraint(conn, schemaName, tableName, cname, ctype);
+    let restList   = await loadConstraintDetails(conn, schemaName, tableName, rest);
+    thisList + restList;
+  }
+}
+
+// Returns a List<Constraint> — empty if the constraint should be skipped,
+// singleton if it should be included. Avoids using Option<Constraint> which
+// would collide with Option<String> from loadCheckExpression in type inference.
+export async proc loadOneConstraint(conn, schemaName, tableName, cname, ctype) {
+  if ctype == "PRIMARY KEY" then {
+    let cols = await loadConstraintColumns(conn, schemaName, cname);
+    [PrimaryKey { cname, cols }];
+  } else if ctype == "UNIQUE" then {
+    let cols = await loadConstraintColumns(conn, schemaName, cname);
+    [Unique { cname, cols }];
+  } else if ctype == "FOREIGN KEY" then {
+    let cols      = await loadConstraintColumns(conn, schemaName, cname);
+    let fkDetails = await loadForeignKeyTarget(conn, schemaName, cname);
+    match fkDetails with
+    | FkNotFound   -> []
+    | FkFound fk   -> [ForeignKey { cname, cols, fk.refTable, fk.refCols }];
+  } else if ctype == "CHECK" then {
+    let expr = await loadCheckExpression(conn, schemaName, cname);
+    match expr with
+    | None    -> []
+    | Some ex -> [Check { cname, ex.value }];
+  } else [];
+}
+
+export async proc loadConstraintColumns(conn, schemaName, cname) {
+  let result = await dbQuery(conn,
+    "SELECT column_name FROM information_schema.key_column_usage " +
+    "WHERE constraint_schema = $1 AND constraint_name = $2 " +
+    "ORDER BY ordinal_position",
+    [DbText { schemaName }, DbText { cname }]
+  );
+  match result with
+  | Err _ -> []
+  | Ok r  -> map(fn row => getStr(row, "column_name"), r.value.rows);
+}
+
+export async proc loadForeignKeyTarget(conn, schemaName, cname) {
+  let result = await dbQuery(conn,
+    "SELECT ccu.table_name AS ref_table, ccu.column_name AS ref_column " +
+    "FROM information_schema.referential_constraints rc " +
+    "JOIN information_schema.constraint_column_usage ccu " +
+    "  ON ccu.constraint_schema = rc.unique_constraint_schema " +
+    "  AND ccu.constraint_name  = rc.unique_constraint_name " +
+    "WHERE rc.constraint_schema = $1 AND rc.constraint_name = $2 " +
+    "ORDER BY ccu.column_name",
+    [DbText { schemaName }, DbText { cname }]
+  );
+  match result with
+  | Err _ -> FkNotFound
+  | Ok r  -> {
+      if length(r.value.rows) == 0 then FkNotFound else {
+        let refTable = getStr(head(r.value.rows), "ref_table");
+        let refCols  = map(fn row => getStr(row, "ref_column"), r.value.rows);
+        FkFound { refTable, refCols };
+      }
+    }
+}
+
+export async proc loadCheckExpression(conn, schemaName, cname) {
+  let result = await dbQuery(conn,
+    "SELECT check_clause FROM information_schema.check_constraints " +
+    "WHERE constraint_schema = $1 AND constraint_name = $2",
+    [DbText { schemaName }, DbText { cname }]
+  );
+  match result with
+  | Err _ -> None
+  | Ok r  -> {
+      if length(r.value.rows) == 0 then None else {
+        let clause = getStr(head(r.value.rows), "check_clause");
+        // Skip Postgres auto-generated NOT NULL check constraints
+        if clause == "" then None else
+        if endsWith(clause, " IS NOT NULL") then None else
+          Some { clause };
+      }
+    }
+}
+
+// endsWith helper — Pfun has split but no endsWith
+export function endsWith(s, suffix) {
+  let sl = length(s);
+  let xl = length(suffix);
+  if xl > sl then false else
+    slice(toInt(sl - xl), toInt(xl), s) == suffix;
+}
+
+// ── Table loader ──────────────────────────────────────────────────────────────
+
+export async proc loadTable(conn, schemaName, tableName) {
+  let colResult = await loadColumns(conn, schemaName, tableName);
+  let conResult = await loadConstraints(conn, schemaName, tableName);
+  match colResult with
+  | ColsErr e -> TableErr { e.message }
+  | ColsOk cols -> {
+      match conResult with
+      | ConsErr e -> TableErr { e.message }
+      | ConsOk cons -> TableOk { Table { schemaName, tableName, cols.columns, cons.cons } };
+    }
+}
+
+// ── Schema loader ─────────────────────────────────────────────────────────────
+
+export async proc loadSchema(conn, schemaName) {
+  let tablesResult = await dbQuery(conn,
+    "SELECT table_name FROM information_schema.tables " +
+    "WHERE table_schema = $1 AND table_type = 'BASE TABLE' " +
+    "ORDER BY table_name",
+    [DbText { schemaName }]
+  );
+  match tablesResult with
+  | Err e -> SchemaErr { e.message }
+  | Ok r  -> {
+      let tableNames = map(fn row => getStr(row, "table_name"), r.value.rows);
+      let tables     = await loadTables(conn, schemaName, tableNames);
+      SchemaOk { SchemaMetadata { schemaName, tables } };
+    }
+}
+
+export async proc loadTables(conn, schemaName, names) {
+  if length(names) == 0 then [] else {
+    let name  = head(names);
+    let rest  = tail(names);
+    let tbl   = await loadTable(conn, schemaName, name);
+    let more  = await loadTables(conn, schemaName, rest);
+    match tbl with
+    | TableErr _ -> more
+    | TableOk t  -> [t.table] + more;
+  }
+}
+
+// ── Pretty printer ────────────────────────────────────────────────────────────
+
+function nullableStr(b) { if b then " NULL" else " NOT NULL"; }
+
+export proc printColumn(col) {
+  let nullable = nullableStr(col.nullable);
+  let def = match col.defaultVal with
+    | Some d -> " DEFAULT " + d.value
+    | None   -> "";
+  println("    " + col.name + "  " + pgTypeName(col.pgType) + nullable + def);
+}
+
+export proc printColumns(cols) {
+  if length(cols) > 0 then {
+    printColumn(head(cols));
+    printColumns(tail(cols));
+  }
+}
+
+export proc printConstraint(c) {
+  match c with
+  | PrimaryKey pk -> println("    PK    " + pk.name + "  (" + join(pk.columns, ", ") + ")")
+  | Unique u      -> println("    UNIQ  " + u.name + "  (" + join(u.columns, ", ") + ")")
+  | ForeignKey fk -> println("    FK    " + fk.name +
+                       "  (" + join(fk.columns, ", ") + ")" +
+                       " -> " + fk.refTable +
+                       " (" + join(fk.refColumns, ", ") + ")")
+  | Check ck      -> println("    CHECK " + ck.name + "  " + ck.expression);
+}
+
+export proc printConstraints(cs) {
+  if length(cs) > 0 then {
+    printConstraint(head(cs));
+    printConstraints(tail(cs));
+  }
+}
+
+export proc printTable(t) {
+  println("TABLE " + t.schema + "." + t.name);
+  printColumns(t.columns);
+  printConstraints(t.constraints);
+  println("");
+}
+
+export proc printTables(tables) {
+  if length(tables) > 0 then {
+    printTable(head(tables));
+    printTables(tail(tables));
+  }
+}
+
+export proc printSchema(meta) {
+  println("Schema: " + meta.schemaName);
+  println("");
+  printTables(meta.tables);
+}
+// ── Fingerprint ───────────────────────────────────────────────────────────────
+// A simple deterministic hash of schema structure + lookup values.
+// Used by verifySchema to detect drift between the model and the live DB.
+
+function hashStep(acc, c) {
+  let code = asc(head(c));
+  (acc * 31 + toInt(code)) % 2147483647;
+}
+
+function hashStr(s) {
+  reduce(hashStep, 0, split(s, ""));
+}
+
+export function fingerprintColumn(col) {
+  col.name + ":" + col.rawType + ":" + __str__(col.nullable);
+}
+
+export function fingerprintConstraint(c) {
+  match c with
+  | PrimaryKey pk -> "PK:" + join(pk.columns, ",")
+  | Unique u      -> "UQ:" + join(u.columns, ",")
+  | ForeignKey fk -> "FK:" + join(fk.columns, ",") + "->" + fk.refTable + "(" + join(fk.refColumns, ",") + ")"
+  | Check ck      -> "CK:" + ck.expression;
+}
+
+export function fingerprintTable(t) {
+  let cols  = join(map(fingerprintColumn, t.columns), "|");
+  let cstrs = join(map(fingerprintConstraint, t.constraints), "|");
+  t.name + "{" + cols + "}" + "[" + cstrs + "]";
+}
+
+export function fingerprintSchema(tables, lookupValues) {
+  let tableStr  = join(map(fingerprintTable, tables), ";");
+  let lookupStr = join(lookupValues, ";");
+  __str__(hashStr(tableStr + "||" + lookupStr));
+}
+
+// ── Lookup value loader ───────────────────────────────────────────────────────
+
+export async proc loadLookupValues(conn, schemaName, tableName) {
+  let result = await dbQuery(conn,
+    "SELECT kcu.column_name " +
+    "FROM information_schema.table_constraints tc " +
+    "JOIN information_schema.key_column_usage kcu " +
+    "  ON kcu.constraint_name = tc.constraint_name " +
+    "  AND kcu.constraint_schema = tc.constraint_schema " +
+    "WHERE tc.table_schema = $1 AND tc.table_name = $2 " +
+    "  AND tc.constraint_type = 'PRIMARY KEY' " +
+    "ORDER BY kcu.ordinal_position LIMIT 1",
+    [DbText { schemaName }, DbText { tableName }]
+  );
+  match result with
+  | Err _ -> []
+  | Ok r  -> {
+      if length(r.value.rows) == 0 then [] else {
+        let pkCol = getStr(head(r.value.rows), "column_name");
+        let rows  = await dbQuery(conn,
+          "SELECT " + pkCol + " FROM " + schemaName + "." + tableName + " ORDER BY " + pkCol,
+          []
+        );
+        match rows with
+        | Err _ -> []
+        | Ok rv -> map(fn row => getStr(row, pkCol), rv.value.rows)
+      }
+    }
+}
+
+export async proc loadAllLookupValues(conn, schemaName, lookupTables) {
+  if length(lookupTables) == 0 then [] else {
+    let name   = head(lookupTables);
+    let rest   = tail(lookupTables);
+    let vals   = await loadLookupValues(conn, schemaName, name);
+    let more   = await loadAllLookupValues(conn, schemaName, rest);
+    map(fn v => name + "." + v, vals) + more;
+  }
+}

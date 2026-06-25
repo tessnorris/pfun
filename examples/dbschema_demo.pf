@@ -1,0 +1,241 @@
+/*
+  dbschema_demo.pf — Demonstrates generated CRUD operations.
+
+  Prerequisites:
+    1. Run schema setup:
+         psql postgres://postgres:tessa@localhost:5432/tessa \
+              -f examples/db/schema_setup.sql
+
+    2. Generate the data model:
+         pfun examples/db/dbschema_gen.pf
+
+    3. Run this demo:
+         pfun examples/db/dbschema_demo.pf
+*/
+
+import * from "io";
+import * from "db/postgresql";
+import * from "./dbschema_config";
+import * from "../dbschema";
+import * from "./dbschema_utils";
+import * from "./data_model/public_data_model";
+
+// Re-declare types to ensure variants are registered in this module's context.
+type MaybeId             = { | New | Id : value }
+type ParseResult         = { | ParseOk : val | ParseFail }
+type InsertCustomerResult = { | InsertCustomerOk : model | InsertCustomerErr : message }
+type FindCustomerResult   = { | FindCustomerOk   : model | FindCustomerErr   : message }
+type InsertOrderResult    = { | InsertOrderOk    : model | InsertOrderErr    : message }
+type FindOrderResult      = { | FindOrderOk      : model | FindOrderErr      : message }
+type InsertOrderItemResult = { | InsertOrderItemOk : model | InsertOrderItemErr : message }
+type FindOrderItemResult   = { | FindOrderItemOk   : model | FindOrderItemErr   : message }
+type MutResult           = { | MutOk | MutErr : message }
+type CustomerRef  = { | CustomerId : id | CustomerDataModel : customer }
+type OrderRef     = { | OrderId    : id | OrderDataModel    : order }
+type ProductRef   = { | ProductId  : id | ProductDataModel  : product }
+type CustomerModel    = { maybeId, name, email }
+type OrderModel       = { maybeId, customerRef, status, placedAt }
+type OrderItemModel   = { maybeId, orderRef, productRef, quantity }
+
+// ── Schema verification ───────────────────────────────────────────────────────
+
+async proc verifySchema(conn) {
+  let meta = await loadSchema(conn, SCHEMA);
+  match meta with
+  | SchemaErr e -> println("[Schema] Could not load schema: " + e.message)
+  | SchemaOk s  -> {
+      let lookupVals = await loadAllLookupValues(conn, SCHEMA, LOOKUP_TABLES);
+      let fp = fingerprintSchema(s.meta.tables, lookupVals);
+      if fp == SCHEMA_FINGERPRINT then
+        println("[Schema] OK — model matches database.")
+      else {
+        println("[Schema] MISMATCH — database schema has changed!");
+        println("  Expected: " + SCHEMA_FINGERPRINT);
+        println("  Current:  " + fp);
+        println("  Regenerate: pfun examples/db/dbschema_gen.pf");
+      }
+    }
+}
+
+// ── Printing helpers ──────────────────────────────────────────────────────────
+
+proc printMaybeId(mid) {
+  match mid with
+  | New    -> print("New")
+  | Id i   -> print("Id " + __str__(i.value));
+}
+
+proc printCustomerModel(c) {
+  print("CustomerModel { ");
+  printMaybeId(c.maybeId);
+  println(", " + c.name + ", " + c.email + " }");
+}
+
+proc printOrderModel(o) {
+  print("OrderModel { ");
+  printMaybeId(o.maybeId);
+  print(", status=" + __str__(o.status));
+  match o.customerRef with
+  | CustomerId r        -> print(", customerId=" + __str__(r.id))
+  | CustomerDataModel r -> print(", customerName=" + r.customer.name);
+  println(" }");
+}
+
+proc printOrderItemModel(oi) {
+  print("OrderItemModel { ");
+  printMaybeId(oi.maybeId);
+  match oi.orderRef with
+  | OrderId r        -> print(", orderId=" + __str__(r.id))
+  | OrderDataModel r -> print(", order=<hydrated>");
+  match oi.productRef with
+  | ProductId r        -> print(", productId=" + __str__(r.id))
+  | ProductDataModel r -> print(", productName=" + r.product.name);
+  println(", qty=" + __str__(oi.quantity) + " }");
+}
+
+proc printSep(label) {
+  println("");
+  println("── " + label + " ──────────────────────────────────────────");
+}
+
+// ── Demo ──────────────────────────────────────────────────────────────────────
+
+async proc main() {
+  println("Connecting to " + CONNECTION_STRING + "...");
+  let conn = await dbConnect(CONNECTION_STRING);
+  match conn with
+  | Err e -> println("Connect failed: " + e.message)
+  | Ok c  -> {
+      await runDemo(c.value);
+      let closed = await dbClose(c.value);
+      match closed with
+      | Ok _  -> {}
+      | Err e -> println("Close failed: " + e.message);
+    }
+}
+
+async proc runDemo(conn) {
+  // ── Schema verification ───────────────────────────────────────────────────
+  printSep("Schema Verification");
+  await verifySchema(conn);
+
+  // ── Find all customers ────────────────────────────────────────────────────
+  printSep("Find All Customers");
+  let customers = await findAllCustomers(conn);
+  println("Found " + __str__(length(customers)) + " customers:");
+  map(printCustomerModel, customers);
+
+  // ── Find customer by id ───────────────────────────────────────────────────
+  printSep("Find Customer By Id (id=1)");
+  let found = await findCustomerById(conn, 1);
+  match found with
+  | FindCustomerErr e -> println("Not found: " + e.message)
+  | FindCustomerOk f  -> {
+      println("Found:");
+      printCustomerModel(f.model);
+    }
+
+  // ── Insert a new customer ─────────────────────────────────────────────────
+  printSep("Insert Customer");
+  let newCustomer = CustomerModel { New, "Dave Kowalski", "dave@example.com" };
+  let inserted = await insertCustomer(conn, newCustomer);
+  match inserted with
+  | InsertCustomerErr e -> println("Insert failed: " + e.message)
+  | InsertCustomerOk i  -> {
+      println("Inserted:");
+      printCustomerModel(i.model);
+
+      // ── Update the customer ───────────────────────────────────────────────
+      printSep("Update Customer");
+      let updated = CustomerModel { i.model.maybeId, "Dave K.", i.model.email };
+      let updateResult = await updateCustomer(conn, updated);
+      match updateResult with
+      | MutErr e -> println("Update failed: " + e.message)
+      | MutOk    -> {
+          println("Updated. Re-fetching...");
+          match i.model.maybeId with
+          | New   -> println("(no id to fetch)")
+          | Id id -> {
+              let refetched = await findCustomerById(conn, id.value);
+              match refetched with
+              | FindCustomerErr e -> println("Fetch failed: " + e.message)
+              | FindCustomerOk f  -> printCustomerModel(f.model);
+            }
+        }
+
+      // ── Delete the customer ───────────────────────────────────────────────
+      printSep("Delete Customer");
+      let deleteResult = await deleteCustomer(conn, i.model);
+      match deleteResult with
+      | MutErr e -> println("Delete failed: " + e.message)
+      | MutOk    -> println("Deleted successfully.");
+    }
+
+  // ── Find all orders ───────────────────────────────────────────────────────
+  printSep("Find All Orders");
+  let orders = await findAllOrders(conn);
+  println("Found " + __str__(length(orders)) + " orders:");
+  map(printOrderModel, orders);
+
+  // ── Find orders by customer ───────────────────────────────────────────────
+  printSep("Find Orders By Customer (id=1)");
+  let custRef = CustomerId { 1 };
+  let custOrders = await findAllOrdersByCustomer(conn, custRef);
+  println("Found " + __str__(length(custOrders)) + " orders for customer 1:");
+  map(printOrderModel, custOrders);
+
+  // ── Insert a new order ────────────────────────────────────────────────────
+  printSep("Insert Order");
+  let newOrder = OrderModel {
+    New,
+    CustomerId { 2 },
+    Shipped,
+    ""   // placed_at has DEFAULT now() — value ignored by insert, populated by DB
+  };
+  let insertedOrder = await insertOrder(conn, newOrder);
+  match insertedOrder with
+  | InsertOrderErr e -> println("Insert failed: " + e.message)
+  | InsertOrderOk io -> {
+      println("Inserted:");
+      printOrderModel(io.model);
+
+      // ── Insert an order item for it ───────────────────────────────────────
+      printSep("Insert Order Item");
+      match io.model.maybeId with
+      | New    -> println("(no order id)")
+      | Id oid -> {
+          let newItem = OrderItemModel {
+            New,
+            OrderId { oid.value },
+            ProductId { 1 },
+            3
+          };
+          let insertedItem = await insertOrderItem(conn, newItem);
+          match insertedItem with
+          | InsertOrderItemErr e -> println("Insert failed: " + e.message)
+          | InsertOrderItemOk ii -> {
+              println("Inserted:");
+              printOrderItemModel(ii.model);
+            }
+        }
+
+      // ── Delete the order ──────────────────────────────────────────────────
+      printSep("Delete Order");
+      let deleteOrderResult = await deleteOrder(conn, io.model);
+      match deleteOrderResult with
+      | MutErr e -> println("Delete failed: " + e.message)
+      | MutOk    -> println("Deleted successfully.");
+    }
+
+  // ── Find order items by order ─────────────────────────────────────────────
+  printSep("Find Order Items By Order (id=1)");
+  let orderRef = OrderId { 1 };
+  let items = await findAllOrderItemsByOrder(conn, orderRef);
+  println("Found " + __str__(length(items)) + " items for order 1:");
+  map(printOrderItemModel, items);
+
+  println("");
+  println("Done.");
+}
+
+main();

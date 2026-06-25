@@ -1,11 +1,10 @@
 /*
-  server.pf — Pfun HTTP server for the full-stack example.
+  server.pf — Request handler for the full-stack example.
 
-  Receives ClientMsg JSON at POST /api, responds with ServerMsg JSON.
-  Run with:  pfun examples/server.pf
+  In app mode (pfun --serve app.pf): handleRequest is called by the
+  --serve runtime for requests to apiPath. No httpListen needed.
 
-  The client (client.pf) connects via:  pfun --serve examples/client.pf
-  Run server on 3171, client on 3170 (default).
+  Standalone mode: uncomment httpListen at the bottom.
 */
 
 import * from "io";
@@ -13,12 +12,10 @@ import * from "http";
 import * from "json";
 import * from "./protocol";
 
-let port = 3171;
-
-async proc handleRequest(req, res) {
+export async proc handleRequest(req, res) {
   if req.method == "OPTIONS" then {
     res.text(200, "");
-  } else if req.method == "POST" && req.path == "/api" then {
+  } else if req.method == "POST" then {
     let parsed = jsonDeserialize(req.body);
     match parsed with
     | Some msg -> {
@@ -33,10 +30,11 @@ async proc handleRequest(req, res) {
 
 function dispatch(msg) {
   match msg with
-  | ClientPing _  -> serverPong()
-  | ClientEcho e  -> ServerEchoed { e.text }
-  | ClientAdd a   -> ServerSum { a.a + a.b };
+  | ClientPing   -> ServerPong
+  | ClientEcho e -> ServerEchoed { e.text }
+  | ClientAdd a  -> ServerSum { a.a + a.b };
 }
 
-println("Server listening on http://localhost:" + __str__(port) + "/api");
-httpListen(port, handleRequest);
+// Standalone mode — uncomment to run server independently:
+// println("Server listening on http://localhost:3171/api");
+// httpListen(3171, handleRequest);

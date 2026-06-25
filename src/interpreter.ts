@@ -6,7 +6,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { Lexer } from './lexer';
 import { Parser } from './parser';
-import { checkProcedureUsage, DICT_CONSTRUCTOR_CALLS, BUFFER_CONSTRUCTOR_CALLS, matchedConstructorCall } from './procedureCheck';
+import { checkProcedureUsage } from './procedureCheck';
 import { checkTypes } from './typechecker';
 
 // ─── Registry Types ───────────────────────────────────────────────────────────
@@ -477,18 +477,15 @@ export class TypeRegistry {
     const variantNames = new Set<string>();
     for (const v of variants) {
       const existing = this.schemas.get(v.name) ?? [];
-      // Allow shared variant names across different unions — only reject
-      // redefinition within the same union.
+      // If this variant is already registered in this union (re-import), skip silently.
       if (existing.some(s => s.unionName === unionName)) {
-        throw new Error(`Variant '${v.name}' is already defined in union '${unionName}'.`);
+        variantNames.add(v.name);
+        continue;
       }
       existing.push({ fields: v.fields, inferredTypes: null, unionName });
       this.schemas.set(v.name, existing);
       variantNames.add(v.name);
       if (v.fields.length === 0 && globals) {
-        // Zero-field variants that share a name across unions should only be
-        // registered as globals once — first registration wins. Callers that
-        // need a specific union's zero-field variant should construct explicitly.
         if (!globals.isDefined(v.name)) {
           globals.define(v.name, { __type: v.name, __union: unionName }, false);
         }
@@ -835,15 +832,6 @@ export class ModuleLoader {
   }
 }
 
-// The DICT_CONSTRUCTOR_CALLS/BUFFER_CONSTRUCTOR_CALLS name sets and the
-// matchedConstructorCall() helper used by LetStmt's runtime guard below now
-// live in procedureCheck.ts (imported above), which also runs the same
-// check statically via checkMutableLetUsage — see that file's header for
-// the full rationale. Sharing one definition here avoids the two checks
-// silently drifting apart; this direction (interpreter.ts importing FROM
-// procedureCheck.ts) introduces no new dependency, since interpreter.ts
-// already imports checkProcedureUsage from the same module.
-
 // ─── Interpreter ──────────────────────────────────────────────────────────────
 
 export class Interpreter {
@@ -1122,14 +1110,21 @@ export class Interpreter {
         if (stmt.initializer.type === 'ArrayExpr') {
           throw new Error(`Arrays must be declared with 'var', not 'let'. Use: var ${stmt.name} = array { ... }`);
         }
-        {
-          const dictCall = matchedConstructorCall(stmt.initializer, DICT_CONSTRUCTOR_CALLS);
-          if (dictCall) {
-            throw new Error(`Dictionaries must be declared with 'var', not 'let'. Use: var ${stmt.name} = ${dictCall}(...)`);
+        // Guard mutable constructor calls (toDict, listToDict, makeBuffer, makeStringBuffer, etc.)
+        // Unwrap a single layer of grouping parens before inspecting the call.
+        const initExpr = stmt.initializer.type === 'GroupExpr'
+          ? (stmt.initializer as any).expression
+          : stmt.initializer;
+        if (initExpr.type === 'CallExpr') {
+          const callee = (initExpr as any).callee;
+          const fnName = callee?.type === 'IdentExpr' ? callee.name : null;
+          const DICT_CTORS   = new Set(['toDict','listToDict']);
+          const BUFFER_CTORS = new Set(['makeBuffer','makeStringBuffer']);
+          if (DICT_CTORS.has(fnName)) {
+            throw new Error(`Dictionaries must be declared with 'var', not 'let'. Use: var ${stmt.name} = ${fnName}(...)`);
           }
-          const bufferCall = matchedConstructorCall(stmt.initializer, BUFFER_CONSTRUCTOR_CALLS);
-          if (bufferCall) {
-            throw new Error(`Buffers must be declared with 'var', not 'let'. Use: var ${stmt.name} = ${bufferCall}(...)`);
+          if (BUFFER_CTORS.has(fnName)) {
+            throw new Error(`Buffers must be declared with 'var', not 'let'. Use: var ${stmt.name} = ${fnName}(...)`);
           }
         }
         this.checkNameAvailable(stmt.name, env, 'let');
@@ -1237,8 +1232,20 @@ export class Interpreter {
             this.checkNameAvailable(bindName, targetEnv, 'import');
             targetEnv.defineCell(bindName, val.__varCell, true);
           } else {
-            this.checkNameAvailable(bindName, targetEnv, 'import');
-            targetEnv.define(bindName, val, false);
+            // For zero-field union variant records (e.g. PgText, CmdNone), re-importing
+            // the same value under the same name is idempotent — skip rather than throw.
+            // This happens when module A defines a union, and modules B and C both import
+            // A; when a program imports both B and C the variant names are seen twice.
+            const isZeroFieldVariant = (
+              val && typeof val === 'object' && val.__type && val.__union &&
+              Object.keys(val).filter(k => k !== '__type' && k !== '__union').length === 0
+            );
+            if (isZeroFieldVariant && targetEnv.isDefinedLocally(bindName)) {
+              // idempotent — already defined with the same zero-field variant
+            } else {
+              this.checkNameAvailable(bindName, targetEnv, 'import');
+              targetEnv.define(bindName, val, false);
+            }
           }
         };
 
@@ -1894,12 +1901,27 @@ export class Interpreter {
       }
     }
 
+    // ── List concatenation via + ──────────────────────────────────────────────
+    if (expr.operator === 'PlusToken') {
+      if (Array.isArray(left) && Array.isArray(right)) {
+        const lCL = left.length  > 0 && left.every((c: any)  => c instanceof PfunChar);
+        const rCL = right.length > 0 && right.every((c: any) => c instanceof PfunChar);
+        // Both char lists → string concat; both non-char lists → list concat;
+        // mixed or either empty → defer to string path only if either is a
+        // non-empty char list, otherwise list concat.
+        if (lCL && rCL) return this.stringify(left) + this.stringify(right);
+        if (lCL)        return this.stringify(left) + this.stringify(right);
+        if (rCL)        return this.stringify(left) + this.stringify(right);
+        return [...left, ...right];
+      }
+    }
+
     // ── String / char concatenation via + ────────────────────────────────────
     if (expr.operator === 'PlusToken') {
       const lStr = typeof left === 'string', rStr = typeof right === 'string';
       const lChar = left instanceof PfunChar, rChar = right instanceof PfunChar;
-      const lCL = Array.isArray(left)  && left.every((c: any)  => c instanceof PfunChar);
-      const rCL = Array.isArray(right) && right.every((c: any) => c instanceof PfunChar);
+      const lCL = Array.isArray(left)  && left.length > 0 && left.every((c: any)  => c instanceof PfunChar);
+      const rCL = Array.isArray(right) && right.length > 0 && right.every((c: any) => c instanceof PfunChar);
       if (lStr || lChar || lCL || rStr || rChar || rCL) return this.stringify(left) + this.stringify(right);
     }
 

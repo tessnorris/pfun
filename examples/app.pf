@@ -1,0 +1,15 @@
+/*
+  app.pf — Full-stack application manifest.
+
+  pfun --serve examples/app.pf
+
+  The --serve runtime:
+    - Compiles client to a browser bundle, serves it at /
+    - Compiles server and calls its exported handleRequest for API routes
+    - Runs everything on a single port — no CORS needed
+*/
+
+let port    = 3170;
+let apiPath = "/api";
+let server  = "./server";
+let client  = "./client";

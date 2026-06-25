@@ -891,7 +891,18 @@ if (require.main === module) {
       // source tree — so the relative path between two output files is the
       // same as between two source files.
 
-      const js = transpile(stmts, source, { runtimeRequirePath, builtinRequirePaths });
+      // Collect zero-field variants from all already-compiled dependency modules
+      const externalSingletons = new Set<string>();
+      for (const [depPath, unions] of userModuleUnions.entries()) {
+        if (depPath === absolutePath) continue;
+        for (const u of unions) {
+          for (const v of u.variants) {
+            if (v.fields.length === 0) externalSingletons.add(v.name);
+          }
+        }
+      }
+
+      const js = transpile(stmts, source, { runtimeRequirePath, builtinRequirePaths, externalSingletons });
       fs.writeFileSync(outPath, js, 'utf-8');
       console.log(`Compiled: ${path.relative(cwd, absolutePath)} → ${path.relative(cwd, outPath)}`);
     }
@@ -948,15 +959,21 @@ if (require.main === module) {
       console.log(`Inlined to: ${path.relative(cwd, singleOut)}`);
     }
   } else if (args.includes('--serve')) {
-    // ── Browser serve mode ──────────────────────────────────────────────────
-    // pfun --serve <script.pf> [--port N]
+    // ── Serve mode ───────────────────────────────────────────────────────────
+    // pfun --serve <entry.pf> [--port N]
     //
-    // Compiles the program and all user-module dependencies, bundles everything
-    // into a single self-contained index.html, and serves it on localhost.
-    // println() output appears in a <div> on the page.
+    // Two sub-modes detected by inspecting the entry file:
+    //
+    // APP MODE — entry has `let server = "..."` and `let client = "..."`:
+    //   Compiles client to a browser bundle, compiles server and extracts its
+    //   exported handleRequest, runs a single HTTP server that serves the
+    //   bundle at / and routes apiPath to the handler.
+    //
+    // PLAIN MODE — any other .pf file:
+    //   Compiles it as a browser-only program and serves the bundle at /.
 
-    const portIdx = args.indexOf('--port');
-    const port = portIdx !== -1 ? parseInt(args[portIdx + 1], 10) : 3170;
+    const portArg = args.indexOf('--port');
+    const cliPort = portArg !== -1 ? parseInt(args[portArg + 1], 10) : -1;
 
     const positional = args.filter((a, i) => {
       if (a === '--serve' || a === '--port') return false;
@@ -976,7 +993,8 @@ if (require.main === module) {
     }
 
     const cwd       = process.cwd();
-    const srcRtDir  = path.join(cwd, 'src', 'runtime');
+    const projectRoot0 = path.resolve(__dirname, '..');
+    const srcRtDir  = path.join(projectRoot0, 'src', 'runtime');
     const browserRt = path.join(srcRtDir, 'pfun-runtime-browser.js');
 
     if (!fs.existsSync(browserRt)) {
@@ -985,13 +1003,36 @@ if (require.main === module) {
       process.exit(1);
     }
 
+    // ── Parse the entry file to detect app manifest ───────────────────────
+    const entrySource = fs.readFileSync(entryPath, 'utf-8');
+    const entryStmts  = new Parser(new Lexer(entrySource).lex()).parse();
+
+    // Extract top-level `let name = "string"` and `let name = number` values
+    function extractManifestValues(stmts: any[]): Record<string, string | number> {
+      const vals: Record<string, string | number> = {};
+      for (const s of stmts) {
+        if (s.type !== 'LetStmt') continue;
+        const init = s.initializer ?? s.init ?? s.value;
+        if (!init) continue;
+        if (init.type === 'StrExpr')  vals[s.name] = init.value;
+        if (init.type === 'IntExpr')  vals[s.name] = Number(init.value);
+      }
+      return vals;
+    }
+
+    const manifest = extractManifestValues(entryStmts);
+    const isAppManifest = typeof manifest.server === 'string' && typeof manifest.client === 'string';
+
+    const entryDir    = path.dirname(entryPath);
+    const port        = cliPort !== -1 ? cliPort : (typeof manifest.port === 'number' ? manifest.port : 3170);
+    const apiPath     = typeof manifest.apiPath === 'string' ? manifest.apiPath : '/api';
+
     const BUILTIN_PATHS_BROWSER = new Set([
       'io','file','math','json','async','http','db/postgresql','db/mariadb',
     ]);
-
     const builtinUnionResolverForServe = builtinUnionResolver;
 
-    // Compile each .pf file to JS in dependency order (deps before entry).
+    // ── Browser bundle compilation (shared by both modes) ─────────────────
     const compiledServe = new Set<string>();
     const serveModules: Array<{ js: string }> = [];
     const serveUserUnions = new Map<string, Array<{ name: string; variants: { name: string; fields: string[] }[] }>>();
@@ -1012,11 +1053,8 @@ if (require.main === module) {
     function compileBrowserFile(absPath: string): void {
       if (compiledServe.has(absPath)) return;
       compiledServe.add(absPath);
-
       const src   = fs.readFileSync(absPath, 'utf-8');
       const stmts = new Parser(new Lexer(src).lex()).parse();
-
-      // Recurse into user-module dependencies first
       const srcDir = path.dirname(absPath);
       for (const stmt of stmts) {
         if (stmt.type !== 'ImportStmt') continue;
@@ -1030,19 +1068,31 @@ if (require.main === module) {
         }
         compileBrowserFile(depPath);
       }
-
       serveUserUnions.set(absPath, extractUnions(stmts));
-
       const errors = checkTypes(stmts, src, undefined, makeServeUnionResolver(absPath));
       if (errors.length > 0) {
         for (const e of errors) console.error(e.pfunMessage);
         process.exit(1);
       }
-
-      serveModules.push({ js: transpile(stmts, src) });
+      // Collect zero-field variants from all compiled dependency modules
+      const externalSingletons = new Set<string>();
+      for (const [depPath, unions] of serveUserUnions.entries()) {
+        if (depPath === absPath) continue;
+        for (const u of unions) {
+          for (const v of u.variants) {
+            if (v.fields.length === 0) externalSingletons.add(v.name);
+          }
+        }
+      }
+      serveModules.push({ js: transpile(stmts, src, { externalSingletons }) });
     }
 
-    compileBrowserFile(entryPath);
+    const clientEntryPath = isAppManifest
+      ? path.resolve(entryDir, (manifest.client as string).endsWith('.pf')
+          ? manifest.client as string : manifest.client + '.pf')
+      : entryPath;
+
+    compileBrowserFile(clientEntryPath);
 
     // Runtime destructure — reads from window.__pfunRuntime instead of require()
     const runtimeDestructure = 'const {' + [
@@ -1075,63 +1125,53 @@ if (require.main === module) {
 
     function browserifyModule(js: string, isFirst: boolean): string {
       let result = js;
-      // Replace pfun-runtime require with browser destructure (first module only)
       result = result.replace(
         /^const\s+\{[^}]+\}\s*=\s*require\("[^"]*pfun-runtime[^"]*"\);\n?/m,
         isFirst ? runtimeDestructure + '\n' : '',
       );
-      // Strip all remaining require() calls (may be indented inside async IIFE).
       result = result.replace(
         /^\s*const\s+(?:\{[^}]*\}|[^\s=]+)\s*=\s*require\(['"][^'"]+['"]\);\n?(?:\s*Object\.assign\(globalThis,[^)]+\);\n?)?/gm,
         '',
       );
-      // Strip module.exports assignments
       result = result.replace(/^\s*module\.exports\s*=\s*\{[^}]*\};\s*\n?/gm, '');
       result = result.replace(/^\s*module\.exports\.\w+\s*=\s*\w+;\s*\n?/gm, '');
-      // Browser-safe error handler
       result = result.replace(
         /process\.stderr\.write\([^)]+\);\s*\n\s*process\.exit\(1\);/g,
         'console.error($e$.message);',
       );
-      // Strip the per-module async IIFE wrapper line by line.
-      // The transpiler always emits this exact 4-line shell around the module body:
-      //   (async () => {        ← line 1
-      //   try {                 ← line 2 (indented 2)
-      //     ...body...
-      //   } catch ($e$) {      ← second-to-last pair
-      //     console.error(...)
-      //   }
-      //   })();                ← last line
-      // We strip lines 1, 2, and the last 4 lines (catch block + closing).
-      // This is robust against nested try/catch inside the body.
       const lines = result.split('\n');
       const firstIife = lines.findIndex(l => /^\(async \(\) => \{/.test(l));
       const lastClose = lines.map((l, i) => [l, i]).filter(([l]) => /^\}\)\(\);/.test(l as string)).pop();
       if (firstIife !== -1 && lastClose) {
         const closeIdx = lastClose[1] as number;
-        // Remove from closeIdx back to the "} catch" line
-        // The catch block is always: "  } catch ($e$) {", error line, "  }"
-        // So remove lines closeIdx-3 through closeIdx (inclusive)
-        // and lines firstIife and firstIife+1 (the "(async" and "try {" lines)
         const withoutClose = [
-          ...lines.slice(0, firstIife),                  // before IIFE
-          ...lines.slice(firstIife + 2, closeIdx - 3),   // body (skip "(async" + "try {")
-          ...lines.slice(closeIdx + 1),                  // after IIFE
+          ...lines.slice(0, firstIife),
+          ...lines.slice(firstIife + 2, closeIdx - 3),
+          ...lines.slice(closeIdx + 1),
         ];
         result = withoutClose.join('\n');
       }
       return result;
     }
 
-    // Strip the shared runtime destructure from non-first modules (it's already in the first)
     const rawModules = serveModules.map(({ js }, i) => browserifyModule(js, i === 0));
+    let innerCode = rawModules.join('\n');
 
-    // Wrap everything in a single async IIFE so all module functions share one scope
-    const innerCode = rawModules.join('\n');
+    // In app mode, patch the client's serverUrl to apiPath.
+    // client.pf declares `let serverUrl = "..."` which compiles to
+    // `const serverUrl = "..."` in the bundle. Replace the value in place
+    // rather than injecting a second declaration (which would be a SyntaxError).
+    if (isAppManifest) {
+      innerCode = innerCode.replace(
+        /\bconst serverUrl\s*=\s*"[^"]*";/,
+        `const serverUrl = ${JSON.stringify(apiPath)};`
+      );
+    }
+
     const bundledJs = `(async () => {\ntry {\n${innerCode}\n} catch ($e$) {\nconsole.error($e$.message);\n}\n})();`;
 
     const runtimeJs = fs.readFileSync(browserRt, 'utf-8');
-    const entryName = path.basename(entryPath, '.pf');
+    const entryName = path.basename(clientEntryPath, '.pf');
     const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1167,16 +1207,257 @@ ${bundledJs}
 </body>
 </html>`;
 
-    const http = require('http');
-    const server = http.createServer((_req: any, res: any) => {
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-      res.end(html);
-    });
+    if (!isAppManifest) {
+      // ── Plain mode: browser-only, no server handler ───────────────────────
+      const http = require('http');
+      const srv = http.createServer((_req: any, res: any) => {
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end(html);
+      });
+      srv.listen(port, '127.0.0.1', () => {
+        console.log(`Serving ${path.relative(cwd, entryPath)} at http://localhost:${port}/`);
+        console.log('Press Ctrl+C to stop.');
+      });
+    } else {
+      // ── App mode: compile server, wire single HTTP server ─────────────────
+      const serverPfPath = path.resolve(entryDir,
+        (manifest.server as string).endsWith('.pf')
+          ? manifest.server as string : manifest.server + '.pf');
 
-    server.listen(port, '127.0.0.1', () => {
-      console.log(`Serving ${path.relative(cwd, entryPath)} at http://localhost:${port}/`);
-      console.log('Press Ctrl+C to stop.');
-    });
+      if (!fs.existsSync(serverPfPath)) {
+        console.error(`Server file not found: ${serverPfPath}`);
+        process.exit(1);
+      }
+
+      // Compile server.pf to a temp JS file and require it.
+      // Always use the pfun project root (where main.ts lives) as the base,
+      // so lib/ paths resolve correctly regardless of where --serve is invoked from.
+      const projectRoot = projectRoot0;
+      const tmpDir = path.join(projectRoot, 'output', '__serve_tmp__');
+      fs.mkdirSync(tmpDir, { recursive: true });
+
+      // Reuse -c compilation machinery for the server side
+      const serverCompiled  = new Set<string>();
+      const serverOutPaths  = new Map<string, string>();
+      const serverUserUnions = new Map<string, Array<{ name: string; variants: { name: string; fields: string[] }[] }>>();
+
+      function makeServerUnionResolver(forFile: string) {
+        return (importPath: string) => {
+          const builtin = BUILTIN_UNION_TABLE[importPath];
+          if (builtin) return new Map(builtin.map((u: any) => [u.name, u.variants]));
+          const sd = path.dirname(forFile);
+          const dp = importPath.endsWith('.pf') ? importPath : importPath + '.pf';
+          const depPath = path.resolve(sd, dp);
+          const unions = serverUserUnions.get(depPath);
+          if (!unions || unions.length === 0) return null;
+          return new Map(unions.map(u => [u.name, u.variants]));
+        };
+      }
+
+      function compileServerFile(absPath: string): void {
+        if (serverCompiled.has(absPath)) return;
+        serverCompiled.add(absPath);
+        const src   = fs.readFileSync(absPath, 'utf-8');
+        const stmts = new Parser(new Lexer(src).lex()).parse();
+        const sd    = path.dirname(absPath);
+        const BUILTIN_PATHS_SERVER = new Set([
+          'io','file','math','json','async','http','db/postgresql','db/mariadb',
+        ]);
+        for (const stmt of stmts) {
+          if (stmt.type !== 'ImportStmt') continue;
+          const imp = stmt as any;
+          if (BUILTIN_PATHS_SERVER.has(imp.path)) continue;
+          const depPf   = imp.path.endsWith('.pf') ? imp.path : imp.path + '.pf';
+          const depPath = path.resolve(sd, depPf);
+          if (!fs.existsSync(depPath)) {
+            console.error(`Server module not found: ${depPath}`);
+            process.exit(1);
+          }
+          compileServerFile(depPath);
+        }
+        serverUserUnions.set(absPath, extractUnions(stmts));
+        const errors = checkTypes(stmts, src, undefined, makeServerUnionResolver(absPath));
+        if (errors.length > 0) {
+          for (const e of errors) console.error(e.pfunMessage);
+          process.exit(1);
+        }
+        // Output to tmp dir mirroring structure relative to project root
+        const rel     = path.relative(projectRoot, absPath);
+        const outPath = path.join(tmpDir, rel.replace(/\.pf$/, '.js'));
+        fs.mkdirSync(path.dirname(outPath), { recursive: true });
+        const relToLib      = path.relative(path.dirname(outPath), path.join(projectRoot, 'output', 'lib'));
+        const libPathOption = relToLib.startsWith('.') ? relToLib : './' + relToLib;
+        const builtinReqPaths: Record<string, string> = {};
+        const BUILTIN_LIB_FILES_LOCAL: Record<string, string> = {
+          'io': 'pfun-io', 'file': 'pfun-file', 'math': 'pfun-math',
+          'json': 'pfun-json', 'async': 'pfun-async', 'http': 'pfun-http',
+          'db/postgresql': 'pfun-db-postgresql', 'db/mariadb': 'pfun-db-mariadb',
+        };
+        for (const [mod, lib] of Object.entries(BUILTIN_LIB_FILES_LOCAL)) {
+          builtinReqPaths[mod] = libPathOption + '/' + lib;
+        }
+        const serverExternalSingletons = new Set<string>();
+        for (const [depPath, unions] of serverUserUnions.entries()) {
+          if (depPath === absPath) continue;
+          for (const u of unions) {
+            for (const v of u.variants) {
+              if (v.fields.length === 0) serverExternalSingletons.add(v.name);
+            }
+          }
+        }
+        const js = transpile(stmts, src, {
+          runtimeRequirePath: libPathOption + '/pfun-runtime',
+          builtinRequirePaths: builtinReqPaths,
+          externalSingletons: serverExternalSingletons,
+        });
+        fs.writeFileSync(outPath, js, 'utf-8');
+        serverOutPaths.set(absPath, outPath);
+      }
+
+      compileServerFile(serverPfPath);
+
+      // Ensure runtime libs are in output/lib/ under the project root
+      const libDir = path.join(projectRoot, 'output', 'lib');
+      fs.mkdirSync(libDir, { recursive: true });
+      const RT_LIBS = ['pfun-runtime','pfun-io','pfun-json','pfun-http',
+                       'pfun-math','pfun-file','pfun-async',
+                       'pfun-db-postgresql','pfun-db-mariadb'];
+      for (const lib of RT_LIBS) {
+        const dest = path.join(libDir, lib + '.js');
+        // pfun-runtime.js lives at the project root; others are in src/runtime/
+        const src = lib === 'pfun-runtime'
+          ? path.join(projectRoot, 'pfun-runtime.js')
+          : path.join(srcRtDir, lib + '.js');
+        if (fs.existsSync(src)) fs.copyFileSync(src, dest);
+      }
+
+      // Clear require cache for runtime libs to ensure fresh copies are used
+      const runtimeLibPath = require.resolve(path.join(libDir, 'pfun-runtime.js'));
+      delete require.cache[runtimeLibPath];
+
+      // Require the compiled server entry and get handleRequest
+      const serverOutPath = serverOutPaths.get(serverPfPath)!;
+      let handleRequest: ((req: any, res: any) => Promise<void>) | null = null;
+      try {
+        const serverModule = require(serverOutPath);
+        handleRequest = serverModule.handleRequest ?? null;
+      } catch (e: any) {
+        console.error(`Failed to load compiled server: ${e.message}`);
+        process.exit(1);
+      }
+      if (!handleRequest) {
+        console.error(`server.pf must export handleRequest — add 'export' before the proc declaration.`);
+        process.exit(1);
+      }
+
+      // Build the req/res objects (same shape as pfun-http.js's httpListen)
+      const { URL: NodeURL } = require('url');
+      const { PfunDict: PfunDictNode, PfunByte: PfunByteNode, $stringify: $stringifyNode } = require(
+        path.join(libDir, 'pfun-runtime.js')
+      );
+      function dictFromRecord(rec: Record<string, string>) {
+        const map = new Map<string, string>();
+        for (const [k, v] of Object.entries(rec)) map.set(`s:${k}`, v as string);
+        return new PfunDictNode(map);
+      }
+      function pfunToJsonValue(value: any): any {
+        if (value === null || value === undefined) return null;
+        if (typeof value === 'bigint')  return { __pfun: 'int', v: value.toString() };
+        if (typeof value === 'boolean') return value;
+        if (typeof value === 'number')  return value;
+        if (typeof value === 'string')  return value;
+        if (value instanceof PfunDictNode) {
+          const obj: any = {};
+          for (const [k, v] of (value as any).entries.entries()) obj[k.slice(2)] = pfunToJsonValue(v);
+          return obj;
+        }
+        if (Array.isArray(value)) return value.map(pfunToJsonValue);
+        if (value && typeof value === 'object' && '__type' in value) {
+          const out: any = { __pfun: 'record', __type: value.__type, __union: value.__union ?? null };
+          for (const key of Object.keys(value)) {
+            if (key === '__type' || key === '__union') continue;
+            out[key] = pfunToJsonValue(value[key]);
+          }
+          return out;
+        }
+        return $stringifyNode(value);
+      }
+
+      const corsHeaders = {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type',
+      };
+
+      const http = require('http');
+      const srv  = http.createServer((nodeReq: any, nodeRes: any) => {
+        const chunks: Buffer[] = [];
+        nodeReq.on('data', (chunk: Buffer) => chunks.push(chunk));
+        nodeReq.on('end', () => {
+          const rawBody  = Buffer.concat(chunks);
+          const body     = rawBody.toString('utf8');
+          const bodyBytes = Array.from(rawBody, (b: number) => new PfunByteNode(b));
+
+          let pathname = nodeReq.url ?? '/';
+          const queryEntries = new Map<string, string>();
+          try {
+            const parsed = new NodeURL(nodeReq.url ?? '/', `http://${nodeReq.headers.host ?? 'localhost'}`);
+            pathname = parsed.pathname;
+            parsed.searchParams.forEach((v: string, k: string) => queryEntries.set(`s:${k}`, v));
+          } catch { /* fall back to raw path */ }
+
+          const headersEntries = new Map<string, string>();
+          for (const [k, v] of Object.entries(nodeReq.headers as Record<string, string | string[]>)) {
+            if (typeof v === 'string') headersEntries.set(`s:${k}`, v);
+            else if (Array.isArray(v)) headersEntries.set(`s:${k}`, v.join(', '));
+          }
+
+          let responded = false;
+          const send = (status: bigint, contentType: string, payload: string | Buffer) => {
+            if (responded) return;
+            responded = true;
+            nodeRes.writeHead(Number(status), { 'Content-Type': contentType, ...corsHeaders });
+            nodeRes.end(payload);
+          };
+
+          const isApi = pathname === apiPath;
+
+          if (!isApi) {
+            // Serve client bundle for all non-API routes
+            send(200n, 'text/html; charset=utf-8', html);
+            return;
+          }
+
+          const req = {
+            __type: 'Request', method: nodeReq.method ?? 'GET', path: pathname,
+            query: new PfunDictNode(queryEntries), headers: new PfunDictNode(headersEntries),
+            body, bodyBytes,
+          };
+          const res = {
+            __type: 'Response',
+            text:  (status: bigint, value: any) => send(status, 'text/plain; charset=utf-8', typeof value === 'string' ? value : $stringifyNode(value)),
+            json:  (status: bigint, value: any) => send(status, 'application/json; charset=utf-8', JSON.stringify(pfunToJsonValue(value))),
+            bytes: (status: bigint, byteList: any[], contentType: string) => {
+              const buf = Buffer.from(byteList.map((b: any) => b.value));
+              send(status, contentType, buf);
+            },
+          };
+
+          Promise.resolve(handleRequest!(req, res)).catch((e: any) => {
+            const msg = e instanceof Error ? e.message : String(e);
+            process.stderr.write(`[server] handler error: ${msg}\n`);
+            if (!responded) send(500n, 'text/plain; charset=utf-8', 'Internal Server Error');
+          });
+        });
+      });
+
+      srv.listen(port, '127.0.0.1', () => {
+        console.log(`App running at http://localhost:${port}/`);
+        console.log(`  client → /`);
+        console.log(`  server → ${apiPath}`);
+        console.log('Press Ctrl+C to stop.');
+      });
+    }
 
   } else if (args.length === 0) {
     console.log('Usage: pfun <script.pf>');

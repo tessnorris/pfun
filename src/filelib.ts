@@ -87,15 +87,6 @@ function nodeErrMsg(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-// ─── Buffer runtime object ────────────────────────────────────────────────────
-//
-// PfunBuffer now lives in mutStructures.ts (imported above) so that Buffer
-// construction and in-memory manipulation (makeBuffer, appendBuffer,
-// bufferToBytes, bufferToString, bufferLength) are core operations, not
-// gated behind `import * from "file"`. readBuffer/writeBuffer below still
-// produce/consume PfunBuffer values since they're inherently file-handle
-// operations.
-
 // ─── Registry Types ───────────────────────────────────────────────────────────
 
 export const filelibTypes: RegistryType[] = [
@@ -131,6 +122,15 @@ export const filelibTypes: RegistryType[] = [
       { name: 'Ok',  fields: ['value'] },
       { name: 'Eof', fields: [] },
       { name: 'Err', fields: ['message'] },
+    ],
+  },
+  // BufferMode: whether a buffer holds raw bytes or UTF-8 chars.
+  {
+    kind: 'union',
+    name: 'BufferMode',
+    variants: [
+      { name: 'ByteMode', fields: [] },
+      { name: 'CharMode', fields: [] },
     ],
   },
 ];
@@ -287,6 +287,18 @@ export const filelibFunctions: RegistryFunction[] = [
     } catch (e) { return err(nodeErrMsg(e)); }
   }},
 
+  // mkdirP(path) — creates directory and all parents (like mkdir -p).
+  // Returns Ok { 0 } or Err { message }.
+  { name: 'mkdirP', fn: (args, interp) => {
+    if (interp.inPureContext) throw new Error("Functions cannot use 'mkdirP': side effects not allowed in pure functions.");
+    const dirPath = interp.force(args[0]);
+    if (typeof dirPath !== 'string') throw new Error("mkdirP: path must be a string.");
+    try {
+      fs.mkdirSync(dirPath, { recursive: true });
+      return ok(0n);
+    } catch (e) { return err(nodeErrMsg(e)); }
+  }},
+
   // ─── Byte-level I/O ──────────────────────────────────────────────────────
 
   // readByte(handle) — reads one raw byte from a ReadHandle.
@@ -355,13 +367,23 @@ export const filelibFunctions: RegistryFunction[] = [
 
   // ─── Buffer I/O ──────────────────────────────────────────────────────────
   //
-  // makeBuffer/appendBuffer/bufferToBytes/bufferToString/bufferLength now
-  // live in mutStructures.ts (see import above) — only the handle-dependent
-  // operations remain here.
+  // A Buffer is a mutable byte/char accumulator backed by PfunBuffer.
+  // makeBuffer(mode) — creates a new empty buffer.
+  //   mode: ByteMode | CharMode (from the BufferMode union)
   // readBuffer(handle, n, mode) — reads n units into a new buffer and returns it.
   //   In ByteMode: reads n raw bytes.
   //   In CharMode: reads n UTF-8 chars (each may be 1–4 bytes on disk).
   // writeBuffer(handle, buffer) — writes all of buffer's contents to a WriteHandle.
+  // bufferToBytes(buffer) — returns a List<Byte> copy of the buffer's raw bytes.
+  // bufferToString(buffer) — returns a String (CharMode buffers only).
+  // bufferLength(buffer) — number of bytes currently in the buffer.
+
+  { name: 'makeBuffer', fn: (args, interp) => {
+    const mode = interp.force(args[0]);
+    if (!mode || (mode.__type !== 'ByteMode' && mode.__type !== 'CharMode'))
+      throw new Error("makeBuffer: mode must be ByteMode or CharMode.");
+    return new PfunBuffer(mode.__type === 'ByteMode' ? 'byte' : 'char');
+  }},
 
   { name: 'readBuffer', arity: 3, fn: (args, interp) => {
     if (interp.inPureContext) throw new Error("Functions cannot use 'readBuffer': side effects not allowed in pure functions.");
@@ -385,7 +407,15 @@ export const filelibFunctions: RegistryFunction[] = [
         while (charsRead < n) {
           const c = readCharFromFd(getFd(handle));
           if (c === null) break;
-          pbuf.append(Buffer.from(c, 'utf8'));
+          const encoded = Buffer.from(c, 'utf8');
+          // Grow if needed
+          if (pbuf.pos + encoded.length > pbuf.data.length) {
+            const grown = Buffer.alloc(pbuf.data.length * 2);
+            pbuf.data.copy(grown);
+            pbuf.data = grown;
+          }
+          encoded.copy(pbuf.data, pbuf.pos);
+          pbuf.pos += encoded.length;
           charsRead++;
         }
       }
@@ -403,5 +433,27 @@ export const filelibFunctions: RegistryFunction[] = [
       fs.writeSync(getFd(handle), pbuf.data, 0, pbuf.pos);
       return ok(BigInt(pbuf.pos));
     } catch (e) { return err(nodeErrMsg(e)); }
+  }},
+
+  // bufferToBytes(buffer) — returns a List<Byte> copy of the buffer's raw bytes.
+  { name: 'bufferToBytes', fn: (args, interp) => {
+    const pbuf = interp.force(args[0]);
+    if (!(pbuf instanceof PfunBuffer)) throw new Error("bufferToBytes: argument must be a Buffer.");
+    return pbuf.toByteList();
+  }},
+
+  // bufferToString(buffer) — returns the buffer contents decoded as UTF-8 string.
+  // Intended for CharMode buffers; works on ByteMode too (raw UTF-8 decode).
+  { name: 'bufferToString', fn: (args, interp) => {
+    const pbuf = interp.force(args[0]);
+    if (!(pbuf instanceof PfunBuffer)) throw new Error("bufferToString: argument must be a Buffer.");
+    return pbuf.data.toString('utf8', 0, pbuf.pos);
+  }},
+
+  // bufferLength(buffer) — number of bytes currently written into the buffer.
+  { name: 'bufferLength', fn: (args, interp) => {
+    const pbuf = interp.force(args[0]);
+    if (!(pbuf instanceof PfunBuffer)) throw new Error("bufferLength: argument must be a Buffer.");
+    return BigInt(pbuf.pos);
   }},
 ];

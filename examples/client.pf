@@ -61,14 +61,16 @@ function onFail(reason) {
   ServerFailed { reason };
 }
 
-let serverUrl = "http://localhost:3171/api";
+// serverUrl is injected by --serve app.pf as the apiPath from app.pf.
+// When running standalone (pfun --serve client.pf), set the full URL here.
+let serverUrl = "/api";
 
 function sendCmd(msg) { Send { msg, onReply, serverUrl }; }
 
 function update(msg, model) {
   match msg with
   | SendPing ->
-      withCmd(model, sendCmd(clientPing()))
+      withCmd(model, sendCmd(ClientPing))
   | SendEcho ->
       withCmd(model, sendCmd(ClientEcho { model.echoText }))
   | SendAdd -> {
@@ -90,7 +92,7 @@ function update(msg, model) {
     }
   | ServerReplied r -> {
       let text = match r.reply with
-        | ServerPong _    -> "Pong!"
+        | ServerPong      -> "Pong!"
         | ServerEchoed e  -> "Echoed: \"" + e.text + "\""
         | ServerSum s     -> "Sum: " + __str__(s.value)
         | ServerBadMsg b  -> "Error from server: " + b.reason;

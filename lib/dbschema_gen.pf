@@ -1,0 +1,849 @@
+/*
+  dbschema_gen.pf — Generates a Pfun data model from a live PostgreSQL schema.
+
+  Reads dbschema_config.pf for connection string, schema name, and lookup tables.
+  Writes the generated model to:
+    <script_dir>/data_model/<schema>_data_model.pf
+
+  Run with:
+    pfun examples/db/dbschema_gen.pf
+
+  The generated file contains:
+    - Enum types for lookup tables (values read from the DB)
+    - Record types for regular tables with typed fields
+    - Ref types for foreign key columns (CustomerId | CustomerDataModel)
+    - A schema fingerprint constant
+    - A verifySchema proc that checks the live DB matches the model
+*/
+
+import * from "io";
+import * from "file";
+import * from "db/postgresql";
+import * from "../dbschema";
+import * from "./dbschema_utils";
+import * from "./dbschema_config";
+
+// ── Naming helpers ────────────────────────────────────────────────────────────
+
+// snake_case → PascalCase: "order_items" → "OrderItems"
+function toPascal(s) {
+  let parts = split(s, "_");
+  join(map(capitalise, parts), "");
+}
+
+// snake_case → camelCase: "customer_id" → "customerId"
+function toCamel(s) {
+  let parts = split(s, "_");
+  if length(parts) == 0 then s else {
+    let first = head(parts);
+    let rest  = map(capitalise, tail(parts));
+    join([first] + rest, "");
+  }
+}
+
+function capitalise(s) {
+  if length(s) == 0 then s else {
+    let chars = split(s, "");
+    let h = toUpper(head(chars));
+    let t = join(tail(chars), "");
+    h + t;
+  }
+}
+
+function toLower(c) {
+  let code = asc(head(c));
+  if code >= 65 && code <= 90
+    then __str__(chr(code + 32))
+    else c;
+}
+
+// Lowercase first character of a string
+function lcFirst(s) {
+  if length(s) == 0 then s else {
+    let chars = split(s, "");
+    toLower(head(chars)) + join(tail(chars), "");
+  }
+}
+
+function toUpper(c) {
+  let code = asc(head(c));
+  if code >= 97 && code <= 122
+    then __str__(chr(code - 32))
+    else c;
+}
+
+// "order_items" → "OrderItem" (singular PascalCase)
+// "customers"   → "Customer"
+// "order_status" → "OrderStatus" (already singular — don't strip)
+function toTypeName(s) {
+  let pascal = toPascal(s);
+  let len = length(pascal);
+  if len > 3 && slice(toInt(len - 3), 3, pascal) == "ies" then
+    slice(0, toInt(len - 3), pascal) + "y"
+  else if len > 1 && slice(toInt(len - 1), 1, pascal) == "s" then {
+    let prev2 = slice(toInt(len - 2), 1, pascal);
+    if prev2 == "u" || prev2 == "s" || prev2 == "i" || prev2 == "a" || prev2 == "o"
+      then pascal
+      else slice(0, toInt(len - 1), pascal);
+  }
+  else pascal;
+}
+
+// Full generated type name: CustomerModel, OrderModel, etc.
+function toModelName(s) {
+  toTypeName(s) + "Model";
+}
+
+// "pending" → "Pending", "in_progress" → "InProgress"
+function toVariantName(s) {
+  toPascal(s);
+}
+
+// Pfun type string for a column's PgType
+function pfunType(col) {
+  match col.pgType with
+  | PgText        -> "String"
+  | PgVarchar     -> "String"
+  | PgChar        -> "String"
+  | PgInteger     -> "Int"
+  | PgBigInt      -> "Int"
+  | PgSmallInt    -> "Int"
+  | PgSerial      -> "Int"
+  | PgBigSerial   -> "Int"
+  | PgNumeric     -> "Float"
+  | PgReal        -> "Float"
+  | PgDouble      -> "Float"
+  | PgBoolean     -> "Bool"
+  | PgTimestamp   -> "String"
+  | PgTimestampTz -> "String"
+  | PgDate        -> "String"
+  | PgTime        -> "String"
+  | PgJson        -> "String"
+  | PgJsonb       -> "String"
+  | PgUuid        -> "String"
+  | PgBytea       -> "List<Byte>"
+  | PgOther o     -> "String";
+}
+
+// ── Lookup table helpers ──────────────────────────────────────────────────────
+
+function isLookup(tableName, lookupTables) {
+  length(filter(fn n => n == tableName, lookupTables)) > 0;
+}
+
+type FkColResult = { | FkColFound : constraint | FkColNone }
+
+// Find the FK constraint on a column, if any
+function fkForColumn(colName, constraints) {
+  let fks = filter(fn c => match c with
+    | ForeignKey fk -> length(filter(fn col => col == colName, fk.columns)) > 0
+    | _ -> false, constraints);
+  if length(fks) == 0 then FkColNone else FkColFound { head(fks) };
+}
+
+// Get the ref table name for an FK constraint
+function fkRefTable(constraint) {
+  match constraint with
+  | ForeignKey fk -> Some { fk.refTable }
+  | _             -> None;
+}
+
+// ── IO wrappers ───────────────────────────────────────────────────────────────
+// Returns true on success, false on failure (prints error message).
+// Avoids Ok/Err to prevent HM inference unification with DB result types.
+
+proc mkdirSafe(path) {
+  match mkdirP(path) with
+  | Ok _  -> true
+  | Err e -> { println("Could not create directory '" + path + "': " + e.message); false };
+}
+
+proc writeSafe(path, content) {
+  match writeFile(path, content) with
+  | Ok _  -> true
+  | Err e -> { println("Could not write file '" + path + "': " + e.message); false };
+}
+
+// ── Code generation ───────────────────────────────────────────────────────────
+
+function genHeader(schemaName, connStr) {
+  "// Generated by dbschema_gen.pf — do not edit by hand.\n" +
+  "// Source schema: " + schemaName + "\n" +
+  "// Regenerate: pfun examples/db/dbschema_gen.pf\n" +
+  "\n" +
+  "import * from \"io\";\n" +
+  "import * from \"db/postgresql\";\n" +
+  "import * from \"../dbschema_config\";\n" +
+  "\n" +
+  "// Re-declare core types locally to ensure variants are registered in this module.\n" +
+  "type MaybeId      = { | New | Id : value }\n" +
+  "type InsertResult = { | InsertOk : model | InsertErr : message }\n" +
+  "type FindResult   = { | FindOk   : model | FindErr   : message }\n" +
+  "type MutResult    = { | MutOk            | MutErr    : message }\n" +
+  "\n" +
+  "// Row value getters — inline to guarantee availability in this module.\n" +
+  "function getStr(row, col) {\n" +
+  "  let ps = filter(fn p => p.key == col, row);\n" +
+  "  if length(ps) == 0 then \"\" else match head(ps).value with\n" +
+  "  | DbText t -> t.value | DbNull -> \"\" | _ -> \"\";\n" +
+  "}\n" +
+  "function getInt(row, col) {\n" +
+  "  let ps = filter(fn p => p.key == col, row);\n" +
+  "  if length(ps) == 0 then 0 else match head(ps).value with\n" +
+  "  | DbInt n -> n.value | DbNull -> 0 | _ -> 0;\n" +
+  "}\n" +
+  "function getFloat(row, col) {\n" +
+  "  let ps = filter(fn p => p.key == col, row);\n" +
+  "  if length(ps) == 0 then 0.0 else match head(ps).value with\n" +
+  "  | DbFloat f -> f.value | DbInt n -> toFloat(n.value) | DbNull -> 0.0 | _ -> 0.0;\n" +
+  "}\n" +
+  "function getBool(row, col) {\n" +
+  "  let ps = filter(fn p => p.key == col, row);\n" +
+  "  if length(ps) == 0 then false else match head(ps).value with\n" +
+  "  | DbBool b -> b.value | _ -> false;\n" +
+  "}\n" +
+  "// ParseResult — avoids Option monomorphism. parse functions return this directly.\n" +
+  "type ParseResult = { | ParseOk : val | ParseFail }\n" +
+  "function unwrapParse(result, typeName, raw) {\n" +
+  "  match result with\n" +
+  "  | ParseOk v  -> v.val\n" +
+  "  | ParseFail  -> { println(\"[Schema drift] Unknown \" + typeName + \" value: \" + raw); head([]) }\n" +
+  "}\n\n";
+}
+
+function genFingerprint(fp) {
+  "// ── Schema fingerprint ───────────────────────────────────────────────────────\n" +
+  "// Run verifySchema(conn) at startup to catch DB / model drift.\n" +
+  "export let SCHEMA_FINGERPRINT = \"" + fp + "\";\n\n";
+}
+
+function genLookupEnum(table, values) {
+  let typeName = toModelName(table.name);
+  let variants = map(fn v => "  | " + toVariantName(v), values);
+  "// Lookup table: " + table.name + "\n" +
+  "export type " + typeName + " = {\n" +
+  join(variants, "\n") + "\n" +
+  "}\n\n" +
+  "export function parse" + typeName + "(s) {\n" +
+  join(map(fn v =>
+    "  if s == \"" + v + "\" then ParseOk { " + toVariantName(v) + " } else",
+    values), "\n") + "\n" +
+  "  ParseFail;\n" +
+  "}\n\n" +
+  "export function " + lcFirst(typeName) + "ToStr(v) {\n" +
+  "  match v with\n" +
+  join(map(fn v =>
+    "  | " + toVariantName(v) + " -> \"" + v + "\"",
+    values), "\n") + ";\n" +
+  "}\n\n";
+}
+
+function genRefType(refTableName, lookupTables) {
+  let typeName  = toTypeName(refTableName);
+  let modelName = toModelName(refTableName);
+  let refType   = typeName + "Ref";
+  if isLookup(refTableName, lookupTables) then "" else
+    "export type " + refType + " = {\n" +
+    "  | " + typeName + "Id        : id        // Int — unloaded FK\n" +
+    "  | " + typeName + "DataModel : " + lcFirst(typeName) + "  // " + modelName + " — hydrated\n" +
+    "}\n\n";
+}
+
+function columnFieldType(col, table, lookupTables) {
+  let fkOpt = fkForColumn(col.name, table.constraints);
+  let baseType = match fkOpt with
+    | FkColNone    -> pfunType(col)
+    | FkColFound fk -> {
+        match fkRefTable(fk.constraint) with
+        | None    -> pfunType(col)
+        | Some rt -> {
+            if isLookup(rt.value, lookupTables)
+              then toModelName(rt.value)
+              else toTypeName(rt.value) + "Ref"
+          }
+      };
+  if col.nullable then "Option<" + baseType + ">" else baseType;
+}
+
+function nullNote(col) {
+  if col.nullable then " nullable" else " NOT NULL";
+}
+
+function fkNote(constraint) {
+  match fkRefTable(constraint) with
+  | None    -> ""
+  | Some rt -> " — FK -> " + rt.value;
+}
+
+function columnComment(col, table, lookupTables) {
+  let fkOpt = fkForColumn(col.name, table.constraints);
+  let fk = match fkOpt with
+    | FkColNone    -> ""
+    | FkColFound f -> fkNote(f.constraint);
+  " // " + col.rawType + nullNote(col) + fk;
+}
+
+function columnFieldName(col, table, lookupTables) {
+  let fkOpt = fkForColumn(col.name, table.constraints);
+  match fkOpt with
+  | FkColNone    -> toCamel(col.name)
+  | FkColFound f -> {
+      match fkRefTable(f.constraint) with
+      | None    -> toCamel(col.name)
+      | Some rt -> {
+          if isLookup(rt.value, lookupTables)
+            then toCamel(col.name)
+            else lcFirst(toTypeName(rt.value)) + "Ref";  // e.g. "orderRef"
+        }
+    };
+}
+
+// Join field lines: all but last get a comma after the field name
+function joinFields(fields) {
+  if length(fields) == 0 then ""
+  else if length(fields) == 1 then head(fields)
+  else {
+    let line = head(fields);
+    // Insert comma before the " //" comment separator
+    let spaceSlash = " //";
+    let pos = findSlice(line, spaceSlash);
+    let lined = match pos with
+      | None   -> line + ","
+      | Some p -> slice(0, toInt(p.value), line) + "," + slice(toInt(p.value), toInt(length(line)) - toInt(p.value), line);
+    lined + "\n" + joinFields(tail(fields));
+  }
+}
+
+function genRecordType(table, lookupTables) {
+  let typeName = toModelName(table.name);
+  let fields = map(fn col => {
+    let fieldName = columnFieldName(col, table, lookupTables);
+    let fieldType = columnFieldType(col, table, lookupTables);
+    "  " + fieldName + " // " + fieldType + nullNote(col);
+  }, table.columns);
+  "export type " + typeName + " = {\n" +
+  joinFields(fields) + "\n" +
+  "}\n\n";
+}
+
+// Collect all ref types needed (one per referenced regular table, deduped)
+function collectRefTables(tables, lookupTables) {
+  let allRefs = reduce(fn acc, table => {
+    let tableFks = filter(fn c => match c with
+      | ForeignKey _ -> true | _ -> false,
+      table.constraints);
+    let refNames = map(fn fk => match fk with
+      | ForeignKey f -> f.refTable | _ -> "", tableFks);
+    let newRefs = filter(fn r =>
+      r != "" && !isLookup(r, lookupTables) &&
+      length(filter(fn a => a == r, acc)) == 0,
+      refNames);
+    acc + newRefs;
+  }, [], tables);
+  allRefs;
+}
+
+// ── CRUD code generation ──────────────────────────────────────────────────────
+
+// Find the PK column name(s) for a table
+function pkColumns(table) {
+  let pks = filter(fn c => match c with | PrimaryKey _ -> true | _ -> false, table.constraints);
+  if length(pks) == 0 then [] else {
+    match head(pks) with
+    | PrimaryKey pk -> pk.columns
+    | _             -> [];
+  }
+}
+
+// True if a column is a serial/auto-increment PK
+function isSerialCol(col) {
+  match col.pgType with
+  | PgSerial    -> true
+  | PgBigSerial -> true
+  | _           -> false;
+}
+
+// True if a column has a non-null default (and is therefore omittable on insert)
+function hasDefault(col) {
+  match col.defaultVal with
+  | Some _ -> true
+  | None   -> false;
+}
+
+// True if a column should be omitted from INSERT (serial or has a DB default)
+function omitFromInsert(col) {
+  isSerialCol(col) || hasDefault(col);
+}
+
+// Generate the DbValue parameter expression for a column value
+// colExpr is the Pfun expression string that yields the column's value
+function genDbParam(col, colExpr) {
+  match col.pgType with
+  | PgText        -> "DbText { " + colExpr + " }"
+  | PgVarchar     -> "DbText { " + colExpr + " }"
+  | PgChar        -> "DbText { " + colExpr + " }"
+  | PgInteger     -> "DbInt { " + colExpr + " }"
+  | PgBigInt      -> "DbInt { " + colExpr + " }"
+  | PgSmallInt    -> "DbInt { " + colExpr + " }"
+  | PgNumeric     -> "DbText { __str__(" + colExpr + ") }"
+  | PgReal        -> "DbFloat { " + colExpr + " }"
+  | PgDouble      -> "DbFloat { " + colExpr + " }"
+  | PgBoolean     -> "DbBool { " + colExpr + " }"
+  | PgTimestamp   -> "DbText { " + colExpr + " }"
+  | PgTimestampTz -> "DbText { " + colExpr + " }"
+  | PgDate        -> "DbText { " + colExpr + " }"
+  | PgTime        -> "DbText { " + colExpr + " }"
+  | PgJson        -> "DbText { " + colExpr + " }"
+  | PgJsonb       -> "DbText { " + colExpr + " }"
+  | PgUuid        -> "DbText { " + colExpr + " }"
+  | PgBytea       -> "DbBytes { " + colExpr + " }"
+  | PgSerial      -> "DbInt { " + colExpr + " }"
+  | PgBigSerial   -> "DbInt { " + colExpr + " }"
+  | PgOther _     -> "DbText { __str__(" + colExpr + ") }";
+}
+
+// Generate a row getter expression for a column
+function genRowGetter(col, colName) {
+  match col.pgType with
+  | PgText        -> "getStr(row, \"" + colName + "\")"
+  | PgVarchar     -> "getStr(row, \"" + colName + "\")"
+  | PgChar        -> "getStr(row, \"" + colName + "\")"
+  | PgInteger     -> "getInt(row, \"" + colName + "\")"
+  | PgBigInt      -> "getInt(row, \"" + colName + "\")"
+  | PgSmallInt    -> "getInt(row, \"" + colName + "\")"
+  | PgNumeric     -> "getFloat(row, \"" + colName + "\")"
+  | PgReal        -> "getFloat(row, \"" + colName + "\")"
+  | PgDouble      -> "getFloat(row, \"" + colName + "\")"
+  | PgBoolean     -> "getBool(row, \"" + colName + "\")"
+  | PgTimestamp   -> "getStr(row, \"" + colName + "\")"
+  | PgTimestampTz -> "getStr(row, \"" + colName + "\")"
+  | PgDate        -> "getStr(row, \"" + colName + "\")"
+  | PgTime        -> "getStr(row, \"" + colName + "\")"
+  | PgJson        -> "getStr(row, \"" + colName + "\")"
+  | PgJsonb       -> "getStr(row, \"" + colName + "\")"
+  | PgUuid        -> "getStr(row, \"" + colName + "\")"
+  | PgBytea       -> "getStr(row, \"" + colName + "\")"
+  | PgSerial      -> "getInt(row, \"" + colName + "\")"
+  | PgBigSerial   -> "getInt(row, \"" + colName + "\")"
+  | PgOther _     -> "getStr(row, \"" + colName + "\")";
+}
+
+// Generate the row→model field expression for one column
+function genFieldFromRow(col, table, lookupTables) {
+  let pkCols = pkColumns(table);
+  let isPk   = length(filter(fn c => c == col.name, pkCols)) > 0;
+  if isPk then
+    "Id { getInt(row, \"" + col.name + "\") }"
+  else {
+    let fkOpt = fkForColumn(col.name, table.constraints);
+    match fkOpt with
+    | FkColNone -> genRowGetter(col, col.name)
+    | FkColFound f -> {
+        match fkRefTable(f.constraint) with
+        | None    -> genRowGetter(col, col.name)
+        | Some rt -> {
+            if isLookup(rt.value, lookupTables) then {
+              let modelName = toModelName(rt.value);
+              let parseFn   = "parse" + modelName;
+              let rawGetter = "getStr(row, \"" + col.name + "\")";
+              // FK constraint guarantees this is always valid; parse failure = schema drift
+              "unwrapParse(" + parseFn + "(" + rawGetter + "), \"" + modelName + "\", " + rawGetter + ")";
+            } else {
+              let refTypeName = toTypeName(rt.value);
+              refTypeName + "Id { getInt(row, \"" + col.name + "\") }";
+            }
+          }
+      };
+  }
+}
+
+// Generate the rowToModel function for a table
+function genRowToModel(table, lookupTables) {
+  let typeName  = toModelName(table.name);
+  let fnName    = "rowTo" + typeName;
+  let fieldExprs = map(fn col => {
+    let expr = genFieldFromRow(col, table, lookupTables);
+    "    " + expr;
+  }, table.columns);
+  "function " + fnName + "(row) {\n" +
+  "  " + typeName + " {\n" +
+  join(fieldExprs, ",\n") + "\n" +
+  "  }\n" +
+  "}\n\n";
+}
+
+// Generate the insert parameter list for a table (omitting serial/default cols)
+function genInsertParams(table, lookupTables) {
+  let insertCols = filter(fn col => !omitFromInsert(col), table.columns);
+  map(fn col => {
+    let fkOpt = fkForColumn(col.name, table.constraints);
+    let fieldName = columnFieldName(col, table, lookupTables);
+    match fkOpt with
+    | FkColNone -> genDbParam(col, "m." + fieldName)
+    | FkColFound f -> {
+        match fkRefTable(f.constraint) with
+        | None    -> genDbParam(col, "m." + fieldName)
+        | Some rt -> {
+            if isLookup(rt.value, lookupTables) then
+              "DbText { " + lcFirst(toModelName(rt.value)) + "ToStr(m." + fieldName + ") }"
+            else {
+              let refTypeName = toTypeName(rt.value);
+              let helperFn    = lcFirst(refTypeName) + "RefId";
+              "DbInt { " + helperFn + "(m." + fieldName + ") }";
+            }
+          }
+      };
+  }, insertCols);
+}
+
+// Simpler ref id extractor — generates a helper function per ref type
+function genRefIdHelper(refTableName) {
+  let typeName = toTypeName(refTableName);
+  let fnName   = lcFirst(typeName) + "RefId";
+  let varName  = lcFirst(typeName) + "Ref";
+  "function " + fnName + "(" + varName + ") {\n" +
+  "  match " + varName + " with\n" +
+  "  | " + typeName + "Id r        -> r.id\n" +
+  "  | " + typeName + "DataModel r -> { match r." + lcFirst(typeName) + ".maybeId with\n" +
+  "      | Id i -> i.value\n" +
+  "      | New  -> 0 }\n" +
+  "}\n\n";
+}
+
+// Build "$1, $2, ..., $n" placeholder string
+function genPlaceholders(n, i) {
+  if i > n then ""
+  else if i == n then "$" + __str__(i)
+  else "$" + __str__(i) + ", " + genPlaceholders(n, i + 1);
+}
+
+// Build "col1 = $1, col2 = $2, ..." set clause string
+function genSetClauses(cols, i) {
+  if length(cols) == 0 then ""
+  else if length(cols) == 1 then head(cols).name + " = $" + __str__(i)
+  else head(cols).name + " = $" + __str__(i) + ", " + genSetClauses(tail(cols), i + 1);
+}
+
+function returningClause(pkCols) {
+  if length(pkCols) == 0 then "" else " RETURNING *";
+}
+
+// Generate SQL column list and param placeholders for insert
+function genInsertSql(table, schema) {
+  let insertCols   = filter(fn col => !omitFromInsert(col), table.columns);
+  let colNames     = join(map(fn col => col.name, insertCols), ", ");
+  let placeholders = genPlaceholders(toInt(length(insertCols)), 1);
+  let pkCols = pkColumns(table);
+  "INSERT INTO " + schema + "." + table.name +
+  " (" + colNames + ") VALUES (" + placeholders + ")" + returningClause(pkCols);
+}
+
+// Generate SQL for update (all non-PK columns)
+function genUpdateSql(table, schema) {
+  let pkCols     = pkColumns(table);
+  let updateCols = filter(fn col =>
+    length(filter(fn pk => pk == col.name, pkCols)) == 0,
+    table.columns);
+  let setClauses = genSetClauses(updateCols, 1);
+  let pkParam    = "$" + __str__(length(updateCols) + 1);
+  "UPDATE " + schema + "." + table.name +
+  " SET " + setClauses +
+  " WHERE " + head(pkCols) + " = " + pkParam;
+}
+
+// Generate update params (non-PK columns then PK)
+function genUpdateParams(table, lookupTables) {
+  let pkCols    = pkColumns(table);
+  let updateCols = filter(fn col =>
+    length(filter(fn pk => pk == col.name, pkCols)) == 0,
+    table.columns);
+  let valueParams = map(fn col => {
+    let fkO = fkForColumn(col.name, table.constraints);
+    let fieldName = columnFieldName(col, table, lookupTables);
+    match fkO with
+    | FkColNone -> genDbParam(col, "m." + fieldName)
+    | FkColFound f -> {
+        match fkRefTable(f.constraint) with
+        | None    -> genDbParam(col, "m." + fieldName)
+        | Some rt -> {
+            if isLookup(rt.value, lookupTables) then
+              "DbText { " + lcFirst(toModelName(rt.value)) + "ToStr(m." + fieldName + ") }"
+            else {
+              let refTypeName = toTypeName(rt.value);
+              let helperFn = lcFirst(refTypeName) + "RefId";
+              "DbInt { " + helperFn + "(m." + fieldName + ") }";
+            }
+          }
+      };
+  }, updateCols);
+  let pkParam = "DbInt { match m.maybeId with | Id i -> i.value | New -> 0 }";
+  valueParams + [pkParam];
+}
+
+// Generate findBy* procs for each FK column
+function genFindByFk(table, schema, lookupTables) {
+  let fkCons = filter(fn c => match c with | ForeignKey _ -> true | _ -> false, table.constraints);
+  join(map(fn fk => {
+    match fk with
+    | ForeignKey f -> {
+        if isLookup(f.refTable, lookupTables) then "" else {
+          let refTypeName  = toTypeName(f.refTable);
+          let modelName    = toModelName(table.name);
+          let procName     = "findAll" + toPascal(table.name) + "By" + refTypeName;
+          let refParamName = lcFirst(refTypeName) + "Ref";
+          let helperFn     = lcFirst(refTypeName) + "RefId";
+          let fkColName    = head(f.columns);
+          "export async proc " + procName + "(conn, " + refParamName + ") {\n" +
+          "  let result = await dbQuery(conn,\n" +
+          "    \"SELECT * FROM " + schema + "." + table.name +
+                " WHERE " + fkColName + " = $1 ORDER BY " + head(pkColumns(table)) + "\",\n" +
+          "    [DbInt { " + helperFn + "(" + refParamName + ") }]\n" +
+          "  );\n" +
+          "  match result with\n" +
+          "  | Err e -> []\n" +
+          "  | Ok r  -> map(rowTo" + modelName + ", r.value.rows);\n" +
+          "}\n\n";
+        }
+      }
+    | _ -> "";
+  }, fkCons), "");
+}
+
+// Generate full CRUD for one table
+function genCrud(table, schema, lookupTables) {
+  let typeName  = toModelName(table.name);
+  let procBase  = toTypeName(table.name);
+  let pkCols    = pkColumns(table);
+  if length(pkCols) == 0 then "" else {
+    let pkCol     = head(pkCols);
+    let insertCols = filter(fn col => !omitFromInsert(col), table.columns);
+    let insertSql = genInsertSql(table, schema);
+    let insertParamList = join(genInsertParams(table, lookupTables), ",\n      ");
+    let updateSql = genUpdateSql(table, schema);
+    let updateParamList = join(genUpdateParams(table, lookupTables), ",\n      ");
+
+    // Per-table result types to avoid monomorphism unification
+    "type Insert" + procBase + "Result = { | Insert" + procBase + "Ok : model | Insert" + procBase + "Err : message }\n" +
+    "type Find"   + procBase + "Result = { | Find"   + procBase + "Ok : model | Find"   + procBase + "Err : message }\n\n" +
+
+    // rowToModel
+    genRowToModel(table, lookupTables) +
+
+    // insert
+    "export async proc insert" + procBase + "(conn, m) {\n" +
+    "  let result = await dbQuery(conn,\n" +
+    "    \"" + insertSql + "\",\n" +
+    "    [" + insertParamList + "]\n" +
+    "  );\n" +
+    "  match result with\n" +
+    "  | Err e -> Insert" + procBase + "Err { e.message }\n" +
+    "  | Ok r  -> {\n" +
+    "      if length(r.value.rows) == 0 then Insert" + procBase + "Err { \"No row returned\" } else\n" +
+    "        Insert" + procBase + "Ok { rowTo" + typeName + "(head(r.value.rows)) }\n" +
+    "    }\n" +
+    "}\n\n" +
+
+    // findById
+    "export async proc find" + procBase + "ById(conn, id) {\n" +
+    "  let result = await dbQuery(conn,\n" +
+    "    \"SELECT * FROM " + schema + "." + table.name + " WHERE " + pkCol + " = $1\",\n" +
+    "    [DbInt { id }]\n" +
+    "  );\n" +
+    "  match result with\n" +
+    "  | Err _ -> Find" + procBase + "Err { \"Query failed\" }\n" +
+    "  | Ok r  -> {\n" +
+    "      if length(r.value.rows) == 0 then Find" + procBase + "Err { \"Not found\" } else\n" +
+    "        Find" + procBase + "Ok { rowTo" + typeName + "(head(r.value.rows)) }\n" +
+    "    }\n" +
+    "}\n\n" +
+
+    // findAll
+    "export async proc findAll" + procBase + "s(conn) {\n" +
+    "  let result = await dbQuery(conn,\n" +
+    "    \"SELECT * FROM " + schema + "." + table.name + " ORDER BY " + pkCol + "\",\n" +
+    "    []\n" +
+    "  );\n" +
+    "  match result with\n" +
+    "  | Err _ -> []\n" +
+    "  | Ok r  -> map(rowTo" + typeName + ", r.value.rows);\n" +
+    "}\n\n" +
+
+    // update
+    "export async proc update" + procBase + "(conn, m) {\n" +
+    "  match m.maybeId with\n" +
+    "  | New  -> MutErr { \"Cannot update unsaved " + procBase + "\" }\n" +
+    "  | Id _ -> {\n" +
+    "      let result = await dbQuery(conn,\n" +
+    "        \"" + updateSql + "\",\n" +
+    "        [" + updateParamList + "]\n" +
+    "      );\n" +
+    "      match result with\n" +
+    "      | Err e -> MutErr { e.message }\n" +
+    "      | Ok _  -> MutOk;\n" +
+    "    }\n" +
+    "}\n\n" +
+
+    // delete
+    "export async proc delete" + procBase + "(conn, m) {\n" +
+    "  match m.maybeId with\n" +
+    "  | New  -> MutErr { \"Cannot delete unsaved " + procBase + "\" }\n" +
+    "  | Id i -> {\n" +
+    "      let result = await dbQuery(conn,\n" +
+    "        \"DELETE FROM " + schema + "." + table.name + " WHERE " + pkCol + " = $1\",\n" +
+    "        [DbInt { i.value }]\n" +
+    "      );\n" +
+    "      match result with\n" +
+    "      | Err e -> MutErr { e.message }\n" +
+    "      | Ok _  -> MutOk;\n" +
+    "    }\n" +
+    "}\n\n" +
+
+    // findBy* for each FK
+    genFindByFk(table, schema, lookupTables);
+  }
+}
+
+// Generate ref id helper functions (one per referenced regular table)
+function genRefHelpers(refTableNames) {
+  join(map(genRefIdHelper, refTableNames), "");
+}
+
+function genAllCrud(tables, schema, lookupTables) {
+  let regularTbls = filter(fn t => !isLookup(t.name, lookupTables), tables);
+  join(map(fn t => genCrud(t, schema, lookupTables), regularTbls), "");
+}
+
+function pkFieldName(col, pkCols, table, lookupTables) {
+  if length(filter(fn c => c == col.name, pkCols)) > 0
+    then "maybeId"
+    else columnFieldName(col, table, lookupTables);
+}
+
+function pkFieldType(col, pkCols, table, lookupTables) {
+  if length(filter(fn c => c == col.name, pkCols)) > 0
+    then "MaybeId"
+    else columnFieldType(col, table, lookupTables);
+}
+
+function genRecordTypeWithMaybeId(table, lookupTables) {
+  let typeName = toModelName(table.name);
+  let pkCols   = pkColumns(table);
+  let fields   = map(fn col => {
+    let fieldName = pkFieldName(col, pkCols, table, lookupTables);
+    let fieldType = pkFieldType(col, pkCols, table, lookupTables);
+    "  " + fieldName + " // " + fieldType + nullNote(col);
+  }, table.columns);
+  "export type " + typeName + " = {\n" +
+  joinFields(fields) + "\n" +
+  "}\n\n";
+}
+
+function genLookupRecordType(table, lookupTables) {
+  // Lookup tables get simple record types (no MaybeId — they're read-only)
+  genRecordType(table, lookupTables);
+}
+
+function genVerifySchema(schemaName) {
+  "// ── Schema verification ──────────────────────────────────────────────────────\n" +
+  "// Call at startup to verify the live DB matches this generated model.\n" +
+  "export async proc verifySchema(conn) {\n" +
+  "  let meta = await loadSchema(conn, SCHEMA);\n" +
+  "  match meta with\n" +
+  "  | SchemaErr e -> println(\"[Schema] Could not load schema: \" + e.message)\n" +
+  "  | SchemaOk s  -> {\n" +
+  "      let lookupVals = await loadAllLookupValues(conn, SCHEMA, LOOKUP_TABLES);\n" +
+  "      let fp = fingerprintSchema(s.meta.tables, lookupVals);\n" +
+  "      if fp == SCHEMA_FINGERPRINT then\n" +
+  "        println(\"[Schema] OK — model matches database.\")\n" +
+  "      else {\n" +
+  "        println(\"[Schema] MISMATCH — database schema has changed!\");\n" +
+  "        println(\"  Expected fingerprint: \" + SCHEMA_FINGERPRINT);\n" +
+  "        println(\"  Current fingerprint:  \" + fp);\n" +
+  "        println(\"  Regenerate the model: pfun examples/db/dbschema_gen.pf\");\n" +
+  "      }\n" +
+  "    }\n" +
+  "}\n";
+}
+
+// ── Main generator proc ───────────────────────────────────────────────────────
+
+export async proc generate(conn, meta, lookupValues, outputPath) {
+  let tables      = meta.tables;
+  let lookupTbls  = filter(fn t => isLookup(t.name, LOOKUP_TABLES), tables);
+  let regularTbls = filter(fn t => !isLookup(t.name, LOOKUP_TABLES), tables);
+
+  let header     = genHeader(meta.schemaName, CONNECTION_STRING);
+  let fp         = fingerprintSchema(tables, lookupValues);
+  let fpSection  = genFingerprint(fp);
+
+  let lookupSections = await genLookupSections(conn, lookupTbls);
+
+  let refTableNames = collectRefTables(regularTbls, LOOKUP_TABLES);
+  let refSections   = join(map(fn r => genRefType(r, LOOKUP_TABLES), refTableNames), "");
+  let refHelpers    = genRefHelpers(refTableNames);
+
+  let lookupRecords  = "";  // lookup tables only generate enum types, not record types
+  let regularRecords = join(map(fn t => genRecordTypeWithMaybeId(t, LOOKUP_TABLES), regularTbls), "");
+
+  let crudSections  = genAllCrud(tables, meta.schemaName, LOOKUP_TABLES);
+
+  let output =
+    header +
+    fpSection +
+    "// ── Lookup enums ─────────────────────────────────────────────────────────────\n\n" +
+    lookupSections +
+    "// ── Ref types ────────────────────────────────────────────────────────────────\n\n" +
+    refSections +
+    "// ── Record types ─────────────────────────────────────────────────────────────\n\n" +
+    lookupRecords +
+    regularRecords +
+    "// ── Ref id helpers ───────────────────────────────────────────────────────────\n\n" +
+    refHelpers +
+    "// ── CRUD ─────────────────────────────────────────────────────────────────────\n\n" +
+    crudSections;
+
+  let writeOk = writeSafe(outputPath, output);
+  if writeOk then {
+    println("Written: " + outputPath);
+    println("Fingerprint: " + fp);
+  }
+}
+
+async proc genLookupSections(conn, lookupTbls) {
+  if length(lookupTbls) == 0 then "" else {
+    let t    = head(lookupTbls);
+    let rest = tail(lookupTbls);
+    let vals = await loadLookupValues(conn, SCHEMA, t.name);
+    let sec  = genLookupEnum(t, vals);
+    let more = await genLookupSections(conn, rest);
+    sec + more;
+  }
+}
+
+// ── Entry point ───────────────────────────────────────────────────────────────
+
+async proc main() {
+  println("Connecting to " + CONNECTION_STRING + "...");
+  let conn = await dbConnect(CONNECTION_STRING);
+  match conn with
+  | Err e -> println("Connect failed: " + e.message)
+  | Ok c  -> {
+      println("Loading schema '" + SCHEMA + "'...");
+      let meta = await loadSchema(c.value, SCHEMA);
+      match meta with
+      | SchemaErr e -> println("Schema load failed: " + e.message)
+      | SchemaOk s  -> {
+          let lookupVals = await loadAllLookupValues(c.value, SCHEMA, LOOKUP_TABLES);
+          let outDir  = "examples/db/data_model";
+          let outFile = outDir + "/" + SCHEMA + "_data_model.pf";
+          let dirOk = mkdirSafe(outDir);
+          if dirOk then { await generate(c.value, s.meta, lookupVals, outFile) }
+        };
+      let closed = await dbClose(c.value);
+      match closed with
+      | Ok _  -> {}
+      | Err e -> println("Close failed: " + e.message);
+    };
+}
+
+main();

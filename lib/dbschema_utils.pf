@@ -1,0 +1,83 @@
+/*
+  dbschema_utils.pf — Schema fingerprinting and lookup value loading utilities.
+  Imported by dbschema_gen.pf and dbschema_demo.pf.
+*/
+
+import * from "io";
+import * from "db/postgresql";
+import * from "../dbschema";
+
+// ── Fingerprint ───────────────────────────────────────────────────────────────
+
+function hashStep(acc, c) {
+  let code = asc(head(c));
+  (acc * 31 + toInt(code)) % 2147483647;
+}
+
+function hashStr(s) {
+  reduce(hashStep, 0, split(s, ""));
+}
+
+export function fingerprintColumn(col) {
+  col.name + ":" + col.rawType + ":" + __str__(col.nullable);
+}
+
+export function fingerprintConstraint(c) {
+  match c with
+  | PrimaryKey pk -> "PK:" + join(pk.columns, ",")
+  | Unique u      -> "UQ:" + join(u.columns, ",")
+  | ForeignKey fk -> "FK:" + join(fk.columns, ",") + "->" + fk.refTable + "(" + join(fk.refColumns, ",") + ")"
+  | Check ck      -> "CK:" + ck.expression;
+}
+
+export function fingerprintTable(t) {
+  let cols  = join(map(fingerprintColumn, t.columns), "|");
+  let cstrs = join(map(fingerprintConstraint, t.constraints), "|");
+  t.name + "{" + cols + "}" + "[" + cstrs + "]";
+}
+
+export function fingerprintSchema(tables, lookupValues) {
+  let tableStr  = join(map(fingerprintTable, tables), ";");
+  let lookupStr = join(lookupValues, ";");
+  __str__(hashStr(tableStr + "||" + lookupStr));
+}
+
+// ── Lookup value loader ───────────────────────────────────────────────────────
+
+export async proc loadLookupValues(conn, schemaName, tableName) {
+  let result = await dbQuery(conn,
+    "SELECT kcu.column_name " +
+    "FROM information_schema.table_constraints tc " +
+    "JOIN information_schema.key_column_usage kcu " +
+    "  ON kcu.constraint_name = tc.constraint_name " +
+    "  AND kcu.constraint_schema = tc.constraint_schema " +
+    "WHERE tc.table_schema = $1 AND tc.table_name = $2 " +
+    "  AND tc.constraint_type = 'PRIMARY KEY' " +
+    "ORDER BY kcu.ordinal_position LIMIT 1",
+    [DbText { schemaName }, DbText { tableName }]
+  );
+  match result with
+  | Err _ -> []
+  | Ok r  -> {
+      if length(r.value.rows) == 0 then [] else {
+        let pkCol = getStr(head(r.value.rows), "column_name");
+        let rows  = await dbQuery(conn,
+          "SELECT " + pkCol + " FROM " + schemaName + "." + tableName + " ORDER BY " + pkCol,
+          []
+        );
+        match rows with
+        | Err _ -> []
+        | Ok rv -> map(fn row => getStr(row, pkCol), rv.value.rows)
+      }
+    }
+}
+
+export async proc loadAllLookupValues(conn, schemaName, lookupTables) {
+  if length(lookupTables) == 0 then [] else {
+    let name   = head(lookupTables);
+    let rest   = tail(lookupTables);
+    let vals   = await loadLookupValues(conn, schemaName, name);
+    let more   = await loadAllLookupValues(conn, schemaName, rest);
+    map(fn v => name + "." + v, vals) + more;
+  }
+}

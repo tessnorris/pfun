@@ -227,6 +227,10 @@ function collectSchemaStmts(stmts: Stmt[]): Node[] {
   singletonVariants.clear();
   // Seed built-in singletons
   singletonVariants.add('None');
+  // Seed zero-field variants from imported modules (passed via TranspileOptions)
+  if (_currentOptions.externalSingletons) {
+    for (const name of _currentOptions.externalSingletons) singletonVariants.add(name);
+  }
 
   const calls: Node[] = [];
   for (let s of stmts) {
@@ -441,6 +445,8 @@ export interface TranspileOptions {
   runtimeRequirePath?: string;
   /** Require paths to use for each builtin module name (e.g. 'math' → path). */
   builtinRequirePaths?: Record<string, string>;
+  /** Zero-field variant names from imported modules — emitted as $record(name,[]) not bare identifiers. */
+  externalSingletons?: Set<string>;
 }
 
 // Module-level options set by transpile() before each emit pass so that

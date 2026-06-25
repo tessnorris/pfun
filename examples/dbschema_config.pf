@@ -1,0 +1,10 @@
+/*
+  dbschema_config.pf — Configuration for the schema reader and code generator.
+
+  Update CONNECTION_STRING for your database.
+  Add table names to LOOKUP_TABLES for tables that should become enums.
+*/
+
+export let CONNECTION_STRING = "postgres://postgres@localhost:5432/postgres";
+export let SCHEMA            = "public";
+export let LOOKUP_TABLES     = ["order_status"];
