@@ -10,9 +10,9 @@
 */
 
 import * from "io";
-import * from "./htmllib";
-import * from "./viewlib";
-import * from "./tea";
+import * from "../lib/htmllib";
+import * from "../lib/viewlib";
+import * from "../lib/tea";
 import * from "./protocol";
 
 // ── Model ─────────────────────────────────────────────────────────────────────

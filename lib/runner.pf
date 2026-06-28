@@ -1,0 +1,159 @@
+// -----------------------------------------------------------------------------
+// testing/runner.pf
+//
+// Test runner.
+//
+// Executes suites sequentially.
+// Continues after failures.
+// Prints a Jest-style summary.
+//
+// -----------------------------------------------------------------------------
+
+import * from "io";
+import * from "./testing";
+import * from "./assertions";
+
+type Stats = {
+  suitePass,
+  suiteFail,
+  testPass,
+  testFail
+}
+
+let emptyStats =
+  Stats {
+    0,
+    0,
+    0,
+    0
+  };
+
+function addSuitePass(stats) {
+  Stats {
+    stats.suitePass + 1,
+    stats.suiteFail,
+    stats.testPass,
+    stats.testFail
+  };
+}
+
+function addSuiteFail(stats) {
+  Stats {
+    stats.suitePass,
+    stats.suiteFail + 1,
+    stats.testPass,
+    stats.testFail
+  };
+}
+
+function addTestPass(stats) {
+  Stats {
+    stats.suitePass,
+    stats.suiteFail,
+    stats.testPass + 1,
+    stats.testFail
+  };
+}
+
+function addTestFail(stats) {
+  Stats {
+    stats.suitePass,
+    stats.suiteFail,
+    stats.testPass,
+    stats.testFail + 1
+  };
+}
+
+
+function failures(results) {
+  filter(
+    fn r =>
+      match r with
+      | Some _ -> true
+      | None   -> false,
+    results
+  );
+}
+
+proc printFailure(failure) {
+  match failure with
+  | Some f -> {
+    println("      Expected : " + f.value.expected);
+    println("      Actual   : " + f.value.actual);
+    if f.value.message != "" then
+       println("      " + f.value.message);
+  }
+  | None -> {};
+}
+
+
+proc runTest(test, stats) {
+  test.fixture.before();
+  let results = test.body();
+  test.fixture.after();
+  let failed = failures(results);
+  if length(failed) == 0 then {
+    println("  ✓ " + test.name);
+    addTestPass(stats);
+  } else {
+    println("  ✗ " + test.name);
+    printFailures(failed);
+     addTestFail(stats);
+  }
+}
+
+proc printFailures(list) {
+  if length(list) > 0 then {
+     printFailure(head(list));
+     printFailures(tail(list));
+  }
+}
+
+
+proc runSuiteTests(tests, stats) {
+  if length(tests) == 0 then
+    stats
+  else {
+    let next = runTest(head(tests), stats);
+    runSuiteTests(tail(tests), next);
+  }
+}
+
+proc runSuite(suite, stats) {
+  println("");
+  println(suite.name);
+  let before = stats;
+  let after = runSuiteTests(suite.tests, stats);
+  if after.testFail == before.testFail then
+    addSuitePass(after)
+  else
+    addSuiteFail(after);
+}
+
+
+proc runSuitesRec(suites, stats) {
+  if length(suites) == 0 then
+    stats
+  else {
+    let next = runSuite(head(suites), stats);
+    runSuitesRec(tail(suites), next);
+  }
+}
+
+proc printSummary(stats) {
+  println("");
+  println("----------------------------------------");
+  println("");
+  println($"Suites: {__str__(stats.suitePass)} passed, {__str__(stats.suiteFail)} failed");
+  println($"Tests  : {__str__(stats.testPass)} passed, {__str__(stats.testFail)} failed");
+  println("");
+  if stats.testFail == 0 then
+    println("PASS")
+  else
+    println("FAIL");
+}
+
+export proc runSuites(suites) {
+  let stats = runSuitesRec(suites, emptyStats);
+  printSummary(stats);
+}

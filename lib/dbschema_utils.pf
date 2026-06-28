@@ -5,7 +5,7 @@
 
 import * from "io";
 import * from "db/postgresql";
-import * from "../dbschema";
+import * from "./dbschema";
 
 // ── Fingerprint ───────────────────────────────────────────────────────────────
 

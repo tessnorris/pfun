@@ -1,0 +1,57 @@
+/*
+  counter.pf — Minimal TEA counter app.
+  Run with: pfun --serve examples/counter.pf
+*/
+
+import * from "io";
+import * from "../lib/htmllib";
+import * from "../lib/viewlib";
+import * from "../lib/tea";
+
+// ── Model ─────────────────────────────────────────────────────────────────────
+
+type Model = { count }
+
+function init() {
+  Model { 0 };
+}
+
+// ── Msg ───────────────────────────────────────────────────────────────────────
+
+type Msg = {
+  | Increment
+  | Decrement
+  | Reset
+}
+
+// ── Update ────────────────────────────────────────────────────────────────────
+
+function update(msg, model) {
+  match msg with
+  | Increment -> Model { model.count + 1 }
+  | Decrement -> Model { model.count - 1 }
+  | Reset     -> Model { 0 };
+}
+
+// ── View ──────────────────────────────────────────────────────────────────────
+
+function view(model) {
+  vdiv([
+    vcontent(Section {
+      [text("Counter")],
+      [Para { [text("A minimal TEA example in Pfun.")] }]
+    }),
+    vdiv([
+      vbutton("-", Decrement),
+      vtext(" " + __str__(model.count) + " "),
+      vbutton("+", Increment)
+    ]),
+    vdiv([
+      vbutton("Reset", Reset)
+    ])
+  ]);
+}
+
+// ── Run ───────────────────────────────────────────────────────────────────────
+
+run(init(), view, update);

@@ -27,8 +27,7 @@ export type RegistryFunction = {
  */
 export type RegistryType =
   | { kind: 'plain'; name: string; fields: string[]; generic?: boolean }
-  | { kind: 'union'; name: string; variants: { name: string; fields: string[] }[] };
-
+  | { kind: 'union'; name: string; variants: { name: string; fields: string[] }[]; generic?: boolean };
 // ─── Value Types ──────────────────────────────────────────────────────────────
 
 function getValueType(v: any, schemas?: Map<string, any[]>): string {
@@ -473,14 +472,20 @@ export class TypeRegistry {
     this.schemas.set(name, existing);
   }
 
-  registerUnion(unionName: string, variants: { name: string; fields: string[] }[], globals?: Environment) {
+  registerUnion(unionName: string, variants: { name: string; fields: string[] }[], globals?: Environment, generic: boolean = false) {
     const variantNames = new Set<string>();
     for (const v of variants) {
       const existing = this.schemas.get(v.name) ?? [];
-      // If this variant is already registered in this union (re-import), skip silently.
-      if (existing.some(s => s.unionName === unionName)) {
-        variantNames.add(v.name);
-        continue;
+      // Idempotent: a variant already registered to THIS union is a no-op
+      // (re-import of same module). Only the global singleton below re-runs.
+      if (!existing.some(s => s.unionName === unionName)) {
+        existing.push({ fields: v.fields, inferredTypes: null, unionName, generic });
+        this.schemas.set(v.name, existing);
+      }
+      // (re-import of same module). Only the global singleton below re-runs.
+      if (!existing.some(s => s.unionName === unionName)) {
+        existing.push({ fields: v.fields, inferredTypes: null, unionName, generic });
+        this.schemas.set(v.name, existing);
       }
       existing.push({ fields: v.fields, inferredTypes: null, unionName });
       this.schemas.set(v.name, existing);
@@ -1025,7 +1030,7 @@ export class Interpreter {
     if (entry.kind === 'plain') {
       this.types.registerPlain(entry.name, entry.fields, entry.generic ?? false);
     } else {
-      this.types.registerUnion(entry.name, entry.variants, this.globals);
+      this.types.registerUnion(entry.name, entry.variants, this.globals, entry.generic ?? false);
     }
   }
 
@@ -1155,7 +1160,7 @@ export class Interpreter {
         this.types.registerPlain(stmt.name, stmt.fields, stmt.generic ?? false);
         return;
       case 'UnionTypeStmt':
-        this.types.registerUnion(stmt.name, stmt.variants, this.globals);
+        this.types.registerUnion(stmt.name, stmt.variants, this.globals, stmt.generic ?? false);
         return;
       case 'ExprStmt': return yield* this.evaluateExprGen(stmt.expression, env);
       case 'EvalStmt': return yield* this.forceGen(yield* this.evaluateExprGen(stmt.expression, env));
@@ -1187,7 +1192,7 @@ export class Interpreter {
           const descriptor: RegistryType = { kind: 'plain', name: decl.name, fields: decl.fields };
           this.exports.set(decl.name, { __registryType: descriptor });
         } else if (decl.type === 'UnionTypeStmt') {
-          const descriptor: RegistryType = { kind: 'union', name: decl.name, variants: decl.variants };
+          const descriptor: RegistryType = { kind: 'union', name: decl.name, variants: decl.variants, generic: decl.generic ?? false };
           this.exports.set(decl.name, { __registryType: descriptor });
           // Also export zero-field variant singletons (e.g. None)
           for (const v of decl.variants) {

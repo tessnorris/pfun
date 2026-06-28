@@ -1,0 +1,21 @@
+// golden_helper.pf — a small library module imported by golden.pf.
+// Demonstrates cross-module compilation: exported functions, a memoized
+// function, and a tail-recursive helper.
+
+import * from "io";
+
+export function square(n) { return n * n; }
+
+export function add(x, y) { return x + y; }
+
+// Tail-recursive sum 1..n (relies on tail-call optimization).
+export function sumTo(n, acc) {
+  if n <= 0 then return acc else sumTo(n - 1, acc + n);
+}
+
+// Memoized Fibonacci — cached across calls.
+export memo function fib(n) {
+  if n <= 1 then n else fib(n - 1) + fib(n - 2);
+}
+
+export let greeting = "hello from the helper module";

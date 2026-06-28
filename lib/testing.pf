@@ -1,0 +1,82 @@
+// -----------------------------------------------------------------------------
+// testing/testing.pf
+//
+// Core test model.
+//
+// Tests, suites and fixtures are ordinary immutable values.
+//
+// The runner interprets these values.
+// -----------------------------------------------------------------------------
+
+export type Fixture = {
+  before,
+  after
+}
+
+export type Test = {
+  name,
+  fixture,
+  body
+}
+
+export type Suite = {
+  name,
+  tests
+}
+
+export let noFixture =
+  Fixture {
+    proc() {},
+    proc() {}
+  };
+
+export function fixture(before, after) {
+  Fixture {
+    before,
+    after
+  };
+}
+
+export function test(name, body) {
+  Test {
+    name,
+    noFixture,
+    body
+  };
+}
+
+export function testUsing(name, fixture, body) {
+  Test {
+    name,
+    fixture,
+    body
+  };
+}
+
+export function suite(name, tests) {
+  Suite {
+    name,
+    tests
+  };
+}
+
+export function composeFixtures(first, second) {
+  Fixture {
+    proc() {
+      first.before();
+      second.before();
+    },
+    proc() {
+      second.after();
+      first.after();
+    }
+  };
+}
+
+export function withFixture(test, fixture) {
+  Test {
+    test.name,
+    fixture,
+    test.body
+  };
+}

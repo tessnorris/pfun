@@ -19,8 +19,8 @@
 import * from "io";
 import * from "file";
 import * from "db/postgresql";
-import * from "../dbschema";
-import * from "./dbschema_utils";
+import * from "../../lib/dbschema";
+import * from "../../lib/db/dbschema_utils";
 import * from "./dbschema_config";
 
 // ── Naming helpers ────────────────────────────────────────────────────────────
@@ -622,10 +622,6 @@ function genCrud(table, schema, lookupTables) {
     let updateSql = genUpdateSql(table, schema);
     let updateParamList = join(genUpdateParams(table, lookupTables), ",\n      ");
 
-    // Per-table result types to avoid monomorphism unification
-    "type Insert" + procBase + "Result = { | Insert" + procBase + "Ok : model | Insert" + procBase + "Err : message }\n" +
-    "type Find"   + procBase + "Result = { | Find"   + procBase + "Ok : model | Find"   + procBase + "Err : message }\n\n" +
-
     // rowToModel
     genRowToModel(table, lookupTables) +
 
@@ -636,10 +632,10 @@ function genCrud(table, schema, lookupTables) {
     "    [" + insertParamList + "]\n" +
     "  );\n" +
     "  match result with\n" +
-    "  | Err e -> Insert" + procBase + "Err { e.message }\n" +
+    "  | Err e -> InsertErr { e.message }\n" +
     "  | Ok r  -> {\n" +
-    "      if length(r.value.rows) == 0 then Insert" + procBase + "Err { \"No row returned\" } else\n" +
-    "        Insert" + procBase + "Ok { rowTo" + typeName + "(head(r.value.rows)) }\n" +
+    "      if length(r.value.rows) == 0 then InsertErr { \"No row returned\" } else\n" +
+    "        InsertOk { rowTo" + typeName + "(head(r.value.rows)) }\n" +
     "    }\n" +
     "}\n\n" +
 
@@ -650,10 +646,10 @@ function genCrud(table, schema, lookupTables) {
     "    [DbInt { id }]\n" +
     "  );\n" +
     "  match result with\n" +
-    "  | Err _ -> Find" + procBase + "Err { \"Query failed\" }\n" +
+    "  | Err _ -> FindErr { \"Query failed\" }\n" +
     "  | Ok r  -> {\n" +
-    "      if length(r.value.rows) == 0 then Find" + procBase + "Err { \"Not found\" } else\n" +
-    "        Find" + procBase + "Ok { rowTo" + typeName + "(head(r.value.rows)) }\n" +
+    "      if length(r.value.rows) == 0 then FindErr { \"Not found\" } else\n" +
+    "        FindOk { rowTo" + typeName + "(head(r.value.rows)) }\n" +
     "    }\n" +
     "}\n\n" +
 

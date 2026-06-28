@@ -185,7 +185,7 @@ export class Parser {
       }
       this.consume('RBraceToken', "Expected '}' after union variants.");
       this.match('SemiToken');
-      return { type: 'UnionTypeStmt', name, variants, pos: stmtPos };
+      return { type: 'UnionTypeStmt', name, variants, generic, pos: stmtPos };
     }
 
     // Plain record type

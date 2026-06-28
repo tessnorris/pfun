@@ -1,0 +1,88 @@
+// -----------------------------------------------------------------------------
+// testing/assertions.pf
+//
+// Core assertion library.
+//
+// Assertions are pure functions.
+//
+// Assertion functions return Option<Failure>.
+// Test bodies return TestResult.
+//
+// -----------------------------------------------------------------------------
+
+export type Failure = {
+  message,
+  expected,
+  actual
+}
+
+export type TestResult = {
+  failures
+}
+
+function failure(message, expected, actual) {
+  Some { Failure {message, expected, actual} };
+}
+
+export function assertEqual(expected, actual) {
+  if expected == actual then
+    None
+  else
+    failure("Expected values to be equal.", expected, actual);
+}
+
+export function assertNotEqual(expected, actual) {
+  if expected != actual then
+    None
+  else
+    failure("Expected values to be different.", "<different value>", actual);
+}
+
+export function assertTrue(value) {
+  if value then
+    None
+  else
+    failure("Expected true.", true, value);
+}
+
+export function assertFalse(value) {
+  if value then
+    failure("Expected false.", false, value)
+  else
+    None;
+}
+
+export function assertSome(value) {
+  match value with
+  | Some _ -> None
+  | None   -> failure("Expected Some.", Some, None);
+}
+
+export function assertNone(value) {
+  match value with
+  | None   -> None
+  | Some _ -> failure("Expected None.", None, Some);
+}
+
+export function check(condition, message) {
+  if condition then
+    None
+  else
+    failure(message, true, false);
+}
+
+export function fail(message) {
+  failure(message, (),());
+}
+
+export function assertions(assertions) {
+  TestResult {
+    filter(
+      fn assertion =>
+        match assertion with
+        | Some _ -> true
+        | None   -> false,
+      assertions
+    )
+  };
+}

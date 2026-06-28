@@ -16,26 +16,21 @@
 import * from "io";
 import * from "db/postgresql";
 import * from "./dbschema_config";
-import * from "../dbschema";
-import * from "./dbschema_utils";
+import * from "../../lib/dbschema";
+import * from "../../lib/db/dbschema_utils";
 import * from "./data_model/public_data_model";
 
 // Re-declare types to ensure variants are registered in this module's context.
-type MaybeId             = { | New | Id : value }
-type ParseResult         = { | ParseOk : val | ParseFail }
-type InsertCustomerResult = { | InsertCustomerOk : model | InsertCustomerErr : message }
-type FindCustomerResult   = { | FindCustomerOk   : model | FindCustomerErr   : message }
-type InsertOrderResult    = { | InsertOrderOk    : model | InsertOrderErr    : message }
-type FindOrderResult      = { | FindOrderOk      : model | FindOrderErr      : message }
-type InsertOrderItemResult = { | InsertOrderItemOk : model | InsertOrderItemErr : message }
-type FindOrderItemResult   = { | FindOrderItemOk   : model | FindOrderItemErr   : message }
-type MutResult           = { | MutOk | MutErr : message }
+type MaybeId      = { | New | Id : value }
+type InsertResult = { | InsertOk : model | InsertErr : message }
+type FindResult   = { | FindOk   : model | FindErr   : message }
+type MutResult    = { | MutOk            | MutErr    : message }
 type CustomerRef  = { | CustomerId : id | CustomerDataModel : customer }
 type OrderRef     = { | OrderId    : id | OrderDataModel    : order }
 type ProductRef   = { | ProductId  : id | ProductDataModel  : product }
-type CustomerModel    = { maybeId, name, email }
-type OrderModel       = { maybeId, customerRef, status, placedAt }
-type OrderItemModel   = { maybeId, orderRef, productRef, quantity }
+type CustomerModel   = { maybeId, name, email }
+type OrderModel      = { maybeId, customerRef, status, placedAt }
+type OrderItemModel  = { maybeId, orderRef, productRef, quantity }
 
 // ── Schema verification ───────────────────────────────────────────────────────
 
@@ -129,8 +124,8 @@ async proc runDemo(conn) {
   printSep("Find Customer By Id (id=1)");
   let found = await findCustomerById(conn, 1);
   match found with
-  | FindCustomerErr e -> println("Not found: " + e.message)
-  | FindCustomerOk f  -> {
+  | FindErr e -> println("Not found: " + e.message)
+  | FindOk f  -> {
       println("Found:");
       printCustomerModel(f.model);
     }
@@ -140,8 +135,8 @@ async proc runDemo(conn) {
   let newCustomer = CustomerModel { New, "Dave Kowalski", "dave@example.com" };
   let inserted = await insertCustomer(conn, newCustomer);
   match inserted with
-  | InsertCustomerErr e -> println("Insert failed: " + e.message)
-  | InsertCustomerOk i  -> {
+  | InsertErr e -> println("Insert failed: " + e.message)
+  | InsertOk i  -> {
       println("Inserted:");
       printCustomerModel(i.model);
 
@@ -158,8 +153,8 @@ async proc runDemo(conn) {
           | Id id -> {
               let refetched = await findCustomerById(conn, id.value);
               match refetched with
-              | FindCustomerErr e -> println("Fetch failed: " + e.message)
-              | FindCustomerOk f  -> printCustomerModel(f.model);
+              | FindErr e -> println("Fetch failed: " + e.message)
+              | FindOk f  -> printCustomerModel(f.model);
             }
         }
 
@@ -194,8 +189,8 @@ async proc runDemo(conn) {
   };
   let insertedOrder = await insertOrder(conn, newOrder);
   match insertedOrder with
-  | InsertOrderErr e -> println("Insert failed: " + e.message)
-  | InsertOrderOk io -> {
+  | InsertErr e -> println("Insert failed: " + e.message)
+  | InsertOk io -> {
       println("Inserted:");
       printOrderModel(io.model);
 
@@ -212,8 +207,8 @@ async proc runDemo(conn) {
           };
           let insertedItem = await insertOrderItem(conn, newItem);
           match insertedItem with
-          | InsertOrderItemErr e -> println("Insert failed: " + e.message)
-          | InsertOrderItemOk ii -> {
+          | InsertErr e -> println("Insert failed: " + e.message)
+          | InsertOk ii -> {
               println("Inserted:");
               printOrderItemModel(ii.model);
             }

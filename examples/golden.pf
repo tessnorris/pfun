@@ -1,0 +1,164 @@
+// ============================================================================
+// golden.pf — the Pfun compiler conformance program.
+//
+// A deterministic, stdout-only program that exercises the full feature set the
+// AOT compiler supports. Its output must be BYTE-IDENTICAL whether produced by
+// the interpreter (`pfun golden.pf`) or the compiled executable
+// (`pfc build golden.pf -o golden && ./golden`). See scripts/golden-test.sh.
+//
+// Deliberately avoids anything non-deterministic (wall-clock, file errors,
+// network) so the two runs always agree.
+// ============================================================================
+
+import * from "io";
+import * from "math";
+import * from "json";
+import * from "async";
+import { square, sumTo, fib, greeting } from "./golden_helper";
+import * as H from "./golden_helper";
+
+proc section(title) { println(""); println("== " + title + " =="); }
+
+// ── 1. Variables, operators, control flow ───────────────────────────────────
+section("variables & operators");
+let a = 10;
+var counter = 0;
+counter = counter + 5;
+println(a + counter * 2);          // 30
+println(10 / 4);                   // 2  (integer division truncates)
+println(2.0 + 3);                  // 5.0  (mixed -> float)
+println(17 % 5);                   // 2
+println((a > counter) ? "a" : "c");
+println(a < counter && counter > 0);
+if a < 20 then println("less") else println("more");
+println(0xF0b | 0x0Fb);            // 255  (byte bitwise)
+println(1 << 10);                  // 1024 (int shift)
+
+// ── 2. Functions, closures, currying, recursion, TCO ────────────────────────
+section("functions");
+function clampInt(lo, hi, x) { return x < lo ? lo : (x > hi ? hi : x); }
+let clamp100 = clampInt(0)(100);      // partial application
+println(clamp100(150));            // 100
+let dbl = fn x => x * 2;
+println(dbl(21));                  // 42
+function adder(n) { return fn x => x + n; }
+println(adder(5)(10));             // 15
+println(sumTo(100000, 0));         // 5000050000  (deep tail recursion)
+println(fib(30));                  // 832040 (memoized)
+
+// ── 3. Lists, comprehensions, lazy lists ────────────────────────────────────
+section("lists");
+let nums = [1, 2, 3, 4, 5];
+println(map(fn x => x * x, nums));
+println(filter(fn x => x % 2 == 0, nums));
+println(reduce(fn acc, x => acc + x, 0, nums));
+println(reverse(nums));
+println(cons(0, nums));
+println([ x * 10 for x <- nums where x % 2 == 1 ]);
+println([ x + y for x <- [1, 2] for y <- [10, 20] ]);
+let nats = iterate(fn x => x + 1, 1);
+println(take(8, nats));
+println(take(5, filter(fn x => x % 3 == 0, nats)));
+println(nth(nats, 1000));
+
+// ── 4. Strings, chars, bytes, interpolation ─────────────────────────────────
+section("strings & bytes");
+let s = "Pfun";
+println(head(s));
+println(tail(s));
+println(map(fn c => chr(asc(c) + 1), s));
+println(split("a,b,c", ","));
+println(join([1, 2, 3], "-"));
+let name = "world";
+let n = 42;
+println($"hello {name}, the answer is {n}");
+println(asc('A'));
+println(chr(0x20AC));              // €
+println(toByte(255));
+println(charBytes('€'));           // UTF-8 bytes
+println(bytesToChar([0xE2b, 0x82b, 0xACb]));
+
+// ── 5. Records, unions, pattern matching, Option/Result ─────────────────────
+section("records & match");
+type Point = { x, y };
+let p = Point(x = 3, y = 4);
+println($"({p.x}, {p.y})");
+
+type Shape = { | Circle: radius | Rect: w, h }
+function area(sh) {
+  match sh with
+  | Circle c -> c.radius * c.radius * 3
+  | Rect r   -> r.w * r.h;
+}
+println(area(Circle { radius = 5 }));
+println(area(Rect(w = 3, h = 4)));
+
+function describe(x) {
+  match x with
+  | x where x < 0   -> "negative"
+  | x where x == 0  -> "zero"
+  | x where x < 100 -> "small"
+  | _               -> "big";
+}
+println(describe(-5));
+println(describe(0));
+println(describe(50));
+println(describe(1000));
+
+function safeDiv(x, y) { return y == 0 ? None : Some { x / y }; }
+match safeDiv(10, 2) with | Some r -> println(r.value) | None -> println("undefined");
+match safeDiv(10, 0) with | Some r -> println(r.value) | None -> println("undefined");
+
+// ── 6. Arrays & dicts (mutable) ─────────────────────────────────────────────
+section("arrays & dicts");
+var arr = array { 10, 20, 30 };
+append(arr, 40);
+arr[0] = 99;
+println(toList(arr));
+println(arrayLength(arr));
+var scores = dict { "alice" -> 90, "bob" -> 85 };
+scores["carol"] = 95;
+scores["bob"] = 88;
+println(scores["bob"]);
+println(has(scores, "carol"));
+println(keys(scores));
+println(values(scores));
+
+// ── 7. Math, big integers, JSON ─────────────────────────────────────────────
+section("math, bigints & json");
+println(sqrt(2.0));
+println(pow(2.0, 16.0));
+println(abs(-7));
+println(round(lerp(0.0, 100.0, 0.25)));
+// arbitrary-precision integers (well beyond 64 bits)
+function factorial(k, acc) { if k <= 1 then return acc else factorial(k - 1, k * acc); }
+println(factorial(30, 1));         // 265252859812191058636308480000000
+println(square(1000000000000));    // 10^24, from the helper module
+
+type Record = { name, value };
+let rec = Record(name = "answer", value = 42);
+match jsonSerialize([rec, rec]) with
+| Some j -> {
+    match jsonDeserialize(j.value) with
+    | Some back -> { let xs = back.value; println(head(xs).name); }
+    | None -> println("parse failed");
+  }
+| None -> println("serialize failed");
+
+// ── 8. Async / await (sequential) ───────────────────────────────────────────
+section("async");
+async proc delayedDouble(x) { await sleep(1); return x * 2; }
+async proc runAsync() {
+  let r = await delayedDouble(21);
+  println($"delayedDouble(21) = {r}");
+}
+runAsync();
+
+// ── 9. Cross-module imports ─────────────────────────────────────────────────
+section("modules");
+println(greeting);
+println(H.add(40, 2));
+println(H.square(9));
+
+section("done");
+println("golden program complete");
