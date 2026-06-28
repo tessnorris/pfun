@@ -1,13 +1,17 @@
 // -----------------------------------------------------------------------------
 // lib/test/tea_test.pf
 //
-// Tests for lib/tea.pf — only the pure parts are testable without a browser:
-//   cmdNone        — Cmd constructor
-//   collectHandlers — extracts event handler records from a View tree
+// Tests for lib/tea.pf.
 //
-// The runtime procs (run, render, attachAll, executeCmd) call browser
-// primitives (mountHtml, clearOutput, attachDomHandler, httpPost) that don't
-// exist in the interpreter context, so they're not tested here.
+// What's testable here:
+//   cmdNone, collectHandlers — pure functions, fully testable
+//   Handler key naming and function invocation — testable via collectHandlers
+//
+// What requires integration testing (browser or transpiler):
+//   render, attachAll, run, executeCmd — call browser primitives
+//   (clearOutput, mountHtml, attachDomHandler, httpPost) that are only
+//   available in the transpiled browser runtime, not the interpreter.
+//   These are covered by the full-stack example app instead.
 //
 // Run with:  pfun lib/test/tea_test.pf
 // -----------------------------------------------------------------------------
@@ -18,7 +22,9 @@ import * from "../testing/assertions";
 import * from "../testing/runner";
 import * from "../htmllib";
 import * from "../viewlib";
-// Re-declare types for match resolution.
+import * from "../tea";
+
+// Re-declare types for match resolution in this module.
 type View = {
   | VText      : value
   | VEl        : tag, attrs, children
@@ -40,48 +46,38 @@ type Block   = { | Para : content | RawHtml : value | ThematicBreak
 type Inline  = { | Text : value | Emph : content | Strong : content
                | InlineCode : value | Link : href, content | HtmlLineBreak }
 
-// ── Inline implementations (from tea.pf, extracted for testability) ───────────
-// collectHandlers and cmdNone are pure and don't depend on browser primitives.
+// ── App types for handler invocation tests ────────────────────────────────────
 
-function cmdNone() { CmdNone; }
-
-function collectHandlers(view) {
-  match view with
-  | VButton b    -> [Handler { "click_"  + b.label,  fn ignored => b.onClick  }]
-  | VTextInput i -> [Handler { "input_"  + i.name,   i.onInput  }]
-  | VCheckbox c  -> [Handler { "check_"  + c.name,   c.onToggle }]
-  | VSelect s    -> [Handler { "change_" + s.name,   s.onChange }]
-  | VEl el       -> reduce(fn acc, child => acc + collectHandlers(child), [], el.children)
-  | VText _      -> []
-  | VContent _   -> [];
-}
-
+type Msg = { | Increment | Decrement | Reset }
 
 // ── cmdNone ───────────────────────────────────────────────────────────────────
 
 function testCmdNone() {
   let c = cmdNone();
   match c with
-  | CmdNone  -> assertions([check(true, "got CmdNone")])
-  | Send _   -> assertions([fail("Expected CmdNone")]);
+  | CmdNone -> assertions([check(true, "got CmdNone")])
+  | Send _  -> assertions([fail("Expected CmdNone")]);
+}
+
+function testCmdNoneIsNoCmdVariant() {
+  let c = cmdNone();
+  match c with
+  | CmdNone -> assertions([assertEqual("CmdNone", __str__(c))])
+  | Send _  -> assertions([fail("Expected CmdNone")]);
 }
 
 // ── collectHandlers — leaf nodes ──────────────────────────────────────────────
 
 function testCollectHandlersVText() {
-  // VText has no events.
-  let hs = collectHandlers(vtext("hello"));
-  assertions([assertEqual(0, length(hs))]);
+  assertions([assertEqual(0, length(collectHandlers(vtext("hello"))))]);
 }
 
 function testCollectHandlersVContent() {
-  let hs = collectHandlers(vcontent(Para { [Text { "x" }] }));
-  assertions([assertEqual(0, length(hs))]);
+  assertions([assertEqual(0, length(collectHandlers(vcontent(Para { [Text { "x" }] }))))]);
 }
 
 function testCollectHandlersVButton() {
-  let v = vbutton("Save", 42);
-  let hs = collectHandlers(v);
+  let hs = collectHandlers(vbutton("Save", Increment));
   assertions([
     assertEqual(1, length(hs)),
     assertEqual("click_Save", head(hs).key)
@@ -89,8 +85,7 @@ function testCollectHandlersVButton() {
 }
 
 function testCollectHandlersVTextInput() {
-  let v = vinput("q", "", "Search", fn s => s);
-  let hs = collectHandlers(v);
+  let hs = collectHandlers(vinput("q", "", "Search", fn s => s));
   assertions([
     assertEqual(1, length(hs)),
     assertEqual("input_q", head(hs).key)
@@ -98,8 +93,7 @@ function testCollectHandlersVTextInput() {
 }
 
 function testCollectHandlersVCheckbox() {
-  let v = vcheckbox("agree", false, "Agree", fn b => b);
-  let hs = collectHandlers(v);
+  let hs = collectHandlers(vcheckbox("agree", false, "Agree", fn b => b));
   assertions([
     assertEqual(1, length(hs)),
     assertEqual("check_agree", head(hs).key)
@@ -108,40 +102,34 @@ function testCollectHandlersVCheckbox() {
 
 function testCollectHandlersVSelect() {
   let cs = [Choice { "a", "A" }];
-  let v = vselect("color", cs, "a", fn s => s);
-  let hs = collectHandlers(v);
+  let hs = collectHandlers(vselect("color", cs, "a", fn s => s));
   assertions([
     assertEqual(1, length(hs)),
     assertEqual("change_color", head(hs).key)
   ]);
 }
 
-// ── collectHandlers — VEl container ──────────────────────────────────────────
+// ── collectHandlers — VEl containers ─────────────────────────────────────────
 
 function testCollectHandlersVElEmpty() {
-  let v = vdiv([]);
-  assertions([assertEqual(0, length(collectHandlers(v)))]);
+  assertions([assertEqual(0, length(collectHandlers(vdiv([]))))]);
 }
 
 function testCollectHandlersVElWithButton() {
-  let v = vdiv([vbutton("OK", 0)]);
-  let hs = collectHandlers(v);
+  let hs = collectHandlers(vdiv([vbutton("OK", Increment)]));
   assertions([
     assertEqual(1, length(hs)),
     assertEqual("click_OK", head(hs).key)
   ]);
 }
 
-function testCollectHandlersVElMultipleChildren() {
-  // A div containing two buttons — should get two handlers.
-  let v = vdiv([vbutton("A", 0), vbutton("B", 0)]);
-  let hs = collectHandlers(v);
-  assertions([assertEqual(2, length(hs))]);
+function testCollectHandlersVElMultiple() {
+  let v = vdiv([vbutton("A", Increment), vbutton("B", Decrement)]);
+  assertions([assertEqual(2, length(collectHandlers(v)))]);
 }
 
 function testCollectHandlersNestedEl() {
-  // div > span > button — handler bubbles up through containers.
-  let v = vdiv([vspan([vbutton("Deep", 0)])]);
+  let v = vdiv([vspan([vbutton("Deep", Increment)])]);
   let hs = collectHandlers(v);
   assertions([
     assertEqual(1, length(hs)),
@@ -150,103 +138,160 @@ function testCollectHandlersNestedEl() {
 }
 
 function testCollectHandlersMixedChildren() {
-  // Text nodes and content nodes contribute zero handlers.
   let v = vdiv([
     vtext("label"),
-    vbutton("Submit", 0),
+    vbutton("Submit", Increment),
     vinput("name", "", "ph", fn s => s)
   ]);
-  let hs = collectHandlers(v);
-  assertions([assertEqual(2, length(hs))]);
+  assertions([assertEqual(2, length(collectHandlers(v)))]);
+}
+
+function testCollectHandlersDeepNesting() {
+  // div > div > span > button — handler found at any depth
+  let v = vdiv([vdiv([vspan([vbutton("Nested", Increment)])])]);
+  assertions([assertEqual(1, length(collectHandlers(v)))]);
 }
 
 // ── Handler key naming ────────────────────────────────────────────────────────
 
 function testHandlerKeyButton() {
-  let hs = collectHandlers(vbutton("Delete item", 0));
-  assertions([assertEqual("click_Delete item", head(hs).key)]);
+  assertions([assertEqual("click_Delete item",
+    head(collectHandlers(vbutton("Delete item", Increment))).key)]);
 }
 
 function testHandlerKeyInput() {
-  let hs = collectHandlers(vinput("user_name", "", "", fn s => s));
-  assertions([assertEqual("input_user_name", head(hs).key)]);
+  assertions([assertEqual("input_user_name",
+    head(collectHandlers(vinput("user_name", "", "", fn s => s))).key)]);
 }
 
 function testHandlerKeyCheckbox() {
-  let hs = collectHandlers(vcheckbox("is_active", true, "Active", fn b => b));
-  assertions([assertEqual("check_is_active", head(hs).key)]);
+  assertions([assertEqual("check_is_active",
+    head(collectHandlers(vcheckbox("is_active", true, "Active", fn b => b))).key)]);
 }
 
 function testHandlerKeySelect() {
   let cs = [Choice { "x", "X" }];
-  let hs = collectHandlers(vselect("my_select", cs, "x", fn s => s));
-  assertions([assertEqual("change_my_select", head(hs).key)]);
+  assertions([assertEqual("change_my_select",
+    head(collectHandlers(vselect("my_select", cs, "x", fn s => s))).key)]);
 }
 
 // ── Handler function invocation ───────────────────────────────────────────────
 
-function testHandlerFunctionInput() {
-  // The onInput handler wraps its string argument into a Msg.
-  // We can verify the handler function is callable and returns a value.
-  let v = vinput("q", "", "", fn s => length(s));
-  let hs = collectHandlers(v);
-  let h = head(hs);
-  let result = h.handler("hello");
-  assertions([assertEqual(5, result)]);
+function testHandlerButtonReturnsMsg() {
+  // VButton onClick is returned directly as the message
+  let v = vbutton("inc", Increment);
+  let h = head(collectHandlers(v));
+  let msg = h.handler("click");
+  match msg with
+  | Increment -> assertions([check(true, "got Increment")])
+  | _         -> assertions([fail("Expected Increment")]);
 }
 
-function testHandlerFunctionCheckbox() {
+function testHandlerInputTransformsString() {
+  let v = vinput("q", "", "", fn s => length(s));
+  let h = head(collectHandlers(v));
+  assertions([assertEqual(5, h.handler("hello"))]);
+}
+
+function testHandlerCheckboxReturnsBool() {
   let v = vcheckbox("flag", false, "Label", fn b => b);
-  let hs = collectHandlers(v);
-  let h = head(hs);
+  let h = head(collectHandlers(v));
   assertions([
     assertTrue(h.handler(true)),
     assertFalse(h.handler(false))
   ]);
 }
 
-function testHandlerFunctionSelect() {
+function testHandlerSelectTransformsString() {
   let cs = [Choice { "a", "A" }];
   let v = vselect("s", cs, "a", fn s => s + "!");
-  let hs = collectHandlers(v);
-  let h = head(hs);
+  let h = head(collectHandlers(v));
   assertions([assertEqual("x!", h.handler("x"))]);
+}
+
+function testHandlerButtonMsgIsWrappedAsMsg() {
+  // The handler fn wraps onClick value — firing with any input returns onClick
+  let v = vbutton("reset", Reset);
+  let h = head(collectHandlers(v));
+  let msg = h.handler("ignored");
+  match msg with
+  | Reset -> assertions([check(true, "got Reset")])
+  | _     -> assertions([fail("Expected Reset")]);
+}
+
+// ── Multiple handlers from complex view ───────────────────────────────────────
+
+function testHandlerOrderPreserved() {
+  // Handlers come out in document order (left-to-right, depth-first)
+  let v = vdiv([
+    vbutton("first", Increment),
+    vdiv([vbutton("second", Decrement)]),
+    vbutton("third", Reset)
+  ]);
+  let hs = collectHandlers(v);
+  assertions([
+    assertEqual(3, length(hs)),
+    assertEqual("click_first",  head(hs).key),
+    assertEqual("click_second", head(tail(hs)).key),
+    assertEqual("click_third",  head(tail(tail(hs))).key)
+  ]);
+}
+
+function testAllInteractiveNodesCollected() {
+  // A view with one of each interactive node type
+  let cs = [Choice { "a", "A" }];
+  let v = vdiv([
+    vbutton("btn", Increment),
+    vinput("inp", "", "ph", fn s => s),
+    vcheckbox("chk", false, "Label", fn b => b),
+    vselect("sel", cs, "a", fn s => s)
+  ]);
+  assertions([assertEqual(4, length(collectHandlers(v)))]);
 }
 
 // ── Suites ────────────────────────────────────────────────────────────────────
 
 let cmdSuite = suite("Cmd", [
-  test("cmdNone produces CmdNone", testCmdNone)
+  test("cmdNone produces CmdNone",          testCmdNone),
+  test("cmdNone stringifies as CmdNone",    testCmdNoneIsNoCmdVariant)
 ]);
 
 let leafSuite = suite("collectHandlers — leaf nodes", [
-  test("VText: no handlers",      testCollectHandlersVText),
-  test("VContent: no handlers",   testCollectHandlersVContent),
-  test("VButton: click handler",  testCollectHandlersVButton),
-  test("VTextInput: input handler", testCollectHandlersVTextInput),
-  test("VCheckbox: check handler",  testCollectHandlersVCheckbox),
-  test("VSelect: change handler",   testCollectHandlersVSelect)
+  test("VText: no handlers",          testCollectHandlersVText),
+  test("VContent: no handlers",       testCollectHandlersVContent),
+  test("VButton: click handler",      testCollectHandlersVButton),
+  test("VTextInput: input handler",   testCollectHandlersVTextInput),
+  test("VCheckbox: check handler",    testCollectHandlersVCheckbox),
+  test("VSelect: change handler",     testCollectHandlersVSelect)
 ]);
 
-let containerSuite = suite("collectHandlers — VEl containers", [
-  test("empty VEl: no handlers",            testCollectHandlersVElEmpty),
-  test("VEl with button: one handler",      testCollectHandlersVElWithButton),
-  test("VEl with two buttons",              testCollectHandlersVElMultipleChildren),
-  test("nested VEl: handler found",         testCollectHandlersNestedEl),
-  test("mixed children: only event nodes",  testCollectHandlersMixedChildren)
+let containerSuite = suite("collectHandlers — containers", [
+  test("empty VEl: no handlers",          testCollectHandlersVElEmpty),
+  test("VEl with one button",             testCollectHandlersVElWithButton),
+  test("VEl with two buttons",            testCollectHandlersVElMultiple),
+  test("nested VEl: handler found",       testCollectHandlersNestedEl),
+  test("mixed children: events only",     testCollectHandlersMixedChildren),
+  test("deep nesting: still found",       testCollectHandlersDeepNesting)
 ]);
 
 let keySuite = suite("Handler key naming", [
-  test("button key: click_<label>",        testHandlerKeyButton),
-  test("input key: input_<name>",          testHandlerKeyInput),
-  test("checkbox key: check_<name>",       testHandlerKeyCheckbox),
-  test("select key: change_<name>",        testHandlerKeySelect)
+  test("button: click_<label>",   testHandlerKeyButton),
+  test("input: input_<name>",     testHandlerKeyInput),
+  test("checkbox: check_<name>",  testHandlerKeyCheckbox),
+  test("select: change_<name>",   testHandlerKeySelect)
 ]);
 
-let handlerSuite = suite("Handler function invocation", [
-  test("onInput function is callable",     testHandlerFunctionInput),
-  test("onToggle function returns bool",   testHandlerFunctionCheckbox),
-  test("onChange function transforms str", testHandlerFunctionSelect)
+let invokeSuite = suite("Handler function invocation", [
+  test("button handler returns onClick msg",     testHandlerButtonReturnsMsg),
+  test("input handler transforms string",        testHandlerInputTransformsString),
+  test("checkbox handler returns bool",          testHandlerCheckboxReturnsBool),
+  test("select handler transforms string",       testHandlerSelectTransformsString),
+  test("button msg identity (Reset)",            testHandlerButtonMsgIsWrappedAsMsg)
 ]);
 
-runSuites([cmdSuite, leafSuite, containerSuite, keySuite, handlerSuite]);
+let complexSuite = suite("Complex view trees", [
+  test("handler order is document order",          testHandlerOrderPreserved),
+  test("all interactive node types collected",     testAllInteractiveNodesCollected)
+]);
+
+runSuites([cmdSuite, leafSuite, containerSuite, keySuite, invokeSuite, complexSuite]);

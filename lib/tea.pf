@@ -62,7 +62,7 @@ export function collectHandlers(view) {
 
 // executeCmd: run an effect after update returns.
 // Calls back into render with the result so the loop continues.
-async proc executeCmd(cmd, model, viewFn, updateFn) {
+export async proc executeCmd(cmd, model, viewFn, updateFn) {
   match cmd with
   | CmdNone  -> {}
   | Send s   -> {
@@ -78,7 +78,7 @@ async proc executeCmd(cmd, model, viewFn, updateFn) {
     };
 }
 
-proc render(model, viewFn, updateFn) {
+export proc render(model, viewFn, updateFn) {
   let tree     = viewFn(model);
   let html     = renderView(tree, "");
   clearOutput();
@@ -87,11 +87,11 @@ proc render(model, viewFn, updateFn) {
   attachAll(handlers, updateFn, model, viewFn);
 }
 
-proc attachAll(handlers, updateFn, model, viewFn) {
+export proc attachAll(handlers, updateFn, model, viewFn) {
   if length(handlers) > 0 then {
     let h    = head(handlers);
     let rest = tail(handlers);
-    attachDomHandler(h.key, fn value => {
+    attachDomHandler(h.key, proc value => {
       let msg  = h.handler(value);
       let next = updateFn(msg, model);
       render(next.model, viewFn, updateFn);
@@ -101,7 +101,7 @@ proc attachAll(handlers, updateFn, model, viewFn) {
   }
 }
 
-// run: entry point.  init is { model, cmd } so any startup effect is possible.
+// run: entry point. init is { model, cmd } so any startup effect is possible.
 export proc run(init, viewFn, updateFn) {
   render(init.model, viewFn, updateFn);
   executeCmd(init.cmd, init.model, viewFn, updateFn);
