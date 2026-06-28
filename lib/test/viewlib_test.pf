@@ -1,0 +1,386 @@
+// -----------------------------------------------------------------------------
+// lib/test/viewlib_test.pf
+//
+// Tests for lib/viewlib.pf — all pure functions, no runtime or IO needed.
+//
+// Run with:  pfun lib/test/viewlib_test.pf
+// -----------------------------------------------------------------------------
+
+import * from "io";
+import * from "../testing/testing";
+import * from "../testing/assertions";
+import * from "../testing/runner";
+import * from "../htmllib";
+import * from "../viewlib";
+
+// Re-declare types for match resolution in this module.
+type View = {
+  | VText      : value
+  | VEl        : tag, attrs, children
+  | VButton    : label, attrs, onClick
+  | VTextInput : name, value, placeholder, onInput
+  | VCheckbox  : name, checked, label, onToggle
+  | VSelect    : name, choices, selected, onChange
+  | VContent   : block
+}
+type Block = {
+  | Para : content | BulletList : items | OrderedList : items
+  | BlockQuote : content | CodeBlock : language, value
+  | ThematicBreak | Section : heading, content | Article : heading, content
+  | Aside : content | Nav : content | Form : action, method, fields
+  | RawHtml : value | Attributed : node, attrs
+}
+type Inline  = { | Text : value | Emph : content | Strong : content
+               | InlineCode : value | Link : href, content | HtmlLineBreak }
+type Choice  = { value, label }
+type Attrs   = { id, classes, style }
+
+// ── boolStr ───────────────────────────────────────────────────────────────────
+
+function testBoolStrTrue() {
+  assertions([assertEqual("active", boolStr(true, "active"))]);
+}
+function testBoolStrFalse() {
+  assertions([assertEqual("", boolStr(false, "active"))]);
+}
+
+// ── Constructors ──────────────────────────────────────────────────────────────
+
+function testVtext() {
+  let v = vtext("hello");
+  match v with
+  | VText t -> assertions([assertEqual("hello", t.value)])
+  | _       -> assertions([fail("Expected VText")]);
+}
+
+function testVbutton() {
+  let v = vbutton("Save", 0);
+  match v with
+  | VButton b -> assertions([assertEqual("Save", b.label)])
+  | _         -> assertions([fail("Expected VButton")]);
+}
+
+function testVbuttonClass() {
+  let v = vbuttonClass("Tab", ["active"], 1);
+  match v with
+  | VButton b -> assertions([assertEqual("[active]", __str__(b.attrs.classes))])
+  | _         -> assertions([fail("Expected VButton")]);
+}
+
+function testVdiv() {
+  let v = vdiv([vtext("x")]);
+  match v with
+  | VEl el -> assertions([assertEqual("div", el.tag)])
+  | _      -> assertions([fail("Expected VEl")]);
+}
+
+function testVspan() {
+  let v = vspan([vtext("x")]);
+  match v with
+  | VEl el -> assertions([assertEqual("span", el.tag)])
+  | _      -> assertions([fail("Expected VEl")]);
+}
+
+function testVp() {
+  let v = vp([vtext("x")]);
+  match v with
+  | VEl el -> assertions([assertEqual("p", el.tag)])
+  | _      -> assertions([fail("Expected VEl")]);
+}
+
+function testVh() {
+  let v = vh(2, "Subtitle");
+  match v with
+  | VEl el -> assertions([assertEqual("h2", el.tag)])
+  | _      -> assertions([fail("Expected VEl")]);
+}
+
+function testVdivClass() {
+  let v = vdivClass(["foo", "bar"], []);
+  match v with
+  | VEl el -> assertions([assertEqual("[foo, bar]", __str__(el.attrs.classes))])
+  | _      -> assertions([fail("Expected VEl")]);
+}
+
+function testVdivId() {
+  let v = vdivId("main", []);
+  match v with
+  | VEl el -> assertions([assertSome(el.attrs.id)])
+  | _      -> assertions([fail("Expected VEl")]);
+}
+
+function testVinput() {
+  let v = vinput("q", "hello", "Search...", fn s => s);
+  match v with
+  | VTextInput i -> assertions([
+      assertEqual("q", i.name),
+      assertEqual("hello", i.value),
+      assertEqual("Search...", i.placeholder)
+    ])
+  | _ -> assertions([fail("Expected VTextInput")]);
+}
+
+function testVcheckbox() {
+  let v = vcheckbox("agree", true, "I agree", fn b => b);
+  match v with
+  | VCheckbox c -> assertions([
+      assertEqual("agree", c.name),
+      assertTrue(c.checked)
+    ])
+  | _ -> assertions([fail("Expected VCheckbox")]);
+}
+
+function testVselect() {
+  let cs = [Choice { "a", "Option A" }];
+  let v = vselect("size", cs, "a", fn s => s);
+  match v with
+  | VSelect s -> assertions([assertEqual("size", s.name)])
+  | _         -> assertions([fail("Expected VSelect")]);
+}
+
+function testVcontent() {
+  let b = Para { [Text { "hi" }] };
+  let v = vcontent(b);
+  match v with
+  | VContent c -> assertions([check(true, "got VContent")])
+  | _          -> assertions([fail("Expected VContent")]);
+}
+
+// ── renderView — VText ────────────────────────────────────────────────────────
+
+function testRenderVtext() {
+  assertions([assertEqual("hello", renderView(vtext("hello"), ""))]);
+}
+function testRenderVtextEscapes() {
+  assertions([assertEqual("&lt;b&gt;", renderView(vtext("<b>"), ""))]);
+}
+
+// ── renderView — VEl ──────────────────────────────────────────────────────────
+
+function testRenderVdiv() {
+  let v = vdiv([vtext("hi")]);
+  assertions([
+    assertEqual("<div>hi</div>\n", renderView(v, ""))
+  ]);
+}
+function testRenderVdivNested() {
+  let inner = vspan([vtext("x")]);
+  let outer = vdiv([inner]);
+  let result = renderView(outer, "");
+  assertions([
+    assertTrue(length(split(result, "<div>")) == 2),
+    assertTrue(length(split(result, "<span>")) == 2)
+  ]);
+}
+function testRenderVdivClass() {
+  let v = vdivClass(["foo"], [vtext("x")]);
+  let result = renderView(v, "");
+  assertions([assertTrue(length(split(result, "class=\"foo\"")) == 2)]);
+}
+function testRenderVdivId() {
+  let v = vdivId("main", []);
+  let result = renderView(v, "");
+  assertions([assertTrue(length(split(result, "id=\"main\"")) == 2)]);
+}
+function testRenderVh() {
+  let v = vh(3, "Section");
+  assertions([assertEqual("<h3>Section</h3>\n", renderView(v, ""))]);
+}
+
+// ── renderView — VButton ──────────────────────────────────────────────────────
+
+function testRenderVbutton() {
+  let v = vbutton("Go", 0);
+  let result = renderView(v, "pfx_");
+  assertions([
+    assertTrue(length(split(result, "<button")) == 2),
+    assertTrue(length(split(result, ">Go<")) == 2),
+    assertTrue(length(split(result, "pfx_click_Go")) == 2)
+  ]);
+}
+function testRenderVbuttonEscapesLabel() {
+  let v = vbutton("A&B", 0);
+  let result = renderView(v, "");
+  // "A&amp;B" appears in both the data attribute and the button text
+  assertions([
+    assertTrue(length(split(result, "A&amp;B")) == 3),
+    assertTrue(length(split(result, "click_A&amp;B")) == 2)
+  ]);
+}
+function testRenderVbuttonWithClass() {
+  let v = vbuttonClass("Tab", ["active"], 0);
+  let result = renderView(v, "");
+  assertions([assertTrue(length(split(result, "class=\"active\"")) == 2)]);
+}
+
+// ── renderView — VTextInput ───────────────────────────────────────────────────
+
+function testRenderVinput() {
+  let v = vinput("search", "hello", "Type here...", fn s => s);
+  let result = renderView(v, "pfx_");
+  assertions([
+    assertTrue(length(split(result, "type=\"text\"")) == 2),
+    assertTrue(length(split(result, "name=\"search\"")) == 2),
+    assertTrue(length(split(result, "value=\"hello\"")) == 2),
+    assertTrue(length(split(result, "placeholder=\"Type here...\"")) == 2),
+    assertTrue(length(split(result, "pfx_input_search")) == 2)
+  ]);
+}
+function testRenderVinputEscapes() {
+  let v = vinput("q", "<x>", "ph", fn s => s);
+  let result = renderView(v, "");
+  assertions([assertTrue(length(split(result, "value=\"&lt;x&gt;\"")) == 2)]);
+}
+
+// ── renderView — VCheckbox ────────────────────────────────────────────────────
+
+function testRenderVcheckboxChecked() {
+  let v = vcheckbox("agree", true, "I agree", fn b => b);
+  let result = renderView(v, "");
+  assertions([
+    assertTrue(length(split(result, "type=\"checkbox\"")) == 2),
+    assertTrue(length(split(result, " checked")) == 2)
+  ]);
+}
+function testRenderVcheckboxUnchecked() {
+  let v = vcheckbox("agree", false, "I agree", fn b => b);
+  let result = renderView(v, "");
+  assertions([assertTrue(length(split(result, " checked")) == 1)]);
+}
+function testRenderVcheckboxLabel() {
+  let v = vcheckbox("ok", false, "Accept <terms>", fn b => b);
+  let result = renderView(v, "");
+  assertions([assertTrue(length(split(result, "Accept &lt;terms&gt;")) == 2)]);
+}
+
+// ── renderView — VSelect ──────────────────────────────────────────────────────
+
+function testRenderVselect() {
+  let cs = [Choice { "a", "Apple" }, Choice { "b", "Banana" }];
+  let v = vselect("fruit", cs, "b", fn s => s);
+  let result = renderView(v, "pfx_");
+  assertions([
+    assertTrue(length(split(result, "<select")) == 2),
+    assertTrue(length(split(result, "<option")) == 3),
+    assertTrue(length(split(result, " selected")) == 2),
+    assertTrue(length(split(result, "pfx_change_fruit")) == 2)
+  ]);
+}
+function testRenderVselectNoSelection() {
+  let cs = [Choice { "a", "A" }, Choice { "b", "B" }];
+  let v = vselect("x", cs, "none", fn s => s);
+  let result = renderView(v, "");
+  assertions([assertTrue(length(split(result, " selected")) == 1)]);
+}
+
+// ── renderView — VContent ─────────────────────────────────────────────────────
+
+function testRenderVcontent() {
+  let v = vcontent(Para { [Text { "paragraph" }] });
+  assertions([assertEqual("<p>paragraph</p>\n", renderView(v, ""))]);
+}
+
+// ── renderViewChoice ──────────────────────────────────────────────────────────
+
+function testRenderViewChoiceSelected() {
+  let c = Choice { "x", "Option X" };
+  let result = renderViewChoice(c, "x");
+  assertions([
+    assertTrue(length(split(result, " selected")) == 2),
+    assertTrue(length(split(result, "value=\"x\"")) == 2),
+    assertTrue(length(split(result, "Option X")) == 2)
+  ]);
+}
+function testRenderViewChoiceUnselected() {
+  let c = Choice { "x", "Option X" };
+  let result = renderViewChoice(c, "y");
+  assertions([assertTrue(length(split(result, " selected")) == 1)]);
+}
+function testRenderViewChoiceEscapes() {
+  let c = Choice { "a&b", "A & B" };
+  let result = renderViewChoice(c, "");
+  assertions([
+    assertTrue(length(split(result, "value=\"a&amp;b\"")) == 2),
+    assertTrue(length(split(result, "A &amp; B")) == 2)
+  ]);
+}
+
+// ── prefix propagation ────────────────────────────────────────────────────────
+
+function testPrefixInButton() {
+  let v = vbutton("X", 0);
+  assertions([
+    assertTrue(length(split(renderView(v, "app_"), "app_click_X")) == 2),
+    assertTrue(length(split(renderView(v, ""), "click_X")) == 2)
+  ]);
+}
+
+function testPrefixInNestedEl() {
+  // Prefix should propagate into children of VEl.
+  let v = vdiv([vbutton("B", 0)]);
+  let result = renderView(v, "ns_");
+  assertions([assertTrue(length(split(result, "ns_click_B")) == 2)]);
+}
+
+// ── renderViews ───────────────────────────────────────────────────────────────
+
+function testRenderViewsEmpty() {
+  assertions([assertEqual("", renderViews([], ""))]);
+}
+function testRenderViewsMultiple() {
+  let vs = [vtext("a"), vtext("b"), vtext("c")];
+  assertions([assertEqual("abc", renderViews(vs, ""))]);
+}
+
+// ── Suites ────────────────────────────────────────────────────────────────────
+
+let helperSuite = suite("Helpers", [
+  test("boolStr true",  testBoolStrTrue),
+  test("boolStr false", testBoolStrFalse)
+]);
+
+let constructorSuite = suite("Constructors", [
+  test("vtext",       testVtext),
+  test("vbutton",     testVbutton),
+  test("vbuttonClass",testVbuttonClass),
+  test("vdiv",        testVdiv),
+  test("vspan",       testVspan),
+  test("vp",          testVp),
+  test("vh",          testVh),
+  test("vdivClass",   testVdivClass),
+  test("vdivId",      testVdivId),
+  test("vinput",      testVinput),
+  test("vcheckbox",   testVcheckbox),
+  test("vselect",     testVselect),
+  test("vcontent",    testVcontent)
+]);
+
+let renderSuite = suite("renderView", [
+  test("VText plain",                 testRenderVtext),
+  test("VText escapes HTML",          testRenderVtextEscapes),
+  test("VEl div",                     testRenderVdiv),
+  test("VEl nested",                  testRenderVdivNested),
+  test("VEl with class",              testRenderVdivClass),
+  test("VEl with id",                 testRenderVdivId),
+  test("VEl heading level",           testRenderVh),
+  test("VButton renders label",       testRenderVbutton),
+  test("VButton escapes label",       testRenderVbuttonEscapesLabel),
+  test("VButton with class",          testRenderVbuttonWithClass),
+  test("VTextInput attributes",       testRenderVinput),
+  test("VTextInput escapes value",    testRenderVinputEscapes),
+  test("VCheckbox checked",           testRenderVcheckboxChecked),
+  test("VCheckbox unchecked",         testRenderVcheckboxUnchecked),
+  test("VCheckbox label escapes",     testRenderVcheckboxLabel),
+  test("VSelect with selection",      testRenderVselect),
+  test("VSelect no match",            testRenderVselectNoSelection),
+  test("VContent embeds block",       testRenderVcontent),
+  test("renderViewChoice selected",   testRenderViewChoiceSelected),
+  test("renderViewChoice unselected", testRenderViewChoiceUnselected),
+  test("renderViewChoice escapes",    testRenderViewChoiceEscapes),
+  test("prefix in button",            testPrefixInButton),
+  test("prefix propagates to children", testPrefixInNestedEl),
+  test("renderViews empty",           testRenderViewsEmpty),
+  test("renderViews multiple",        testRenderViewsMultiple)
+]);
+
+runSuites([helperSuite, constructorSuite, renderSuite]);

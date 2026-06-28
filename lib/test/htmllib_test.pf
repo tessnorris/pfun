@@ -1,0 +1,460 @@
+// -----------------------------------------------------------------------------
+// lib/test/htmllib_test.pf
+//
+// Tests for lib/htmllib.pf — all pure functions, no DB or IO needed.
+//
+// Run with:  pfun lib/test/htmllib_test.pf
+// -----------------------------------------------------------------------------
+
+import * from "io";
+import * from "../testing/testing";
+import * from "../testing/assertions";
+import * from "../testing/runner";
+import * from "../htmllib";
+
+// Re-declare types for match resolution in this module.
+type Inline  = { | Text : value | Emph : content | Strong : content
+               | InlineCode : value | Link : href, content | HtmlLineBreak }
+type Block   = { | Para : content | BulletList : items | OrderedList : items
+               | BlockQuote : content | CodeBlock : language, value
+               | ThematicBreak | Section : heading, content
+               | Article : heading, content | Aside : content | Nav : content
+               | Form : action, method, fields | RawHtml : value
+               | Attributed : node, attrs }
+type Field   = { | TextField : name, label, value | EmailField : name, label, value
+               | PasswordField : name, label | NumberField : name, label, value
+               | TextArea : name, label, value | Checkbox : name, label, checked
+               | RadioGroup : name, label, choices, selected
+               | Dropdown : name, label, choices, selected
+               | SubmitButton : text | ResetButton : text | HiddenField : name, value }
+type Attrs   = { id, classes, style }
+type Choice  = { value, label }
+
+// ── escapeHtml ────────────────────────────────────────────────────────────────
+
+function testEscapeHtmlAmpersand() {
+  assertions([assertEqual("a &amp; b", escapeHtml("a & b"))]);
+}
+function testEscapeHtmlLtGt() {
+  assertions([
+    assertEqual("&lt;div&gt;", escapeHtml("<div>")),
+    assertEqual("&lt;a&gt;text&lt;/a&gt;", escapeHtml("<a>text</a>"))
+  ]);
+}
+function testEscapeHtmlQuote() {
+  assertions([assertEqual("say &quot;hi&quot;", escapeHtml("say \"hi\""))]);
+}
+function testEscapeHtmlClean() {
+  assertions([assertEqual("hello world", escapeHtml("hello world"))]);
+}
+function testEscapeHtmlEmpty() {
+  assertions([assertEqual("", escapeHtml(""))]);
+}
+function testEscapeHtmlAllSpecial() {
+  assertions([assertEqual("&lt;&amp;&gt;&quot;", escapeHtml("<&>\""))]);
+}
+
+// ── escapeAttr ────────────────────────────────────────────────────────────────
+
+function testEscapeAttrSingleQuote() {
+  assertions([assertEqual("it&#39;s", escapeAttr("it's"))]);
+}
+function testEscapeAttrCombined() {
+  assertions([assertEqual("&lt;b&gt; &amp; &#39;x&#39;", escapeAttr("<b> & 'x'"))]);
+}
+
+// ── boolAttr ──────────────────────────────────────────────────────────────────
+
+function testBoolAttrTrue() {
+  assertions([assertEqual(" checked", boolAttr(true, " checked"))]);
+}
+function testBoolAttrFalse() {
+  assertions([assertEqual("", boolAttr(false, " checked"))]);
+}
+
+// ── labelFor ──────────────────────────────────────────────────────────────────
+
+function testLabelFor() {
+  assertions([
+    assertEqual("<label for=\"email\">Email address</label>\n",
+                labelFor("email", "Email address"))
+  ]);
+}
+function testLabelForEscapes() {
+  assertions([
+    assertEqual("<label for=\"a&amp;b\">Label &lt;x&gt;</label>\n",
+                labelFor("a&b", "Label <x>"))
+  ]);
+}
+
+// ── renderInline ──────────────────────────────────────────────────────────────
+
+function testRenderText() {
+  assertions([assertEqual("hello", renderInline(Text { "hello" }))]);
+}
+function testRenderTextEscapes() {
+  assertions([assertEqual("&lt;b&gt;", renderInline(Text { "<b>" }))]);
+}
+function testRenderEmph() {
+  assertions([
+    assertEqual("<em>hello</em>", renderInline(Emph { [Text { "hello" }] }))
+  ]);
+}
+function testRenderStrong() {
+  assertions([
+    assertEqual("<strong>world</strong>", renderInline(Strong { [Text { "world" }] }))
+  ]);
+}
+function testRenderInlineCode() {
+  assertions([assertEqual("<code>x &lt; y</code>", renderInline(InlineCode { "x < y" }))]);
+}
+function testRenderLink() {
+  assertions([
+    assertEqual("<a href=\"https://example.com\">click</a>",
+                renderInline(Link { "https://example.com", [Text { "click" }] }))
+  ]);
+}
+function testRenderLineBreak() {
+  assertions([assertEqual("<br>", renderInline(HtmlLineBreak))]);
+}
+function testRenderNestedInlines() {
+  // <em><strong>bold em</strong></em>
+  let node = Emph { [Strong { [Text { "bold em" }] }] };
+  assertions([assertEqual("<em><strong>bold em</strong></em>", renderInline(node))]);
+}
+
+// ── renderInlines ─────────────────────────────────────────────────────────────
+
+function testRenderInlinesEmpty() {
+  assertions([assertEqual("", renderInlines([]))]);
+}
+function testRenderInlinesMultiple() {
+  assertions([
+    assertEqual("hello <em>world</em>",
+                renderInlines([Text { "hello " }, Emph { [Text { "world" }] }]))
+  ]);
+}
+
+// ── renderBlock — Para ────────────────────────────────────────────────────────
+
+function testRenderPara() {
+  assertions([
+    assertEqual("<p>hello world</p>\n",
+                renderBlock(Para { [Text { "hello world" }] }, 0))
+  ]);
+}
+function testRenderParaEmpty() {
+  assertions([assertEqual("<p></p>\n", renderBlock(Para { [] }, 0))]);
+}
+
+// ── renderBlock — lists ───────────────────────────────────────────────────────
+
+function testRenderBulletList() {
+  let ul = BulletList { [[Para { [Text { "a" }] }], [Para { [Text { "b" }] }]] };
+  let result = renderBlock(ul, 0);
+  assertions([
+    assertTrue(length(split(result, "<li>")) == 3),  // 2 items → 3 splits
+    assertTrue(length(split(result, "<ul>")) == 2)
+  ]);
+}
+function testRenderOrderedList() {
+  let ol = OrderedList { [[Para { [Text { "first" }] }]] };
+  let result = renderBlock(ol, 0);
+  assertions([
+    assertTrue(length(split(result, "<ol>")) == 2),
+    assertTrue(length(split(result, "<li>")) == 2)
+  ]);
+}
+
+// ── renderBlock — CodeBlock ───────────────────────────────────────────────────
+
+function testRenderCodeBlock() {
+  let cb = CodeBlock { "python", "x = 1\n" };
+  assertions([
+    assertEqual("<pre><code class=\"language-python\">x = 1\n</code></pre>\n",
+                renderBlock(cb, 0))
+  ]);
+}
+function testRenderCodeBlockEscapes() {
+  let cb = CodeBlock { "html", "<br>" };
+  assertions([
+    assertTrue(length(split(renderBlock(cb, 0), "&lt;br&gt;")) == 2)
+  ]);
+}
+
+// ── renderBlock — ThematicBreak ───────────────────────────────────────────────
+
+function testRenderThematicBreak() {
+  assertions([assertEqual("<hr>\n", renderBlock(ThematicBreak, 0))]);
+}
+
+// ── renderBlock — Section heading levels ─────────────────────────────────────
+
+function testSectionDepth0() {
+  let s = Section { [Text { "Title" }], [] };
+  let result = renderBlock(s, 0);
+  assertions([
+    assertTrue(length(split(result, "<h1>")) == 2),
+    assertTrue(length(split(result, "<section>")) == 2)
+  ]);
+}
+function testSectionDepth1() {
+  let s = Section { [Text { "Sub" }], [] };
+  let result = renderBlock(s, 1);
+  assertions([assertTrue(length(split(result, "<h2>")) == 2)]);
+}
+function testNestedSections() {
+  // A Section containing another Section: outer h1, inner h2.
+  let inner = Section { [Text { "Inner" }], [] };
+  let outer = Section { [Text { "Outer" }], [inner] };
+  let result = renderBlock(outer, 0);
+  assertions([
+    assertTrue(length(split(result, "<h1>")) == 2),
+    assertTrue(length(split(result, "<h2>")) == 2)
+  ]);
+}
+
+// ── renderBlock — BlockQuote ──────────────────────────────────────────────────
+
+function testRenderBlockQuote() {
+  let bq = BlockQuote { [Para { [Text { "quote" }] }] };
+  assertions([
+    assertTrue(length(split(renderBlock(bq, 0), "<blockquote>")) == 2)
+  ]);
+}
+
+// ── renderBlock — RawHtml ─────────────────────────────────────────────────────
+
+function testRenderRawHtml() {
+  assertions([
+    assertEqual("<div class=\"x\">raw</div>",
+                renderBlock(RawHtml { "<div class=\"x\">raw</div>" }, 0))
+  ]);
+}
+
+// ── renderBlock — Attributed ──────────────────────────────────────────────────
+
+function testAttributedWithId() {
+  let node = withId("hero", Para { [Text { "hi" }] });
+  let result = renderBlock(node, 0);
+  assertions([
+    assertTrue(length(split(result, "id=\"hero\"")) == 2),
+    assertTrue(length(split(result, "<p")) == 2)
+  ]);
+}
+function testAttributedWithClass() {
+  let node = withClass(["bold", "red"], Para { [Text { "x" }] });
+  let result = renderBlock(node, 0);
+  assertions([
+    assertTrue(length(split(result, "class=\"bold red\"")) == 2)
+  ]);
+}
+function testAttributedWithStyle() {
+  let node = withStyle("color:red", Para { [Text { "x" }] });
+  let result = renderBlock(node, 0);
+  assertions([
+    assertTrue(length(split(result, "style=\"color:red\"")) == 2)
+  ]);
+}
+
+// ── renderAttrs ───────────────────────────────────────────────────────────────
+
+function testRenderAttrsEmpty() {
+  assertions([assertEqual("", renderAttrs(noAttrs))]);
+}
+function testRenderAttrsId() {
+  let attrs = Attrs { Some { "main" }, [], None };
+  assertions([assertEqual(" id=\"main\"", renderAttrs(attrs))]);
+}
+function testRenderAttrsClasses() {
+  let attrs = Attrs { None, ["a", "b"], None };
+  assertions([assertEqual(" class=\"a b\"", renderAttrs(attrs))]);
+}
+function testRenderAttrsAll() {
+  let attrs = Attrs { Some { "x" }, ["y"], Some { "z:1" } };
+  let result = renderAttrs(attrs);
+  assertions([
+    assertTrue(length(split(result, "id=\"x\"")) == 2),
+    assertTrue(length(split(result, "class=\"y\"")) == 2),
+    assertTrue(length(split(result, "style=\"z:1\"")) == 2)
+  ]);
+}
+
+// ── Field rendering ───────────────────────────────────────────────────────────
+
+function testRenderTextField() {
+  let f = textField("name", "Full name", "Alice");
+  let result = renderField(f);
+  assertions([
+    assertTrue(length(split(result, "type=\"text\"")) == 2),
+    assertTrue(length(split(result, "value=\"Alice\"")) == 2),
+    assertTrue(length(split(result, "<label")) == 2)
+  ]);
+}
+function testRenderEmailField() {
+  let f = emailField("email", "Email", "a@b.com");
+  let result = renderField(f);
+  assertions([assertTrue(length(split(result, "type=\"email\"")) == 2)]);
+}
+function testRenderPasswordField() {
+  let f = passwordField("pw", "Password");
+  let result = renderField(f);
+  assertions([
+    assertTrue(length(split(result, "type=\"password\"")) == 2),
+    // No value attribute should appear
+    assertTrue(length(split(result, "value=")) == 1)
+  ]);
+}
+function testRenderCheckboxChecked() {
+  let f = checkbox("agree", "I agree", true);
+  let result = renderField(f);
+  assertions([assertTrue(length(split(result, " checked")) == 2)]);
+}
+function testRenderCheckboxUnchecked() {
+  let f = checkbox("agree", "I agree", false);
+  let result = renderField(f);
+  assertions([assertTrue(length(split(result, " checked")) == 1)]);
+}
+function testRenderSubmitButton() {
+  let f = submitButton("Save");
+  assertions([
+    assertEqual("<button type=\"submit\">Save</button>\n", renderField(f))
+  ]);
+}
+function testRenderResetButton() {
+  let f = resetButton("Clear");
+  assertions([
+    assertEqual("<button type=\"reset\">Clear</button>\n", renderField(f))
+  ]);
+}
+function testRenderHiddenField() {
+  let f = hiddenField("csrf", "token123");
+  let result = renderField(f);
+  assertions([
+    assertTrue(length(split(result, "type=\"hidden\"")) == 2),
+    assertTrue(length(split(result, "value=\"token123\"")) == 2)
+  ]);
+}
+function testRenderDropdown() {
+  let cs = [Choice { "a", "Option A" }, Choice { "b", "Option B" }];
+  let f = dropdown("size", "Size", cs, "b");
+  let result = renderField(f);
+  assertions([
+    assertTrue(length(split(result, "<select")) == 2),
+    assertTrue(length(split(result, "<option")) == 3),  // 2 options = 3 splits
+    assertTrue(length(split(result, " selected")) == 2)  // only "b" selected
+  ]);
+}
+function testRenderRadioGroup() {
+  let cs = [Choice { "y", "Yes" }, Choice { "n", "No" }];
+  let f = radioGroup("ok", "Confirm", cs, "y");
+  let result = renderField(f);
+  assertions([
+    assertTrue(length(split(result, "type=\"radio\"")) == 3),  // 2 radios
+    assertTrue(length(split(result, "<fieldset>")) == 2),
+    assertTrue(length(split(result, " checked")) == 2)  // only "y"
+  ]);
+}
+
+// ── Form rendering ────────────────────────────────────────────────────────────
+
+function testRenderForm() {
+  let fields = [textField("q", "Query", ""), submitButton("Go")];
+  let b = form("/search", "get", fields);
+  let result = renderBlock(b, 0);
+  assertions([
+    assertTrue(length(split(result, "<form")) == 2),
+    assertTrue(length(split(result, "action=\"/search\"")) == 2),
+    assertTrue(length(split(result, "method=\"get\"")) == 2),
+    assertTrue(length(split(result, "<button")) == 2)
+  ]);
+}
+
+// ── renderDocument ────────────────────────────────────────────────────────────
+
+function testRenderDocument() {
+  let doc = Document {
+    "My Page",
+    [Para { [Text { "Hello" }] }, ThematicBreak]
+  };
+  let result = renderDocument(doc);
+  assertions([
+    assertTrue(length(split(result, "<p>")) == 2),
+    assertTrue(length(split(result, "<hr>")) == 2)
+  ]);
+}
+
+// ── Suites ────────────────────────────────────────────────────────────────────
+
+let escapeSuite = suite("HTML escaping", [
+  test("escapeHtml ampersand",        testEscapeHtmlAmpersand),
+  test("escapeHtml < and >",          testEscapeHtmlLtGt),
+  test("escapeHtml double quote",     testEscapeHtmlQuote),
+  test("escapeHtml clean string",     testEscapeHtmlClean),
+  test("escapeHtml empty string",     testEscapeHtmlEmpty),
+  test("escapeHtml all specials",     testEscapeHtmlAllSpecial),
+  test("escapeAttr single quote",     testEscapeAttrSingleQuote),
+  test("escapeAttr combined",         testEscapeAttrCombined),
+  test("boolAttr true",               testBoolAttrTrue),
+  test("boolAttr false",              testBoolAttrFalse),
+  test("labelFor basic",              testLabelFor),
+  test("labelFor escapes names",      testLabelForEscapes)
+]);
+
+let inlineSuite = suite("Inline rendering", [
+  test("Text node",                   testRenderText),
+  test("Text escapes HTML",           testRenderTextEscapes),
+  test("Emph",                        testRenderEmph),
+  test("Strong",                      testRenderStrong),
+  test("InlineCode escapes",          testRenderInlineCode),
+  test("Link",                        testRenderLink),
+  test("HtmlLineBreak",               testRenderLineBreak),
+  test("Nested Emph > Strong",        testRenderNestedInlines),
+  test("Empty inline list",           testRenderInlinesEmpty),
+  test("Multiple inlines",            testRenderInlinesMultiple)
+]);
+
+let blockSuite = suite("Block rendering", [
+  test("Para",                        testRenderPara),
+  test("Para empty",                  testRenderParaEmpty),
+  test("BulletList",                  testRenderBulletList),
+  test("OrderedList",                 testRenderOrderedList),
+  test("CodeBlock",                   testRenderCodeBlock),
+  test("CodeBlock escapes content",   testRenderCodeBlockEscapes),
+  test("ThematicBreak",               testRenderThematicBreak),
+  test("Section depth 0 → h1",       testSectionDepth0),
+  test("Section depth 1 → h2",       testSectionDepth1),
+  test("Nested sections h1/h2",       testNestedSections),
+  test("BlockQuote",                  testRenderBlockQuote),
+  test("RawHtml passes through",      testRenderRawHtml)
+]);
+
+let attrsSuite = suite("Attributed blocks and Attrs", [
+  test("withId wraps with id attr",   testAttributedWithId),
+  test("withClass wraps with class",  testAttributedWithClass),
+  test("withStyle wraps with style",  testAttributedWithStyle),
+  test("renderAttrs empty",           testRenderAttrsEmpty),
+  test("renderAttrs id only",         testRenderAttrsId),
+  test("renderAttrs classes",         testRenderAttrsClasses),
+  test("renderAttrs all fields",      testRenderAttrsAll)
+]);
+
+let fieldSuite = suite("Field rendering", [
+  test("TextField",                   testRenderTextField),
+  test("EmailField",                  testRenderEmailField),
+  test("PasswordField no value",      testRenderPasswordField),
+  test("Checkbox checked",            testRenderCheckboxChecked),
+  test("Checkbox unchecked",          testRenderCheckboxUnchecked),
+  test("SubmitButton",                testRenderSubmitButton),
+  test("ResetButton",                 testRenderResetButton),
+  test("HiddenField",                 testRenderHiddenField),
+  test("Dropdown with selected",      testRenderDropdown),
+  test("RadioGroup with selected",    testRenderRadioGroup)
+]);
+
+let formSuite = suite("Form and Document", [
+  test("Form block renders correctly",  testRenderForm),
+  test("renderDocument renders body",   testRenderDocument)
+]);
+
+runSuites([escapeSuite, inlineSuite, blockSuite, attrsSuite, fieldSuite, formSuite]);
