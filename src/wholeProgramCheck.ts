@@ -2,7 +2,7 @@
 //
 // Whole-program static checking driver. Walks a program's entire import
 // graph, parsing each file exactly once, and runs BOTH static checkers —
-// procedure-usage/purity (procedureCheck.ts, Stage 1) and type/
+// procedure-usage/purity (purityCheck.ts, Stage 1) and type/
 // exhaustiveness (typechecker.ts's checkTypes, Stage 2) — against every
 // module in the graph, not just the entry file, feeding each module real
 // cross-module information about what it imports.
@@ -21,7 +21,7 @@
 //   2. Order modules so every module is processed only after everything it
 //      imports has already been processed (topological order over the
 //      import graph), with circular-import detection.
-//   3. For each module, in that order: run checkProcedureUsage AND
+//   3. For each module, in that order: run checkPurity AND
 //      checkTypes against it, each seeded with a resolver that can answer
 //      "what kind/type/union-shape does this imported name have?" by
 //      looking up the already-computed info for whichever module it
@@ -38,7 +38,7 @@
 //      walked to completion. A module that fails either check simply does
 //      NOT get its export tables cached (step 4 above is skipped for it),
 //      so anything that later imports it falls back to the same permissive
-//      "unresolvable import" behavior checkProcedureUsage/checkTypes
+//      "unresolvable import" behavior checkPurity/checkTypes
 //      already have for a missing resolver entry (every name from it reads
 //      as kind 'other' / type Unknown) — exactly as if cross-module
 //      checking didn't exist for that one edge. That fallback is what
@@ -79,7 +79,7 @@ import { Stmt, Expr, PfunType, UNKNOWN } from './ast';
 import { Lexer, SourcePos } from './lexer';
 import { Parser } from './parser';
 import { buildPfunError, PfunError } from './errors';
-import { checkProcedureUsage, ImportTable, ModuleImportResolver } from './procedureCheck';
+import { checkPurity, ImportTable, ModuleImportResolver } from './purityCheck';
 import { checkTypes } from './typechecker';
 import type { TypeImportTable, TypeImportResolver, UnionImportTable, UnionImportResolver } from './inferencer';
 import { BUILTIN_FUNCTION_TYPES } from './inferencer';
@@ -111,7 +111,7 @@ interface ModuleInfo {
  *  buildModuleGraph on a graph-level error (missing file, circular import,
  *  lex/parse failure) — those still abort the whole walk immediately,
  *  since there is no graph to keep walking past a parse failure; and (2)
- *  constructed (not thrown) as a plain value when checkProcedureUsage
+ *  constructed (not thrown) as a plain value when checkPurity
  *  rejects a module during the Stage 3 batching loop, so it can be pushed
  *  onto the collected `errors` array and checking can continue with the
  *  next module. Never escapes checkProgram() in either case.*/
@@ -297,11 +297,11 @@ function collectImportStmts(stmts: Stmt[]): { path: string; pos: SourcePos | und
  * Build a module's ImportTable by walking its own statement tree for
  * ExportStmts (which, like imports, may be nested — see
  * collectImportStmts's docblock) and classifying each exported
- * declaration's kind. Mirrors procedureCheck.ts's own per-declaration kind
+ * declaration's kind. Mirrors purityCheck.ts's own per-declaration kind
  * assignment (LetStmt -> 'other', VarStmt -> 'var', FunctionStmt ->
  * 'function', ProcedureStmt -> 'proc') so a module's exports are kind-typed
  * identically whether read from outside (here) or from within
- * (procedureCheck.ts's own ExportStmt handling).
+ * (purityCheck.ts's own ExportStmt handling).
  *
  * UnionTypeStmt's zero-field variants (singletons, e.g. `None`) are also
  * exported as values at runtime (see interpreter.ts's ExportStmt handling)
@@ -386,14 +386,14 @@ function extractExportUnions(stmts: Stmt[]): UnionImportTable {
  *
  * Stage 3 (all-errors batching): a violation in one module does NOT stop
  * checking of the rest of the graph. Every module is still visited in
- * dependency-first order and gets BOTH checkProcedureUsage and checkTypes
+ * dependency-first order and gets BOTH checkPurity and checkTypes
  * run against it regardless of whether an earlier module already failed;
  * every resulting error (purity, type, exhaustiveness — from every file)
  * is collected into `errors`, each tagged with its own file path. A
  * module that fails either check simply has its export tables withheld
  * from `infoByPath` (see the loop body), so anything that later imports
  * it gets the same permissive "imported name of unknown kind/type"
- * fallback checkProcedureUsage/checkTypes already use for an unresolvable
+ * fallback checkPurity/checkTypes already use for an unresolvable
  * import — never a cascade of bogus secondary errors caused by one
  * already-broken module. The one thing that still aborts immediately,
  * before any module-level check runs at all, is a GRAPH-level failure
@@ -509,7 +509,7 @@ export function checkProgram(entryPath: string, loader: ModuleLoader, entrySourc
 
       // Stage 3: both checks always run for this module, regardless of
       // whether the OTHER one already failed it — they're independent
-      // passes over the same already-parsed AST (checkProcedureUsage
+      // passes over the same already-parsed AST (checkPurity
       // never mutates it; checkTypes' in-place mutation of
       // inferredType/missingVariants is unconditional and safe either
       // way), so running both maximizes how much real information this
@@ -520,7 +520,7 @@ export function checkProgram(entryPath: string, loader: ModuleLoader, entrySourc
       let moduleOk = true;
 
       try {
-        checkProcedureUsage(node.ast!, kindResolver);
+        checkPurity(node.ast!, kindResolver);
       } catch (e) {
         moduleOk = false;
         const raw = e instanceof Error ? e : new Error(String(e));
@@ -572,7 +572,7 @@ export function checkProgram(entryPath: string, loader: ModuleLoader, entrySourc
 }
 
 /**
- * Format a raw error message (as thrown by checkProcedureUsage, or
+ * Format a raw error message (as thrown by checkPurity, or
  * carried by a graph-level WholeProgramError) into a fully-formatted
  * PfunError, attaching an "In <path>:" file-path header when, and only
  * when, the error is in a DIFFERENT file than the one the user actually
@@ -583,7 +583,7 @@ export function checkProgram(entryPath: string, loader: ModuleLoader, entrySourc
  * slash or '.' segment difference.
  *
  * Shared by both call sites that start from a raw (not yet PfunError-
- * shaped) message: the per-module checkProcedureUsage catch in the Stage
+ * shaped) message: the per-module checkPurity catch in the Stage
  * 3 batching loop above, and the graph-level WholeProgramError catch
  * below it. checkTypes' own errors never go through this function — they
  * arrive already fully formatted and are headered via
@@ -610,7 +610,7 @@ function formatModuleError(message: string, sourcePath: string, source: string, 
  * file it came from, prepend an "In <path>:" header line when, and only
  * when, that file is NOT the entry file the user actually ran (same
  * suppress-for-the-common-case policy as formatModuleError's
- * checkProcedureUsage/graph-level branch, which builds its PfunError
+ * checkPurity/graph-level branch, which builds its PfunError
  * fresh via buildPfunError's filePath parameter instead — that path isn't
  * available here because a finished PfunError instance only ever exposes
  * its already-formatted .pfunMessage, never the raw kind/message/pos/

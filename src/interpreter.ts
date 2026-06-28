@@ -6,7 +6,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { Lexer } from './lexer';
 import { Parser } from './parser';
-import { checkProcedureUsage } from './procedureCheck';
+import { checkPurity } from './purityCheck';
 import { checkTypes } from './typechecker';
 
 // ─── Registry Types ───────────────────────────────────────────────────────────
@@ -658,7 +658,7 @@ export class ModuleLoader {
    * wholeProgramCheck.ts) — never set by the REPL paths, which never call
    * checkProgram at all (out of scope for whole-program checking; see
    * wholeProgramCheck.ts's design notes). When true, load() below skips
-   * its own per-module checkProcedureUsage/checkTypes calls for modules
+   * its own per-module checkPurity/checkTypes calls for modules
    * loaded through this loader, since checkProgram already proved the
    * WHOLE graph — same-module violations within a dependency included,
    * not just cross-module misuse by importers — is error-free before any
@@ -677,7 +677,7 @@ export class ModuleLoader {
    * file and re-parsing it. A NON-EMPTY map also doubles as "this
    * loader's entire import graph was already statically checked upfront"
    * — load()'s fallback branch (for any path NOT in this map) relies on
-   * that to decide whether to run its own checkProcedureUsage/checkTypes
+   * that to decide whether to run its own checkPurity/checkTypes
    * calls. This is sound because the only caller that ever populates
    * this map (runFile) does so for checkProgram's WHOLE graph and exits
    * the process before any load() call happens if checkProgram found an
@@ -778,7 +778,7 @@ export class ModuleLoader {
       // the reused AST carries real type annotations a fresh parse never
       // would, which the interpreter's record-schema seeding can use
       // (see evaluateRecord()'s seedTypes/seedFromExpr path) — so this is
-      // strictly better, not just faster. checkProcedureUsage/checkTypes
+      // strictly better, not just faster. checkPurity/checkTypes
       // are skipped entirely in this branch (not merely
       // wholeProgramChecked-gated) because reusing an entry from
       // checkedAsts means checkProgram has ALREADY run both checks
@@ -803,7 +803,7 @@ export class ModuleLoader {
           // real-world audience is the REPL's own loader, where
           // checkedAsts stays empty and this is the only static checking
           // a dynamically `import`ed file ever gets.
-          checkProcedureUsage(ast);
+          checkPurity(ast);
           const typeErrors = checkTypes(ast, source);
           if (typeErrors.length > 0) throw typeErrors[0];
         }
@@ -817,7 +817,7 @@ export class ModuleLoader {
     } finally {
       // Always clear the in-progress marker, regardless of how the load
       // ended — on success AND on any error (lex/parse error,
-      // checkProcedureUsage, checkTypes, or interpretation itself throwing).
+      // checkPurity, checkTypes, or interpretation itself throwing).
       // Without this, any failed load would leave resolvedPath stuck in
       // `loading` forever, so a SECOND attempt to load the same (now
       // perhaps-fixed, in a REPL session, or simply retried) path would
@@ -1364,7 +1364,11 @@ export class Interpreter {
         env.assign(expr.name, val);
         return val;
       }
-      case 'LambdaExpr': { this.inTailPosition = false; return new PfunFunction(null, expr.params, expr.body, env, 'function'); }
+      case 'LambdaExpr': {
+        this.inTailPosition = false;
+        const kind = (expr as any).isProc ? 'procedure' : 'function';
+        return new PfunFunction(null, expr.params, expr.body, env, kind);
+      }
       case 'ListExpr': {
         this.inTailPosition = false;
         const elements: any[] = [];

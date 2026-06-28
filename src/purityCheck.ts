@@ -1,6 +1,6 @@
-// src/procedureCheck.ts
+// src/purityCheck.ts
 //
-// Static procedure-usage checker.
+// Static purity checker.
 //
 // Pfun's purity guarantee — "a function can never have a side effect" — used
 // to be enforced *only* at runtime, via `Interpreter.inPureContext` checked
@@ -77,7 +77,7 @@
 // regardless of whether a resolver is supplied.
 //
 // Cross-module names (anything arriving via `import`) depend on whether
-// checkProcedureUsage() is called with a ModuleImportResolver:
+// checkPurity() is called with a ModuleImportResolver:
 //
 //   - WITHOUT one (the default — e.g. existing tests, and any caller from
 //     before cross-module support existed): imported names are treated as
@@ -124,7 +124,7 @@
 // interpreter.ts's own LetStmt evaluation has the same guard at runtime
 // (and imports the constructor-name lists/helper below from here, rather
 // than keeping a duplicate copy, since interpreter.ts already depends on
-// this module for checkProcedureUsage — adding a couple more named
+// this module for checkPurity — adding a couple more named
 // imports from the same module introduces no new dependency or cycle).
 // This static copy exists because the runtime guard only fires for code
 // that's actually interpreted: a transpiled program has no runtime LetStmt
@@ -159,13 +159,13 @@ type NameKind = 'function' | 'proc' | 'var' | 'other';
 export type ModuleImportResolver = (importPath: string, pos: SourcePos | undefined) => ImportTable | null;
 
 /**
- * Set once at the start of each checkProcedureUsage() call, read only by
+ * Set once at the start of each checkPurity() call, read only by
  * ImportStmt's handling in checkStmt — never mutated mid-walk. Module-level
  * rather than threaded as an explicit parameter through all five mutually
  * recursive check* functions (~50 call sites) because it is genuinely
  * constant for the whole walk, unlike `scope`/`inPureContext` which change
  * per-call; a parameter would be passed unchanged at every single call site.
- * Safe as module state because checkProcedureUsage is fully synchronous
+ * Safe as module state because checkPurity is fully synchronous
  * (no await, no generators — confirmed by its plain recursive-descent
  * structure) and Node/this codebase has no concurrent/worker-thread calls
  * into it; both real call sites (main.ts, interpreter.ts's ModuleLoader.load)
@@ -181,7 +181,7 @@ let currentImportResolver: ModuleImportResolver | null = null;
  * ModuleLoader.builtinExportNames's docblock in interpreter.ts).
  *
  * Absent here entirely, this checker's behavior is unchanged from before
- * cross-module support existed: checkProcedureUsage() called with no
+ * cross-module support existed: checkPurity() called with no
  * import table (the default) treats every import as opaque 'other',
  * exactly as today.
  */
@@ -389,11 +389,14 @@ function checkExprValue(expr: Expr, scope: StaticScope, inPureContext: boolean):
       return;
     }
     case 'LambdaExpr': {
-      // A lambda body is itself function-kind code: always pure context,
-      // regardless of the context it's written in.
+      // A `fn` lambda body is function-kind code: always pure context. An
+      // anonymous procedure (`proc(...) { ... }`, isProc=true) is procedure
+      // code: side effects and var mutation are allowed in its body, exactly
+      // like a named procedure.
       const inner = scope.child();
       for (const p of expr.params) inner.define(p, 'other');
-      checkExprValue(expr.body, inner, true);
+      const bodyPure = (expr as any).isProc ? false : true;
+      checkExprValue(expr.body, inner, bodyPure);
       return;
     }
     case 'TernaryExpr':
@@ -676,7 +679,7 @@ function checkStmt(stmt: Stmt, scope: StaticScope, inPureContext: boolean): void
  *   import graph in dependency order before calling this on a module that
  *   imports from them.
  */
-export function checkProcedureUsage(statements: Stmt[], resolver?: ModuleImportResolver): void {
+export function checkPurity(statements: Stmt[], resolver?: ModuleImportResolver): void {
   const root = new StaticScope();
   // Top level starts in impure ("procedural") context — matching
   // Interpreter.inPureContext's default of `false` and main.ts's runFile,

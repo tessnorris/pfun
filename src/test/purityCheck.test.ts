@@ -1,24 +1,24 @@
-// src/test/procedureCheck.test.ts
+// src/test/purityCheck_test.ts
 //
-// Tests for the static procedure-usage checker (checkProcedureUsage).
+// Tests for the static procedure-usage checker (checkPurity).
 //
-// These tests exercise the pass directly: parse → checkProcedureUsage. They
+// These tests exercise the pass directly: parse → checkPurity. They
 // do not invoke main.ts (which calls process.exit) or the interpreter — the
 // pass requires no runtime, type information, or evaluation, only a parsed
-// AST. See procedureCheck.ts's file header for the precise rules and the
+// AST. See purityCheck.ts's file header for the precise rules and the
 // documented single-module scope boundary (imports are treated as opaque).
 
 import { Lexer } from '../lexer';
 import { Parser } from '../parser';
 import { Stmt } from '../ast';
-import { checkProcedureUsage } from '../procedureCheck';
+import { checkPurity } from '../purityCheck';
 
 function parse(src: string): Stmt[] {
   return new Parser(new Lexer(src).lex()).parse();
 }
 
 function check(src: string): void {
-  checkProcedureUsage(parse(src));
+  checkPurity(parse(src));
 }
 
 describe('Static procedure-usage checker', () => {
@@ -186,7 +186,153 @@ describe('Static procedure-usage checker', () => {
     });
   });
 
-  describe('Rule 3 — mutating a var or array/dict element from pure context is forbidden', () => {
+  describe('Anonymous proc lambdas (proc x => body)', () => {
+    // ── proc lambda bodies are impure — side effects allowed ────────────────
+
+    it('allows a proc lambda body to call a named proc', () => {
+      expect(() => check(`
+        proc sideEffect(x) { println(x); }
+        proc run(f) { f(1); }
+        run(proc x => sideEffect(x));
+      `)).not.toThrow();
+    });
+
+    it('allows a proc lambda body to use var mutation', () => {
+      expect(() => check(`
+        var counter = 0;
+        proc run(f) { f(1); }
+        run(proc x => { counter = counter + x; });
+      `)).not.toThrow();
+    });
+
+    it('allows a proc lambda body to contain a block with side effects', () => {
+      expect(() => check(`
+        proc run(f) { f(1); }
+        run(proc x => {
+          var y = x + 1;
+          y = y * 2;
+        });
+      `)).not.toThrow();
+    });
+
+    it('allows nested proc lambdas (proc returning proc)', () => {
+      expect(() => check(`
+        proc run(f) { f(1); }
+        run(proc x => {
+          run(proc y => {
+            var z = x + y;
+            z = z + 1;
+          });
+        });
+      `)).not.toThrow();
+    });
+
+    // ── proc lambdas in pure context ────────────────────────────────────────
+    // Note: the static checker catches proc lambda bodies being in pure
+    // context (a fn lambda inside the proc lambda can't call procs), but does
+    // not yet track that a let binding initialized with a proc lambda is
+    // proc-kind — that is caught at runtime when the call actually occurs.
+
+    it('does not statically reject a proc lambda stored in a let inside a function (caught at runtime on call)', () => {
+      // The static pass does not yet track proc-lambda-initialized let bindings
+      // as proc-kind. The runtime's inPureContext check catches it when called.
+      expect(() => check(`
+        proc sideEffect(x) { println(x); }
+        function bad() {
+          let g = proc x => sideEffect(x);
+          return 1;
+        }
+      `)).not.toThrow();
+    });
+
+    it('does not statically reject calling a proc lambda from inside a fn lambda (caught at runtime)', () => {
+      // Similarly, an immediately-invoked proc lambda inside a fn lambda is
+      // a runtime purity error, not a static one.
+      expect(() => check(`
+        proc sideEffect(x) { println(x); }
+        let g = fn x => (proc y => sideEffect(y))(x);
+      `)).not.toThrow();
+    });
+
+    // ── fn lambdas inside a proc lambda body stay pure ───────────────────────
+
+    it('allows a fn lambda inside a proc lambda body (fn stays pure)', () => {
+      expect(() => check(`
+        proc run(f) { f(1); }
+        run(proc x => {
+          let g = fn y => y * x;
+        });
+      `)).not.toThrow();
+    });
+
+    it('rejects a proc call from inside a fn lambda nested in a proc lambda', () => {
+      expect(() => check(`
+        proc sideEffect(x) { println(x); }
+        proc run(f) { f(1); }
+        run(proc x => {
+          let g = fn y => sideEffect(y);
+        });
+      `)).toThrow('Functions cannot call procedures');
+    });
+
+    // ── closure capture ──────────────────────────────────────────────────────
+
+    it('allows a proc lambda to capture and mutate an outer var via closure', () => {
+      expect(() => check(`
+        proc run(f) { f(0); }
+        var total = 0;
+        run(proc x => { total = total + x; });
+      `)).not.toThrow();
+    });
+
+    it('allows a proc lambda to capture an outer let binding', () => {
+      expect(() => check(`
+        proc run(f) { f(0); }
+        let prefix = "hello";
+        run(proc x => { println(prefix); });
+      `)).not.toThrow();
+    });
+
+    // ── syntax variants ──────────────────────────────────────────────────────
+
+    it('accepts bare single-param syntax: proc x => expr', () => {
+      expect(() => check(`
+        proc run(f) { f(1); }
+        run(proc x => println(x));
+      `)).not.toThrow();
+    });
+
+    it('accepts parenthesized single-param syntax: proc(x) => expr', () => {
+      expect(() => check(`
+        proc run(f) { f(1); }
+        run(proc(x) => println(x));
+      `)).not.toThrow();
+    });
+
+    it('accepts multi-param syntax: proc(x, y) => expr', () => {
+      expect(() => check(`
+        proc run2(f) { f(1, 2); }
+        run2(proc(x, y) => println(x));
+      `)).not.toThrow();
+    });
+
+    it('accepts zero-param syntax: proc() => expr', () => {
+      expect(() => check(`
+        proc run0(f) { f(); }
+        run0(proc() => println("hi"));
+      `)).not.toThrow();
+    });
+
+    it('accepts block body: proc x => { stmts }', () => {
+      expect(() => check(`
+        proc run(f) { f(1); }
+        run(proc x => {
+          var y = x;
+          y = y + 1;
+        });
+      `)).not.toThrow();
+    });
+  });
     it('rejects reassigning an outer var from inside a function', () => {
       expect(() => check(`
         var counter = 0;
@@ -428,6 +574,33 @@ describe('Static procedure-usage checker', () => {
       `)).not.toThrow();
     });
 
+    it('allows a proc lambda to be passed as a value inside a proc body', () => {
+      expect(() => check(`
+        proc run(f) { f(1); }
+        proc setup() {
+          run(proc x => println(x));
+        }
+      `)).not.toThrow();
+    });
+
+    it('allows a proc lambda to be stored in a let inside a proc body', () => {
+      expect(() => check(`
+        proc run(f) { f(1); }
+        proc setup() {
+          let handler = proc x => println(x);
+          run(handler);
+        }
+      `)).not.toThrow();
+    });
+
+    it('allows a proc lambda stored in a var at top level', () => {
+      expect(() => check(`
+        proc run(f) { f(1); }
+        var handler = proc x => println(x);
+        run(handler);
+      `)).not.toThrow();
+    });
+
     it('allows a parameter name that shadows a would-be proc-shaped use', () => {
       expect(() => check(`
         function apply(sideEffect, x) {
@@ -449,7 +622,7 @@ describe('Static procedure-usage checker', () => {
 
   describe('Module-boundary scope (imports are treated as opaque, per documented design)', () => {
     it('does not flag an imported name used as a value inside a function', () => {
-      // Per procedureCheck.ts's documented scope boundary, this pass cannot
+      // Per purityCheck.ts's documented scope boundary, this pass cannot
       // know whether an imported name is a function or a proc — that
       // remains the dynamic interpreter's responsibility (inPureContext),
       // exactly as before this pass existed. This test pins down that the
@@ -502,7 +675,7 @@ describe('Static procedure-usage checker', () => {
   describe('Mutable-structure let/var check (unrelated to the purity rules above)', () => {
     // This rule has nothing to do with inPureContext — it fires identically
     // at the top level, inside a proc, or inside a function. See
-    // procedureCheck.ts's file header for the full rationale.
+    // purityCheck.ts's file header for the full rationale.
 
     it('rejects a dict literal declared with let', () => {
       expect(() => check(`let d = dict { "x" -> 1 };`))
@@ -624,7 +797,7 @@ describe('Static procedure-usage checker', () => {
       // This rule needs no cross-module information at all, so it must
       // behave identically with or without a resolver supplied.
       const resolver = () => null;
-      expect(() => checkProcedureUsage(parse(`let b = makeBuffer(ByteMode);`), resolver))
+      expect(() => checkPurity(parse(`let b = makeBuffer(ByteMode);`), resolver))
         .toThrow("Buffers must be declared with 'var'");
     });
 

@@ -98,6 +98,12 @@ export type Expr =
        * ops inside the lambda body without runtime dispatch.
        */
       paramTypes?: PfunType[];
+      /**
+       * True for anonymous procedures (`proc(params) { body }`). A proc lambda
+       * may contain side effects and can only be called from an impure context,
+       * exactly like a named procedure. False/undefined for pure `fn` lambdas.
+       */
+      isProc?: boolean;
       body: Expr; pos?: SourcePos; inferredType?: PfunType }
   | { type: 'TernaryExpr'; condition: Expr; thenBranch: Expr; elseBranch: Expr; pos?: SourcePos; inferredType?: PfunType }
   | { type: 'ListExpr';   elements: Expr[];

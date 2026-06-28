@@ -366,6 +366,7 @@ export class Parser {
       case 'AwaitToken':
         return { type: 'AwaitExpr', value: this.parseExpression(Precedence.UNARY), pos: token.pos ?? exprPos };
       case 'FnToken': return this.parseLambda();
+      case 'ProcToken': return this.parseProcLambda();
       case 'MatchToken': return this.parseMatchExpression();
       case 'DictToken': {
         this.consume('LBraceToken', "Expected '{' after 'dict'.");
@@ -658,6 +659,32 @@ export class Parser {
     this.consume('ArrowToken', "Expected '=>' after lambda parameters.");
     const body = this.check('LBraceToken') ? this.parseBlockExpr() : this.parseExpression();
     return { type: 'LambdaExpr', params, body, pos: exprPos };
+  }
+
+  /**
+   * Parses an anonymous procedure: `proc params => body` — identical syntax
+   * to `fn params => body` but produces isProc=true, so the body runs in
+   * impure context (side effects and var mutation allowed, purity guards off).
+   */
+  private parseProcLambda(): Expr {
+    const exprPos = this.pos();
+    let params: string[] = [];
+    if (this.match('LParenToken')) {
+      params = this.parseParameters();
+      this.consume('RParenToken', "Expected ')' after parameters.");
+    } else {
+      do {
+        if (this.check('WildcardToken')) {
+          this.advance();
+          params.push('_');
+        } else {
+          params.push((this.consume('IdentToken', "Expected parameter name.") as any).value);
+        }
+      } while (this.match('CommaToken'));
+    }
+    this.consume('ArrowToken', "Expected '=>' after proc parameters.");
+    const body = this.check('LBraceToken') ? this.parseBlockExpr() : this.parseExpression();
+    return { type: 'LambdaExpr', params, isProc: true, body, pos: exprPos };
   }
 
   /**

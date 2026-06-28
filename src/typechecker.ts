@@ -32,14 +32,14 @@ import { PfunError, buildPfunError } from './errors';
 export type UnionVariants = { name: string; fields: string[] }[];
 
 /** A module's exported unions, keyed by union name — the exhaustiveness
- *  analogue of procedureCheck.ts's ImportTable / inferencer.ts's
+ *  analogue of purityCheck.ts's ImportTable / inferencer.ts's
  *  TypeImportTable. Supplied by the whole-program driver
  *  (wholeProgramCheck.ts), extracted from a module's own UnionTypeStmt
  *  exports. */
 export type UnionImportTable = Map<string, UnionVariants>;
 
 /** Resolves an import to that module's exported unions. Mirrors
- *  procedureCheck.ts's ModuleImportResolver / inferencer.ts's
+ *  purityCheck.ts's ModuleImportResolver / inferencer.ts's
  *  TypeImportResolver exactly (same null-means-"fall back to permissive
  *  treatment" contract — a union this pass can't resolve cross-module
  *  simply never gets registered, so a match on it is silently skipped,
@@ -111,7 +111,7 @@ function registerAllUnions(stmts: Stmt[], registry: UnionRegistry, resolver?: Un
         const table = resolver(s.path, s.pos);
         if (!table) break;
         // Registering is correct for ALL import kinds (named, namespace,
-        // star) identically here, unlike procedureCheck.ts/inferencer.ts's
+        // star) identically here, unlike purityCheck.ts/inferencer.ts's
         // per-kind binding logic: a union's *registration* (its name and
         // variant list, for exhaustiveness purposes) doesn't depend on
         // how the importing file refers to it by name — only the

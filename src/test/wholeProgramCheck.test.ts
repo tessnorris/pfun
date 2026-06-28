@@ -102,6 +102,39 @@ describe('Whole-program static checker (checkProgram) — Stage 1: graph + purit
     });
   });
 
+  describe('Mutable-structure let/var check propagates through checkProgram (unrelated to purity rules above)', () => {
+    // This rule needs no cross-module resolution at all — it's purely
+    // syntactic (purityCheck.ts's checkMutableLetUsage, invoked from
+    // checkStmt's existing LetStmt case) — so it requires zero changes to
+    // this file's checkProgram to participate in whole-program checking;
+    // it rides along for free wherever checkPurity already runs.
+    // These tests exist to confirm that's actually true end-to-end,
+    // through real fixture files, not just asserted.
+    it('catches a let-bound buffer constructor at the entry-file top level', () => {
+      const err = check('main_mutable_let_bad.pf');
+      expect(err).not.toBeNull();
+      expect(err!.pfunMessage).toContain("Buffers must be declared with 'var'");
+    });
+
+    it('passes the var-correct equivalent', () => {
+      expect(check('main_mutable_let_good.pf')).toBeNull();
+    });
+
+    it('attributes the error to the dependency file, not the entry file, for a transitive violation', () => {
+      // transitive_mutable_let_dep.pf (imported by
+      // transitive_mutable_let_entry.pf) has the actual violation inside
+      // an exported function; the entry file itself only imports and
+      // calls it. The reported error must point at the dependency file,
+      // matching the existing transitive-attribution test above for the
+      // purity rules.
+      const err = check('transitive_mutable_let_entry.pf');
+      expect(err).not.toBeNull();
+      expect(err!.pfunMessage).toContain('transitive_mutable_let_dep.pf');
+      expect(err!.pfunMessage).not.toContain('transitive_mutable_let_entry.pf');
+      expect(err!.pfunMessage).toContain("Buffers must be declared with 'var'");
+    });
+  });
+
   describe('Legitimate cross-module uses are NOT flagged', () => {
     it('passes a function imported by name and called from another function', () => {
       expect(check('main_good.pf')).toBeNull();
@@ -241,12 +274,12 @@ describe('Whole-program static checker (checkProgram) — Stage 1: graph + purit
     });
   });
 
-  describe('Backward compatibility — checkProcedureUsage with no resolver is unchanged', () => {
+  describe('Backward compatibility — checkPurity with no resolver is unchanged', () => {
     it('still treats imports as opaque when called without a ModuleImportResolver (existing single-module callers/tests)', () => {
-      // This is procedureCheck.test.ts's territory in detail; this is a
+      // This is purityCheck_test.ts's territory in detail; this is a
       // narrow smoke check that wholeProgramCheck.ts's existence hasn't
-      // altered checkProcedureUsage's default (no-resolver) behavior.
-      const { checkProcedureUsage } = require('../procedureCheck');
+      // altered checkPurity's default (no-resolver) behavior.
+      const { checkPurity } = require('../purityCheck');
       const { Lexer } = require('../lexer');
       const { Parser } = require('../parser');
       const ast = new Parser(new Lexer(`
@@ -256,11 +289,11 @@ describe('Whole-program static checker (checkProgram) — Stage 1: graph + purit
           return 1;
         }
       `).lex()).parse();
-      expect(() => checkProcedureUsage(ast)).not.toThrow();
+      expect(() => checkPurity(ast)).not.toThrow();
     });
 
     it('checkTypes still treats an imported name as unbound (no false positive) when called without resolvers (existing single-module callers/tests)', () => {
-      // Mirrors the checkProcedureUsage check above, for checkTypes' own
+      // Mirrors the checkPurity check above, for checkTypes' own
       // default (no-resolver) behavior — inferencer.test.ts/
       // typechecker.test.ts cover this in detail; this is a narrow smoke
       // check that wholeProgramCheck.ts's existence hasn't altered it.

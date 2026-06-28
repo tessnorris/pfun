@@ -55,28 +55,28 @@ if a < b then {
  *  14. STRINGS, CHARS & OUTPUT
  *  ============================================================================
  *  Chars ('a') are a distinct type from strings ("a").
- *  Semantically, a string is a list of chars — head/tail/cons/map/filter
+ *  Semantically, a string is a list of chars -- head/tail/cons/map/filter
  *  all work on strings the same way they work on lists.
  *
  *  Char literals:  'a'  '\n'  '\t'  '\\'  '\''
  *  String escapes: \"  \\  \n  \t
  *
  *  Output:
- *    println(x)  — prints x with a newline
- *    print(x)    — prints x without a newline
- *    printf("text {name} or {rec.field}\n")  — interpolated print (no newline)
+ *    println(x)  -- prints x with a newline
+ *    print(x)    -- prints x without a newline
+ *    printf("text {name} or {rec.field}\n")  -- interpolated print (no newline)
  *
  *  Char/string builtins:
- *    asc('a')    — char -> integer (ascii code)
- *    chr(97)     — integer -> char
- *    head("str") — first char
- *    tail("str") — rest of string
- *    cons('c', "str") — prepend char to string
+ *    asc('a')    -- char -> integer (ascii code)
+ *    chr(97)     -- integer -> char
+ *    head("str") -- first char
+ *    tail("str") -- rest of string
+ *    cons('c', "str") -- prepend char to string
  *
  *  List builtins that work on strings and lists:
- *    slice(n, k, list)  — k items starting at index n (0-based)
- *    nth(list, n)       — item at index n, or false if out of bounds
- *    isInfinite(x)      — true if x is a lazy list
+ *    slice(n, k, list)  -- k items starting at index n (0-based)
+ *    nth(list, n)       -- item at index n, or false if out of bounds
+ *    isInfinite(x)      -- true if x is a lazy list
  */
 
 println("--- 14. Strings, Chars & Output ---");
@@ -138,7 +138,7 @@ print($"Use \{ and \} for literal braces\n");
  *  21. @ RAW STRING LITERALS
  *  ============================================================================
  *  The @ prefix produces a raw string literal in which backslash sequences
- *  are NOT processed — every character is taken at face value.  This is
+ *  are NOT processed -- every character is taken at face value.  This is
  *  useful for regular expressions, file paths, help text, and any string
  *  where you want to write \n to mean the two characters '\' and 'n' rather
  *  than a newline.
@@ -156,7 +156,7 @@ let help = @"Options:
 -e   enable interpretation of \\n as newline";
 println(help);
 
-// Windows-style path — no need to escape every backslash
+// Windows-style path -- no need to escape every backslash
 let winPath = @"C:\Users\Alice\Documents\notes.txt";
 println(winPath);  // C:\Users\Alice\Documents\notes.txt
 
@@ -174,9 +174,9 @@ println(length(raw));     // 11 (\n is two chars)
 /*
  *  22. SPLIT & JOIN
  *  ============================================================================
- *  split(str, delimiter)  — splits a string on a delimiter, returning a list
+ *  split(str, delimiter)  -- splits a string on a delimiter, returning a list
  *                           of strings.  Empty delimiter splits into chars.
- *  join(list, delimiter)  — joins a list into a string, inserting delimiter
+ *  join(list, delimiter)  -- joins a list into a string, inserting delimiter
  *                           between each element.  Values are auto-converted
  *                           to strings.
  *
@@ -194,7 +194,7 @@ println(length(words));              // 3
 let csv = split("Alice,30,true", ",");
 println(csv);                        // [Alice, 30, true]
 
-// Split on empty string → individual characters
+// Split on empty string -> individual characters
 let chars = split("hello", "");
 println(chars);                      // [h, e, l, l, o]
 
@@ -229,7 +229,7 @@ println($"numbers: {numsStr}");  // numbers: 10, 20, 30
 
   - `function` defines a PURE function: no side effects, lazy args.
     Functions cannot use `print`, `var`, or call procedures.
-  - `memo function` is like `function` but memoizes results — repeated calls
+  - `memo function` is like `function` but memoizes results -- repeated calls
     with the same arguments return the cached value immediately.
   - `fn` defines an anonymous pure lambda (always pure by construction).
   - `proc` defines a PROCEDURE: side effects allowed, strict evaluation,
@@ -260,15 +260,104 @@ println(g(10));
 
 
 /*
+  4b. ANONYMOUS PROC LAMBDAS
+  ============================================================================
+  Just as `fn` creates an anonymous pure function, `proc` creates an anonymous
+  impure procedure. The syntax mirrors `fn` exactly:
+
+    proc x => expr              -- bare param, expression body
+    proc x => { stmts }        -- bare param, block body
+    proc(x, y) => expr         -- multiple params (parens required)
+    proc() => expr              -- zero params
+
+  Anonymous procs are first-class values -- they can be passed as callbacks,
+  stored in vars, and called like any other proc. They close over their
+  enclosing scope, capturing both let and var bindings.
+
+  The purity rules still apply: a fn lambda cannot call or store an anonymous
+  proc, and an anonymous proc cannot be used as a value inside a function body.
+*/
+
+println("--- 4b. Anonymous Proc Lambdas ---");
+
+// Basic: anonymous proc passed directly as a callback
+proc callWith(f, x) {
+  f(x);
+}
+
+callWith(proc x => println("got: " + __str__(x)), 42);  // got: 42
+
+// Block body -- multiple statements
+callWith(proc x => {
+  var doubled = x * 2;
+  println("doubled: " + __str__(doubled));
+}, 5);                                                   // doubled: 10
+
+// Multi-param anonymous proc
+proc callWith2(f, x, y) {
+  f(x, y);
+}
+
+callWith2(proc(a, b) => println(__str__(a) + " + " + __str__(b) + " = " + __str__(a + b)), 3, 4);
+// 3 + 4 = 7
+
+// Zero-param anonymous proc
+proc doIt(f) { f(); }
+
+doIt(proc() => println("zero params work too"));        // zero params work too
+
+// Closure: anonymous proc captures its defining environment
+proc makeCounter() {
+  var count = 0;
+  let inc = proc() => {
+    count = count + 1;
+    println("count = " + __str__(count));
+  };
+  callWith2(proc(a, b) => {
+    // also captures 'count' from the outer proc
+    println("outer count seen from nested proc: " + __str__(count));
+  }, 0, 0);
+  inc();   // count = 1
+  inc();   // count = 2
+  inc();   // count = 3
+}
+makeCounter();
+
+// The key use case: passing an impure callback to a higher-order proc.
+// Without anonymous procs, you'd need a named proc that manually threads
+// all context as parameters. With anonymous procs, the closure captures it.
+proc forEachItem(items, action) {
+  if length(items) > 0 then {
+    action(head(items));
+    forEachItem(tail(items), action);
+  }
+}
+
+let fruits = ["apple", "banana", "cherry"];
+var idx = 0;
+forEachItem(fruits, proc item => {
+  println(__str__(idx) + ": " + item);
+  idx = idx + 1;
+});
+// 0: apple
+// 1: banana
+// 2: cherry
+
+// fn lambdas remain pure -- they cannot call procs or mutate vars.
+// Uncommenting this would be a purity error:
+// let badFn = fn x => println(x);  // ERROR: Functions cannot use 'println'
+
+
+/*
   5. TAIL-CALL OPTIMIZATION (TCO), MEMOIZATION & CURRYING
   ============================================================================
-  TCO — Pfun eliminates tail calls so deep recursion doesn't stack-overflow.
+  TCO -- Pfun eliminates tail calls so deep recursion doesn't stack-overflow.
 
-  Memoization — prefix a function with `memo` to cache its results.
+  Memoization -- prefix a function with `memo` to cache its results.
   Repeated calls with the same arguments skip recomputation entirely.
   Use memo for expensive pure computations; omit it for simple helpers.
 
-  Currying — calling a function with fewer arguments than it expects returns
+  Currying -- calling a function with fewer arguments than it expects returns
   a new function waiting for the rest. This works for both user-defined
   functions and built-in native functions.
 */
@@ -294,7 +383,7 @@ println(fact(5, 1));       // 120
 println(fib(10));          // 55
 println(fib(20));          // 6765
 
-// Currying — partial application by supplying fewer arguments
+// Currying -- partial application by supplying fewer arguments
 function clamp(lo, hi, x) {
     return x < lo ? lo : (x > hi ? hi : x);
 }
@@ -347,10 +436,10 @@ println(sum);     // 12
 /*
  *  15. SLICE, NTH & ISINFINITE
  *  ============================================================================
- *  slice(n, k, list)  — returns k items starting at index n (0-based)
+ *  slice(n, k, list)  -- returns k items starting at index n (0-based)
  *                       works on strings, finite lists, and lazy lists
- *  nth(list, n)       — item at index n, or false if out of bounds
- *  isInfinite(x)      — true if x is a LazyList descriptor
+ *  nth(list, n)       -- item at index n, or false if out of bounds
+ *  isInfinite(x)      -- true if x is a LazyList descriptor
  */
 
 println("--- 15. Slice, nth & isInfinite ---");
@@ -386,13 +475,13 @@ println(isInfinite("hello"));    // false
 /*
  *  16. FIND & FINDSLICE
  *  ============================================================================
- *  find(list, item)        — returns Some { index } of first matching item,
+ *  find(list, item)        -- returns Some { index } of first matching item,
  *                            or None if not found
- *  findSlice(list, slice)  — returns Some { index } of first matching sublist,
+ *  findSlice(list, slice)  -- returns Some { index } of first matching sublist,
  *                            or None if not found
  *
  *  Both use deep value equality (not reference equality), work on strings,
- *  finite lists, and records. Require a finite list — use take() first on
+ *  finite lists, and records. Require a finite list -- use take() first on
  *  lazy lists.
  */
 
@@ -410,7 +499,7 @@ println(match find([1, 2, 1, 3], 1) with | Some s -> s.value | None -> "not foun
 println(match find("hello", 'l') with | Some s -> s.value | None -> "not found");   // 2
 println(match find("hello", 'z') with | Some s -> s.value | None -> "not found");   // not found
 
-// find with records — value equality
+// find with records -- value equality
 // (Use SearchPt to avoid conflict with the 3-field Point defined earlier)
 type SearchPt = { x, y }
 let pts = [SearchPt { 1, 2 }, SearchPt { 3, 4 }, SearchPt { 5, 6 }];
@@ -441,11 +530,11 @@ println(match findByX(pts, 9) with | Some s -> s.value | None -> "not found");  
 /*
  *  17. REVERSE & LENGTH
  *  ============================================================================
- *  reverse(list)  — returns a new list or string in reversed order
- *  length(list)   — returns the number of elements in a list or string
+ *  reverse(list)  -- returns a new list or string in reversed order
+ *  length(list)   -- returns the number of elements in a list or string
  *
  *  Both work uniformly on strings and finite lists.
- *  reverse throws on infinite (lazy) lists — use take() first.
+ *  reverse throws on infinite (lazy) lists -- use take() first.
  */
 
 println("--- 17. reverse & length ---");
@@ -470,7 +559,7 @@ println(length([]));                  // 0
 println(length("hello"));            // 5
 println(length(""));                  // 0
 
-// useful together — last element of a list
+// useful together -- last element of a list
 function last(lst) {
   return nth(lst, length(lst) - 1);
 }
@@ -498,7 +587,7 @@ println(evensRev);                   // [6, 4, 2]
  *
  *  - `for x <- list`  binds each element of list to x in turn (generator)
  *  - Multiple `for` clauses produce the cartesian product of the sources
- *  - `where <expr>`   filters elements — only items where the guard is true
+ *  - `where <expr>`   filters elements -- only items where the guard is true
  *    are included. The guard is a normal boolean expression, so use &&
  *    to combine multiple conditions.
  *  - The body expression is evaluated for each passing element.
@@ -526,7 +615,7 @@ let words2 = ["hello", "world", "pfun"];
 let lengths = [ w + "!" for w <- words ];
 println(lengths); // [hello!, world!, pfun!]
 
-// Multiple generators — cartesian product
+// Multiple generators -- cartesian product
 let xs = [1, 2, 3];
 let ys = [10, 20];
 let pairs_sum = [ x + y for x <- xs for y <- ys ];
@@ -547,7 +636,7 @@ function evens2(lst) {
 }
 println(evens([1, 2, 3, 4, 5, 6])); // [2, 4, 6]
 
-// Nested comprehension — flatten one level using multiple generators
+// Nested comprehension -- flatten one level using multiple generators
 let matrix = [[1, 2], [3, 4], [5, 6]];
 let flat = [ x for row <- matrix for x <- row ];
 println(flat); // [1, 2, 3, 4, 5, 6]
@@ -556,13 +645,13 @@ println(flat); // [1, 2, 3, 4, 5, 6]
 /*
  *  12. INFINITE LISTS
  *  ============================================================================
- *  Infinite lists are represented as lazy descriptors — no values are computed
+ *  Infinite lists are represented as lazy descriptors -- no values are computed
  *  until take() materializes them into a finite array.
  *
  *  Constructors:
- *    iterate(f, seed)  — [seed, f(seed), f(f(seed)), ...]
- *    repeat(x)         — [x, x, x, ...]
- *    cycle(list)       — [a, b, c, a, b, c, ...] cycling any list
+ *    iterate(f, seed)  -- [seed, f(seed), f(f(seed)), ...]
+ *    repeat(x)         -- [x, x, x, ...]
+ *    cycle(list)       -- [a, b, c, a, b, c, ...] cycling any list
  *
  *  Operations (return new lazy descriptors, still infinite):
  *    map(f, lazyList)
@@ -571,10 +660,10 @@ println(flat); // [1, 2, 3, 4, 5, 6]
  *    tail(lazyList)
  *
  *  Materialization:
- *    take(n, list)  — returns the first n elements as a finite array.
+ *    take(n, list)  -- returns the first n elements as a finite array.
  *                     Works on both finite and infinite lists.
  *
- *  Note: reduce requires a finite list — use take() first.
+ *  Note: reduce requires a finite list -- use take() first.
  */
 
 println("--- 12. Infinite Lists ---");
@@ -591,7 +680,7 @@ println(take(8, powers)); // [1, 2, 4, 8, 16, 32, 64, 128]
 let lazyEvens2 = filter(fn x => x % 2 == 0, nats);
 println(take(5, lazyEvens2)); // [2, 4, 6, 8, 10]
 
-// All even numbers via map — more efficient
+// All even numbers via map -- more efficient
 let doubledNats = map(fn x => x * 2, nats);
 println(take(5, doubledNats)); // [2, 4, 6, 8, 10]
 
@@ -627,7 +716,7 @@ println(short); // [10, 20, 30]
 let fibs = map(fn p => p.key, iterate(fn p => Pair { p.value, p.key + p.value }, Pair { 0, 1 }));
 println(take(10, fibs)); // [0, 1, 1, 2, 3, 5, 8, 13, 21, 34]
 
-// Pure function returning an infinite list — fine, no side effects
+// Pure function returning an infinite list -- fine, no side effects
 function multiplesOf(n) {
   return iterate(fn x => x + n, n);
 }
@@ -704,7 +793,7 @@ println(re.y);       // 4
       | <VariantName> <binding> [where <guard>] -> <result-expr>
       | <VariantName> _                         -> <result-expr>   // discard binding
       | <VariantName>                           -> <result-expr>   // zero-field variant, no binding
-      | <binding> where <guard>                 -> <result-expr>   // NO constructor tag — binds the subject directly
+      | <binding> where <guard>                 -> <result-expr>   // NO constructor tag -- binds the subject directly
       | _                                       -> <result-expr>   // wildcard
 
   Rules:
@@ -713,20 +802,20 @@ println(re.y);       // 4
       If the guard is false the arm is SKIPPED and the next arm is tried.
     - `_` as a binding discards the matched value (no name bound).
     - `| _ ->` is a wildcard arm that matches any variant.
-    - A bare `<binding> where <guard> -> ...` arm has NO constructor tag —
+    - A bare `<binding> where <guard> -> ...` arm has NO constructor tag --
       it matches the subject's value directly, union-tagged or not. This
       is what makes guard-routed dispatch on plain values (Int, Bool, Str,
       records, ...) possible, not just on union variants. (One token of
       lookahead disambiguates it: a bare identifier directly followed by
       `where` is this form; directly followed by `->` it keeps its
-      original meaning — a variant tag with no binding, for zero-field
+      original meaning -- a variant tag with no binding, for zero-field
       variants.)
     - EXHAUSTIVENESS on a UNION subject: if no wildcard arm is present,
       every variant of the matched union must appear at least once as an
       arm.
     - EXHAUSTIVENESS on any OTHER concretely-known subject (Bool, Int,
       Float, Byte, Str, Char, or a plain non-union record): the LAST arm
-      must be unconditional (no guard) — UNLESS the guards are provably
+      must be unconditional (no guard) -- UNLESS the guards are provably
       exhaustive on their own, which is recognized for Bool (true/false)
       and for numeric ranges (Int/Float/Byte) whose guards' combined
       intervals cover the whole domain, e.g. `n >= 0` and `n < 0` together
@@ -734,7 +823,7 @@ println(re.y);       // 4
     - A missing case (whichever rule above applies) is caught at compile
       time where statically determinable, or is a runtime error otherwise.
 
-  Match is an EXPRESSION — it produces a value and can appear anywhere
+  Match is an EXPRESSION -- it produces a value and can appear anywhere
   an expression is valid.
 */
 
@@ -776,7 +865,7 @@ let doubled_area = (match sq with
 ) * 2;
 println(doubled_area); // 200
 
-// Match inside a pure function — fine, no side effects
+// Match inside a pure function -- fine, no side effects
 function describe(shape) {
   return match shape with
     | Square s    -> "Square with side " + s.side
@@ -796,9 +885,9 @@ printDescriptions(sq, ci, re);
 // Circle with radius 5
 // Rectangle 3x4
 
-// ── Bare-binding arms (no constructor tag) ─────────────────────────────────
+// -- Bare-binding arms (no constructor tag) ---------------------------------
 // These bind the SUBJECT'S OWN VALUE directly, so they work on plain
-// values, not just union variants — guard-routed dispatch on Int/Bool/etc.
+// values, not just union variants -- guard-routed dispatch on Int/Bool/etc.
 
 function classify_number(n) {
   return match n with
@@ -810,7 +899,7 @@ println(classify_number(150)); // big
 println(classify_number(42));  // small non-negative
 println(classify_number(-7));  // negative
 
-// Different arms can use different binding names for the same subject —
+// Different arms can use different binding names for the same subject --
 // `hot` and `chilly` together still provably cover the whole Int range,
 // so (as with classify_number/sign_of above) no trailing arm is needed:
 function classify_temp(t) {
@@ -823,7 +912,7 @@ println(classify_temp(-5));  // not hot
 println(classify_temp(15));  // not hot
 
 // `n >= 0` and `n < 0` together are PROVABLY exhaustive over Int (and
-// likewise true/false over Bool) — no trailing unconditional arm needed:
+// likewise true/false over Bool) -- no trailing unconditional arm needed:
 function sign_of(n) {
   return match n with
     | n where n >= 0 -> "non-negative"
@@ -840,11 +929,11 @@ function describe_flag(b) {
 println(describe_flag(true));  // on
 println(describe_flag(false)); // off
 
-// A bare-binding arm can be mixed with an ordinary tagged arm too — handy
+// A bare-binding arm can be mixed with an ordinary tagged arm too -- handy
 // for special-casing one computed condition across a whole record before
 // falling through to the normal, per-field handling. (On a record type
 // like this one, with no enumerable "variant" list, exhaustiveness just
-// needs SOME arm with no guard at all — the tagged Vec2 arm below — since
+// needs SOME arm with no guard at all -- the tagged Vec2 arm below -- since
 // every Vec2 value matches its own tag.)
 type Vec2 = { vx, vy };
 let zero_vec = Vec2 { 0, 0 };
@@ -858,7 +947,7 @@ function describe_vec(v) {
 println(describe_vec(zero_vec)); // zero vector
 println(describe_vec(some_vec)); // vector (3, 4)
 
-// Non-exhaustive guard-only match — no trailing unconditional arm, and the
+// Non-exhaustive guard-only match -- no trailing unconditional arm, and the
 // guard doesn't provably cover every Int on its own (uncomment to see the
 // error):
 // match 5 with | n where n > 0 -> "positive";
@@ -874,7 +963,7 @@ println(describe_vec(some_vec)); // vector (3, 4)
 // match sq {
 //   | Square s -> s.side
 //   | Circle c -> c.radius
-//   // Missing Rectangle arm → ERROR: Non-exhaustive match on 'Shape': missing arm(s) for 'Rectangle'.
+//   // Missing Rectangle arm -> ERROR: Non-exhaustive match on 'Shape': missing arm(s) for 'Rectangle'.
 // };
 
 
@@ -885,8 +974,8 @@ println(describe_vec(some_vec)); // vector (3, 4)
  *  Option is a built-in union type representing a value that may or may not
  *  exist. It has two variants:
  *
- *    Some { value }   — wraps a value
- *    None             — represents absence (bare identifier, no braces)
+ *    Some { value }   -- wraps a value
+ *    None             -- represents absence (bare identifier, no braces)
  *
  *  Use `match` to safely unwrap Option values. Because Option is built-in,
  *  Some and None are always available without any type declaration.
@@ -909,7 +998,7 @@ let missing = match absent with
 | None   -> 0;
 println(missing); // 0
 
-// A pure function returning an Option — safe division
+// A pure function returning an Option -- safe division
 function safeDivide(a, b) {
   return b == 0 ? None : Some { a / b };
 }
@@ -927,7 +1016,7 @@ println(match bad with
 | None   -> "Division by zero"
 );  // Division by zero
 
-// where guard on Some — only match large values
+// where guard on Some -- only match large values
 let big = Some { 100 };
 let classify_opt = match big with
 | Some s where s.value > 50 -> "big"
@@ -935,7 +1024,7 @@ let classify_opt = match big with
 | None                      -> "nothing";
 println(classify_opt); // big
 
-// Option in a list — filter out None values with a procedure
+// Option in a list -- filter out None values with a procedure
 let opts = [Some { 1 }, Some { 2 }, Some { 3 }];
 let unwrapped = map(fn o => match o with | Some s -> s.value | None -> 0, opts);
 println(unwrapped); // [1, 2, 3]
@@ -996,7 +1085,7 @@ println(match divided with
 | None   -> "Division by zero"
 );  // Result: 5
 
-// Namespace import — all exports under one name
+// Namespace import -- all exports under one name
 import * as Math from "./mathutils";
 
 println(Math.multiply(6, 7));   // 42
@@ -1025,7 +1114,7 @@ proc copyFile(src, dst) {
   Dictionaries are mutable key-value stores. Keys are primitives (string,
   integer, or boolean) compared by value. Values can be anything.
 
-  Dictionaries must always be declared with `var` — they are inherently
+  Dictionaries must always be declared with `var` -- they are inherently
   imperative and cannot be used with `let`.
 
   Syntax:
@@ -1072,13 +1161,13 @@ var small = dict { "x" -> 10, "y" -> 20 };
 println(keys(small));    // [x, y]
 println(values(small));  // [10, 20]
 
-// Pair can be constructed directly — it's a built-in record type
+// Pair can be constructed directly -- it's a built-in record type
 let p = Pair(key="lang", value="Pfun");
 println(p.key);    // lang
 println(p.value);  // Pfun
 
-// dictToList() — convert a dict to an immutable list of Pair { key, value } records
-// Pair is a built-in generic record — different lists can have different key/value types
+// dictToList() -- convert a dict to an immutable list of Pair { key, value } records
+// Pair is a built-in generic record -- different lists can have different key/value types
 proc showPairs() {
   var d = dict { "name" -> "Alice", "role" -> "admin" };
   let pairs = dictToList(d);
@@ -1090,7 +1179,7 @@ proc showPairs() {
   let keys_only = map(fn p => p.key, pairs);
   println(keys_only);                 // [name, role]
 
-  // Integer-keyed dict — a different list with different Pair field types
+  // Integer-keyed dict -- a different list with different Pair field types
   var scores2 = dict { 1 -> "gold", 2 -> "silver", 3 -> "bronze" };
   let ranked = dictToList(scores2);
   println(head(ranked).key);          // 1
@@ -1098,7 +1187,7 @@ proc showPairs() {
 }
 showPairs();
 
-// listToDict() — build a dict from a list of Pair { key, value } records
+// listToDict() -- build a dict from a list of Pair { key, value } records
 // Useful for constructing dicts from transformed or filtered pair lists
 proc showListToDict() {
   // Build a dict directly from a list of Pairs
@@ -1114,7 +1203,7 @@ proc showListToDict() {
   println(scores2["alice"]);  // 11
   println(scores2["carol"]);  // 13
 
-  // Filter pairs before converting — keep only high scorers
+  // Filter pairs before converting -- keep only high scorers
   let top = filter(fn p => p.value >= 10, dictToList(scores));
   var topScores = listToDict(top);
   println(has(topScores, "alice"));  // true
@@ -1140,16 +1229,16 @@ countWords(["hello", "world", "hello"]);  // 1 then 1
 
 
 /*
-  18. INPUT — readChar & readln
+  18. INPUT -- readChar & readln
   ============================================================================
-  readChar()  — reads one character from stdin, returns Some { value } or None
-  readln()    — reads one line from stdin (newline stripped), returns
+  readChar()  -- reads one character from stdin, returns Some { value } or None
+  readln()    -- reads one line from stdin (newline stripped), returns
                 Some { value } or None at EOF
 
   Both are procedure-only (side effects). Both return an Option so you
   can match on them safely. Use s.value to extract the contents of Some.
 
-  Example — echo loop:
+  Example -- echo loop:
 
     proc echoLoop() {
       var line = readln();
@@ -1159,7 +1248,7 @@ countWords(["hello", "world", "hello"]);  // 1 then 1
             echoLoop();
         | None -> println("EOF")
 
-  Example — single prompt:
+  Example -- single prompt:
 
     proc greet() {
       print("Enter your name: ");
@@ -1171,7 +1260,7 @@ countWords(["hello", "world", "hello"]);  // 1 then 1
       print($"Hello, {userName}!\n");
     }
 
-  Example — gate check (the Mines of Moria):
+  Example -- gate check (the Mines of Moria):
 
     proc gate() {
       print("Speak, friend, and enter: ");
@@ -1229,7 +1318,7 @@ gate2();
   ============================================================================
   The $ operator formats a string in place by interpolating {expression}
   holes into the surrounding text.  It is syntactic sugar for string
-  concatenation with automatic value-to-string conversion — no printing
+  concatenation with automatic value-to-string conversion -- no printing
   is implied.  Because $ is a pure operation it can be used freely inside
   `function` definitions.
 
@@ -1237,9 +1326,9 @@ gate2();
     $"literal text {varName} more text {rec.field} etc."
 
   Rules:
-  - {name}      — interpolates the value of `name`, auto-converted to string
-  - {rec.field} — interpolates a record field
-  - \{  \}      — literal brace characters (not interpolation holes)
+  - {name}      -- interpolates the value of `name`, auto-converted to string
+  - {rec.field} -- interpolates a record field
+  - \{  \}      -- literal brace characters (not interpolation holes)
   - All other escape sequences (\n \t \\ \") work as in normal strings
   - The result is an ordinary string value
 
@@ -1252,7 +1341,7 @@ let x1 = 3;
 let x2 = 7;
 function square(x) { return x * x; }
 
-// Pure usage — works inside a function
+// Pure usage -- works inside a function
 function fmtPoint(label, x, y) {
   return $"{label} = ({x}, {y})";
 }
@@ -1285,22 +1374,22 @@ println(tmpl);  // template: {value}
   ============================================================================
   File operations are in the "file" built-in module (imported at the top).
 
-  FileMode — controls how fileOpen opens the file:
-    Read   — open for reading; file must exist
-    Write  — open for writing; creates or overwrites
-    Append — open for writing; creates or appends to end
+  FileMode -- controls how fileOpen opens the file:
+    Read   -- open for reading; file must exist
+    Write  -- open for writing; creates or overwrites
+    Append -- open for writing; creates or appends to end
 
-  Result type — returned by all non-read file operations:
-    Ok  { value }   — success; value is the result (string, int, handle...)
-    Err { message } — failure; message describes the OS error
+  Result type -- returned by all non-read file operations:
+    Ok  { value }   -- success; value is the result (string, int, handle...)
+    Err { message } -- failure; message describes the OS error
 
-  ReadResult type — returned by readChar and readLine:
-    Ok  { value }   — success; a char or string was read
-    Eof             — end of file reached cleanly
-    Err { message } — I/O error
+  ReadResult type -- returned by readChar and readLine:
+    Ok  { value }   -- success; a char or string was read
+    Eof             -- end of file reached cleanly
+    Err { message } -- I/O error
 
   Both Ok and Err appear in both Result and ReadResult. The match expression
-  resolves which variants are required from the type of the subject value —
+  resolves which variants are required from the type of the subject value --
   so matching a Result only requires Ok | Err, while matching a ReadResult
   requires Ok | Eof | Err.
 
@@ -1319,14 +1408,14 @@ println(tmpl);  // template: {value}
   Existence check:
     fileExists(path)          -> boolean
 
-  All file functions are impure — proc/top-level only.
+  All file functions are impure -- proc/top-level only.
 */
 
 println("--- 23. File I/O ---");
 
 let tmpPath = "./pfun-example-tmp.txt";
 
-// ── readFile / writeFile ──────────────────────────────────────────────────────
+// -- readFile / writeFile ------------------------------------------------------
 
 proc demonstrateReadWrite() {
   // Write a file; Ok carries the character count
@@ -1339,22 +1428,22 @@ proc demonstrateReadWrite() {
     | Ok o  -> println(o.value)
     | Err e -> println("Read error: " + e.message);
 
-  // Missing file — Err carries a descriptive OS message
+  // Missing file -- Err carries a descriptive OS message
   match readFile("./does-not-exist.txt") with
     | Ok  _ -> println("unexpected success")
     | Err e -> println("Caught missing file: " + e.message);
 }
 demonstrateReadWrite();
 
-// ── FileMode: Write vs Append ─────────────────────────────────────────────────
+// -- FileMode: Write vs Append -------------------------------------------------
 
 proc demonstrateModes() {
-  // Write — creates or overwrites
+  // Write -- creates or overwrites
   match fileOpen(tmpPath, Write) with
     | Ok o  -> { writeLine(o.value, "overwritten"); fileClose(o.value); }
     | Err e -> println("Open error: " + e.message);
 
-  // Append — adds to end without truncating
+  // Append -- adds to end without truncating
   match fileOpen(tmpPath, Append) with
     | Ok o  -> { writeLine(o.value, "appended line"); fileClose(o.value); }
     | Err e -> println("Append error: " + e.message);
@@ -1366,7 +1455,7 @@ proc demonstrateModes() {
 }
 demonstrateModes();
 
-// ── Handle-based reading with ReadResult ─────────────────────────────────────
+// -- Handle-based reading with ReadResult -------------------------------------
 
 proc readAllLines(path) {
   match fileOpen(path, Read) with
@@ -1385,9 +1474,9 @@ proc readAllLines(path) {
 }
 readAllLines(tmpPath);
 
-// ── fileExists ───────────────────────────────────────────────────────────────
+// -- fileExists ---------------------------------------------------------------
 
-// Returns true if the path exists, false otherwise — no handle needed
+// Returns true if the path exists, false otherwise -- no handle needed
 println(fileExists(tmpPath));              // true
 println(fileExists("./no-such-file.txt")); // false
 
@@ -1403,7 +1492,7 @@ proc safeRead(path) {
 safeRead(tmpPath);                         // Read: (contents)
 safeRead("./no-such-file.txt");            // File not found: ./no-such-file.txt
 
-// ── Clean up ──────────────────────────────────────────────────────────────────
+// -- Clean up ------------------------------------------------------------------
 writeFile(tmpPath, "");
 
 
@@ -1413,7 +1502,7 @@ writeFile(tmpPath, "");
   Arrays are mutable, zero-indexed, contiguous sequences. Unlike lists they
   are always strictly evaluated and support in-place mutation.
 
-  Arrays are homogeneous — all elements must share the same type, enforced
+  Arrays are homogeneous -- all elements must share the same type, enforced
   at construction and on every mutation.
 
   Arrays must always be declared with `var` (they are mutable by nature).
@@ -1422,48 +1511,48 @@ writeFile(tmpPath, "");
     var a = array { val1, val2, val3 }
     var empty = array {}
 
-  Access:   a[i]           — zero-based; throws on out-of-bounds
-  Assign:   a[i] = value   — throws on type mismatch or out-of-bounds
+  Access:   a[i]           -- zero-based; throws on out-of-bounds
+  Assign:   a[i] = value   -- throws on type mismatch or out-of-bounds
 
   Mutating functions (proc/top-level only):
-    append(a, value)          — add to end
-    removeAt(a, index)        — remove at index, shift later elements down
-    insertAt(a, index, value) — insert before index, shift later elements up
+    append(a, value)          -- add to end
+    removeAt(a, index)        -- remove at index, shift later elements down
+    insertAt(a, index, value) -- insert before index, shift later elements up
                                 index must be in [0, arrayLength(a)]
 
   Non-mutating functions (usable anywhere):
-    arrayLength(a) — element count
-    find(a, item)  — Some { index } or None (deep equality)
-    toList(a)      — copy to an immutable Pfun list
-    toArray(list)  — copy a list or string into a new mutable array
-    toDict(a)      — copy to a dict with integer keys 0, 1, 2, ...
+    arrayLength(a) -- element count
+    find(a, item)  -- Some { index } or None (deep equality)
+    toList(a)      -- copy to an immutable Pfun list
+    toArray(list)  -- copy a list or string into a new mutable array
+    toDict(a)      -- copy to a dict with integer keys 0, 1, 2, ...
 
-  Note: length() (for immutable lists and strings) does not accept arrays —
+  Note: length() (for immutable lists and strings) does not accept arrays --
   use arrayLength() for PfunArray.
 */
 
 println("--- 24. Arrays ---");
 
-// ── Construction and access ───────────────────────────────────────────────────
+// -- Construction and access ---------------------------------------------------
 
 proc arrayExamples() {
   var employees = array { "Alice", "Bob", "Carol" };
   println(employees[0]);              // Alice
   println(arrayLength(employees));         // 3
 
-  // ── append ───────────────────────────────────────────────────────────────────
+  // -- append -------------------------------------------------------------------
 
   append(employees, "Dave");
   println(arrayLength(employees));         // 4
   println(employees[3]);              // Dave
 
-  // ── removeAt — shifts elements down ──────────────────────────────────────────
+  // -- removeAt -- shifts elements down ------------------------------------------
 
   removeAt(employees, 1);             // removes "Bob"
   println(arrayLength(employees));         // 3
   println(employees[1]);              // Carol (was index 2)
 
-  // ── insertAt — shifts elements up ────────────────────────────────────────────
+  // -- insertAt -- shifts elements up --------------------------------------------
 
   insertAt(employees, 2, "Charlie");  // inserts before Dave
   println(employees[2]);              // Charlie
@@ -1474,38 +1563,38 @@ proc arrayExamples() {
   insertAt(employees, arrayLength(employees), "Edgar");
   println(employees[4]);              // Edgar
 
-  // insertAt beyond length throws — no gap-filling
+  // insertAt beyond length throws -- no gap-filling
   // insertAt(employees, 99, "X");   // would throw: index out of bounds
 
-  // ── Index assignment ──────────────────────────────────────────────────────────
+  // -- Index assignment ----------------------------------------------------------
 
   employees[0] = "Alicia";
   println(employees[0]);              // Alicia
 
-  // ── find ─────────────────────────────────────────────────────────────────────
+  // -- find ---------------------------------------------------------------------
 
   println(match find(employees, "Charlie") with | Some s -> s.value | None -> "not found");  // 2
   println(match find(employees, "nobody")  with | Some s -> s.value | None -> "not found");  // not found
 
-  // ── Integer array ─────────────────────────────────────────────────────────────
+  // -- Integer array -------------------------------------------------------------
 
   var scoreArr = array { 95, 87, 92 };
   append(scoreArr, 88);
   println(scoreArr[3]);                 // 88
 
-  // ── Conversions ───────────────────────────────────────────────────────────────
+  // -- Conversions ---------------------------------------------------------------
 
-  // toList — snapshot as immutable list
+  // toList -- snapshot as immutable list
   let snap = toList(employees);
   println(snap);                      // [Alicia, Carol, Charlie, Dave, Edgar]
 
-  // toArray — list to mutable array
+  // toArray -- list to mutable array
   let numList = [10, 20, 30];
   var numArr = toArray(numList);
   append(numArr, 40);
   println(arrayLength(numArr));            // 4
 
-  // toDict — integer-keyed dict
+  // toDict -- integer-keyed dict
   var smallArr = array { "x", "y", "z" };
   var d2 = toDict(smallArr);
   println(d2[0]);                      // x
@@ -1518,16 +1607,16 @@ arrayExamples();
  *  20. JSON PERSISTENCE
  *  ============================================================================
  *  The json module serializes and deserializes Pfun's immutable data structures
- *  — records, discriminated union variants, and lists (arbitrarily nested) —
+ *  -- records, discriminated union variants, and lists (arbitrarily nested) --
  *  to and from JSON.
  *
  *  Import:
  *    import * from "json";
  *
  *  Functions:
- *    jsonSerialize(value)       — convert a value to a JSON string
+ *    jsonSerialize(value)       -- convert a value to a JSON string
  *                                 returns Some { string } or None on failure
- *    jsonDeserialize(string)    — parse a JSON string back to a Pfun value
+ *    jsonDeserialize(string)    -- parse a JSON string back to a Pfun value
  *                                 returns Some { value } or None on failure
  *
  *  jsonlib is pure encode/decode only (no file I/O). To persist to disk,
@@ -1541,22 +1630,22 @@ arrayExamples();
  *    | Ok c  -> jsonDeserialize(c.value)
  *    | Err _ -> None
  *
- *  (jsonlib uses Option-based results; filelib uses Result-based results —
+ *  (jsonlib uses Option-based results; filelib uses Result-based results --
  *  composing the two requires converting via match, as shown above.)
  *
  *  Wire format
  *  -----------
- *  bigint      → { "__pfun": "int",    "v": "123" }
- *  char        → { "__pfun": "char",   "v": "x"   }
- *  record/variant → { "__pfun": "record", "__type": "Circle", "__union": "Shape", ...fields }
- *  string, boolean, null, list → native JSON
+ *  bigint      -> { "__pfun": "int",    "v": "123" }
+ *  char        -> { "__pfun": "char",   "v": "x"   }
+ *  record/variant -> { "__pfun": "record", "__type": "Circle", "__union": "Shape", ...fields }
+ *  string, boolean, null, list -> native JSON
  */
 
 import * from "json";
 
 println("--- 20. JSON Persistence ---");
 
-// ── Serialize primitives ────────────────────────────────────────────────────
+// -- Serialize primitives ----------------------------------------------------
 
 proc json1() {
   let s = jsonSerialize(42);
@@ -1569,7 +1658,7 @@ proc json1() {
 }
 json1();
 
-// ── Serialize a record ──────────────────────────────────────────────────────
+// -- Serialize a record ------------------------------------------------------
 
 type Coord = { x, y };
 
@@ -1586,7 +1675,7 @@ proc json2() {
 }
 json2();
 
-// ── Serialize a discriminated union ────────────────────────────────────────
+// -- Serialize a discriminated union ----------------------------------------
 
 type Figure = {
   | Disk: radius
@@ -1610,7 +1699,7 @@ proc json3() {
 }
 json3();
 
-// ── Write to file and read back ─────────────────────────────────────────────
+// -- Write to file and read back ---------------------------------------------
 
 type Config = { host, port, debug };
 
@@ -1632,7 +1721,7 @@ proc json4() {
 }
 json4();
 
-// ── Nested structures round-trip ────────────────────────────────────────────
+// -- Nested structures round-trip --------------------------------------------
 
 type Tree = {
   | Leaf: value
@@ -1671,46 +1760,46 @@ json5();
 /*
  *  25. BYTES & BINARY I/O
  *  ============================================================================
- *  Byte is a distinct scalar type for raw 8-bit values (0–255).
- *  It is separate from Int and Char — no implicit coercions.
+ *  Byte is a distinct scalar type for raw 8-bit values (0-255).
+ *  It is separate from Int and Char -- no implicit coercions.
  *
  *  Byte literals:
- *    255b      — decimal byte literal
- *    0xFFb     — hex byte literal
- *    0x00b     — zero byte
+ *    255b      -- decimal byte literal
+ *    0xFFb     -- hex byte literal
+ *    0x00b     -- zero byte
  *
  *  Byte arithmetic (errors on overflow/underflow):
- *    +  -  *  /  %  — range-checked, result is Byte
- *    ==  !=  <  >  <=  >=  — comparisons, result is Bool
+ *    +  -  *  /  %  -- range-checked, result is Byte
+ *    ==  !=  <  >  <=  >=  -- comparisons, result is Bool
  *
  *  Bitwise operators (work on both Byte and Int):
- *    &   — bitwise AND
- *    |   — bitwise OR
- *    <<  — left shift  (Byte: masks shift amount to 3 bits)
- *    >>  — right shift (Byte: masks shift amount to 3 bits)
+ *    &   -- bitwise AND
+ *    |   -- bitwise OR
+ *    <<  -- left shift  (Byte: masks shift amount to 3 bits)
+ *    >>  -- right shift (Byte: masks shift amount to 3 bits)
  *
  *  Conversion functions:
- *    toByte(x)          — Int or Char -> Byte (errors if out of range)
- *    toChar(b)          — Byte -> Char (always valid)
- *    charBytes(c)       — Char -> List<Byte> (UTF-8 byte sequence)
- *    bytesToChar(bytes) — List<Byte> -> Char (must be valid UTF-8)
+ *    toByte(x)          -- Int or Char -> Byte (errors if out of range)
+ *    toChar(b)          -- Byte -> Char (always valid)
+ *    charBytes(c)       -- Char -> List<Byte> (UTF-8 byte sequence)
+ *    bytesToChar(bytes) -- List<Byte> -> Char (must be valid UTF-8)
  *
  *  File I/O (import * from "file"):
- *    readByte(handle)         — ReadResult: Ok { Byte } | Eof | Err
- *    writeByte(handle, byte)  — Result: Ok { 1 } | Err
- *    readBytes(handle, n)     — ReadResult: Ok { List<Byte> } | Eof | Err
- *    writeBytes(handle, list) — Result: Ok { n } | Err
- *    readBuffer(handle, n, mode)   — Result: Ok { Buffer } | Err
- *    writeBuffer(handle, buffer)   — Result: Ok { n } | Err
- *    bufferToBytes(buf)   — List<Byte>
- *    bufferToString(buf)  — String (UTF-8 decode)
- *    bufferLength(buf)    — Int
- *    makeBuffer(mode)     — creates an empty Buffer (ByteMode | CharMode)
+ *    readByte(handle)         -- ReadResult: Ok { Byte } | Eof | Err
+ *    writeByte(handle, byte)  -- Result: Ok { 1 } | Err
+ *    readBytes(handle, n)     -- ReadResult: Ok { List<Byte> } | Eof | Err
+ *    writeBytes(handle, list) -- Result: Ok { n } | Err
+ *    readBuffer(handle, n, mode)   -- Result: Ok { Buffer } | Err
+ *    writeBuffer(handle, buffer)   -- Result: Ok { n } | Err
+ *    bufferToBytes(buf)   -- List<Byte>
+ *    bufferToString(buf)  -- String (UTF-8 decode)
+ *    bufferLength(buf)    -- Int
+ *    makeBuffer(mode)     -- creates an empty Buffer (ByteMode | CharMode)
  */
 
 println("--- 25. Bytes & Binary I/O ---");
 
-// ── Byte literals ────────────────────────────────────────────────────────────
+// -- Byte literals ------------------------------------------------------------
 
 let zero     = 0b;
 let max_byte = 0xFFb;
@@ -1720,7 +1809,7 @@ println(zero);      // 0
 println(max_byte);  // 255
 println(mid_byte);  // 128
 
-// ── Byte arithmetic ──────────────────────────────────────────────────────────
+// -- Byte arithmetic ----------------------------------------------------------
 
 let byte_sum  = 100b + 55b;   // 155
 let byte_diff = 200b - 50b;   // 150
@@ -1734,7 +1823,7 @@ println(byte_prod);  // 100
 println(byte_quot);  // 3
 println(byte_rem);   // 1
 
-// ── Bitwise operators ────────────────────────────────────────────────────────
+// -- Bitwise operators --------------------------------------------------------
 
 let masked  = 0xF0b & 0x0Fb;  // 0x00 = 0
 let merged  = 0xF0b | 0x0Fb;  // 0xFF = 255
@@ -1752,50 +1841,51 @@ let ishl = 1 << 8;        // 256
 println(iand);   // 15
 println(ishl);   // 256
 
-// ── Conversions ──────────────────────────────────────────────────────────────
+// -- Conversions --------------------------------------------------------------
 
-// toByte: Int or Char → Byte
+// toByte: Int or Char -> Byte
 let b_from_int  = toByte(65);    // 65b  (ASCII 'A')
 let b_from_char = toByte('A');   // 65b
 
-// toChar: Byte → Char
+// toChar: Byte -> Char
 let c_from_byte = toChar(65b);   // 'A'
 println(c_from_byte);            // A
 
-// charBytes: Char → List<Byte>  (UTF-8 encoding)
-let ascii_bytes  = charBytes('A');   // [65b]
-let pound_bytes  = charBytes('£');   // [0xC2b, 0xA3b]  (2 bytes)
-let euro_bytes   = charBytes('€');   // [0xE2b, 0x82b, 0xACb]  (3 bytes)
+// charBytes: Char -> List<Byte>  (UTF-8 encoding)
+// ASCII chars encode to a single byte; higher codepoints use more bytes.
+let ascii_bytes  = charBytes('A');     // [65b]           (1 byte)
+let latin_bytes  = charBytes(chr(163)); // pound sign      (2 bytes: [0xC2b, 0xA3b])
+let cjk_bytes    = charBytes(chr(20013)); // Chinese 'zhong' (3 bytes)
 
 println(length(ascii_bytes));   // 1
-println(length(pound_bytes));   // 2
-println(length(euro_bytes));    // 3
+println(length(latin_bytes));   // 2
+println(length(cjk_bytes));     // 3
 
-// bytesToChar: List<Byte> → Char  (inverse of charBytes)
-let euro_back = bytesToChar(euro_bytes);
-println(euro_back);   // €
+// bytesToChar: List<Byte> -> Char  (inverse of charBytes)
+let latin_back = bytesToChar(latin_bytes);
+println(toInt(toByte(asc(latin_back))));   // verifies round-trip via byte value
 
-// toInt: Byte → Int  (the byte's numeric value as a full integer)
+// toInt: Byte -> Int  (the byte's numeric value as a full integer)
 let byt = 0xFFb;
 println(toInt(byt));        // 255
 println(toInt(0b));         // 0
-println(toInt(toByte(42))); // 42  — round-trip via Int
+println(toInt(toByte(42))); // 42  -- round-trip via Int
 
-// Round-trip: char → bytes → char
+// Round-trip: char -> bytes -> char
 function roundTrip(c) {
   return bytesToChar(charBytes(c));
 }
-println(roundTrip('€'));  // €
-println(roundTrip('A'));  // A
+println(roundTrip('A'));              // A
+println(roundTrip(chr(163)));         // pound sign -- multi-byte round-trip
 
-// ── Byte truthiness ──────────────────────────────────────────────────────────
+// -- Byte truthiness ----------------------------------------------------------
 // 0b is falsy; any non-zero Byte is truthy.
 
 let flag = 0xFFb;
 if flag then println("flag is set") else println("flag is clear");
 // flag is set
 
-// ── Binary file I/O ──────────────────────────────────────────────────────────
+// -- Binary file I/O ----------------------------------------------------------
 
 proc byte_io_demo() {
   // Write raw bytes to a file
@@ -1827,8 +1917,8 @@ proc byte_io_demo() {
 }
 byte_io_demo();
 
-// ── Buffer I/O ───────────────────────────────────────────────────────────────
-// Buffers accumulate bytes or chars before flushing — useful for bulk reads.
+// -- Buffer I/O ---------------------------------------------------------------
+// Buffers accumulate bytes or chars before flushing -- useful for bulk reads.
 
 proc buffer_demo() {
   // Write some text

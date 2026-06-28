@@ -244,7 +244,7 @@ function feedEntries(interp: Interpreter, entries: string[]): void {
  * Evaluation still happens under the `inPureContext` enforcement set up by
  * runRepl(), so any side-effecting call (println, var, array/dict mutation,
  * calling a `proc`, etc.) throws "side effects are not allowed" exactly as
- * it would if typed interactively — checkProgram's checkProcedureUsage
+ * it would if typed interactively — checkProgram's checkPurity
  * pass only flags genuine same-module rule violations (a `function`
  * misusing a `proc`/`var`), never a side-effecting call by itself; it
  * doesn't change what's loadable here, only what's caught statically

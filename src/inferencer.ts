@@ -405,7 +405,7 @@ function constraint(a: PfunType, b: PfunType, pos?: SourcePos): Constraint {
  * whole-program driver (wholeProgramCheck.ts) after running
  * generateConstraints + solveConstraints over that module and reading off
  * each exported name's final (substituted) type. Mirrors
- * procedureCheck.ts's ImportTable (which does the analogous thing for
+ * purityCheck.ts's ImportTable (which does the analogous thing for
  * purity *kinds*) — kept as a separate type since the value domain differs
  * (PfunType here, NameKind there), but the role is identical: turn an
  * imported name from "completely opaque to this pass" into "as precisely
@@ -424,7 +424,7 @@ export type TypeImportTable = Map<string, PfunType>;
  * solveConstraints over every module in the import graph, in dependency
  * order, before this pass runs on a module that imports from them — see
  * wholeProgramCheck.ts for the full design. Mirrors
- * procedureCheck.ts's ModuleImportResolver exactly (same null-means-
+ * purityCheck.ts's ModuleImportResolver exactly (same null-means-
  * "fall back to permissive treatment of this one import" contract).
  */
 export type TypeImportResolver = (importPath: string, pos: SourcePos | undefined) => TypeImportTable | null;
@@ -464,7 +464,7 @@ export type UnionImportResolver = (importPath: string, pos: SourcePos | undefine
  * ImportStmt's handling in cgenStmt and by GetExpr's namespace-member
  * lookup in cgenExpr — never mutated mid-walk. Module-level rather than
  * threaded as an explicit parameter through cgenStmt/cgenExpr (~44 call
- * sites) for the identical reason procedureCheck.ts's
+ * sites) for the identical reason purityCheck.ts's
  * currentImportResolver is module-level: it is genuinely constant for the
  * whole walk, unlike `env`/`registry`/`cs` which change per-call, so a
  * parameter would be passed unchanged at every single call site. Safe as
@@ -483,7 +483,7 @@ let currentUnionImportResolver: UnionImportResolver | null = null;
  *  (or in-progress, pre-substitution) type, or — for a namespace import
  *  (`import * as X from "..."`) — the whole imported module's type table,
  *  so a later `X.foo` GetExpr can be resolved against it. Mirrors
- *  procedureCheck.ts's ScopeEntry. */
+ *  purityCheck.ts's ScopeEntry. */
 type CGenEnvEntry = { tag: 'type'; type: PfunType } | { tag: 'namespace'; table: TypeImportTable };
 
 class CGenEnv {
@@ -1513,7 +1513,7 @@ function bindImport(stmt: Stmt & { type: 'ImportStmt' }, env: CGenEnv): void {
   } else {
     // 'star' — every export of the resolved module binds directly into
     // this env, same as the runtime's own star-import binding
-    // (interpreter.ts) and procedureCheck.ts's analogous star-import
+    // (interpreter.ts) and purityCheck.ts's analogous star-import
     // handling.
     if (table) for (const [name, ty] of table) env.define(name, ty);
   }
@@ -1628,7 +1628,7 @@ export function generateConstraints(
     return cs;
   } finally {
     // Always clear, success or failure — mirrors
-    // procedureCheck.ts's identical try/finally around its own
+    // purityCheck.ts's identical try/finally around its own
     // currentImportResolver.
     currentTypeImportResolver  = null;
     currentUnionImportResolver = null;

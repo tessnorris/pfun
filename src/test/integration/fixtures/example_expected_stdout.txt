@@ -41,6 +41,18 @@ numbers: 10, 20, 30
 20
 sum: 7
 102
+--- 4b. Anonymous Proc Lambdas ---
+got: 42
+doubled: 10
+3 + 4 = 7
+zero params work too
+outer count seen from nested proc: 0
+count = 1
+count = 2
+count = 3
+0: apple
+1: banana
+2: cherry
 --- 5. TCO, Memoization & Currying ---
 Liftoff!
 120
@@ -290,12 +302,12 @@ A
 1
 2
 3
-€
+163
 255
 0
 42
-€
 A
+£
 flag is set
 wrote 4 bytes
 4
