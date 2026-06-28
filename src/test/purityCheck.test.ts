@@ -333,6 +333,124 @@ describe('Static procedure-usage checker', () => {
       `)).not.toThrow();
     });
   });
+
+  describe('While loops', () => {
+    // ── while is impure: allowed in proc context, forbidden in functions ──────
+
+    it('rejects a while loop inside a function', () => {
+      expect(() => check(`
+        function bad() {
+          var i = 0;
+          while (i < 3) {
+            i = i + 1;
+          }
+          return i;
+        }
+      `)).toThrow("'while' loops are not allowed");
+    });
+
+    it('rejects a while loop inside a lambda body', () => {
+      expect(() => check(`
+        var i = 0;
+        let f = fn () => {
+          while (i < 3) {
+            i = i + 1;
+          }
+        };
+      `)).toThrow("'while' loops are not allowed");
+    });
+
+    it('allows a while loop at top level (impure module context)', () => {
+      expect(() => check(`
+        var i = 0;
+        while (i < 5) {
+          i = i + 1;
+        }
+      `)).not.toThrow();
+    });
+
+    it('allows a while loop inside a proc body', () => {
+      expect(() => check(`
+        proc countUp() {
+          var i = 0;
+          while (i < 5) {
+            i = i + 1;
+          }
+        }
+      `)).not.toThrow();
+    });
+
+    it('allows a while loop inside an async proc body', () => {
+      expect(() => check(`
+        async proc poll() {
+          var done = false;
+          while (!done) {
+            done = true;
+          }
+        }
+      `)).not.toThrow();
+    });
+
+    it('allows a while loop inside a proc lambda', () => {
+      expect(() => check(`
+        proc run(f) { f(); }
+        run(proc () => {
+          var i = 0;
+          while (i < 3) {
+            i = i + 1;
+          }
+        });
+      `)).not.toThrow();
+    });
+
+    it('allows side effects (proc calls) inside a while body', () => {
+      expect(() => check(`
+        proc tick() { println("tick"); }
+        proc main() {
+          var i = 0;
+          while (i < 3) {
+            tick();
+            i = i + 1;
+          }
+        }
+      `)).not.toThrow();
+    });
+
+    it('rejects a proc call in the while condition from a function context', () => {
+      // The while itself triggers before the condition is even evaluated
+      expect(() => check(`
+        proc isDone() { true }
+        function bad() {
+          while (isDone()) {}
+        }
+      `)).toThrow("'while' loops are not allowed");
+    });
+
+    it('does not reject nested while loops in a proc', () => {
+      expect(() => check(`
+        proc matrix() {
+          var i = 0;
+          while (i < 3) {
+            var j = 0;
+            while (j < 3) {
+              j = j + 1;
+            }
+            i = i + 1;
+          }
+        }
+      `)).not.toThrow();
+    });
+
+    it('rejects a while in the then-branch of an if inside a function', () => {
+      expect(() => check(`
+        function bad(cond) {
+          if cond then
+            while (cond) {}
+          else return 0;
+        }
+      `)).toThrow("'while' loops are not allowed");
+    });
+  });
     it('rejects reassigning an outer var from inside a function', () => {
       expect(() => check(`
         var counter = 0;

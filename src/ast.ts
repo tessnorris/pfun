@@ -159,6 +159,7 @@ export type Stmt =
   | { type: 'ExprStmt';      expression: Expr; pos?: SourcePos }
   | { type: 'BlockStmt';     statements: Stmt[]; pos?: SourcePos }
   | { type: 'IfStmt';        condition: Expr; thenBranch: Stmt; elseBranch?: Stmt; pos?: SourcePos }
+  | { type: 'WhileStmt';     condition: Expr; body: Stmt[];     pos?: SourcePos }
   | { type: 'FunctionStmt';  name: string; params: string[]; body: Stmt[]; memo: boolean; async?: boolean; pos?: SourcePos }
   | { type: 'ProcedureStmt'; name: string; params: string[]; body: Stmt[]; async?: boolean; pos?: SourcePos }
   | { type: 'ReturnStmt';    value?: Expr; pos?: SourcePos }

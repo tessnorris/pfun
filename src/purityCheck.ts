@@ -586,6 +586,16 @@ function checkStmt(stmt: Stmt, scope: StaticScope, inPureContext: boolean): void
       checkStmt(stmt.thenBranch, scope, inPureContext);
       if (stmt.elseBranch) checkStmt(stmt.elseBranch, scope, inPureContext);
       return;
+    case 'WhileStmt': {
+      if (inPureContext) throw Object.assign(
+        new Error("'while' loops are not allowed in pure functions. Move the loop to a procedure."),
+        { pos: stmt.pos }
+      );
+      checkExprValue(stmt.condition, scope, inPureContext);
+      const loopScope = scope.child();
+      for (const s of stmt.body) checkStmt(s, loopScope, inPureContext);
+      return;
+    }
     case 'FunctionStmt': {
       // Bind the function's own name *before* walking its body, mirroring
       // interpreter.ts's env.define-then-close-over-env order, so direct

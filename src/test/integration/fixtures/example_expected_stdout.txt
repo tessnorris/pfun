@@ -4,6 +4,12 @@
 20
 --- 3. Control Flow ---
 a is less than b
+1 2 3 4 5 
+first multiple of both: 21
+1	2	3	
+2	4	6	
+3	6	9	
+9
 --- 14. Strings, Chars & Output ---
 A
 65

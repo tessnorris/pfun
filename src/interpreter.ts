@@ -1297,6 +1297,17 @@ export class Interpreter {
         else if (stmt.elseBranch) return yield* this.evaluateStmtGen(stmt.elseBranch, env);
         return;
       }
+      case 'WhileStmt': {
+        if (this.inPureContext) throw new Error("'while' loops are not allowed in pure functions. Move the loop to a procedure.");
+        this.inTailPosition = false;
+        while (true) {
+          const cond = yield* this.forceGen(yield* this.evaluateExprGen(stmt.condition, env));
+          if (!this.isTruthy(cond)) break;
+          const loopEnv = new Environment(env);
+          for (const s of stmt.body) yield* this.evaluateStmtGen(s, loopEnv);
+        }
+        return;
+      }
       case 'FunctionStmt':
         this.checkNameAvailable(stmt.name, env, 'function');
         env.define(stmt.name, new PfunFunction(stmt.name, stmt.params, stmt.body, env, 'function', stmt.memo, stmt.async ?? false), false);

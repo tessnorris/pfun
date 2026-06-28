@@ -42,6 +42,14 @@ println(max_val); // 20
 
 /*
   3. CONTROL FLOW
+  ============================================================================
+  if / else: expression-level conditional (both branches must be present
+  when used as an expression; the else branch is optional in a statement).
+
+  while: statement-level loop, available in procedures only.
+  Syntax: while (condition) { body }
+  The condition is re-evaluated before each iteration.
+  while is not allowed in pure functions -- use recursion there.
 */
 
 println("--- 3. Control Flow ---");
@@ -50,6 +58,63 @@ if a < b then {
 } else {
     println("a is greater than or equal to b");
 }
+
+// while loop -- must be inside a proc
+proc countTo(n) {
+  var i = 1;
+  while (i <= n) {
+    print(__str__(i) + " ");
+    i = i + 1;
+  }
+  println("");
+}
+countTo(5);  // 1 2 3 4 5
+
+// early exit via condition
+proc firstMultiple(factor, limit) {
+  var n = factor;
+  while (n <= limit && n % 7 != 0) {
+    n = n + factor;
+  }
+  if n <= limit then println("first multiple of both: " + __str__(n))
+  else println("none found");
+}
+firstMultiple(3, 50);  // first multiple of both: 21
+
+// nested while
+proc multiplicationTable(size) {
+  var i = 1;
+  while (i <= size) {
+    var j = 1;
+    var row = "";
+    while (j <= size) {
+      row = row + __str__(i * j) + "\t";
+      j = j + 1;
+    }
+    println(row);
+    i = i + 1;
+  }
+}
+multiplicationTable(3);
+// 1   2   3
+// 2   4   6
+// 3   6   9
+
+// collecting results into a var list
+proc collatz(n) {
+  var seq = [n];
+  var x = n;
+  while (x != 1) {
+    if x % 2 == 0 then x = x / 2 else x = x * 3 + 1;
+    seq = seq + [x];
+  }
+  seq;
+}
+println(__str__(length(collatz(6))));  // 9 steps: 6 3 10 5 16 8 4 2 1
+
+// Pure functions use recursion instead -- while is proc-only.
+// This would be a [Purity] error:
+// function bad() { var i = 0; while (i < 3) { i = i + 1; } i }
 
 /*
  *  14. STRINGS, CHARS & OUTPUT

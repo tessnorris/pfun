@@ -59,7 +59,8 @@ export class Parser {
     }
     if (this.match('ReturnToken')) return this.parseReturnStatement();
     if (this.match('EvalToken')) return this.parseEvalStatement();
-    if (this.match('IfToken')) return this.parseIfStatement();
+    if (this.match('IfToken'))    return this.parseIfStatement();
+    if (this.match('WhileToken')) return this.parseWhileStatement();
     if (this.match('LBraceToken')) return this.parseBlockStatement();
 
     // Fallback: If no statement keyword is found, it must be an expression statement.
@@ -269,6 +270,22 @@ export class Parser {
       elseBranch = this.parseStatement();
     }
     return { type: 'IfStmt', condition, thenBranch, elseBranch, pos: stmtPos };
+  }
+
+  private parseWhileStatement(): Stmt {
+    const stmtPos = this.pos();
+    this.consume('LParenToken', "Expected '(' after 'while'.");
+    const condition = this.parseExpression();
+    this.consume('RParenToken', "Expected ')' after while condition.");
+    this.consume('LBraceToken', "Expected '{' before while body.");
+    const body: Stmt[] = [];
+    while (!this.check('RBraceToken') && !this.isAtEnd()) {
+      if (this.match('SemiToken')) continue;
+      body.push(this.parseStatement());
+    }
+    this.consume('RBraceToken', "Expected '}' after while body.");
+    this.match('SemiToken');
+    return { type: 'WhileStmt', condition, body, pos: stmtPos };
   }
 
   private parseBlockExpr(): Expr {

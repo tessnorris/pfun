@@ -37,7 +37,8 @@ export type Token =
   | { type: 'EvalToken'; pos?: SourcePos } | { type: 'IfToken'; pos?: SourcePos }
   | { type: 'ThenToken'; pos?: SourcePos } | { type: 'ElseToken'; pos?: SourcePos }
   | { type: 'FunctionToken'; pos?: SourcePos } | { type: 'ReturnToken'; pos?: SourcePos } | { type: 'FnToken'; pos?: SourcePos } | { type: 'ProcToken'; pos?: SourcePos }
-  | { type: 'ForToken'; pos?: SourcePos }
+  | { type: 'ForToken';   pos?: SourcePos }
+  | { type: 'WhileToken'; pos?: SourcePos }
   | { type: 'ArrowLeftToken'; pos?: SourcePos }
   | { type: 'DictToken'; pos?: SourcePos }
   | { type: 'ArrayToken'; pos?: SourcePos }
@@ -370,6 +371,7 @@ export class Lexer {
       case 'return':   return { type: 'ReturnToken' };
       case 'fn':       return { type: 'FnToken' };
       case 'for':      return { type: 'ForToken' };
+      case 'while':    return { type: 'WhileToken' };
       case 'dict':     return { type: 'DictToken' };
       case 'array':    return { type: 'ArrayToken' };
       case 'memo':     return { type: 'MemoToken' };
