@@ -1,0 +1,37 @@
+// lib/db/test/dbschema_optint_test.pf
+// Tests for getOptInt — separate file to avoid Option monomorphism collision.
+
+import * from "io";
+import * from "db/postgresql";
+import * from "../../testing/testing";
+import * from "../../testing/assertions";
+import * from "../../testing/runner";
+import * from "../../dbschema";
+
+function intRow(col, val) { [Pair { col, DbInt { val } }]; }
+function nullRow(col)     { [Pair { col, DbNull }]; }
+
+function testGetOptIntPresent() {
+  assertions([assertSome(getOptInt(intRow("ref", 5), "ref"))]);
+}
+function testGetOptIntNull() {
+  assertions([assertNone(getOptInt(nullRow("ref"), "ref"))]);
+}
+function testGetOptIntMissing() {
+  assertions([assertNone(getOptInt(intRow("ref", 5), "absent"))]);
+}
+function testGetOptIntValue() {
+  let result = getOptInt(intRow("ref", 42), "ref");
+  match result with
+  | None   -> assertions([fail("Expected Some")])
+  | Some v -> assertions([assertEqual(42, v.value)]);
+}
+
+let optIntSuite = suite("getOptInt", [
+  test("Some for present value",   testGetOptIntPresent),
+  test("None for null column",     testGetOptIntNull),
+  test("None for missing column",  testGetOptIntMissing),
+  test("value inside Some",        testGetOptIntValue)
+]);
+
+runSuites([optIntSuite]);

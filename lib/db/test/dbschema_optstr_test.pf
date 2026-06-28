@@ -1,0 +1,37 @@
+// lib/db/test/dbschema_optstr_test.pf
+// Tests for getOptStr — separate file to avoid Option monomorphism collision.
+
+import * from "io";
+import * from "db/postgresql";
+import * from "../../testing/testing";
+import * from "../../testing/assertions";
+import * from "../../testing/runner";
+import * from "../../dbschema";
+
+function strRow(col, val) { [Pair { col, DbText { val } }]; }
+function nullRow(col)     { [Pair { col, DbNull }]; }
+
+function testGetOptStrPresent() {
+  assertions([assertSome(getOptStr(strRow("note", "hi"), "note"))]);
+}
+function testGetOptStrNull() {
+  assertions([assertNone(getOptStr(nullRow("note"), "note"))]);
+}
+function testGetOptStrMissing() {
+  assertions([assertNone(getOptStr(strRow("note", "hi"), "absent"))]);
+}
+function testGetOptStrValue() {
+  let result = getOptStr(strRow("note", "hello"), "note");
+  match result with
+  | None   -> assertions([fail("Expected Some")])
+  | Some v -> assertions([assertEqual("hello", v.value)]);
+}
+
+let optStrSuite = suite("getOptStr", [
+  test("Some for present value",   testGetOptStrPresent),
+  test("None for null column",     testGetOptStrNull),
+  test("None for missing column",  testGetOptStrMissing),
+  test("value inside Some",        testGetOptStrValue)
+]);
+
+runSuites([optStrSuite]);

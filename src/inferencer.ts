@@ -537,16 +537,20 @@ class CGenRegistry {
   private constructors = new Map<string, string | undefined>();
   private singletons   = new Map<string, string>();
   private plainArity   = new Map<string, number>();
+  private genericNames = new Set<string>();
 
-  registerPlain(name: string, arity: number): void {
+  registerPlain(name: string, arity: number, generic: boolean = false): void {
     this.constructors.set(name, undefined);
     this.plainArity.set(name, arity);
+    if (generic) this.genericNames.add(name);
   }
 
-  registerUnion(unionName: string, variants: { name: string; fields: string[] }[]): void {
+  registerUnion(unionName: string, variants: { name: string; fields: string[] }[], generic: boolean = false): void {
+    if (generic) this.genericNames.add(unionName);
     for (const v of variants) {
       this.constructors.set(v.name, unionName);
       if (v.fields.length === 0) this.singletons.set(v.name, unionName);
+      if (generic) this.genericNames.add(v.name);
     }
   }
 
@@ -562,6 +566,10 @@ class CGenRegistry {
 
   lookupArity(name: string): number | null {
     return this.plainArity.has(name) ? this.plainArity.get(name)! : null;
+  }
+
+  isGeneric(name: string): boolean {
+    return this.genericNames.has(name);
   }
 }
 
@@ -944,7 +952,8 @@ function cgenExpr(
         for (const el of expr.elements) {
           const et = cgenExpr(el, env, registry, cs);
           cs.push(constraint(et, elemVar, el.pos));
-          if (et.kind === 'Named' && et.unionName === undefined && et.fieldTypes && et.fieldTypes.length > 0) {
+          if (et.kind === 'Named' && et.unionName === undefined && et.fieldTypes && et.fieldTypes.length > 0
+              && !registry.isGeneric(et.name)) {
             const seen = firstFieldTypes.get(et.name);
             if (seen === undefined) {
               firstFieldTypes.set(et.name, et.fieldTypes);
@@ -1385,11 +1394,11 @@ function cgenStmt(
       break;
 
     case 'TypeStmt':
-      registry.registerPlain(stmt.name, stmt.fields.length);
+      registry.registerPlain(stmt.name, stmt.fields.length, (stmt as any).generic ?? false);
       break;
 
     case 'UnionTypeStmt':
-      registry.registerUnion(stmt.name, stmt.variants);
+      registry.registerUnion(stmt.name, stmt.variants, (stmt as any).generic ?? false);
       break;
 
     case 'ImportStmt':
@@ -1446,7 +1455,8 @@ function registerAllUnions(stmts: Stmt[], registry: CGenRegistry): void {
   function walk(s: Stmt): void {
     if (!s) return;
     switch (s.type) {
-      case 'UnionTypeStmt':  registry.registerUnion(s.name, s.variants); break;
+      case 'TypeStmt':       registry.registerPlain(s.name, s.fields.length, (s as any).generic ?? false); break;
+      case 'UnionTypeStmt':  registry.registerUnion(s.name, s.variants, (s as any).generic ?? false); break;
       case 'IfStmt':         walk(s.thenBranch); if (s.elseBranch) walk(s.elseBranch); break;
       case 'BlockStmt':      s.statements.forEach(walk); break;
       case 'FunctionStmt':

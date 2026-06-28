@@ -24,10 +24,12 @@ export type Suite = {
   tests
 }
 
+proc noOp() {}
+
 export let noFixture =
   Fixture {
-    proc() {},
-    proc() {}
+    noOp,
+    noOp
   };
 
 export function fixture(before, after) {
@@ -60,18 +62,17 @@ export function suite(name, tests) {
   };
 }
 
-export function composeFixtures(first, second) {
-  Fixture {
-    proc() {
-      first.before();
-      second.before();
-    },
-    proc() {
-      second.after();
-      first.after();
-    }
-  };
-}
+// composeFixtures requires anonymous procedures (to close over `first` and
+// `second` while performing side effects). Pfun has no anonymous proc syntax
+// yet — `fn` lambdas are pure and cannot run before/after side effects. Until
+// anonymous procs land, compose fixtures manually with a named proc.
+//
+// export function composeFixtures(first, second) {
+//   Fixture {
+//     proc() { first.before(); second.before(); },
+//     proc() { second.after(); first.after(); }
+//   };
+// }
 
 export function withFixture(test, fixture) {
   Test {

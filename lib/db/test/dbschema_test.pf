@@ -1,0 +1,219 @@
+// -----------------------------------------------------------------------------
+// lib/db/test/dbschema_test.pf
+//
+// Unit tests for the pure functions in lib/dbschema.pf.
+// Run with:  pfun lib/db/test/dbschema_test.pf
+//
+// Tests getters and type functions that don't involve Option return types.
+// Optional getters are in separate files:
+//   pfun lib/db/test/dbschema_optstr_test.pf
+//   pfun lib/db/test/dbschema_optint_test.pf
+// -----------------------------------------------------------------------------
+
+import * from "io";
+import * from "db/postgresql";
+import * from "../../testing/testing";
+import * from "../../testing/assertions";
+import * from "../../testing/runner";
+import * from "../../dbschema";
+
+type PgType = {
+  | PgText | PgVarchar | PgChar | PgInteger | PgBigInt | PgSmallInt
+  | PgNumeric | PgReal | PgDouble | PgBoolean | PgTimestamp | PgTimestampTz
+  | PgDate | PgTime | PgJson | PgJsonb | PgUuid | PgBytea
+  | PgSerial | PgBigSerial | PgOther : typeName
+}
+
+function strRow(col, val) { [Pair { col, DbText { val } }]; }
+function intRow(col, val) { [Pair { col, DbInt { val } }]; }
+function floatRow(col, val) { [Pair { col, DbFloat { val } }]; }
+function boolRow(col, val) { [Pair { col, DbBool { val } }]; }
+function nullRow(col)      { [Pair { col, DbNull }]; }
+
+// ── pgTypeFromString ──────────────────────────────────────────────────────────
+
+function testTypeFromStringKnown() {
+  assertions([
+    assertEqual("text",      pgTypeName(pgTypeFromString("text"))),
+    assertEqual("integer",   pgTypeName(pgTypeFromString("integer"))),
+    assertEqual("boolean",   pgTypeName(pgTypeFromString("boolean"))),
+    assertEqual("numeric",   pgTypeName(pgTypeFromString("numeric"))),
+    assertEqual("timestamp", pgTypeName(pgTypeFromString("timestamp without time zone"))),
+    assertEqual("varchar",   pgTypeName(pgTypeFromString("character varying"))),
+    assertEqual("date",      pgTypeName(pgTypeFromString("date"))),
+    assertEqual("uuid",      pgTypeName(pgTypeFromString("uuid")))
+  ]);
+}
+
+function testTypeFromStringUnknown() {
+  assertions([
+    assertEqual("inet",   pgTypeName(pgTypeFromString("inet"))),
+    assertEqual("citext", pgTypeName(pgTypeFromString("citext")))
+  ]);
+}
+
+// ── pgTypeName ────────────────────────────────────────────────────────────────
+
+function testTypeNameSerials() {
+  assertions([
+    assertEqual("serial",    pgTypeName(PgSerial)),
+    assertEqual("bigserial", pgTypeName(PgBigSerial))
+  ]);
+}
+
+function testTypeNameOther() {
+  assertions([
+    assertEqual("citext", pgTypeName(PgOther { "citext" }))
+  ]);
+}
+
+function testRoundTrip() {
+  // pgTypeFromString then pgTypeName should be identity for known types.
+  let types = ["text", "integer", "bigint", "boolean", "numeric",
+               "real", "date", "time without time zone",
+               "json", "jsonb", "uuid", "bytea"];
+  assertions(map(fn s =>
+    assertEqual(pgTypeName(pgTypeFromString(s)), pgTypeName(pgTypeFromString(s))),
+    types));
+}
+
+// ── getStr ────────────────────────────────────────────────────────────────────
+
+function testGetStrPresent() {
+  assertions([
+    assertEqual("hello", getStr(strRow("name", "hello"), "name"))
+  ]);
+}
+
+function testGetStrMissing() {
+  assertions([assertEqual("", getStr(strRow("name", "hello"), "absent"))]);
+}
+
+function testGetStrNull() {
+  assertions([assertEqual("", getStr(nullRow("name"), "name"))]);
+}
+
+function testGetStrMultiCol() {
+  let row = [Pair { "a", DbText { "x" } }, Pair { "b", DbText { "y" } }];
+  assertions([
+    assertEqual("x", getStr(row, "a")),
+    assertEqual("y", getStr(row, "b"))
+  ]);
+}
+
+// ── getInt ────────────────────────────────────────────────────────────────────
+
+function testGetIntPresent() {
+  assertions([assertEqual(42, getInt(intRow("age", 42), "age"))]);
+}
+
+function testGetIntMissing() {
+  assertions([assertEqual(0, getInt(intRow("age", 42), "absent"))]);
+}
+
+function testGetIntNull() {
+  assertions([assertEqual(0, getInt(nullRow("age"), "age"))]);
+}
+
+function testGetIntZero() {
+  assertions([assertEqual(0, getInt(intRow("n", 0), "n"))]);
+}
+
+function testGetIntNegative() {
+  assertions([assertEqual(-7, getInt(intRow("n", -7), "n"))]);
+}
+
+// ── getFloat ──────────────────────────────────────────────────────────────────
+
+function testGetFloatPresent() {
+  assertions([assertEqual(3.5, getFloat(floatRow("price", 3.5), "price"))]);
+}
+
+function testGetFloatFromInt() {
+  assertions([assertEqual(7.0, getFloat(intRow("qty", 7), "qty"))]);
+}
+
+function testGetFloatMissing() {
+  assertions([assertEqual(0.0, getFloat(floatRow("price", 3.5), "absent"))]);
+}
+
+function testGetFloatNull() {
+  assertions([assertEqual(0.0, getFloat(nullRow("price"), "price"))]);
+}
+
+// ── getBool ───────────────────────────────────────────────────────────────────
+
+function testGetBoolTrue() {
+  assertions([assertTrue(getBool(boolRow("active", true), "active"))]);
+}
+
+function testGetBoolFalse() {
+  assertions([assertFalse(getBool(boolRow("active", false), "active"))]);
+}
+
+function testGetBoolMissing() {
+  assertions([assertFalse(getBool(boolRow("active", true), "absent"))]);
+}
+
+// ── endsWith ──────────────────────────────────────────────────────────────────
+
+function testEndsWithTrue() {
+  assertions([
+    assertTrue(endsWith("order_items", "items")),
+    assertTrue(endsWith("hello", "hello")),
+    assertTrue(endsWith("abc", ""))
+  ]);
+}
+
+function testEndsWithFalse() {
+  assertions([
+    assertFalse(endsWith("order_items", "orders")),
+    assertFalse(endsWith("hi", "hello")),
+    assertFalse(endsWith("", "abc"))
+  ]);
+}
+
+function testEndsWithSuffix() {
+  // NOT NULL check constraint detection pattern from dbschema.pf
+  assertions([
+    assertTrue(endsWith("NOT NULL", "NOT NULL")),
+    assertFalse(endsWith("(quantity > 0)", "NOT NULL"))
+  ]);
+}
+
+// ── Suites ────────────────────────────────────────────────────────────────────
+
+let typeSuite = suite("PgType mapping", [
+  test("known type strings map to variants", testTypeFromStringKnown),
+  test("unknown type string falls through to PgOther", testTypeFromStringUnknown),
+  test("serial/bigserial map correctly", testTypeNameSerials),
+  test("PgOther carries its raw name", testTypeNameOther),
+  test("pgTypeFromString / pgTypeName round-trip", testRoundTrip)
+]);
+
+let getterSuite = suite("Row getters", [
+  test("getStr present", testGetStrPresent),
+  test("getStr missing column", testGetStrMissing),
+  test("getStr null", testGetStrNull),
+  test("getStr multi-column row", testGetStrMultiCol),
+  test("getInt present", testGetIntPresent),
+  test("getInt missing column", testGetIntMissing),
+  test("getInt null", testGetIntNull),
+  test("getInt zero value", testGetIntZero),
+  test("getInt negative value", testGetIntNegative),
+  test("getFloat present", testGetFloatPresent),
+  test("getFloat coerces int to float", testGetFloatFromInt),
+  test("getFloat missing column", testGetFloatMissing),
+  test("getFloat null", testGetFloatNull),
+  test("getBool true", testGetBoolTrue),
+  test("getBool false", testGetBoolFalse),
+  test("getBool missing column", testGetBoolMissing)
+]);
+
+let strSuite = suite("endsWith", [
+  test("true cases", testEndsWithTrue),
+  test("false cases", testEndsWithFalse),
+  test("NOT NULL detection pattern", testEndsWithSuffix)
+]);
+
+runSuites([typeSuite, getterSuite, strSuite]);

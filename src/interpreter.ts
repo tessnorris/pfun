@@ -482,13 +482,6 @@ export class TypeRegistry {
         existing.push({ fields: v.fields, inferredTypes: null, unionName, generic });
         this.schemas.set(v.name, existing);
       }
-      // (re-import of same module). Only the global singleton below re-runs.
-      if (!existing.some(s => s.unionName === unionName)) {
-        existing.push({ fields: v.fields, inferredTypes: null, unionName, generic });
-        this.schemas.set(v.name, existing);
-      }
-      existing.push({ fields: v.fields, inferredTypes: null, unionName });
-      this.schemas.set(v.name, existing);
       variantNames.add(v.name);
       if (v.fields.length === 0 && globals) {
         if (!globals.isDefined(v.name)) {
@@ -1189,7 +1182,7 @@ export class Interpreter {
           try { this.exports.set(decl.name, env.get(decl.name)); } catch {}
         } else if (decl.type === 'TypeStmt') {
           // Export as a RegistryType descriptor so the importer can re-register it
-          const descriptor: RegistryType = { kind: 'plain', name: decl.name, fields: decl.fields };
+          const descriptor: RegistryType = { kind: 'plain', name: decl.name, fields: decl.fields, generic: decl.generic ?? false };
           this.exports.set(decl.name, { __registryType: descriptor });
         } else if (decl.type === 'UnionTypeStmt') {
           const descriptor: RegistryType = { kind: 'union', name: decl.name, variants: decl.variants, generic: decl.generic ?? false };

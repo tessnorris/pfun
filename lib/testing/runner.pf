@@ -13,7 +13,11 @@ import * from "io";
 import * from "./testing";
 import * from "./assertions";
 
-type Stats = {
+// Re-declare assertion outcome type so Fail/Pass variants resolve in matches here.
+type Check = { | Pass | Fail : failure }
+type Failure = { message, expected, actual }
+
+export type Stats = {
   suitePass,
   suiteFail,
   testPass,
@@ -65,33 +69,30 @@ function addTestFail(stats) {
 }
 
 
-function failures(results) {
-  filter(
-    fn r =>
-      match r with
-      | Some _ -> true
-      | None   -> false,
-    results
-  );
-}
-
 proc printFailure(failure) {
   match failure with
-  | Some f -> {
-    println("      Expected : " + f.value.expected);
-    println("      Actual   : " + f.value.actual);
-    if f.value.message != "" then
-       println("      " + f.value.message);
+  | Fail f -> {
+    println("      Expected : " + __str__(f.failure.expected));
+    println("      Actual   : " + __str__(f.failure.actual));
+    if f.failure.message != "" then
+       println("      " + f.failure.message);
   }
-  | None -> {};
+  | Pass -> {};
 }
 
+
+proc printFailures(list) {
+  if length(list) > 0 then {
+     printFailure(head(list));
+     printFailures(tail(list));
+  }
+}
 
 proc runTest(test, stats) {
   test.fixture.before();
-  let results = test.body();
+  var results = test.body();
   test.fixture.after();
-  let failed = failures(results);
+  let failed = results.failures;
   if length(failed) == 0 then {
     println("  ✓ " + test.name);
     addTestPass(stats);
@@ -102,19 +103,12 @@ proc runTest(test, stats) {
   }
 }
 
-proc printFailures(list) {
-  if length(list) > 0 then {
-     printFailure(head(list));
-     printFailures(tail(list));
-  }
-}
-
 
 proc runSuiteTests(tests, stats) {
   if length(tests) == 0 then
     stats
   else {
-    let next = runTest(head(tests), stats);
+    var next = runTest(head(tests), stats);
     runSuiteTests(tail(tests), next);
   }
 }
@@ -123,7 +117,7 @@ proc runSuite(suite, stats) {
   println("");
   println(suite.name);
   let before = stats;
-  let after = runSuiteTests(suite.tests, stats);
+  var after = runSuiteTests(suite.tests, stats);
   if after.testFail == before.testFail then
     addSuitePass(after)
   else
@@ -135,7 +129,7 @@ proc runSuitesRec(suites, stats) {
   if length(suites) == 0 then
     stats
   else {
-    let next = runSuite(head(suites), stats);
+    var next = runSuite(head(suites), stats);
     runSuitesRec(tail(suites), next);
   }
 }
@@ -144,8 +138,8 @@ proc printSummary(stats) {
   println("");
   println("----------------------------------------");
   println("");
-  println($"Suites: {__str__(stats.suitePass)} passed, {__str__(stats.suiteFail)} failed");
-  println($"Tests  : {__str__(stats.testPass)} passed, {__str__(stats.testFail)} failed");
+  println("Suites: " + __str__(stats.suitePass) + " passed, " + __str__(stats.suiteFail) + " failed");
+  println("Tests : " + __str__(stats.testPass) + " passed, " + __str__(stats.testFail) + " failed");
   println("");
   if stats.testFail == 0 then
     println("PASS")
@@ -154,6 +148,6 @@ proc printSummary(stats) {
 }
 
 export proc runSuites(suites) {
-  let stats = runSuitesRec(suites, emptyStats);
+  var stats = runSuitesRec(suites, emptyStats);
   printSummary(stats);
 }

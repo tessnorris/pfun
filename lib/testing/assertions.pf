@@ -16,31 +16,39 @@ export type Failure = {
   actual
 }
 
+// Assertion outcome. expected/actual are stringified at assertion time so that
+// Failure has uniform field types (all String) — this lets a list of mixed
+// assertions (some over ints, some over bools) share one element type.
+export type Check = {
+  | Pass
+  | Fail : failure
+}
+
 export type TestResult = {
   failures
 }
 
 function failure(message, expected, actual) {
-  Some { Failure {message, expected, actual} };
+  Fail { Failure { message, __str__(expected), __str__(actual) } };
 }
 
 export function assertEqual(expected, actual) {
   if expected == actual then
-    None
+    Pass
   else
     failure("Expected values to be equal.", expected, actual);
 }
 
 export function assertNotEqual(expected, actual) {
   if expected != actual then
-    None
+    Pass
   else
     failure("Expected values to be different.", "<different value>", actual);
 }
 
 export function assertTrue(value) {
   if value then
-    None
+    Pass
   else
     failure("Expected true.", true, value);
 }
@@ -49,30 +57,30 @@ export function assertFalse(value) {
   if value then
     failure("Expected false.", false, value)
   else
-    None;
+    Pass;
 }
 
 export function assertSome(value) {
   match value with
-  | Some _ -> None
-  | None   -> failure("Expected Some.", Some, None);
+  | Some _ -> Pass
+  | None   -> failure("Expected Some, got None.", "Some", "None");
 }
 
 export function assertNone(value) {
   match value with
-  | None   -> None
-  | Some _ -> failure("Expected None.", None, Some);
+  | None   -> Pass
+  | Some _ -> failure("Expected None, got Some.", "None", "Some");
 }
 
 export function check(condition, message) {
   if condition then
-    None
+    Pass
   else
-    failure(message, true, false);
+    failure(message, "true", "false");
 }
 
 export function fail(message) {
-  failure(message, (),());
+  failure(message, "", "");
 }
 
 export function assertions(assertions) {
@@ -80,8 +88,8 @@ export function assertions(assertions) {
     filter(
       fn assertion =>
         match assertion with
-        | Some _ -> true
-        | None   -> false,
+        | Fail _ -> true
+        | Pass   -> false,
       assertions
     )
   };
