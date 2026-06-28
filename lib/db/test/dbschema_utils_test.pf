@@ -1,0 +1,260 @@
+// -----------------------------------------------------------------------------
+// lib/db/test/dbschema_utils_test.pf
+//
+// Unit tests for lib/db/dbschema_utils.pf — the pure fingerprinting functions.
+//
+// loadLookupValues / loadAllLookupValues are async DB procs and are not
+// tested here — they're covered by the integration demo.
+//
+// Run with:  pfun lib/db/test/dbschema_utils_test.pf
+// -----------------------------------------------------------------------------
+
+import * from "io";
+import * from "db/postgresql";
+import * from "../../testing/testing";
+import * from "../../testing/assertions";
+import * from "../../testing/runner";
+import * from "../../dbschema";
+import * from "../dbschema_utils";
+
+type PgType = {
+  | PgText | PgVarchar | PgChar | PgInteger | PgBigInt | PgSmallInt
+  | PgNumeric | PgReal | PgDouble | PgBoolean | PgTimestamp | PgTimestampTz
+  | PgDate | PgTime | PgJson | PgJsonb | PgUuid | PgBytea
+  | PgSerial | PgBigSerial | PgOther : typeName
+}
+type Constraint = {
+  | PrimaryKey : name, columns
+  | ForeignKey : name, columns, refTable, refColumns
+  | Unique     : name, columns
+  | Check      : name, expression
+}
+
+// ── Fixtures ──────────────────────────────────────────────────────────────────
+
+function col(name, rawType, nullable) {
+  Column { name, PgText, rawType, nullable, None };
+}
+
+let idCol      = col("id",    "integer", false);
+let nameCol    = col("name",  "text",    false);
+let emailCol   = col("email", "text",    true);
+
+let pkCon   = PrimaryKey { "customers_pkey", ["id"] };
+let uqCon   = Unique     { "customers_email_key", ["email"] };
+let fkCon   = ForeignKey { "orders_customer_id_fkey", ["customer_id"], "customers", ["id"] };
+let chkCon  = Check      { "orders_qty_check", "quantity > 0" };
+
+let customersTable = Table {
+  "public", "customers",
+  [idCol, nameCol, emailCol],
+  [pkCon, uqCon]
+};
+
+let ordersTable = Table {
+  "public", "orders",
+  [col("id", "integer", false), col("customer_id", "integer", false)],
+  [PrimaryKey { "orders_pkey", ["id"] }, fkCon]
+};
+
+// ── fingerprintColumn ─────────────────────────────────────────────────────────
+
+function testFingerprintColumnNotNull() {
+  assertions([assertEqual("id:integer:false", fingerprintColumn(idCol))]);
+}
+
+function testFingerprintColumnNullable() {
+  assertions([assertEqual("email:text:true", fingerprintColumn(emailCol))]);
+}
+
+function testFingerprintColumnRawTypePreserved() {
+  // rawType is used, not the PgType enum — so "character varying" stays as-is
+  let c = col("code", "character varying", false);
+  assertions([assertEqual("code:character varying:false", fingerprintColumn(c))]);
+}
+
+// ── fingerprintConstraint ─────────────────────────────────────────────────────
+
+function testFingerprintConstraintPk() {
+  assertions([assertEqual("PK:id", fingerprintConstraint(pkCon))]);
+}
+
+function testFingerprintConstraintPkMultiCol() {
+  let pk = PrimaryKey { "t_pkey", ["a", "b"] };
+  assertions([assertEqual("PK:a,b", fingerprintConstraint(pk))]);
+}
+
+function testFingerprintConstraintUnique() {
+  assertions([assertEqual("UQ:email", fingerprintConstraint(uqCon))]);
+}
+
+function testFingerprintConstraintFk() {
+  assertions([
+    assertEqual("FK:customer_id->customers(id)", fingerprintConstraint(fkCon))
+  ]);
+}
+
+function testFingerprintConstraintFkMultiCol() {
+  let fk = ForeignKey { "fk", ["a", "b"], "other", ["x", "y"] };
+  assertions([assertEqual("FK:a,b->other(x,y)", fingerprintConstraint(fk))]);
+}
+
+function testFingerprintConstraintCheck() {
+  assertions([assertEqual("CK:quantity > 0", fingerprintConstraint(chkCon))]);
+}
+
+// ── fingerprintTable ──────────────────────────────────────────────────────────
+
+function testFingerprintTableStructure() {
+  let fp = fingerprintTable(customersTable);
+  assertions([
+    // name
+    assertTrue(length(split(fp, "customers{")) == 2),
+    // columns joined with |
+    assertTrue(length(split(fp, "id:integer:false")) == 2),
+    assertTrue(length(split(fp, "email:text:true")) == 2),
+    assertTrue(length(split(fp, "|")) > 1),
+    // constraints in []
+    assertTrue(length(split(fp, "PK:id")) == 2),
+    assertTrue(length(split(fp, "UQ:email")) == 2)
+  ]);
+}
+
+function testFingerprintTableFormat() {
+  let fp = fingerprintTable(customersTable);
+  // Full format: name{col|col|...}[con|con|...]
+  assertions([
+    assertTrue(length(split(fp, "customers{")) == 2),
+    assertTrue(length(split(fp, "}[")) == 2),
+    assertTrue(endsWith(fp, "]"))
+  ]);
+}
+
+function testFingerprintTableNoConstraints() {
+  let t = Table { "public", "tags", [col("name", "text", false)], [] };
+  let fp = fingerprintTable(t);
+  assertions([
+    assertTrue(length(split(fp, "tags{")) == 2),
+    assertTrue(length(split(fp, "}[]")) == 2)
+  ]);
+}
+
+function testFingerprintTableDifferentColumns() {
+  // Two tables with different columns should produce different fingerprints
+  let t1 = Table { "public", "t", [col("a", "text", false)], [] };
+  let t2 = Table { "public", "t", [col("b", "text", false)], [] };
+  assertions([assertNotEqual(fingerprintTable(t1), fingerprintTable(t2))]);
+}
+
+function testFingerprintTableNullabilityMatters() {
+  let t1 = Table { "public", "t", [col("x", "text", false)], [] };
+  let t2 = Table { "public", "t", [col("x", "text", true)],  [] };
+  assertions([assertNotEqual(fingerprintTable(t1), fingerprintTable(t2))]);
+}
+
+// ── fingerprintSchema ─────────────────────────────────────────────────────────
+
+function testFingerprintSchemaIsString() {
+  let fp = fingerprintSchema([customersTable], []);
+  // Result is a numeric string (hash value)
+  assertions([
+    assertTrue(length(fp) > 0),
+    check(length(filter(fn c => asc(head(c)) >= 48 && asc(head(c)) <= 57, split(fp, ""))) == length(fp),
+          "fingerprint contains only digits")
+  ]);
+}
+
+function testFingerprintSchemaDeterministic() {
+  // Same input always produces same output
+  let fp1 = fingerprintSchema([customersTable, ordersTable], ["pending", "shipped"]);
+  let fp2 = fingerprintSchema([customersTable, ordersTable], ["pending", "shipped"]);
+  assertions([assertEqual(fp1, fp2)]);
+}
+
+function testFingerprintSchemaTableOrderMatters() {
+  // Order of tables affects the fingerprint (joined with ;)
+  let fp1 = fingerprintSchema([customersTable, ordersTable], []);
+  let fp2 = fingerprintSchema([ordersTable, customersTable], []);
+  assertions([assertNotEqual(fp1, fp2)]);
+}
+
+function testFingerprintSchemaLookupValuesIncluded() {
+  // Different lookup values -> different fingerprint
+  let fp1 = fingerprintSchema([customersTable], ["pending", "shipped"]);
+  let fp2 = fingerprintSchema([customersTable], ["pending"]);
+  assertions([assertNotEqual(fp1, fp2)]);
+}
+
+function testFingerprintSchemaEmptyTables() {
+  let fp = fingerprintSchema([], []);
+  assertions([assertTrue(length(fp) > 0)]);
+}
+
+function testFingerprintSchemaColumnChangeDetected() {
+  let before = Table { "public", "t", [col("name", "text", false)], [] };
+  let after  = Table { "public", "t", [col("name", "varchar", false)], [] };
+  let fp1 = fingerprintSchema([before], []);
+  let fp2 = fingerprintSchema([after], []);
+  assertions([assertNotEqual(fp1, fp2)]);
+}
+
+function testFingerprintSchemaNewColumnDetected() {
+  let before = Table { "public", "t", [col("a", "text", false)], [] };
+  let after  = Table { "public", "t", [col("a", "text", false), col("b", "text", false)], [] };
+  let fp1 = fingerprintSchema([before], []);
+  let fp2 = fingerprintSchema([after], []);
+  assertions([assertNotEqual(fp1, fp2)]);
+}
+
+function testFingerprintSchemaNewTableDetected() {
+  let fp1 = fingerprintSchema([customersTable], []);
+  let fp2 = fingerprintSchema([customersTable, ordersTable], []);
+  assertions([assertNotEqual(fp1, fp2)]);
+}
+
+function testFingerprintSchemaConstraintChangeDetected() {
+  let without = Table { "public", "t", [col("a", "text", false)], [] };
+  let withPk  = Table { "public", "t", [col("a", "text", false)], [pkCon] };
+  let fp1 = fingerprintSchema([without], []);
+  let fp2 = fingerprintSchema([withPk], []);
+  assertions([assertNotEqual(fp1, fp2)]);
+}
+
+// ── Suites ────────────────────────────────────────────────────────────────────
+
+let colSuite = suite("fingerprintColumn", [
+  test("NOT NULL column",              testFingerprintColumnNotNull),
+  test("nullable column",              testFingerprintColumnNullable),
+  test("rawType preserved verbatim",   testFingerprintColumnRawTypePreserved)
+]);
+
+let conSuite = suite("fingerprintConstraint", [
+  test("PrimaryKey single col",        testFingerprintConstraintPk),
+  test("PrimaryKey multi-col",         testFingerprintConstraintPkMultiCol),
+  test("Unique",                       testFingerprintConstraintUnique),
+  test("ForeignKey single col",        testFingerprintConstraintFk),
+  test("ForeignKey multi-col",         testFingerprintConstraintFkMultiCol),
+  test("Check expression",             testFingerprintConstraintCheck)
+]);
+
+let tableSuite = suite("fingerprintTable", [
+  test("structure contains all parts",      testFingerprintTableStructure),
+  test("format: name{cols}[cons]",          testFingerprintTableFormat),
+  test("empty constraints -> []",           testFingerprintTableNoConstraints),
+  test("different columns -> different fp", testFingerprintTableDifferentColumns),
+  test("nullability change -> different fp",testFingerprintTableNullabilityMatters)
+]);
+
+let schemaSuite = suite("fingerprintSchema", [
+  test("returns a numeric string",          testFingerprintSchemaIsString),
+  test("deterministic — same in same out",  testFingerprintSchemaDeterministic),
+  test("table order matters",               testFingerprintSchemaTableOrderMatters),
+  test("lookup values included",            testFingerprintSchemaLookupValuesIncluded),
+  test("empty schema is valid",             testFingerprintSchemaEmptyTables),
+  test("column type change detected",       testFingerprintSchemaColumnChangeDetected),
+  test("new column detected",               testFingerprintSchemaNewColumnDetected),
+  test("new table detected",                testFingerprintSchemaNewTableDetected),
+  test("constraint change detected",        testFingerprintSchemaConstraintChangeDetected)
+]);
+
+runSuites([colSuite, conSuite, tableSuite, schemaSuite]);

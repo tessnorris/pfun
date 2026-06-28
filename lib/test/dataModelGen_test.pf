@@ -1,0 +1,705 @@
+// -----------------------------------------------------------------------------
+// lib/test/dataModelGen_test.pf
+//
+// Unit tests for lib/dataModelGen.pf.
+//
+// All functions tested are pure string generators -- no DB or IO needed.
+// Synthetic Column / Table / Constraint records stand in for real schema data.
+//
+// Run with:  pfun lib/test/dataModelGen_test.pf
+// -----------------------------------------------------------------------------
+
+import * from "io";
+import * from "../testing/testing";
+import * from "../testing/assertions";
+import * from "../testing/runner";
+import * from "../dbschema";
+import * from "../dataModelGen";
+
+// Re-declare types needed for match arms in this module.
+type PgType = {
+  | PgText | PgVarchar | PgChar | PgInteger | PgBigInt | PgSmallInt
+  | PgNumeric | PgReal | PgDouble | PgBoolean | PgTimestamp | PgTimestampTz
+  | PgDate | PgTime | PgJson | PgJsonb | PgUuid | PgBytea
+  | PgSerial | PgBigSerial | PgOther : typeName
+}
+type Constraint = {
+  | PrimaryKey : name, columns
+  | ForeignKey : name, columns, refTable, refColumns
+  | Unique     : name, columns
+  | Check      : name, expression
+}
+type FkColResult = { | FkColFound : constraint | FkColNone }
+
+// ── Fixtures ──────────────────────────────────────────────────────────────────
+
+// Column builder helpers
+function col(name, pgType, nullable) {
+  Column { name, pgType, name, nullable, None };
+}
+function colDefault(name, pgType, nullable, def) {
+  Column { name, pgType, name, nullable, Some { def } };
+}
+
+// Constraints
+let pkId      = PrimaryKey { "customers_pkey", ["id"] };
+let pkOrderId = PrimaryKey { "orders_pkey", ["id"] };
+
+let fkCustomer = ForeignKey {
+  "orders_customer_id_fkey", ["customer_id"],
+  "customers", ["id"]
+};
+let fkStatus = ForeignKey {
+  "orders_status_fkey", ["status"],
+  "order_status", ["value"]
+};
+
+// customers table: id (serial PK), name (text), email (text nullable)
+let customersTable = Table {
+  "public", "customers",
+  [
+    col("id",    PgSerial,  false),
+    col("name",  PgText,    false),
+    col("email", PgText,    true)
+  ],
+  [pkId]
+};
+
+// orders table: id (serial PK), customer_id (int FK), status (text FK to lookup), placed_at (timestamp default)
+let ordersTable = Table {
+  "public", "orders",
+  [
+    col("id",          PgSerial,    false),
+    col("customer_id", PgInteger,   false),
+    col("status",      PgText,      false),
+    colDefault("placed_at", PgTimestamp, false, "now()")
+  ],
+  [pkOrderId, fkCustomer, fkStatus]
+};
+
+// order_status lookup table: id (serial PK), value (text)
+let orderStatusTable = Table {
+  "public", "order_status",
+  [col("id", PgSerial, false), col("value", PgText, false)],
+  [PrimaryKey { "order_status_pkey", ["id"] }]
+};
+
+let lookupTables = ["order_status"];
+let allTables = [customersTable, ordersTable, orderStatusTable];
+let schema = "public";
+
+// ── Naming helpers ────────────────────────────────────────────────────────────
+
+function testToPascalSimple() {
+  assertions([assertEqual("Customers", toPascal("customers"))]);
+}
+function testToPascalSnakeCase() {
+  assertions([assertEqual("OrderItems", toPascal("order_items"))]);
+}
+function testToPascalSingleWord() {
+  assertions([assertEqual("Orders", toPascal("orders"))]);
+}
+
+function testToCamelSimple() {
+  assertions([assertEqual("customers", toCamel("customers"))]);
+}
+function testToCamelSnakeCase() {
+  assertions([assertEqual("customerId", toCamel("customer_id"))]);
+}
+function testToCamelMultiPart() {
+  assertions([assertEqual("placedAt", toCamel("placed_at"))]);
+}
+
+function testCapitalise() {
+  assertions([
+    assertEqual("Hello", capitalise("hello")),
+    assertEqual("A",     capitalise("a")),
+    assertEqual("",      capitalise(""))
+  ]);
+}
+
+function testLcFirst() {
+  assertions([
+    assertEqual("customer",     lcFirst("Customer")),
+    assertEqual("orderModel",   lcFirst("OrderModel")),
+    assertEqual("",             lcFirst(""))
+  ]);
+}
+
+function testToTypeNamePlural() {
+  assertions([
+    assertEqual("Customer",   toTypeName("customers")),
+    assertEqual("Order",      toTypeName("orders")),
+    assertEqual("OrderItem",  toTypeName("order_items"))
+  ]);
+}
+
+function testToTypeNameNoStrip() {
+  // Endings that should NOT be stripped (second-to-last char in guard list)
+  assertions([
+    assertEqual("OrderStatus", toTypeName("order_status")),  // 'us' -> keep (u in guard)
+    assertEqual("Statuse",     toTypeName("statuses")),       // 'us' in guard but prev2 is 'e' -> strips
+    // Note: "addresses" -> "Addresse" (not "Address") because prev2='e' not in
+    // guard, so the trailing 's' is stripped. True singularization of -sse
+    // endings is not handled. This is the documented behavior.
+    assertEqual("Addresse",    toTypeName("addresses"))
+  ]);
+}
+
+function testToTypeNameIes() {
+  assertions([
+    assertEqual("Category", toTypeName("categories")),
+    assertEqual("Company",  toTypeName("companies"))
+  ]);
+}
+
+function testToModelName() {
+  assertions([
+    assertEqual("CustomerModel",    toModelName("customers")),
+    assertEqual("OrderModel",       toModelName("orders")),
+    assertEqual("OrderStatusModel", toModelName("order_status"))
+  ]);
+}
+
+function testToVariantName() {
+  assertions([
+    assertEqual("Pending",    toVariantName("pending")),
+    assertEqual("InProgress", toVariantName("in_progress")),
+    assertEqual("Delivered",  toVariantName("delivered"))
+  ]);
+}
+
+// ── pfunType ──────────────────────────────────────────────────────────────────
+
+function testPfunTypeInt() {
+  assertions([
+    assertEqual("Int", pfunType(col("x", PgInteger, false))),
+    assertEqual("Int", pfunType(col("x", PgBigInt,  false))),
+    assertEqual("Int", pfunType(col("x", PgSerial,  false)))
+  ]);
+}
+function testPfunTypeStr() {
+  assertions([
+    assertEqual("String", pfunType(col("x", PgText,    false))),
+    assertEqual("String", pfunType(col("x", PgVarchar, false))),
+    assertEqual("String", pfunType(col("x", PgUuid,    false)))
+  ]);
+}
+function testPfunTypeFloat() {
+  assertions([
+    assertEqual("Float", pfunType(col("x", PgNumeric, false))),
+    assertEqual("Float", pfunType(col("x", PgReal,    false)))
+  ]);
+}
+function testPfunTypeBool() {
+  assertions([assertEqual("Bool", pfunType(col("x", PgBoolean, false)))]);
+}
+function testPfunTypeBytea() {
+  assertions([assertEqual("List<Byte>", pfunType(col("x", PgBytea, false)))]);
+}
+function testPfunTypeOther() {
+  assertions([assertEqual("String", pfunType(col("x", PgOther { "citext" }, false)))]);
+}
+
+// ── isLookup ──────────────────────────────────────────────────────────────────
+
+function testIsLookupTrue() {
+  assertions([assertTrue(isLookup("order_status", lookupTables))]);
+}
+function testIsLookupFalse() {
+  assertions([assertFalse(isLookup("customers", lookupTables))]);
+}
+function testIsLookupEmpty() {
+  assertions([assertFalse(isLookup("anything", []))]);
+}
+
+// ── fkForColumn ──────────────────────────────────────────────────────────────
+
+function testFkForColumnFound() {
+  let result = fkForColumn("customer_id", ordersTable.constraints);
+  match result with
+  | FkColFound _ -> assertions([check(true, "found FK")])
+  | FkColNone    -> assertions([fail("Expected FK for customer_id")]);
+}
+function testFkForColumnNone() {
+  let result = fkForColumn("id", customersTable.constraints);
+  match result with
+  | FkColNone    -> assertions([check(true, "no FK for PK col")])
+  | FkColFound _ -> assertions([fail("Expected no FK for id")]);
+}
+function testFkForColumnNoConstraints() {
+  let result = fkForColumn("name", customersTable.constraints);
+  match result with
+  | FkColNone    -> assertions([check(true, "no FK")])
+  | FkColFound _ -> assertions([fail("Expected no FK")]);
+}
+
+// ── nullNote / columnFieldType ────────────────────────────────────────────────
+
+function testNullNoteNullable() {
+  assertions([assertEqual(" nullable", nullNote(col("x", PgText, true)))]);
+}
+function testNullNoteNotNull() {
+  assertions([assertEqual(" NOT NULL", nullNote(col("x", PgText, false)))]);
+}
+
+function testColumnFieldTypeSimple() {
+  // name column: text NOT NULL -> "String"
+  let nameCol = col("name", PgText, false);
+  assertions([assertEqual("String", columnFieldType(nameCol, customersTable, lookupTables))]);
+}
+function testColumnFieldTypeNullable() {
+  // email: text nullable -> "Option<String>"
+  let emailCol = col("email", PgText, true);
+  assertions([assertEqual("Option<String>", columnFieldType(emailCol, customersTable, lookupTables))]);
+}
+function testColumnFieldTypeFkToRegular() {
+  // customer_id FK to customers (not lookup) -> "CustomerRef"
+  let cidCol = col("customer_id", PgInteger, false);
+  assertions([assertEqual("CustomerRef", columnFieldType(cidCol, ordersTable, lookupTables))]);
+}
+function testColumnFieldTypeFkToLookup() {
+  // status FK to order_status (lookup) -> "OrderStatusModel"
+  let statusCol = col("status", PgText, false);
+  assertions([assertEqual("OrderStatusModel", columnFieldType(statusCol, ordersTable, lookupTables))]);
+}
+
+// ── columnFieldName ───────────────────────────────────────────────────────────
+
+function testColumnFieldNamePlain() {
+  assertions([assertEqual("name", columnFieldName(col("name", PgText, false), customersTable, lookupTables))]);
+}
+function testColumnFieldNameCamel() {
+  assertions([assertEqual("placedAt", columnFieldName(col("placed_at", PgTimestamp, false), ordersTable, lookupTables))]);
+}
+function testColumnFieldNameFkToRegular() {
+  // customer_id FK to customers -> "customerRef"
+  let cidCol = col("customer_id", PgInteger, false);
+  assertions([assertEqual("customerRef", columnFieldName(cidCol, ordersTable, lookupTables))]);
+}
+function testColumnFieldNameFkToLookup() {
+  // status FK to lookup -> plain camelCase "status" (not a Ref)
+  let statusCol = col("status", PgText, false);
+  assertions([assertEqual("status", columnFieldName(statusCol, ordersTable, lookupTables))]);
+}
+
+// ── pkColumns ─────────────────────────────────────────────────────────────────
+
+function testPkColumnsFound() {
+  let pks = pkColumns(customersTable);
+  assertions([
+    assertEqual(1, length(pks)),
+    assertEqual("id", head(pks))
+  ]);
+}
+function testPkColumnsNone() {
+  let tableNoPk = Table { "public", "tags", [col("name", PgText, false)], [] };
+  assertions([assertEqual(0, length(pkColumns(tableNoPk)))]);
+}
+
+// ── omitFromInsert ────────────────────────────────────────────────────────────
+
+function testOmitSerial() {
+  assertions([assertTrue(omitFromInsert(col("id", PgSerial, false)))]);
+}
+function testOmitWithDefault() {
+  assertions([assertTrue(omitFromInsert(colDefault("created_at", PgTimestamp, false, "now()")))]);
+}
+function testDontOmitPlainCol() {
+  assertions([assertFalse(omitFromInsert(col("name", PgText, false)))]);
+}
+
+// ── genPlaceholders / genSetClauses ──────────────────────────────────────────
+
+function testGenPlaceholders() {
+  assertions([
+    assertEqual("$1",          genPlaceholders(1, 1)),
+    assertEqual("$1, $2",      genPlaceholders(2, 1)),
+    assertEqual("$1, $2, $3",  genPlaceholders(3, 1)),
+    assertEqual("",            genPlaceholders(0, 1))
+  ]);
+}
+
+function testGenSetClauses() {
+  let cols = [col("name", PgText, false), col("email", PgText, true)];
+  assertions([
+    assertEqual("name = $1, email = $2", genSetClauses(cols, 1)),
+    assertEqual("name = $2, email = $3", genSetClauses(cols, 2))
+  ]);
+}
+
+// ── genInsertSql / genUpdateSql ───────────────────────────────────────────────
+
+function testGenInsertSql() {
+  // customers: serial id is omitted; name, email inserted
+  let sql = genInsertSql(customersTable, "public");
+  assertions([
+    assertTrue(length(split(sql, "INSERT INTO public.customers")) == 2),
+    assertTrue(length(split(sql, "name, email")) == 2),
+    assertTrue(length(split(sql, "$1, $2")) == 2),
+    assertTrue(length(split(sql, "RETURNING *")) == 2)
+  ]);
+}
+
+function testGenInsertSqlOmitsDefault() {
+  // orders: serial id and placed_at (has default) should be omitted
+  let sql = genInsertSql(ordersTable, "public");
+  assertions([
+    assertTrue(length(split(sql, "placed_at")) == 1),  // NOT in INSERT
+    assertTrue(length(split(sql, "customer_id")) == 2),
+    assertTrue(length(split(sql, "status")) == 2)
+  ]);
+}
+
+function testGenUpdateSql() {
+  let sql = genUpdateSql(customersTable, "public");
+  assertions([
+    assertTrue(length(split(sql, "UPDATE public.customers SET")) == 2),
+    assertTrue(length(split(sql, "WHERE id =")) == 2),
+    // id is PK, excluded from SET; name and email are SET
+    assertTrue(length(split(sql, "name = $1")) == 2),
+    assertTrue(length(split(sql, "email = $2")) == 2),
+    assertTrue(length(split(sql, "WHERE id = $3")) == 2)
+  ]);
+}
+
+// ── genDbParam ────────────────────────────────────────────────────────────────
+
+function testGenDbParamText() {
+  assertions([assertEqual("DbText { m.name }", genDbParam(col("name", PgText, false), "m.name"))]);
+}
+function testGenDbParamInt() {
+  assertions([assertEqual("DbInt { m.count }", genDbParam(col("count", PgInteger, false), "m.count"))]);
+}
+function testGenDbParamFloat() {
+  assertions([assertEqual("DbFloat { m.price }", genDbParam(col("price", PgReal, false), "m.price"))]);
+}
+function testGenDbParamBool() {
+  assertions([assertEqual("DbBool { m.active }", genDbParam(col("active", PgBoolean, false), "m.active"))]);
+}
+function testGenDbParamNumeric() {
+  // Numeric -> DbText with __str__ wrapper
+  assertions([assertEqual("DbText { __str__(m.amount) }", genDbParam(col("amount", PgNumeric, false), "m.amount"))]);
+}
+
+// ── genRowGetter ─────────────────────────────────────────────────────────────
+
+function testGenRowGetterStr() {
+  assertions([assertEqual("getStr(row, \"name\")", genRowGetter(col("name", PgText, false), "name"))]);
+}
+function testGenRowGetterInt() {
+  assertions([assertEqual("getInt(row, \"count\")", genRowGetter(col("count", PgInteger, false), "count"))]);
+}
+function testGenRowGetterBool() {
+  assertions([assertEqual("getBool(row, \"active\")", genRowGetter(col("active", PgBoolean, false), "active"))]);
+}
+function testGenRowGetterFloat() {
+  assertions([assertEqual("getFloat(row, \"price\")", genRowGetter(col("price", PgReal, false), "price"))]);
+}
+
+// ── genLookupEnum ─────────────────────────────────────────────────────────────
+
+function testGenLookupEnum() {
+  let result = genLookupEnum(orderStatusTable, ["pending", "shipped", "delivered"]);
+  assertions([
+    // type declaration
+    assertTrue(length(split(result, "export type OrderStatusModel = {")) == 2),
+    // variants in type body (with indent)
+    assertTrue(length(split(result, "  | Pending")) == 3),  // 2 occurrences: type + toStr
+    assertTrue(length(split(result, "  | Shipped")) == 3),
+    assertTrue(length(split(result, "  | Delivered")) == 3),
+    // parse function
+    assertTrue(length(split(result, "export function parseOrderStatusModel(s)")) == 2),
+    assertTrue(length(split(result, "ParseOk { Pending }")) == 2),
+    assertTrue(length(split(result, "ParseOk { Shipped }")) == 2),
+    // toStr function
+    assertTrue(length(split(result, "export function orderStatusModelToStr(v)")) == 2),
+    assertTrue(length(split(result, "| Pending -> \"pending\"")) == 2),
+    assertTrue(length(split(result, "| Delivered -> \"delivered\"")) == 2)
+  ]);
+}
+
+function testGenLookupEnumParseFailFallthrough() {
+  let result = genLookupEnum(orderStatusTable, ["pending"]);
+  assertions([assertTrue(length(split(result, "ParseFail;")) == 2)]);
+}
+
+// ── genRefType ────────────────────────────────────────────────────────────────
+
+function testGenRefTypeRegularTable() {
+  let result = genRefType("customers", lookupTables);
+  assertions([
+    assertTrue(length(split(result, "export type CustomerRef = {")) == 2),
+    assertTrue(length(split(result, "| CustomerId")) == 2),
+    assertTrue(length(split(result, "| CustomerDataModel")) == 2)
+  ]);
+}
+
+function testGenRefTypeLookupIsEmpty() {
+  // Lookup tables don't get Ref types
+  let result = genRefType("order_status", lookupTables);
+  assertions([assertEqual("", result)]);
+}
+
+// ── genRowToModel ─────────────────────────────────────────────────────────────
+
+function testGenRowToModelCustomers() {
+  let result = genRowToModel(customersTable, lookupTables);
+  assertions([
+    assertTrue(length(split(result, "function rowToCustomerModel(row)")) == 2),
+    assertTrue(length(split(result, "CustomerModel {")) == 2),
+    // PK col -> Id { getInt(...) }
+    assertTrue(length(split(result, "Id { getInt(row, \"id\") }")) == 2),
+    // plain text cols
+    assertTrue(length(split(result, "getStr(row, \"name\")")) == 2),
+    assertTrue(length(split(result, "getStr(row, \"email\")")) == 2)
+  ]);
+}
+
+function testGenRowToModelWithFk() {
+  let result = genRowToModel(ordersTable, lookupTables);
+  assertions([
+    assertTrue(length(split(result, "function rowToOrderModel(row)")) == 2),
+    // FK to regular table -> XxxId { getInt(...) }
+    assertTrue(length(split(result, "CustomerId { getInt(row, \"customer_id\") }")) == 2),
+    // FK to lookup -> unwrapParse(...)
+    assertTrue(length(split(result, "unwrapParse(parseOrderStatusModel(")) == 2)
+  ]);
+}
+
+// ── genRecordTypeWithMaybeId ──────────────────────────────────────────────────
+
+function testGenRecordTypeCustomers() {
+  let result = genRecordTypeWithMaybeId(customersTable, lookupTables);
+  assertions([
+    assertTrue(length(split(result, "export type CustomerModel = {")) == 2),
+    // PK -> maybeId field
+    assertTrue(length(split(result, "maybeId")) == 2),
+    assertTrue(length(split(result, "name")) > 1),
+    assertTrue(length(split(result, "email")) > 1)
+  ]);
+}
+
+function testGenRecordTypeOrders() {
+  let result = genRecordTypeWithMaybeId(ordersTable, lookupTables);
+  assertions([
+    assertTrue(length(split(result, "export type OrderModel = {")) == 2),
+    // FK to regular -> customerRef field
+    assertTrue(length(split(result, "customerRef")) == 2),
+    // FK to lookup -> status field (plain name)
+    assertTrue(length(split(result, "status")) == 2)
+  ]);
+}
+
+// ── genRefIdHelper ────────────────────────────────────────────────────────────
+
+function testGenRefIdHelper() {
+  let result = genRefIdHelper("customers");
+  assertions([
+    assertTrue(length(split(result, "function customerRefId(customerRef)")) == 2),
+    assertTrue(length(split(result, "| CustomerId r        -> r.id")) == 2),
+    assertTrue(length(split(result, "| CustomerDataModel r ->")) == 2)
+  ]);
+}
+
+// ── collectRefTables ─────────────────────────────────────────────────────────
+
+function testCollectRefTablesFindsRegularRefs() {
+  let regularTbls = filter(fn t => !isLookup(t.name, lookupTables), allTables);
+  let refs = collectRefTables(regularTbls, lookupTables);
+  assertions([
+    assertEqual(1, length(refs)),
+    assertEqual("customers", head(refs))  // orders FK to customers; order_status is a lookup
+  ]);
+}
+
+function testCollectRefTablesDeduplicates() {
+  // Two tables both FK-ing customers should only produce one ref
+  let t2 = Table {
+    "public", "invoices",
+    [col("id", PgSerial, false), col("customer_id", PgInteger, false)],
+    [PrimaryKey { "invoices_pkey", ["id"] },
+     ForeignKey { "invoices_cid", ["customer_id"], "customers", ["id"] }]
+  };
+  let refs = collectRefTables([ordersTable, t2], lookupTables);
+  assertions([assertEqual(1, length(refs))]);
+}
+
+// ── genCrud ───────────────────────────────────────────────────────────────────
+
+function testGenCrudCustomers() {
+  let result = genCrud(customersTable, "public", lookupTables);
+  assertions([
+    // rowToModel
+    assertTrue(length(split(result, "function rowToCustomerModel")) == 2),
+    // insert
+    assertTrue(length(split(result, "export async proc insertCustomer")) == 2),
+    assertTrue(length(split(result, "InsertOk")) == 2),
+    assertTrue(length(split(result, "InsertErr")) > 1),
+    // findById
+    assertTrue(length(split(result, "export async proc findCustomerById")) == 2),
+    assertTrue(length(split(result, "FindOk")) == 2),
+    // findAll
+    assertTrue(length(split(result, "export async proc findAllCustomers")) == 2),
+    // update
+    assertTrue(length(split(result, "export async proc updateCustomer")) == 2),
+    assertTrue(length(split(result, "MutOk")) > 1),
+    assertTrue(length(split(result, "MutErr")) > 1),
+    // delete
+    assertTrue(length(split(result, "export async proc deleteCustomer")) == 2)
+  ]);
+}
+
+function testGenCrudOmitsNoPkTable() {
+  let tableNoPk = Table { "public", "tags", [col("name", PgText, false)], [] };
+  assertions([assertEqual("", genCrud(tableNoPk, "public", lookupTables))]);
+}
+
+function testGenCrudFindByFk() {
+  let result = genCrud(ordersTable, "public", lookupTables);
+  // Orders has FK to customers -> findAllOrdersByCustomer should be generated
+  assertions([
+    assertTrue(length(split(result, "export async proc findAllOrdersByCustomer")) == 2),
+    assertTrue(length(split(result, "customerRefId(customerRef)")) == 2)
+  ]);
+}
+
+// ── genHeader ─────────────────────────────────────────────────────────────────
+
+function testGenHeader() {
+  let result = genHeader("public");
+  assertions([
+    assertTrue(length(split(result, "Generated by dbschema_gen.pf")) == 2),
+    assertTrue(length(split(result, "Source schema: public")) == 2),
+    assertTrue(length(split(result, "import * from \"io\";")) == 2),
+    assertTrue(length(split(result, "type MaybeId")) == 2),
+    assertTrue(length(split(result, "type InsertResult")) == 2),
+    assertTrue(length(split(result, "type FindResult")) == 2),
+    assertTrue(length(split(result, "function getStr")) == 2),
+    assertTrue(length(split(result, "function getInt")) == 2),
+    assertTrue(length(split(result, "type ParseResult")) == 2)
+  ]);
+}
+
+// ── genFingerprint ────────────────────────────────────────────────────────────
+
+function testGenFingerprint() {
+  let result = genFingerprint("12345678");
+  assertions([
+    assertTrue(length(split(result, "export let SCHEMA_FINGERPRINT = \"12345678\";")) == 2),
+    assertTrue(length(split(result, "verifySchema")) == 2)
+  ]);
+}
+
+// ── joinFields ────────────────────────────────────────────────────────────────
+
+function testJoinFieldsSingle() {
+  assertions([assertEqual("  name // String NOT NULL", joinFields(["  name // String NOT NULL"]))]);
+}
+function testJoinFieldsMultiple() {
+  let result = joinFields(["  name // String NOT NULL", "  email // String nullable"]);
+  assertions([
+    // First field gets comma before the comment
+    assertTrue(length(split(result, "name, // String NOT NULL")) == 2),
+    // Last field has no trailing comma
+    assertTrue(length(split(result, "email // String nullable")) == 2)
+  ]);
+}
+function testJoinFieldsEmpty() {
+  assertions([assertEqual("", joinFields([]))]);
+}
+
+// ── Suites ────────────────────────────────────────────────────────────────────
+
+let namingSuite = suite("Naming helpers", [
+  test("toPascal simple",           testToPascalSimple),
+  test("toPascal snake_case",       testToPascalSnakeCase),
+  test("toPascal single word",      testToPascalSingleWord),
+  test("toCamel simple",            testToCamelSimple),
+  test("toCamel snake_case",        testToCamelSnakeCase),
+  test("toCamel multi-part",        testToCamelMultiPart),
+  test("capitalise",                testCapitalise),
+  test("lcFirst",                   testLcFirst),
+  test("toTypeName plural",         testToTypeNamePlural),
+  test("toTypeName no-strip cases", testToTypeNameNoStrip),
+  test("toTypeName -ies",           testToTypeNameIes),
+  test("toModelName",               testToModelName),
+  test("toVariantName",             testToVariantName)
+]);
+
+let pfunTypeSuite = suite("pfunType", [
+  test("integer types -> Int",      testPfunTypeInt),
+  test("text types -> String",      testPfunTypeStr),
+  test("float types -> Float",      testPfunTypeFloat),
+  test("boolean -> Bool",           testPfunTypeBool),
+  test("bytea -> List<Byte>",       testPfunTypeBytea),
+  test("PgOther -> String",         testPfunTypeOther)
+]);
+
+let schemaSuite = suite("Schema helpers", [
+  test("isLookup true",             testIsLookupTrue),
+  test("isLookup false",            testIsLookupFalse),
+  test("isLookup empty list",       testIsLookupEmpty),
+  test("fkForColumn found",         testFkForColumnFound),
+  test("fkForColumn none for PK",   testFkForColumnNone),
+  test("fkForColumn no constraints",testFkForColumnNoConstraints),
+  test("nullNote nullable",         testNullNoteNullable),
+  test("nullNote NOT NULL",         testNullNoteNotNull),
+  test("columnFieldType simple",    testColumnFieldTypeSimple),
+  test("columnFieldType nullable",  testColumnFieldTypeNullable),
+  test("columnFieldType FK regular",testColumnFieldTypeFkToRegular),
+  test("columnFieldType FK lookup", testColumnFieldTypeFkToLookup),
+  test("columnFieldName plain",     testColumnFieldNamePlain),
+  test("columnFieldName camel",     testColumnFieldNameCamel),
+  test("columnFieldName FK regular",testColumnFieldNameFkToRegular),
+  test("columnFieldName FK lookup", testColumnFieldNameFkToLookup),
+  test("pkColumns found",           testPkColumnsFound),
+  test("pkColumns none",            testPkColumnsNone),
+  test("omitFromInsert serial",     testOmitSerial),
+  test("omitFromInsert default",    testOmitWithDefault),
+  test("omitFromInsert plain col",  testDontOmitPlainCol)
+]);
+
+let sqlSuite = suite("SQL generation", [
+  test("genPlaceholders",           testGenPlaceholders),
+  test("genSetClauses",             testGenSetClauses),
+  test("genInsertSql basic",        testGenInsertSql),
+  test("genInsertSql omits default",testGenInsertSqlOmitsDefault),
+  test("genUpdateSql",              testGenUpdateSql),
+  test("genDbParam text",           testGenDbParamText),
+  test("genDbParam int",            testGenDbParamInt),
+  test("genDbParam float",          testGenDbParamFloat),
+  test("genDbParam bool",           testGenDbParamBool),
+  test("genDbParam numeric",        testGenDbParamNumeric),
+  test("genRowGetter str",          testGenRowGetterStr),
+  test("genRowGetter int",          testGenRowGetterInt),
+  test("genRowGetter bool",         testGenRowGetterBool),
+  test("genRowGetter float",        testGenRowGetterFloat)
+]);
+
+let codegenSuite = suite("Code generation", [
+  test("genLookupEnum type/parse/toStr",   testGenLookupEnum),
+  test("genLookupEnum ParseFail fallback", testGenLookupEnumParseFailFallthrough),
+  test("genRefType regular table",         testGenRefTypeRegularTable),
+  test("genRefType lookup -> empty",       testGenRefTypeLookupIsEmpty),
+  test("genRowToModel customers",          testGenRowToModelCustomers),
+  test("genRowToModel with FK",            testGenRowToModelWithFk),
+  test("genRecordType customers",          testGenRecordTypeCustomers),
+  test("genRecordType orders",             testGenRecordTypeOrders),
+  test("genRefIdHelper",                   testGenRefIdHelper),
+  test("collectRefTables",                 testCollectRefTablesFindsRegularRefs),
+  test("collectRefTables deduplicates",    testCollectRefTablesDeduplicates),
+  test("genCrud customers",                testGenCrudCustomers),
+  test("genCrud no-PK table -> empty",     testGenCrudOmitsNoPkTable),
+  test("genCrud findByFk generated",       testGenCrudFindByFk)
+]);
+
+let headerSuite = suite("File structure", [
+  test("genHeader contains imports/types/getters", testGenHeader),
+  test("genFingerprint constant",                  testGenFingerprint),
+  test("joinFields single",                        testJoinFieldsSingle),
+  test("joinFields multiple",                      testJoinFieldsMultiple),
+  test("joinFields empty",                         testJoinFieldsEmpty)
+]);
+
+runSuites([namingSuite, pfunTypeSuite, schemaSuite, sqlSuite, codegenSuite, headerSuite]);

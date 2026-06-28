@@ -1,0 +1,102 @@
+/*
+  examples/db/dbschema_gen.pf -- Generates a Pfun data model from a live PostgreSQL schema.
+
+  Reads dbschema_config.pf for connection string, schema name, and lookup tables.
+  Writes the generated model to:
+    examples/db/data_model/<schema>_data_model.pf
+
+  Run with:
+    pfun examples/db/dbschema_gen.pf
+
+  All generation logic lives in lib/dataModelGen.pf (pure, importable, testable).
+  This file only handles: DB connection, schema loading, lookup value fetching,
+  fingerprinting, file writing.
+*/
+
+import * from "io";
+import * from "file";
+import * from "db/postgresql";
+import * from "../../lib/dbschema";
+import * from "../../lib/db/dbschema_utils";
+import * from "../../lib/dataModelGen";
+import * from "./dbschema_config";
+
+// ── IO wrappers ───────────────────────────────────────────────────────────────
+
+proc mkdirSafe(path) {
+  match mkdirP(path) with
+  | Ok _  -> true
+  | Err e -> { println("Could not create directory '" + path + "': " + e.message); false };
+}
+
+proc writeSafe(path, content) {
+  match writeFile(path, content) with
+  | Ok _  -> true
+  | Err e -> { println("Could not write file '" + path + "': " + e.message); false };
+}
+
+// ── Lookup section fetching ───────────────────────────────────────────────────
+// Fetches values from DB and calls the pure genLookupEnum for each table.
+
+async proc fetchLookupSections(conn, lookupTbls) {
+  if length(lookupTbls) == 0 then [] else {
+    let t    = head(lookupTbls);
+    let rest = tail(lookupTbls);
+    let vals = await loadLookupValues(conn, SCHEMA, t.name);
+    let sec  = genLookupEnum(t, vals);
+    let more = await fetchLookupSections(conn, rest);
+    [sec] + more;
+  }
+}
+
+// ── Main ──────────────────────────────────────────────────────────────────────
+
+export async proc generate(conn, meta, lookupValues, outputPath) {
+  let tables     = meta.tables;
+  let lookupTbls = filter(fn t => isLookup(t.name, LOOKUP_TABLES), tables);
+
+  let lookupSections = await fetchLookupSections(conn, lookupTbls);
+  let fp             = fingerprintSchema(tables, lookupValues);
+
+  // generateOutput assembles the full file; we replace its fingerprint with
+  // the real one (which includes lookup values, unlike the stub in the lib).
+  let output = generateOutput(meta.schemaName, tables, lookupSections, LOOKUP_TABLES);
+
+  // Patch the fingerprint line with the real value (includes lookup data).
+  let fpLine    = "export let SCHEMA_FINGERPRINT = \"" + fp + "\";\n";
+  let stubFp    = fingerprintSchema(tables, []);
+  let stubFpLine = "export let SCHEMA_FINGERPRINT = \"" + stubFp + "\";\n";
+  let patchedOutput = join(split(output, stubFpLine), fpLine);
+
+  let writeOk = writeSafe(outputPath, patchedOutput);
+  if writeOk then {
+    println("Written: " + outputPath);
+    println("Fingerprint: " + fp);
+  }
+}
+
+async proc main() {
+  println("Connecting to " + CONNECTION_STRING + "...");
+  let conn = await dbConnect(CONNECTION_STRING);
+  match conn with
+  | Err e -> println("Connect failed: " + e.message)
+  | Ok c  -> {
+      println("Loading schema '" + SCHEMA + "'...");
+      let meta = await loadSchema(c.value, SCHEMA);
+      match meta with
+      | SchemaErr e -> println("Schema load failed: " + e.message)
+      | SchemaOk s  -> {
+          let lookupVals = await loadAllLookupValues(c.value, SCHEMA, LOOKUP_TABLES);
+          let outDir  = "examples/db/data_model";
+          let outFile = outDir + "/" + SCHEMA + "_data_model.pf";
+          let dirOk = mkdirSafe(outDir);
+          if dirOk then { await generate(c.value, s.meta, lookupVals, outFile) }
+        };
+      let closed = await dbClose(c.value);
+      match closed with
+      | Ok _  -> {}
+      | Err e -> println("Close failed: " + e.message);
+    };
+}
+
+main();
