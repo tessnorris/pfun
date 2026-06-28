@@ -47,13 +47,7 @@ function getValueType(v: any, schemas?: Map<string, any[]>): string {
     if (schemas) {
       const schemaList = schemas.get(v.__type);
       const isGeneric = schemaList?.some((s: any) => s.generic) ?? false;
-      if (isGeneric) {
-        const fieldTypes = Object.keys(v)
-          .filter(k => k !== '__type' && k !== '__union')
-          .map(k => getValueType(v[k], schemas))
-          .join(',');
-        return `${baseName}<${fieldTypes}>`;
-      }
+      if (isGeneric) return baseName;
     }
     return baseName;
   }
@@ -481,6 +475,10 @@ export class TypeRegistry {
       if (!existing.some(s => s.unionName === unionName)) {
         existing.push({ fields: v.fields, inferredTypes: null, unionName, generic });
         this.schemas.set(v.name, existing);
+      } else if (generic) {
+        // Already registered — propagate generic flag if this registration says generic.
+        const entry = existing.find(s => s.unionName === unionName);
+        if (entry) entry.generic = true;
       }
       variantNames.add(v.name);
       if (v.fields.length === 0 && globals) {

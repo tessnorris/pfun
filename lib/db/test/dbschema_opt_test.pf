@@ -1,0 +1,95 @@
+// -----------------------------------------------------------------------------
+// lib/db/test/dbschema_opt_test.pf
+//
+// Tests for getOptStr and getOptInt together.
+// Previously required separate files due to Option monomorphism — now that
+// Option is generic, both can coexist in the same file.
+//
+// Run with:  pfun lib/db/test/dbschema_opt_test.pf
+// -----------------------------------------------------------------------------
+
+import * from "io";
+import * from "db/postgresql";
+import * from "../../testing/testing";
+import * from "../../testing/assertions";
+import * from "../../testing/runner";
+import * from "../../dbschema";
+
+function strRow(col, val) { [Pair { col, DbText { val } }]; }
+function intRow(col, val) { [Pair { col, DbInt { val } }]; }
+function nullRow(col)     { [Pair { col, DbNull }]; }
+
+// ── getOptStr ─────────────────────────────────────────────────────────────────
+
+function testGetOptStrPresent() {
+  assertions([assertSome(getOptStr(strRow("note", "hi"), "note"))]);
+}
+
+function testGetOptStrNull() {
+  assertions([assertNone(getOptStr(nullRow("note"), "note"))]);
+}
+
+function testGetOptStrMissing() {
+  assertions([assertNone(getOptStr(strRow("note", "hi"), "absent"))]);
+}
+
+function testGetOptStrValue() {
+  let result = getOptStr(strRow("note", "hello"), "note");
+  match result with
+  | None   -> assertions([fail("Expected Some")])
+  | Some v -> assertions([assertEqual("hello", v.value)]);
+}
+
+// ── getOptInt ─────────────────────────────────────────────────────────────────
+
+function testGetOptIntPresent() {
+  assertions([assertSome(getOptInt(intRow("ref", 5), "ref"))]);
+}
+
+function testGetOptIntNull() {
+  assertions([assertNone(getOptInt(nullRow("ref"), "ref"))]);
+}
+
+function testGetOptIntMissing() {
+  assertions([assertNone(getOptInt(intRow("ref", 5), "absent"))]);
+}
+
+function testGetOptIntValue() {
+  let result = getOptInt(intRow("ref", 42), "ref");
+  match result with
+  | None   -> assertions([fail("Expected Some")])
+  | Some v -> assertions([assertEqual(42, v.value)]);
+}
+
+// ── Mixed Option list ─────────────────────────────────────────────────────────
+// Verifies that None and Some{T} coexist in the same list.
+
+function testMixedOptionList() {
+  let xs = [None, None, Some { 7 }, Some { 8 }];
+  assertions([
+    assertEqual(4, length(xs)),
+    assertNone(head(xs))
+  ]);
+}
+
+// ── Suites ────────────────────────────────────────────────────────────────────
+
+let optStrSuite = suite("getOptStr", [
+  test("Some for present value",  testGetOptStrPresent),
+  test("None for null column",    testGetOptStrNull),
+  test("None for missing column", testGetOptStrMissing),
+  test("value inside Some",       testGetOptStrValue)
+]);
+
+let optIntSuite = suite("getOptInt", [
+  test("Some for present value",  testGetOptIntPresent),
+  test("None for null column",    testGetOptIntNull),
+  test("None for missing column", testGetOptIntMissing),
+  test("value inside Some",       testGetOptIntValue)
+]);
+
+let optListSuite = suite("Option polymorphism", [
+  test("None and Some{T} can coexist in a list", testMixedOptionList)
+]);
+
+runSuites([optStrSuite, optIntSuite, optListSuite]);

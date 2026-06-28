@@ -1595,7 +1595,7 @@ export function generateConstraints(
   registry.registerUnion('Option', [
     { name: 'Some', fields: ['value'] },
     { name: 'None', fields: [] },
-  ]);
+  ], /* generic = */ true);
 
   currentTypeImportResolver  = resolver ?? null;
   currentUnionImportResolver = unionResolver ?? null;

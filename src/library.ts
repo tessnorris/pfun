@@ -30,6 +30,7 @@ export const stdlibTypes: RegistryType[] = [
       { name: 'Some', fields: ['value'] },
       { name: 'None', fields: [] },
     ],
+    generic: true,
   },
   {
     kind: 'plain',
