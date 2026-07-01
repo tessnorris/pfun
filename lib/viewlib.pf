@@ -33,6 +33,8 @@ export type View = {
                                            //   choices : List<Choice>
                                            //   onChange : fn Str -> Msg
   | VContent  : block                      // embed a Block from htmllib
+  | VColorInput : name, value, onInput
+  | VRangeInput : name, value, min, max, step, onInput
 }
 
 // ── Constructors ──────────────────────────────────────────────────────────────
@@ -72,6 +74,14 @@ export function vselect(name, choices, selected, onChange) {
   VSelect { name, choices, selected, onChange };
 }
 export function vcontent(block) { VContent { block }; }
+
+export function vcolor(name, value, onInput) {
+  VColorInput { name, value, onInput };
+}
+
+export function vrange(name, value, min, max, step, onInput) {
+  VRangeInput { name, value, min, max, step, onInput };
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -115,7 +125,20 @@ export function renderView(view, prefix) {
       join(map(fn c => renderViewChoice(c, s.selected), s.choices), "") +
       "</select>\n";
     }
-  | VContent c   -> renderBlock(c.block, 0);
+  | VContent c   -> renderBlock(c.block, 0)
+  | VColorInput i -> {
+    "<input type=\"color\" data-pfun-input=\"" + prefix + "input_" + escapeAttr(i.name) + "\"" +
+    " name=\"" + escapeAttr(i.name) + "\"" +
+    " value=\"" + escapeAttr(i.value) + "\">\n";
+    }
+  | VRangeInput r -> {
+    "<input type=\"range\" data-pfun-input=\"" + prefix + "input_" + escapeAttr(r.name) + "\"" +
+    " name=\"" + escapeAttr(r.name) + "\"" +
+    " value=\"" + escapeAttr(r.value) + "\"" +
+    " min=\"" + escapeAttr(r.min) + "\"" +
+    " max=\"" + escapeAttr(r.max) + "\"" +
+    " step=\"" + escapeAttr(r.step) + "\">\n";
+    }
 }
 
 export function renderViewChoice(c, selected) {

@@ -1,0 +1,10 @@
+import * from "io";
+
+proc countTo(n) {
+  var i = 1;
+  while (i <= n) {
+    println(__str__(i));
+    i = i + 1;
+  }
+}
+countTo(5);

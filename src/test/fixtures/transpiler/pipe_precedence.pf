@@ -1,0 +1,6 @@
+import * from "io";
+function double(x) { x * 2; }
+// arithmetic binds tighter than |>
+println(__str__(2 + 3 |> double));   // double(5) = 10
+// ternary binds tighter than |>
+println(__str__(true ? 4 : 0 |> double));  // double(4) = 8

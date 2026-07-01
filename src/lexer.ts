@@ -29,6 +29,7 @@ export type Token =
   // ── Bitwise operators ─────────────────────────────────────────────────────
   | { type: 'BitAndToken'; pos?: SourcePos }     // &  (single)
   | { type: 'BitOrToken'; pos?: SourcePos }      // |  (single, mid-expression; parser disambiguates from PipeToken)
+  | { type: 'PipeArrowToken'; pos?: SourcePos }  // |> (forward pipe: x |> f  desugars to  f(x))
   | { type: 'ShiftLeftToken'; pos?: SourcePos }  // <<
   | { type: 'ShiftRightToken'; pos?: SourcePos } // >>
   | { type: 'RParenToken'; pos?: SourcePos } | { type: 'LBraceToken'; pos?: SourcePos } | { type: 'RBraceToken'; pos?: SourcePos }
@@ -134,7 +135,9 @@ export class Lexer {
         // '|' — '||' is boolean or; single '|' is PipeToken (match arms / union defs).
         // The parser re-interprets PipeToken as BitOrToken in expression context.
         case '|':
-          tokens.push(this.match('|') ? { type: 'BooleanOr', pos: tokPos } : { type: 'PipeToken', pos: tokPos });
+          if      (this.match('|')) tokens.push({ type: 'BooleanOr',     pos: tokPos });
+          else if (this.match('>')) tokens.push({ type: 'PipeArrowToken', pos: tokPos });
+          else                      tokens.push({ type: 'PipeToken',      pos: tokPos });
           break;
         // '<' — could be <=, <-, <<, or plain <
         case '<':

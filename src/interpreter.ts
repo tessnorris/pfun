@@ -634,6 +634,27 @@ export class StdinBuffer {
  * @param isBuiltin    True if importPath names a registered built-in
  *                      module (e.g. 'io').
  */
+/**
+ * Expand a leading `$PFUN_HOME/` token in an import path to the value of
+ * the PFUN_HOME environment variable, enabling app files installed outside
+ * the Pfun project tree to refer to the standard libraries portably:
+ *
+ *   import * from "$PFUN_HOME/lib/htmllib";   // works from any directory
+ *
+ * If PFUN_HOME is not set, the token is left unexpanded and path resolution
+ * will fail with a normal "module not found" error, which is the right
+ * diagnostic — the environment is misconfigured.
+ *
+ * Only a leading `$PFUN_HOME/` is expanded (not mid-path occurrences),
+ * matching how shell variable expansion works for path prefixes.
+ */
+export function expandPfunHome(importPath: string): string {
+  if (!importPath.startsWith('$PFUN_HOME/')) return importPath;
+  const pfunHome = process.env.PFUN_HOME;
+  if (!pfunHome) return importPath; // leave unexpanded; resolution will report a clear error
+  return pfunHome + importPath.slice('$PFUN_HOME'.length);
+}
+
 export function resolveModulePath(
   importPath: string,
   fromDir: string,
@@ -641,9 +662,10 @@ export function resolveModulePath(
   isBuiltin: boolean,
 ): string {
   if (isBuiltin) return `__builtin__:${importPath}`;
-  const base = (importPath.startsWith('./') || importPath.startsWith('../'))
-    ? path.resolve(fromDir, importPath)
-    : path.resolve(libDir, importPath);
+  const expanded = expandPfunHome(importPath);
+  const base = (expanded.startsWith('./') || expanded.startsWith('../') || path.isAbsolute(expanded))
+    ? path.resolve(fromDir, expanded)
+    : path.resolve(libDir, expanded);
   return base.endsWith('.pf') ? base : base + '.pf';
 }
 

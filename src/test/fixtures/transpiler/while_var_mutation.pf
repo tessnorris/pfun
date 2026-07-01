@@ -1,0 +1,13 @@
+import * from "io";
+
+proc collatz(n) {
+  var steps = 0;
+  var x = n;
+  while (x != 1) {
+    if x % 2 == 0 then x = x / 2 else x = x * 3 + 1;
+    steps = steps + 1;
+  }
+  steps;
+}
+println(__str__(collatz(6)));
+println(__str__(collatz(27)));

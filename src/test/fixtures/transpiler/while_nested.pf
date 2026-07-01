@@ -1,0 +1,17 @@
+import * from "io";
+
+proc multiplicationTable(size) {
+  var i = 1;
+  while (i <= size) {
+    var j = 1;
+    var row = "";
+    while (j <= size) {
+      if length(row) > 0 then row = row + " ";
+      row = row + __str__(i * j);
+      j = j + 1;
+    }
+    println(row);
+    i = i + 1;
+  }
+}
+multiplicationTable(3);

@@ -441,12 +441,12 @@ function $map(f, v) {
   if ($isLazy(v)) return new $LazyMap(f, v);
   if (typeof v === 'string') {
     const mapped = [...v].map(c => f(new PfunChar(c)));
-    if (mapped.every(x => x instanceof PfunChar)) return mapped.map(x => x.value).join('');
+    if (mapped.length > 0 && mapped.every(x => x instanceof PfunChar)) return mapped.map(x => x.value).join('');
     return mapped;
   }
   if (Array.isArray(v)) {
     const mapped = v.map(x => f(x));
-    if (mapped.every(x => x instanceof PfunChar)) return mapped.map(x => x.value).join('');
+    if (mapped.length > 0 && mapped.every(x => x instanceof PfunChar)) return mapped.map(x => x.value).join('');
     return mapped;
   }
   throw new Error('map() requires a list, string, or lazy sequence.');
@@ -773,30 +773,69 @@ function $mountHtml(html) {
   const wrapper = document.createElement('div');
   wrapper.innerHTML = typeof html === 'string' ? html : $stringify(html);
   el.appendChild(wrapper);
+  $restoreFocus();
 }
 
 function $clearOutput() {
   const el = _getOutput();
-  if (el) el.innerHTML = '';
+  if (el) {
+    $saveFocus();
+    el.innerHTML = '';
+  }
 }
 
-// attachDomHandler(key, pfunFn)
-// Finds every element whose data-pfun-click / data-pfun-input /
-// data-pfun-check / data-pfun-change attribute matches `key` and attaches
-// the appropriate DOM event listener.  pfunFn receives a Pfun-typed value:
+// Save/restore focus around a full DOM replacement so that text inputs
+// don't lose focus on every keystroke.
+let _focusedInputName = null;
+let _focusedInputSelStart = null;
+let _focusedInputSelEnd = null;
+
+function $saveFocus() {
+  const active = document.activeElement;
+  if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA') && active.name) {
+    _focusedInputName = active.name;
+    _focusedInputSelStart = active.selectionStart;
+    _focusedInputSelEnd = active.selectionEnd;
+  } else {
+    _focusedInputName = null;
+  }
+}
+
+function $restoreFocus() {
+  if (!_focusedInputName) return;
+  const el = _getOutput();
+  if (!el) return;
+  const input = el.querySelector(`input[name="${CSS.escape(_focusedInputName)}"], textarea[name="${CSS.escape(_focusedInputName)}"]`);
+  if (!input) return;
+  input.focus();
+  try {
+    input.setSelectionRange(_focusedInputSelStart, _focusedInputSelEnd);
+  } catch (_) {}
+  _focusedInputName = null;
+}
+
+// attachDomHandler(key, occurrence, pfunFn)
+// Finds the Nth element (0-indexed) whose data-pfun-* attribute matches
+// `key` and attaches the appropriate DOM event listener.  Using occurrence
+// index rather than attaching to all matches means that when multiple
+// elements share the same key (e.g. several "Edit" or "Dismiss" buttons
+// rendered in a list), each gets its own distinct handler closure.
+// pfunFn receives a Pfun-typed value:
 //   click  → true (Bool)
 //   input  → the string value
 //   check  → true/false (Bool)
 //   change → the selected string value
-function $attachDomHandler(key, pfunFn) {
+function $attachDomHandler(key, occurrence, pfunFn) {
   const output = _getOutput();
   if (!output) return;
+  const n = typeof occurrence === 'bigint' ? Number(occurrence) : (occurrence ?? 0);
   const tryAttach = (attr, event, getValue) => {
-    output.querySelectorAll(`[${attr}="${CSS.escape(key)}"]`).forEach(el => {
-      el.addEventListener(event, e => {
-        const val = getValue(e);
-        pfunFn(val);
-      });
+    const els = output.querySelectorAll(`[${attr}="${CSS.escape(key)}"]`);
+    const el = els[n];
+    if (!el) return;
+    el.addEventListener(event, e => {
+      const val = getValue(e);
+      pfunFn(val);
     });
   };
   tryAttach('data-pfun-click',  'click',  ()  => true);
@@ -817,7 +856,7 @@ window.__pfunRuntime = {
   PfunChar, PfunByte, PfunArray, PfunDict, PfunBuffer,
   $curry, $memoize,
   $char, $byte, $record, $registerType, $schema,
-  $stringify, $println, $print, $flushStdout, $mountHtml, $clearOutput, $attachDomHandler, $httpPost, $truthy,
+  $stringify, $println, $print, $flushStdout, $mountHtml, $clearOutput, $saveFocus, $restoreFocus, $attachDomHandler, $httpPost, $truthy,
   $readln, $readChar, $scriptArgs, $getEnv, $envVars,
   $ck,
   $add, $sub, $mul, $div, $mod, $neg,

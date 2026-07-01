@@ -103,6 +103,7 @@ function registerAllUnions(stmts: Stmt[], registry: UnionRegistry, resolver?: Un
       case 'UnionTypeStmt':  registry.registerUnion(s.name, s.variants); break;
       case 'IfStmt':         walk(s.thenBranch); if (s.elseBranch) walk(s.elseBranch); break;
       case 'BlockStmt':      s.statements.forEach(walk); break;
+      case 'WhileStmt':      (s as any).body.forEach(walk); break;
       case 'FunctionStmt':
       case 'ProcedureStmt':  s.body.forEach(walk); break;
       case 'ExportStmt':     walk(s.declaration); break;
@@ -509,6 +510,7 @@ function checkExhaustiveness(stmts: Stmt[], source: string, unionResolver?: Unio
       case 'VarStmt':        walkExpr(s.initializer); break;
       case 'ReturnStmt':     if (s.value) walkExpr(s.value); break;
       case 'IfStmt':         walkExpr(s.condition); walkStmt(s.thenBranch); if (s.elseBranch) walkStmt(s.elseBranch); break;
+      case 'WhileStmt':      walkExpr((s as any).condition); (s as any).body.forEach(walkStmt); break;
       case 'BlockStmt':      s.statements.forEach(walkStmt); break;
       case 'FunctionStmt':
       case 'ProcedureStmt':  s.body.forEach(walkStmt); break;

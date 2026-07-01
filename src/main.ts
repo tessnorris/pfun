@@ -7,6 +7,7 @@ import { Lexer } from './lexer';
 import { Parser } from './parser';
 import { checkTypes } from './typechecker';
 import { checkProgram } from './wholeProgramCheck';
+import type { TypeImportTable, TypeImportResolver } from './inferencer';
 import { Interpreter, ModuleLoader } from './interpreter';
 import { stdlibFunctions, stdlibTypes } from './library';
 import { mutStructuresFunctions, mutStructuresTypes } from './mutStructures';
@@ -597,6 +598,18 @@ function flushQueue(interp: Interpreter, queue: string[]): void {
 if (require.main === module) {
   const args = process.argv.slice(2);
 
+  // ── $PFUN_HOME expansion ──────────────────────────────────────────────────
+  // Expand a leading $PFUN_HOME/ token in a user-module import path.
+  // Mirrors expandPfunHome() in interpreter.ts (used by the runtime and
+  // wholeProgramCheck); this copy covers the compile-only paths in -c,
+  // --serve, and --validate that bypass resolveModulePath entirely.
+  function expandPfunHome(importPath: string): string {
+    if (!importPath.startsWith('$PFUN_HOME/')) return importPath;
+    const pfunHome = process.env.PFUN_HOME;
+    if (!pfunHome) return importPath;
+    return pfunHome + importPath.slice('$PFUN_HOME'.length);
+  }
+
   // ── Builtin module union table ────────────────────────────────────────────
   // Used by both -c and --serve to tell the type inferencer which union types
   // each builtin module exports — mirrors loader.builtinUnionTypes().
@@ -842,7 +855,18 @@ if (require.main === module) {
       compiled.add(absolutePath);
 
       const source = fs.readFileSync(absolutePath, 'utf-8');
-      const stmts  = new Parser(new Lexer(source).lex()).parse();
+      let stmts;
+      try {
+        stmts = new Parser(new Lexer(source).lex()).parse();
+      } catch (e) {
+        const rawErr = e instanceof Error ? e : new Error(String(e));
+        const pfunErr = rawErr instanceof PfunError
+          ? rawErr
+          : buildPfunError(rawErr, source, (rawErr as any).pos, null, () => undefined, { stringify: String });
+        console.error(`In ${absolutePath}:`);
+        console.error(pfunErr.pfunMessage);
+        process.exit(1);
+      }
 
       // Recurse into user-module dependencies first.
       const srcDir = path.dirname(absolutePath);
@@ -850,7 +874,8 @@ if (require.main === module) {
         if (stmt.type !== 'ImportStmt') continue;
         const imp = stmt as any;
         if (BUILTIN_PATHS.has(imp.path)) continue;
-        const depPf   = imp.path.endsWith('.pf') ? imp.path : imp.path + '.pf';
+        const expanded = expandPfunHome(imp.path);
+        const depPf   = expanded.endsWith('.pf') ? expanded : expanded + '.pf';
         const depPath = path.resolve(srcDir, depPf);
         if (!fs.existsSync(depPath)) {
           console.error(`Module not found: ${depPath} (imported by ${absolutePath})`);
@@ -914,7 +939,18 @@ if (require.main === module) {
     const usedBuiltinMods = new Set<string>();
     for (const absPath of compiled) {
       const source = fs.readFileSync(absPath, 'utf-8');
-      const stmts  = new Parser(new Lexer(source).lex()).parse();
+      let stmts;
+      try {
+        stmts = new Parser(new Lexer(source).lex()).parse();
+      } catch (e) {
+        const rawErr = e instanceof Error ? e : new Error(String(e));
+        const pfunErr = rawErr instanceof PfunError
+          ? rawErr
+          : buildPfunError(rawErr, source, (rawErr as any).pos, null, () => undefined, { stringify: String });
+        console.error(`In ${absPath}:`);
+        console.error(pfunErr.pfunMessage);
+        process.exit(1);
+      }
       for (const stmt of stmts) {
         if (stmt.type !== 'ImportStmt') continue;
         const imp = stmt as any;
@@ -958,9 +994,16 @@ if (require.main === module) {
       }
       console.log(`Inlined to: ${path.relative(cwd, singleOut)}`);
     }
-  } else if (args.includes('--serve')) {
-    // ── Serve mode ───────────────────────────────────────────────────────────
-    // pfun --serve <entry.pf> [--port N]
+  } else if (args.includes('--serve') || args.includes('--validate')) {
+    // ── Serve / Validate mode ─────────────────────────────────────────────────
+    // pfun --serve    <entry.pf> [--port N]   — compile + launch HTTP server
+    // pfun --validate <entry.pf>              — compile + static-check only (no server)
+    //
+    // validateOnly skips require()ing the compiled server output and starting
+    // the HTTP server; everything else (parse, type-check, transpile for both
+    // the browser bundle and the Node server side) runs identically.
+    const validateOnly = args.includes('--validate');
+    (async () => {
     //
     // Two sub-modes detected by inspecting the entry file:
     //
@@ -976,13 +1019,14 @@ if (require.main === module) {
     const cliPort = portArg !== -1 ? parseInt(args[portArg + 1], 10) : -1;
 
     const positional = args.filter((a, i) => {
-      if (a === '--serve' || a === '--port') return false;
+      if (a === '--serve' || a === '--validate' || a === '--port') return false;
       if (i > 0 && args[i - 1] === '--port') return false;
       return true;
     });
 
     if (positional.length === 0) {
       console.error('Usage: pfun --serve <script.pf> [--port N]');
+      console.error('       pfun --validate <script.pf>');
       process.exit(1);
     }
 
@@ -1005,17 +1049,29 @@ if (require.main === module) {
 
     // ── Parse the entry file to detect app manifest ───────────────────────
     const entrySource = fs.readFileSync(entryPath, 'utf-8');
-    const entryStmts  = new Parser(new Lexer(entrySource).lex()).parse();
+    let entryStmts;
+    try {
+      entryStmts = new Parser(new Lexer(entrySource).lex()).parse();
+    } catch (e) {
+      const rawErr = e instanceof Error ? e : new Error(String(e));
+      const pfunErr = rawErr instanceof PfunError
+        ? rawErr
+        : buildPfunError(rawErr, entrySource, (rawErr as any).pos, null, () => undefined, { stringify: String });
+      console.error(`In ${entryPath}:`);
+      console.error(pfunErr.pfunMessage);
+      process.exit(1);
+    }
 
     // Extract top-level `let name = "string"` and `let name = number` values
     function extractManifestValues(stmts: any[]): Record<string, string | number> {
       const vals: Record<string, string | number> = {};
       for (const s of stmts) {
-        if (s.type !== 'LetStmt') continue;
-        const init = s.initializer ?? s.init ?? s.value;
+        const stmt = s.type === 'ExportStmt' ? s.declaration : s;
+        if (stmt.type !== 'LetStmt') continue;
+        const init = stmt.initializer ?? stmt.init ?? stmt.value;
         if (!init) continue;
-        if (init.type === 'StrExpr')  vals[s.name] = init.value;
-        if (init.type === 'IntExpr')  vals[s.name] = Number(init.value);
+        if (init.type === 'StrExpr')  vals[stmt.name] = init.value;
+        if (init.type === 'IntExpr')  vals[stmt.name] = Number(init.value);
       }
       return vals;
     }
@@ -1026,6 +1082,114 @@ if (require.main === module) {
     const entryDir    = path.dirname(entryPath);
     const port        = cliPort !== -1 ? cliPort : (typeof manifest.port === 'number' ? manifest.port : 3170);
     const apiPath     = typeof manifest.apiPath === 'string' ? manifest.apiPath : '/api';
+
+    // ── Data model generation (--validate only) ───────────────────────────
+    // If the manifest has `dataModelOut` and `connectionString`/`schema`,
+    // regenerate the data model from the live DB before type-checking.
+    // This ensures the static check validates against the actual DB schema.
+    if (validateOnly && isAppManifest && typeof manifest.dataModelOut === 'string') {
+      const connectionString = typeof manifest.CONNECTION_STRING === 'string' ? manifest.CONNECTION_STRING : null;
+      const schema           = typeof manifest.SCHEMA === 'string' ? manifest.SCHEMA : 'public';
+      const lookupTablesRaw  = typeof manifest.lookupTables === 'string' ? manifest.lookupTables : '';
+      const lookupTablesList = lookupTablesRaw.split(',').map((s: string) => s.trim()).filter(Boolean);
+      const dataModelOutDir  = path.resolve(entryDir, manifest.dataModelOut as string);
+      const dataModelOutFile = path.join(dataModelOutDir, `${schema}_data_model.pf`);
+
+      if (!connectionString) {
+        console.error('--validate: manifest has dataModelOut but no connectionString');
+        process.exit(1);
+      }
+
+      const pfunHome = process.env.PFUN_HOME;
+      if (!pfunHome) {
+        console.error('--validate: $PFUN_HOME must be set to regenerate data model');
+        process.exit(1);
+      }
+
+      // Build a self-contained temp Pfun script that runs the generation
+      // with the manifest's connection/schema/lookup values injected as
+      // literals, without depending on any project-local config file.
+      const lookupTablesLiteral = '[' + lookupTablesList.map((t: string) => `"${t}"`).join(', ') + ']';
+      const genScript = `
+import * from "io";
+import * from "file";
+import * from "db/postgresql";
+import * from "$PFUN_HOME/lib/dbschema";
+import * from "$PFUN_HOME/lib/db/dbschema_utils";
+import * from "$PFUN_HOME/lib/dataModelGen";
+
+let CONNECTION_STRING = ${JSON.stringify(connectionString)};
+let SCHEMA            = ${JSON.stringify(schema)};
+let LOOKUP_TABLES     = ${lookupTablesLiteral};
+let OUT_DIR           = ${JSON.stringify(dataModelOutDir)};
+let OUT_FILE          = ${JSON.stringify(dataModelOutFile)};
+
+proc mkdirSafe(p) {
+  match mkdirP(p) with
+  | Ok _  -> true
+  | Err e -> { println("Could not create directory '" + p + "': " + e.message); false };
+}
+
+proc writeSafe(p, content) {
+  match writeFile(p, content) with
+  | Ok _  -> true
+  | Err e -> { println("Could not write file '" + p + "': " + e.message); false };
+}
+
+async proc fetchLookupSections(conn, lookupTbls) {
+  if length(lookupTbls) == 0 then [] else {
+    let t    = head(lookupTbls);
+    let rest = tail(lookupTbls);
+    let vals = await loadLookupValues(conn, SCHEMA, t.name);
+    let sec  = genLookupEnum(t, vals);
+    let more = await fetchLookupSections(conn, rest);
+    [sec] + more;
+  }
+}
+
+async proc main() {
+  println("Generating data model from " + CONNECTION_STRING + "...");
+  let conn = await dbConnect(CONNECTION_STRING);
+  match conn with
+  | Err e -> { println("Connect failed: " + e.message); exit(1) }
+  | Ok c  -> {
+      let meta = await loadSchema(c.value, SCHEMA);
+      match meta with
+      | SchemaErr e -> { println("Schema load failed: " + e.message); exit(1) }
+      | SchemaOk s  -> {
+          let tables     = s.meta.tables;
+          let lookupTbls = filter(fn t => isLookup(t.name, LOOKUP_TABLES), tables);
+          let lookupVals = await loadAllLookupValues(c.value, SCHEMA, LOOKUP_TABLES);
+          let lookupSections = await fetchLookupSections(c.value, lookupTbls);
+          let fp         = fingerprintSchema(tables, lookupVals);
+          let output     = generateOutput(s.meta.schemaName, tables, lookupSections, LOOKUP_TABLES);
+          let fpLine     = "export let SCHEMA_FINGERPRINT = \\"" + fp + "\\";\\n";
+          let stubFp     = fingerprintSchema(tables, []);
+          let stubFpLine = "export let SCHEMA_FINGERPRINT = \\"" + stubFp + "\\";\\n";
+          let patched    = join(split(output, stubFpLine), fpLine);
+          let dirOk = mkdirSafe(OUT_DIR);
+          if dirOk then {
+            let ok = writeSafe(OUT_FILE, patched);
+            if ok then { println("✓ Data model written: " + OUT_FILE) }
+          }
+        };
+      await dbClose(c.value);
+    };
+}
+
+main();
+`.trim();
+
+      // Write temp script alongside the config file, run it, then delete it
+      const tmpScript = path.join(entryDir, '__pfun_gen_tmp__.pf');
+      fs.writeFileSync(tmpScript, genScript, 'utf-8');
+      try {
+        console.log(`Regenerating data model...`);
+        await runFile(tmpScript);
+      } finally {
+        fs.unlinkSync(tmpScript);
+      }
+    }
 
     const BUILTIN_PATHS_BROWSER = new Set([
       'io','file','math','json','async','http','db/postgresql','db/mariadb',
@@ -1054,13 +1218,25 @@ if (require.main === module) {
       if (compiledServe.has(absPath)) return;
       compiledServe.add(absPath);
       const src   = fs.readFileSync(absPath, 'utf-8');
-      const stmts = new Parser(new Lexer(src).lex()).parse();
+      let stmts;
+      try {
+        stmts = new Parser(new Lexer(src).lex()).parse();
+      } catch (e) {
+        const rawErr = e instanceof Error ? e : new Error(String(e));
+        const pfunErr = rawErr instanceof PfunError
+          ? rawErr
+          : buildPfunError(rawErr, src, (rawErr as any).pos, null, () => undefined, { stringify: String });
+        console.error(`In ${absPath}:`);
+        console.error(pfunErr.pfunMessage);
+        process.exit(1);
+      }
       const srcDir = path.dirname(absPath);
       for (const stmt of stmts) {
         if (stmt.type !== 'ImportStmt') continue;
         const imp = stmt as any;
         if (BUILTIN_PATHS_BROWSER.has(imp.path)) continue;
-        const depPf   = imp.path.endsWith('.pf') ? imp.path : imp.path + '.pf';
+        const expanded = expandPfunHome(imp.path);
+        const depPf   = expanded.endsWith('.pf') ? expanded : expanded + '.pf';
         const depPath = path.resolve(srcDir, depPf);
         if (!fs.existsSync(depPath)) {
           console.error(`Module not found: ${depPath} (imported by ${absPath})`);
@@ -1168,7 +1344,7 @@ if (require.main === module) {
       );
     }
 
-    const bundledJs = `(async () => {\ntry {\n${innerCode}\n} catch ($e$) {\nconsole.error($e$.message);\n}\n})();`;
+    const bundledJs = `(async () => {\ntry {\n${innerCode}\n} catch ($e$) {\nconsole.error($e$);\n}\n})();`;
 
     const runtimeJs = fs.readFileSync(browserRt, 'utf-8');
     const entryName = path.basename(clientEntryPath, '.pf');
@@ -1200,6 +1376,11 @@ if (require.main === module) {
 ${runtimeJs}
   </script>
   <script>
+window.addEventListener('unhandledrejection', function(e) {
+  console.error('Unhandled rejection:', e.reason);
+  const el = document.getElementById('pfun-output');
+  if (el) { el.innerHTML = '<pre style="color:#f38ba8;white-space:pre-wrap">Async error: ' + (e.reason instanceof Error ? e.reason.stack || e.reason.message : String(e.reason)) + '</pre>'; }
+});
 document.addEventListener('DOMContentLoaded', function() {
 ${bundledJs}
 });
@@ -1209,6 +1390,10 @@ ${bundledJs}
 
     if (!isAppManifest) {
       // ── Plain mode: browser-only, no server handler ───────────────────────
+      if (validateOnly) {
+        console.log(`✓ Validation passed: ${path.relative(cwd, entryPath)}`);
+        process.exit(0);
+      }
       const http = require('http');
       const srv = http.createServer((_req: any, res: any) => {
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
@@ -1240,13 +1425,24 @@ ${bundledJs}
       const serverCompiled  = new Set<string>();
       const serverOutPaths  = new Map<string, string>();
       const serverUserUnions = new Map<string, Array<{ name: string; variants: { name: string; fields: string[] }[] }>>();
+      // Per-module export TYPES (function signatures + variant constructor
+      // types), captured from each dependency's own checkTypes pass and made
+      // available to its importers via the typeResolver below. Without this,
+      // imported names (notably union variant CONSTRUCTORS like a ServerCmd's
+      // Reply/Perform) bind to independent fresh vars at each use site, so the
+      // checker can't tell they belong to the same union — producing spurious
+      // "Cannot unify X with Y" errors that the whole-program checkProgram
+      // path (which threads these types) never hits. Mirrors checkProgram's
+      // infoByPath.exportTypes + typeResolver exactly.
+      const serverExportTypes = new Map<string, TypeImportTable>();
 
       function makeServerUnionResolver(forFile: string) {
         return (importPath: string) => {
           const builtin = BUILTIN_UNION_TABLE[importPath];
           if (builtin) return new Map(builtin.map((u: any) => [u.name, u.variants]));
           const sd = path.dirname(forFile);
-          const dp = importPath.endsWith('.pf') ? importPath : importPath + '.pf';
+          const expanded = expandPfunHome(importPath);
+          const dp = expanded.endsWith('.pf') ? expanded : expanded + '.pf';
           const depPath = path.resolve(sd, dp);
           const unions = serverUserUnions.get(depPath);
           if (!unions || unions.length === 0) return null;
@@ -1254,11 +1450,43 @@ ${bundledJs}
         };
       }
 
+      // Type resolver for the server compile path. Serves USER modules only:
+      // hand back the export types captured when that dependency was compiled
+      // (it always was — compileServerFile recurses into deps before checking
+      // the importer, so serverExportTypes.get(depPath) is populated by the
+      // time this runs). Builtin modules return null here, exactly as before:
+      // their imported names fall through to the unbound→fresh-var path, which
+      // already works for builtin function calls (this bug was never about
+      // builtins — it's about USER union variant constructors like a
+      // ServerCmd's Reply/Perform binding to independent fresh vars without a
+      // shared type). Mirrors checkProgram's typeResolver for the user-module
+      // case.
+      function makeServerTypeResolver(forFile: string): TypeImportResolver {
+        return (importPath: string) => {
+          const sd = path.dirname(forFile);
+          const expanded = expandPfunHome(importPath);
+          const dp = expanded.endsWith('.pf') ? expanded : expanded + '.pf';
+          const depPath = path.resolve(sd, dp);
+          return serverExportTypes.get(depPath) ?? null;
+        };
+      }
+
       function compileServerFile(absPath: string): void {
         if (serverCompiled.has(absPath)) return;
         serverCompiled.add(absPath);
         const src   = fs.readFileSync(absPath, 'utf-8');
-        const stmts = new Parser(new Lexer(src).lex()).parse();
+        let stmts;
+        try {
+          stmts = new Parser(new Lexer(src).lex()).parse();
+        } catch (e) {
+          const rawErr = e instanceof Error ? e : new Error(String(e));
+          const pfunErr = rawErr instanceof PfunError
+            ? rawErr
+            : buildPfunError(rawErr, src, (rawErr as any).pos, null, () => undefined, { stringify: String });
+          console.error(`In ${absPath}:`);
+          console.error(pfunErr.pfunMessage);
+          process.exit(1);
+        }
         const sd    = path.dirname(absPath);
         const BUILTIN_PATHS_SERVER = new Set([
           'io','file','math','json','async','http','db/postgresql','db/mariadb',
@@ -1267,7 +1495,8 @@ ${bundledJs}
           if (stmt.type !== 'ImportStmt') continue;
           const imp = stmt as any;
           if (BUILTIN_PATHS_SERVER.has(imp.path)) continue;
-          const depPf   = imp.path.endsWith('.pf') ? imp.path : imp.path + '.pf';
+          const expanded = expandPfunHome(imp.path);
+          const depPf   = expanded.endsWith('.pf') ? expanded : expanded + '.pf';
           const depPath = path.resolve(sd, depPf);
           if (!fs.existsSync(depPath)) {
             console.error(`Server module not found: ${depPath}`);
@@ -1276,7 +1505,18 @@ ${bundledJs}
           compileServerFile(depPath);
         }
         serverUserUnions.set(absPath, extractUnions(stmts));
-        const errors = checkTypes(stmts, src, undefined, makeServerUnionResolver(absPath));
+        const exportTypesOut: TypeImportTable = new Map();
+        const errors = checkTypes(
+          stmts,
+          src,
+          makeServerTypeResolver(absPath),
+          makeServerUnionResolver(absPath),
+          exportTypesOut,
+        );
+        // Make this module's export types available to its importers (this
+        // file is only reached after all its own deps were compiled, so by
+        // the time an importer calls makeServerTypeResolver, this is set).
+        serverExportTypes.set(absPath, exportTypesOut);
         if (errors.length > 0) {
           for (const e of errors) console.error(e.pfunMessage);
           process.exit(1);
@@ -1305,10 +1545,36 @@ ${bundledJs}
             }
           }
         }
+        // Build the require()-path override for every user-module import in
+        // THIS file, keyed by the raw source path string (exactly as
+        // transpile's ImportStmt case looks it up). Each dependency was
+        // already compiled above (compileServerFile recurses depth-first),
+        // so serverOutPaths.get(depPath) is populated — compute the path
+        // from THIS file's compiled output location to THAT dependency's,
+        // the only thing Node's require() can actually resolve at runtime.
+        // Without this, a raw source path like "$PFUN_HOME/lib/serverDispatch"
+        // (or any import whose compiled output doesn't sit in the same
+        // relative position as its source) gets emitted into the .js
+        // verbatim and require() fails at runtime — this is what produced
+        // "Cannot find module '$PFUN_HOME/lib/serverDispatch'".
+        const userModuleRequirePaths: Record<string, string> = {};
+        for (const stmt of stmts) {
+          if (stmt.type !== 'ImportStmt') continue;
+          const imp = stmt as any;
+          if (BUILTIN_PATHS_SERVER.has(imp.path)) continue;
+          const expandedDep = expandPfunHome(imp.path);
+          const depPf       = expandedDep.endsWith('.pf') ? expandedDep : expandedDep + '.pf';
+          const depAbsPath  = path.resolve(sd, depPf);
+          const depOutPath  = serverOutPaths.get(depAbsPath);
+          if (!depOutPath) continue; // shouldn't happen — compiled above — but stay permissive
+          const relReq = path.relative(path.dirname(outPath), depOutPath).replace(/\.js$/, '');
+          userModuleRequirePaths[imp.path] = relReq.startsWith('.') ? relReq : './' + relReq;
+        }
         const js = transpile(stmts, src, {
           runtimeRequirePath: libPathOption + '/pfun-runtime',
           builtinRequirePaths: builtinReqPaths,
           externalSingletons: serverExternalSingletons,
+          userModuleRequirePaths,
         });
         fs.writeFileSync(outPath, js, 'utf-8');
         serverOutPaths.set(absPath, outPath);
@@ -1329,6 +1595,15 @@ ${bundledJs}
           ? path.join(projectRoot, 'pfun-runtime.js')
           : path.join(srcRtDir, lib + '.js');
         if (fs.existsSync(src)) fs.copyFileSync(src, dest);
+      }
+
+      // --validate: static checks and compilation are complete — skip loading
+      // the compiled server and starting the HTTP server.
+      if (validateOnly) {
+        const clientRel = path.relative(cwd, clientEntryPath);
+        const serverRel = path.relative(cwd, serverPfPath);
+        console.log(`✓ Validation passed: ${clientRel} (client) + ${serverRel} (server)`);
+        process.exit(0);
       }
 
       // Clear require cache for runtime libs to ensure fresh copies are used
@@ -1445,7 +1720,8 @@ ${bundledJs}
 
           Promise.resolve(handleRequest!(req, res)).catch((e: any) => {
             const msg = e instanceof Error ? e.message : String(e);
-            process.stderr.write(`[server] handler error: ${msg}\n`);
+            const stack = e instanceof Error ? e.stack : '';
+            process.stderr.write(`[server] handler error: ${msg}\n${stack}\n`);
             if (!responded) send(500n, 'text/plain; charset=utf-8', 'Internal Server Error');
           });
         });
@@ -1459,11 +1735,17 @@ ${bundledJs}
       });
     }
 
+    })().catch((e: any) => {
+      console.error(e instanceof Error ? e.message : String(e));
+      process.exit(1);
+    });
+
   } else if (args.length === 0) {
     console.log('Usage: pfun <script.pf>');
     console.log('       pfun -i [script.pf]   (interactive mode, optionally pre-loading a file)');
     console.log('       pfun -c <script.pf>   (compile to JavaScript)');
-    console.log('       pfun --serve <script.pf> [--port N]   (serve in browser, default port 3170)');
+    console.log('       pfun --serve    <script.pf> [--port N]   (serve in browser, default port 3170)');
+    console.log('       pfun --validate <script.pf>              (static checks + compile, no server)');
     process.exit(1);
   } else {
     runFile(args[0], args.slice(1)).catch(e => {

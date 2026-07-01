@@ -1,0 +1,127 @@
+/*
+  serverDispatch.pf — generic, declarative server-side message-dispatch loop.
+
+  Mirrors tea.pf on the client: a pure `update` function decides what to do
+  next (perform a typed app-defined op, or reply), and this library's runtime
+  loop performs the op and feeds the result back in as a new message — looping
+  until `update` returns Reply.
+
+  This library is intentionally generic over the app's types. It never
+  defines or inspects a DbOp/OpResult vocabulary, never names a table, and
+  never builds SQL. It only shuttles opaque values between the app's pure
+  `update` and the app's effectful `runOp`. Because it never looks inside
+  `op` or `result`, it cannot erase their types — the app's typed vocabulary
+  (closed DbOp union, typed repo calls) stays fully typed end to end.
+
+  Usage (app side):
+
+    type SvrMsg    = { | Incoming : client | OpDone : result }
+    type DbOp      = { | FindActive | Insert : model | ... }     // app-defined
+    type OpResult  = { | Listed : items | Inserted : result | ... }
+
+    function update(msg) {                    // PURE — describes ops, never runs them
+      match msg with
+      | Incoming c -> match c with
+          | ClientListAll -> Perform { FindActive, fn r => OpDone r }
+          | ...
+      | OpDone result -> ... // operate on result; Perform again, or Reply
+    }
+
+    async proc runOp(op, conn) {               // the ONE effectful proc — exhaustive
+      match op with
+      | FindActive -> Listed { await repoListActive(conn) }
+      | Insert m   -> Inserted { await insertAnnouncement(conn, m) }
+      | ...;
+    }
+
+    export async proc handleRequest(req, res) {
+      await dispatchHttp(req, res, fn c => Incoming { c }, update, runOp,
+                          fn m => ServerErr { m }, CONNECTION_STRING);
+    }
+*/
+
+import * from "io";
+import * from "http";
+import * from "json";
+import * from "db/postgresql";
+
+// ── ServerCmd ──────────────────────────────────────────────────────────────────
+//
+// The closed effect set for one dispatch step. Mirrors Cmd on the client:
+//   Reply   — terminal effect, the loop ends and this value is sent to the client
+//   Perform — "go run this typed op, then feed the typed result back as a new msg"
+//   NoOp    — update declined to do anything (treated as a dispatch error: every
+//             chain must end in Reply)
+//
+// `op` and `result` are opaque to this library — it never constructs or
+// inspects them. `onResult : result -> msg` is supplied by the app and is
+// what keeps the chain fully typed: the app's own `update` clauses pin
+// `result`'s type via pattern matching, exactly as `runOp`'s return type does.
+export type ServerCmd = {
+  | Reply   : msg
+  | Perform : op, onResult
+  | NoOp
+}
+
+// ── Dispatch loop ──────────────────────────────────────────────────────────────
+//
+// update : msg -> ServerCmd          (pure)
+// runOp  : (op, conn) -> async result (the app's exhaustive op interpreter)
+// mkErr  : String -> reply           (builds the app's error-reply variant;
+//                                      only used if update returns NoOp)
+//
+// Threads no state of its own — any state the app needs between steps is
+// captured in the closures passed as `onResult`, exactly as the client
+// threads context through `onReply` closures in tea.pf's Send.
+export async proc runDispatch(msg, update, runOp, mkErr, conn) {
+  let cmd = update(msg);
+  match cmd with
+  | Reply r -> r.msg
+  | NoOp    -> mkErr("dispatch ended without a reply (update returned NoOp)")
+  | Perform p -> {
+      let result    = await runOp(p.op, conn);
+      let resultMsg = p.onResult(result);
+      await runDispatch(resultMsg, update, runOp, mkErr, conn);
+    };
+}
+
+// ── HTTP boundary ────────────────────────────────────────────────────────────
+//
+// Generic request handler: connects, parses the body as the app's wire
+// ClientMsg, wraps it via `wrapIncoming` into the app's SvrMsg, runs the
+// dispatch loop, and serializes whatever Reply produced. Connection
+// lifecycle (connect/close) and the JSON/HTTP envelope are the only things
+// this library owns; everything about *what* a request does, and what an
+// error reply looks like, is the app's.
+//
+// wrapIncoming : client -> msg     — lifts a parsed ClientMsg into the app's
+//                                     initial SvrMsg (e.g. `fn c => Incoming { c }`)
+// mkErr        : String -> reply   — builds the app's error-reply variant
+//                                     (e.g. `fn m => ServerErr { m }`), since
+//                                     this library does not know the app's
+//                                     reply union and must not assume one.
+export async proc dispatchHttp(req, res, wrapIncoming, update, runOp, mkErr, connectionString) {
+  if req.method == "OPTIONS" then {
+    res.text(200, "");
+  } else if req.method == "POST" then {
+    let connResult = await dbConnect(connectionString);
+    match connResult with
+    | Err e -> res.json(500, mkErr("DB connection failed: " + e.message))
+    | Ok c  -> {
+        let parsed = jsonDeserialize(req.body);
+        match parsed with
+        | None    -> res.json(400, mkErr("Could not parse request body"))
+        | Some p  -> {
+            let initialMsg = wrapIncoming(p.value);
+            let reply      = await runDispatch(initialMsg, update, runOp, mkErr, c.value);
+            res.json(200, reply);
+          };
+        let closed = await dbClose(c.value);
+        match closed with
+        | Ok _  -> {}
+        | Err e -> println("[serverDispatch] dbClose failed: " + e.message);
+      };
+  } else {
+    res.json(404, mkErr("Not found: " + req.path));
+  }
+}

@@ -272,9 +272,26 @@ function $add(l, r) {
   }
   const lStr = typeof l === 'string', rStr = typeof r === 'string';
   const lChar = l instanceof PfunChar, rChar = r instanceof PfunChar;
-  const lCL = Array.isArray(l) && l.every(c => c instanceof PfunChar);
-  const rCL = Array.isArray(r) && r.every(c => c instanceof PfunChar);
-  if (lStr || lChar || lCL || rStr || rChar || rCL) return $stringify(l) + $stringify(r);
+  // A char-list is a NON-EMPTY array of PfunChars. An empty array is NOT
+  // treated as a char-list here: [].every(...) is vacuously true, which
+  // would misclassify an empty *list* as an empty *string* and turn
+  // list concatenation like [] + [[x]] into string concatenation. Empty
+  // arrays are handled explicitly below so they act as the identity for
+  // BOTH string and list concatenation.
+  const lCL = Array.isArray(l) && l.length > 0 && l.every(c => c instanceof PfunChar);
+  const rCL = Array.isArray(r) && r.length > 0 && r.every(c => c instanceof PfunChar);
+  // Empty-array identity: if either side is [] and the other is a
+  // string/char/char-list context, the [] is an empty string — return the
+  // other side stringified. If the other side is also a list, fall through
+  // to list concatenation below (which also yields the right answer).
+  const lEmpty = Array.isArray(l) && l.length === 0;
+  const rEmpty = Array.isArray(r) && r.length === 0;
+  if (lStr || lChar || lCL || rStr || rChar || rCL) {
+    // String concatenation context. Treat an empty array operand as "".
+    const ls = lEmpty ? '' : $stringify(l);
+    const rs = rEmpty ? '' : $stringify(r);
+    return ls + rs;
+  }
   const lF = typeof l === 'number', rF = typeof r === 'number';
   if (lF || rF) return _checkFloat((lF ? l : Number(l)) + (rF ? r : Number(r)), '+');
   // List concatenation

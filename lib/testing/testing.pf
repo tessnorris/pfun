@@ -62,6 +62,23 @@ export function suite(name, tests) {
   };
 }
 
+// suite with no initial tests — for use with the pipe/addTest pattern:
+//   let s = emptySuite("My suite")
+//     |> addTest(test("case 1", testFn1))
+//     |> addTest(test("case 2", testFn2));
+export function emptySuite(name) {
+  Suite { name, [] };
+}
+
+// addTest: append a test to a suite, returning the updated suite.
+// Designed for use with the pipe operator:
+//   let s = emptySuite("My suite")
+//     |> addTest(test("case 1", testFn1))
+//     |> addTest(test("case 2", testFn2));
+export function addTest(t, s) {
+  Suite { s.name, s.tests + [t] };
+}
+
 // composeFixtures requires anonymous procedures (to close over `first` and
 // `second` while performing side effects). Pfun has no anonymous proc syntax
 // yet — `fn` lambdas are pure and cannot run before/after side effects. Until

@@ -7,7 +7,7 @@ import { Expr, Stmt, MatchArm } from './ast';
  * Higher values bind tighter.
  */
 enum Precedence {
-  NONE, ASSIGNMENT, TERNARY, OR, AND, EQUALITY, COMPARISON, BITOR, BITAND, SHIFT, TERM, FACTOR, UNARY, CALL, PRIMARY
+  NONE, ASSIGNMENT, PIPE, TERNARY, OR, AND, EQUALITY, COMPARISON, BITOR, BITAND, SHIFT, TERM, FACTOR, UNARY, CALL, PRIMARY
 }
 
 export class Parser {
@@ -720,6 +720,17 @@ export class Parser {
       return { type: 'AssignExpr', name: left.name, value: this.parseExpression(precedence - 1), pos: infixPos };
     }
 
+    // Forward pipe: x |> f  desugars to  f(x)
+    // Right-hand side is parsed at PIPE precedence (left-associative), so
+    // x |> f |> g  becomes  g(f(x)).
+    // The RHS must be a callable expression (identifier, lambda, field access…).
+    // Passing extra args via currying: x |> f(y)  is a type error at runtime
+    // unless f is curried — use  x |> fn v => f(v, y)  for explicit binding.
+    if (token.type === 'PipeArrowToken') {
+      const fn_ = this.parseExpression(Precedence.PIPE);
+      return { type: 'CallExpr', callee: fn_, args: [left], pos: infixPos };
+    }
+
     if (token.type === 'QuestionToken') {
       const thenBranch = this.parseExpression();
       this.consume('ColonToken', "Expected ':' in ternary expression.");
@@ -807,6 +818,7 @@ export class Parser {
   private getPrecedence(type: Token['type']): Precedence {
     switch (type) {
       case 'AssignToken': return Precedence.ASSIGNMENT;
+      case 'PipeArrowToken': return Precedence.PIPE;
       case 'QuestionToken': return Precedence.TERNARY;
       case 'BooleanOr': return Precedence.OR;
       case 'BooleanAnd': return Precedence.AND;

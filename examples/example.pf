@@ -414,6 +414,57 @@ forEachItem(fruits, proc item => {
 
 
 /*
+  4c. PIPE OPERATOR  |>
+  ============================================================================
+  x |> f  desugars to  f(x).  Left-associative, lower precedence than
+  arithmetic, so  a + b |> f  means  f(a + b).
+
+  Great for chaining transformations without deeply nested calls:
+    instead of:  h(g(f(x)))
+    write:        x |> f |> g |> h
+
+  Also works with the testing library to build suites incrementally:
+    emptySuite("My suite")
+      |> addTest(test("case 1", testFn1))
+      |> addTest(test("case 2", testFn2))
+*/
+
+println("--- 4c. Pipe Operator ---");
+
+// Basic: value to function
+// (prefixed pipe_ to avoid colliding with names defined later in this file)
+function pipe_double(x) { x * 2; }
+function pipe_addOne(x) { x + 1; }
+function pipe_square(x) { x * x; }
+function pipe_isEven(x) { x % 2 == 0; }
+function pipe_sumList(xs) { reduce(fn acc, x => acc + x, 0, xs); }
+
+println(__str__(5 |> pipe_double));                  // 10
+println(__str__(3 |> pipe_addOne |> pipe_double));   // 8
+println(__str__(4 |> pipe_square |> pipe_addOne));   // 17
+
+// Arithmetic binds tighter, so this is pipe_double(2 + 3):
+println(__str__(2 + 3 |> pipe_double));              // 10
+
+// Works with built-in functions
+println(__str__(["a","b","c"] |> length));           // 3
+println([1,2,3] |> reverse |> __str__);              // [3, 2, 1]
+
+// With anonymous functions for inline transformations
+let pipe_result = "hello"
+  |> fn s => s + " world"
+  |> fn s => s + "!";
+println(pipe_result);                                // hello world!
+
+// Long pipeline: sum of squares of even numbers in 1..10
+let sumOfEvenSquares = [1,2,3,4,5,6,7,8,9,10]
+  |> fn xs => filter(pipe_isEven, xs)
+  |> fn xs => map(pipe_square, xs)
+  |> pipe_sumList;
+println(__str__(sumOfEvenSquares));                  // 220  (4+16+36+64+100)
+
+
+/*
   5. TAIL-CALL OPTIMIZATION (TCO), MEMOIZATION & CURRYING
   ============================================================================
   TCO -- Pfun eliminates tail calls so deep recursion doesn't stack-overflow.

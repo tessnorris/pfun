@@ -59,6 +59,15 @@ count = 3
 0: apple
 1: banana
 2: cherry
+--- 4c. Pipe Operator ---
+10
+8
+17
+10
+3
+[3, 2, 1]
+hello world!
+220
 --- 5. TCO, Memoization & Currying ---
 Liftoff!
 120

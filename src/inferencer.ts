@@ -1389,6 +1389,11 @@ function cgenStmt(
       if (stmt.elseBranch) cgenStmt(stmt.elseBranch, env, registry, cs);
       break;
 
+    case 'WhileStmt':
+      cgenExpr((stmt as any).condition, env, registry, cs);
+      for (const s of (stmt as any).body) cgenStmt(s, env, registry, cs);
+      break;
+
     case 'ExportStmt':
       cgenStmt(stmt.declaration, env, registry, cs);
       break;
@@ -1425,6 +1430,7 @@ function collectReturnExprs(body: Stmt[]): Expr[] {
       case 'ReturnStmt': if (s.value) result.push(s.value); break;
       case 'IfStmt':     walk(s.thenBranch); if (s.elseBranch) walk(s.elseBranch); break;
       case 'BlockStmt':  s.statements.forEach(walk); break;
+      case 'WhileStmt':  (s as any).body.forEach(walk); break;
       // Do not recurse into nested function/proc
     }
   }
@@ -1459,6 +1465,7 @@ function registerAllUnions(stmts: Stmt[], registry: CGenRegistry): void {
       case 'UnionTypeStmt':  registry.registerUnion(s.name, s.variants, (s as any).generic ?? false); break;
       case 'IfStmt':         walk(s.thenBranch); if (s.elseBranch) walk(s.elseBranch); break;
       case 'BlockStmt':      s.statements.forEach(walk); break;
+      case 'WhileStmt':      (s as any).body.forEach(walk); break;
       case 'FunctionStmt':
       case 'ProcedureStmt':  s.body.forEach(walk); break;
       case 'ExportStmt':     walk(s.declaration); break;
@@ -1540,6 +1547,7 @@ function seedAllImports(stmts: Stmt[], env: CGenEnv): void {
       case 'ImportStmt':     bindImport(s, env); break;
       case 'IfStmt':         walk(s.thenBranch); if (s.elseBranch) walk(s.elseBranch); break;
       case 'BlockStmt':      s.statements.forEach(walk); break;
+      case 'WhileStmt':      (s as any).body.forEach(walk); break;
       case 'FunctionStmt':
       case 'ProcedureStmt':  s.body.forEach(walk); break;
       case 'ExportStmt':     walk(s.declaration); break;
@@ -1664,6 +1672,7 @@ function collectExportNames(stmts: Stmt[]): string[] {
       case 'ExportStmt':      classify(s.declaration); break;
       case 'IfStmt':          walk(s.thenBranch); if (s.elseBranch) walk(s.elseBranch); break;
       case 'BlockStmt':       s.statements.forEach(walk); break;
+      case 'WhileStmt':       (s as any).body.forEach(walk); break;
       case 'FunctionStmt':
       case 'ProcedureStmt':   s.body.forEach(walk); break;
       // Every other statement type cannot contain an ExportStmt.
@@ -1971,6 +1980,10 @@ export function applySubstitutionToAST(stmts: Stmt[], subst: Substitution): void
         applyExpr(s.condition);
         applyStmt(s.thenBranch);
         if (s.elseBranch) applyStmt(s.elseBranch);
+        break;
+      case 'WhileStmt':
+        applyExpr((s as any).condition);
+        (s as any).body.forEach(applyStmt);
         break;
       case 'BlockStmt':
         s.statements.forEach(applyStmt); break;

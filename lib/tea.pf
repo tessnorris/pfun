@@ -47,6 +47,12 @@ export function cmdNone() { CmdNone; }
 
 export type Handler = { key, handler }
 
+// collectHandlers walks the view tree in the same order renderView does,
+// producing one Handler per interactive element.  The key encodes both
+// the element type and its label/name so $attachDomHandler can find the
+// right DOM node; when multiple elements share the same key (e.g. several
+// "Edit" buttons in a list), attachAll passes the occurrence index so
+// each handler is wired to exactly the right element.
 export function collectHandlers(view) {
   match view with
   | VButton b    -> [Handler { "click_"  + b.label,  fn ignored => b.onClick  }]
@@ -54,6 +60,8 @@ export function collectHandlers(view) {
   | VCheckbox c  -> [Handler { "check_"  + c.name,   c.onToggle }]
   | VSelect s    -> [Handler { "change_" + s.name,   s.onChange }]
   | VEl el       -> reduce(fn acc, child => acc + collectHandlers(child), [], el.children)
+  | VColorInput i -> [Handler { "input_" + i.name, i.onInput }]
+  | VRangeInput r -> [Handler { "input_" + r.name, r.onInput }]
   | VText _      -> []
   | VContent _   -> [];
 }
@@ -84,20 +92,32 @@ export proc render(model, viewFn, updateFn) {
   clearOutput();
   mountHtml(html);
   let handlers = collectHandlers(tree);
-  attachAll(handlers, updateFn, model, viewFn);
+  attachAll(handlers, updateFn, model, viewFn, emptyKeyCounts());
 }
 
-export proc attachAll(handlers, updateFn, model, viewFn) {
+// emptyKeyCounts returns an empty Dict for tracking how many times each
+// handler key has been seen so far, used to wire each handler to the
+// correct occurrence of its DOM element.
+function emptyKeyCounts() { dict {}; }
+
+// getCount returns the current occurrence count for key, or 0 if unseen.
+function getCount(keyCounts, key) {
+  if has(keyCounts, key) then keyCounts[key] else 0;
+}
+
+export proc attachAll(handlers, updateFn, model, viewFn, keyCounts) {
   if length(handlers) > 0 then {
-    let h    = head(handlers);
-    let rest = tail(handlers);
-    attachDomHandler(h.key, proc value => {
+    let h       = head(handlers);
+    let rest    = tail(handlers);
+    let n       = getCount(keyCounts, h.key);
+    keyCounts[h.key] = n + 1;
+    attachDomHandler(h.key, n, proc value => {
       let msg  = h.handler(value);
       let next = updateFn(msg, model);
       render(next.model, viewFn, updateFn);
       executeCmd(next.cmd, next.model, viewFn, updateFn);
     });
-    attachAll(rest, updateFn, model, viewFn);
+    attachAll(rest, updateFn, model, viewFn, keyCounts);
   }
 }
 

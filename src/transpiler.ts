@@ -447,6 +447,23 @@ export interface TranspileOptions {
   builtinRequirePaths?: Record<string, string>;
   /** Zero-field variant names from imported modules — emitted as $record(name,[]) not bare identifiers. */
   externalSingletons?: Set<string>;
+  /**
+   * Require paths to use for USER-MODULE imports, keyed by the import path
+   * exactly as written in source (e.g. "$PFUN_HOME/lib/serverDispatch" or
+   * "../lib/foo"). When a given ImportStmt's path has an entry here, that
+   * entry is used verbatim as the require() target instead of the raw
+   * source path. Needed whenever the compiled OUTPUT file lives somewhere
+   * other than alongside the source (e.g. main.ts's --serve/--validate
+   * pipeline, which compiles into a tmp/output directory tree) and/or the
+   * import uses a non-relative token like $PFUN_HOME that Node's require()
+   * cannot resolve on its own — the caller is responsible for expanding and
+   * re-relativizing the path correctly for wherever this file's compiled
+   * output will actually live. Entries are optional per-path; any import
+   * path absent from this map falls back to the previous raw-source-path
+   * behavior (correct for the common case where source and output sit in
+   * the same directory structure and every import is a plain relative path).
+   */
+  userModuleRequirePaths?: Record<string, string>;
 }
 
 // Module-level options set by transpile() before each emit pass so that
@@ -699,6 +716,12 @@ function emitStmt(s: Stmt): Node[] {
       return [ifNode(test, cons, alt)];
     }
 
+    case 'WhileStmt': {
+      const test = emitExpr((s as any).condition);
+      const body = block((s as any).body.flatMap(emitStmt));
+      return [{ type: 'WhileStatement', test, body }];
+    }
+
     case 'BlockStmt':
       return [block(((s as any).statements as Stmt[]).flatMap(emitStmt))];
 
@@ -802,7 +825,18 @@ function emitStmt(s: Stmt): Node[] {
       // running the compiled output — this means star-imported user module names
       // are only accessible via the namespace (use named or namespace imports for
       // user modules until a full scope-injection solution is in place).
-      const userPath = imp.path.endsWith('.pf') ? imp.path.slice(0, -3) : imp.path;
+      //
+      // If the caller supplied an override for this exact source import path
+      // (options.userModuleRequirePaths), use it verbatim — this is how
+      // $PFUN_HOME-relative imports and any compile pipeline whose output
+      // directory differs from its source directory get a require() target
+      // that Node can actually resolve. Otherwise fall back to the raw
+      // source path (correct whenever output mirrors source 1:1 and every
+      // import is already a plain relative path, the common case).
+      const _userOverride = (_currentOptions.userModuleRequirePaths ?? {})[imp.path];
+      const userPath = _userOverride !== undefined
+        ? _userOverride
+        : (imp.path.endsWith('.pf') ? imp.path.slice(0, -3) : imp.path);
       const requireCall = call(id('require'), [str(userPath)]);
 
       if (imp.kind === 'namespace') {
@@ -918,6 +952,10 @@ function makeReturning(s: Stmt): Node[] {
       const stmts = (s as any).statements as Stmt[];
       return [block(emitFunctionBodyInner(stmts))];
     }
+
+    case 'WhileStmt':
+      // A while loop in tail position doesn't return a value.
+      return emitStmt(s);
 
     case 'ReturnStmt':
       return emitStmt(s);
