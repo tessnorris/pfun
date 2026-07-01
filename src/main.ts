@@ -17,6 +17,7 @@ import { jsonlibFunctions } from './jsonlib';
 import { mathlibFunctions } from './mathlib';
 import { asynclibFunctions } from './asynclib';
 import { httplibFunctions, httplibTypes } from './httplib';
+import { foreignlibFunctions, foreignlibTypes } from './foreignlib';
 import { dblibTypes } from './dblib';
 import { dblibPostgresqlFunctions } from './dblibPostgresql';
 import { dblibMariadbFunctions } from './dblibMariadb';
@@ -32,7 +33,7 @@ function setupInterpreter(interp: Interpreter): void {
   interp.registerLibrary(mutStructuresFunctions, mutStructuresTypes);
 }
 
-/** Register all built-in system modules ('io', 'file', 'json', 'math', 'async', 'http', 'db/postgresql', 'db/mariadb') on a loader. */
+/** Register all built-in system modules ('io', 'file', 'json', 'math', 'async', 'http', 'foreign', 'db/postgresql', 'db/mariadb') on a loader. */
 export function registerBuiltinModules(loader: ModuleLoader): void {
   loader.registerBuiltin('io', iolibFunctions);
   loader.registerBuiltin('file', filelibFunctions, filelibTypes);
@@ -40,6 +41,7 @@ export function registerBuiltinModules(loader: ModuleLoader): void {
   loader.registerBuiltin('math', mathlibFunctions);
   loader.registerBuiltin('async', asynclibFunctions);
   loader.registerBuiltin('http', httplibFunctions, httplibTypes);
+  loader.registerBuiltin('foreign', foreignlibFunctions, foreignlibTypes);
   loader.registerBuiltin('db/postgresql', dblibPostgresqlFunctions, dblibTypes);
   loader.registerBuiltin('db/mariadb', dblibMariadbFunctions, dblibTypes);
 }
@@ -626,6 +628,9 @@ if (require.main === module) {
     'http': [
       { name: 'HttpResult', variants: [{ name: 'Ok', fields: ['value'] }, { name: 'Err', fields: ['message'] }] },
     ],
+    'foreign': [
+      { name: 'ForeignResult', variants: [{ name: 'FOk', fields: ['value'] }, { name: 'FErr', fields: ['kind', 'message'] }] },
+    ],
     'db/postgresql': [
       { name: 'DbResult', variants: [{ name: 'Ok', fields: ['value'] }, { name: 'Err', fields: ['message'] }] },
       { name: 'DbValue',  variants: [
@@ -726,7 +731,7 @@ if (require.main === module) {
 
     // Builtins are handled by separate pfun-*.js runtime modules; skip them.
     const BUILTIN_PATHS = new Set([
-      'io','file','math','json','async','http','db/postgresql','db/mariadb',
+      'io','file','math','json','async','http','foreign','db/postgresql','db/mariadb',
     ]);
 
     // Maps pfun module name → libs filename (without path).
@@ -736,6 +741,7 @@ if (require.main === module) {
       'file': 'pfun-file.js',
       'async': 'pfun-async.js',
       'http': 'pfun-http.js',
+      'foreign': 'pfun-foreign.js',
       'db/postgresql': 'pfun-db-postgresql.js',
       'db/mariadb': 'pfun-db-mariadb.js',
     };
@@ -915,6 +921,12 @@ if (require.main === module) {
       // original import path (e.g. './mathutils') and the output mirrors the
       // source tree — so the relative path between two output files is the
       // same as between two source files.
+      //
+      // Exception: imports using $PFUN_HOME (e.g. "$PFUN_HOME/lib/datelib")
+      // emit verbatim require() paths that Node cannot resolve. We build
+      // userModuleRequirePaths to map each such import to the correct relative
+      // path from the output .js file to the dependency's output .js file.
+      // This mirrors the --serve path's equivalent logic.
 
       // Collect zero-field variants from all already-compiled dependency modules
       const externalSingletons = new Set<string>();
@@ -927,7 +939,22 @@ if (require.main === module) {
         }
       }
 
-      const js = transpile(stmts, source, { runtimeRequirePath, builtinRequirePaths, externalSingletons });
+      const userModuleRequirePaths: Record<string, string> = {};
+      for (const stmt of stmts) {
+        if (stmt.type !== 'ImportStmt') continue;
+        const imp = stmt as any;
+        if (BUILTIN_PATHS.has(imp.path)) continue;
+        const expandedDep = expandPfunHome(imp.path);
+        const depPf       = expandedDep.endsWith('.pf') ? expandedDep : expandedDep + '.pf';
+        const depAbsPath  = path.resolve(srcDir, depPf);
+        const depOutPath  = outPaths.get(depAbsPath);
+        if (depOutPath) {
+          const relReq = path.relative(path.dirname(outPath), depOutPath).replace(/\.js$/, '');
+          userModuleRequirePaths[imp.path] = relReq.startsWith('.') ? relReq : './' + relReq;
+        }
+      }
+
+      const js = transpile(stmts, source, { runtimeRequirePath, builtinRequirePaths, externalSingletons, userModuleRequirePaths });
       fs.writeFileSync(outPath, js, 'utf-8');
       console.log(`Compiled: ${path.relative(cwd, absolutePath)} → ${path.relative(cwd, outPath)}`);
     }
@@ -1192,7 +1219,7 @@ main();
     }
 
     const BUILTIN_PATHS_BROWSER = new Set([
-      'io','file','math','json','async','http','db/postgresql','db/mariadb',
+      'io','file','math','json','async','http','foreign','db/postgresql','db/mariadb',
     ]);
     const builtinUnionResolverForServe = builtinUnionResolver;
 
@@ -1489,7 +1516,7 @@ ${bundledJs}
         }
         const sd    = path.dirname(absPath);
         const BUILTIN_PATHS_SERVER = new Set([
-          'io','file','math','json','async','http','db/postgresql','db/mariadb',
+          'io','file','math','json','async','http','foreign','db/postgresql','db/mariadb',
         ]);
         for (const stmt of stmts) {
           if (stmt.type !== 'ImportStmt') continue;
@@ -1531,6 +1558,7 @@ ${bundledJs}
         const BUILTIN_LIB_FILES_LOCAL: Record<string, string> = {
           'io': 'pfun-io', 'file': 'pfun-file', 'math': 'pfun-math',
           'json': 'pfun-json', 'async': 'pfun-async', 'http': 'pfun-http',
+          'foreign': 'pfun-foreign',
           'db/postgresql': 'pfun-db-postgresql', 'db/mariadb': 'pfun-db-mariadb',
         };
         for (const [mod, lib] of Object.entries(BUILTIN_LIB_FILES_LOCAL)) {
@@ -1586,7 +1614,7 @@ ${bundledJs}
       const libDir = path.join(projectRoot, 'output', 'lib');
       fs.mkdirSync(libDir, { recursive: true });
       const RT_LIBS = ['pfun-runtime','pfun-io','pfun-json','pfun-http',
-                       'pfun-math','pfun-file','pfun-async',
+                       'pfun-math','pfun-file','pfun-async','pfun-foreign',
                        'pfun-db-postgresql','pfun-db-mariadb'];
       for (const lib of RT_LIBS) {
         const dest = path.join(libDir, lib + '.js');

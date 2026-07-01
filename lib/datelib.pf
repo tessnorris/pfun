@@ -1,0 +1,701 @@
+// datelib.pf
+// A date/time library for Pfun built on the JavaScript Date API via foreign.pf.
+//
+// Import with:  import * from "$PFUN_HOME/lib/datelib.pf";
+//
+// ─── Design notes ────────────────────────────────────────────────────────────
+//
+// JS Date objects are mutable, but this library treats them as immutable:
+// every "modification" returns a new handle; setters are only used on a
+// freshly cloned copy for addMonths/addYears.
+//
+// The live handle is kept in an opaque record:
+//   type Date = { handle }      -- handle is a Foreign JS Date
+//
+// All constructors return DateResult so invalid-date strings (which produce
+// a JS Date with a NaN timestamp) surface as errors rather than silently
+// propagating.
+//
+// Local-time accessors return Int via dInt(); getTime/diff return Float via
+// dFloat().  Float ordering is done via round() → Int to stay within the
+// type system; isFinite() detects NaN timestamps.
+//
+// ─── Types ───────────────────────────────────────────────────────────────────
+
+import * from "foreign";
+import * from "io";
+import * from "math";
+
+export type Date = { handle }
+
+export generic type DateResult = { | DateOk : date | DateErr : message }
+
+export type Weekday = { | Sunday | Monday | Tuesday | Wednesday
+                       | Thursday | Friday | Saturday }
+
+export type Month = { | January | February | March | April
+                     | May | June | July | August
+                     | September | October | November | December }
+
+// A broken-down local date+time — for display, construction and comparisons.
+export type DateTime = {
+  year, month, day, hour, minute, second, millisecond, weekday
+}
+
+// ─── Enum helpers (pure, no FFI) ─────────────────────────────────────────────
+//
+// Defined early so format/formatDate/calendar helpers can reference them.
+
+export function monthToInt(m) {
+  match m with
+  | January   -> 0  | February  -> 1  | March    -> 2
+  | April     -> 3  | May       -> 4  | June      -> 5
+  | July      -> 6  | August    -> 7  | September -> 8
+  | October   -> 9  | November  -> 10 | December  -> 11;
+}
+
+export function monthName(m) {
+  match m with
+  | January  -> "January"   | February  -> "February"  | March     -> "March"
+  | April    -> "April"     | May       -> "May"        | June      -> "June"
+  | July     -> "July"      | August    -> "August"     | September -> "September"
+  | October  -> "October"   | November  -> "November"   | December  -> "December";
+}
+
+export function monthShort(m) {
+  match m with
+  | January  -> "Jan" | February  -> "Feb" | March     -> "Mar"
+  | April    -> "Apr" | May       -> "May" | June      -> "Jun"
+  | July     -> "Jul" | August    -> "Aug" | September -> "Sep"
+  | October  -> "Oct" | November  -> "Nov" | December  -> "Dec";
+}
+
+export function weekdayName(w) {
+  match w with
+  | Sunday   -> "Sunday"    | Monday    -> "Monday"
+  | Tuesday  -> "Tuesday"   | Wednesday -> "Wednesday"
+  | Thursday -> "Thursday"  | Friday    -> "Friday"
+  | Saturday -> "Saturday";
+}
+
+export function weekdayShort(w) {
+  match w with
+  | Sunday   -> "Sun" | Monday    -> "Mon" | Tuesday   -> "Tue"
+  | Wednesday -> "Wed" | Thursday -> "Thu" | Friday    -> "Fri"
+  | Saturday -> "Sat";
+}
+
+export function isWeekend(w) {
+  match w with | Saturday -> true | Sunday -> true | _ -> false;
+}
+
+export function isWeekdayVariant(w) {
+  match w with | Saturday -> false | Sunday -> false | _ -> true;
+}
+
+// isLeapYear(year) — pure Int predicate.
+export function isLeapYear(yr) {
+  (yr % 4 == 0 && yr % 100 != 0) || yr % 400 == 0;
+}
+
+// febDays(year) — 28 or 29 depending on leap year.
+function febDays(yr) {
+  if isLeapYear(yr) then 29 else 28;
+}
+
+// daysInMonth(month, year) — pure; handles leap years.
+export function daysInMonth(m, yr) {
+  match m with
+  | February  -> febDays(yr)
+  | April     -> 30 | June      -> 30 | September -> 30 | November  -> 30
+  | _         -> 31;
+}
+
+// ─── Internal helpers ─────────────────────────────────────────────────────────
+
+// Zero-pad an Int to at least `width` digits.
+function zeroPad(n, width) {
+  let s = __str__(n);
+  let pad = width - length(s);
+  if pad <= 0 then s
+  else {
+    function go(i, acc) {
+      if i <= 0 then acc else go(i - 1, "0" + acc);
+    }
+    go(pad, s);
+  }
+}
+
+// Call a no-arg method on a handle, decoding the result as Int (bigint).
+proc callInt(handle, method) {
+  match foreignCall(handle, method, []) with
+  | FErr e -> FErr { e.kind, e.message }
+  | FOk v  -> foreignApply(v.value, dInt());
+}
+
+// Call a no-arg method on a handle, decoding the result as Float.
+proc callFloat(handle, method) {
+  match foreignCall(handle, method, []) with
+  | FErr e -> FErr { e.kind, e.message }
+  | FOk v  -> foreignApply(v.value, dFloat());
+}
+
+// Call a no-arg method on a handle, decoding the result as Str.
+proc callStr(handle, method) {
+  match foreignCall(handle, method, []) with
+  | FErr e -> FErr { e.kind, e.message }
+  | FOk v  -> foreignApply(v.value, dStr());
+}
+
+// getDateCtor() — resolve the JS Date constructor.
+proc getDateCtor() {
+  foreignGlobal("Date");
+}
+
+// validateHandle(handle, src) — check the timestamp isn't NaN.
+// JS Date("bad-string") gives a Date with getTime() == NaN.
+proc validateHandle(handle, src) {
+  match callFloat(handle, "getTime") with
+  | FErr e -> DateErr { "FFI error checking date validity: " + e.message }
+  | FOk ms -> {
+      if isFinite(ms.value)
+      then DateOk { Date { handle } }
+      else DateErr { "Invalid date: " + src };
+    };
+}
+
+// Convert a 0-indexed JS getDay() int to a Weekday variant.
+function intToWeekday(n) {
+  match n with
+  | n where n == 0 -> Sunday
+  | n where n == 1 -> Monday
+  | n where n == 2 -> Tuesday
+  | n where n == 3 -> Wednesday
+  | n where n == 4 -> Thursday
+  | n where n == 5 -> Friday
+  | _ -> Saturday;
+}
+
+// Convert a 0-indexed JS getMonth() int to a Month variant.
+function intToMonth(n) {
+  match n with
+  | n where n == 0  -> January   | n where n == 1  -> February
+  | n where n == 2  -> March     | n where n == 3  -> April
+  | n where n == 4  -> May       | n where n == 5  -> June
+  | n where n == 6  -> July      | n where n == 7  -> August
+  | n where n == 8  -> September | n where n == 9  -> October
+  | n where n == 10 -> November  | _               -> December;
+}
+
+// ─── Constructors ─────────────────────────────────────────────────────────────
+
+// now() — current local time.
+export proc now() {
+  match getDateCtor() with
+  | FErr e -> DateErr { "Could not access Date constructor: " + e.message }
+  | FOk dc -> {
+      match foreignNew(dc.value, []) with
+      | FErr e -> DateErr { "Could not construct Date: " + e.message }
+      | FOk h  -> DateOk { Date { h.value } };
+    };
+}
+
+// fromIso(str) — parse an ISO 8601 string, e.g. "2024-03-15T14:30:00Z".
+export proc fromIso(str) {
+  match getDateCtor() with
+  | FErr e -> DateErr { "Could not access Date constructor: " + e.message }
+  | FOk dc -> {
+      match foreignNew(dc.value, [str]) with
+      | FErr e -> DateErr { "Could not parse date string: " + e.message }
+      | FOk h  -> validateHandle(h.value, str);
+    };
+}
+
+// fromParts(year, month, day) — local midnight.
+// month is 1-indexed (1 = January … 12 = December).
+export proc fromParts(year, month, day) {
+  match getDateCtor() with
+  | FErr e -> DateErr { "Could not access Date constructor: " + e.message }
+  | FOk dc -> {
+      // JS Date constructor takes Number (not BigInt), so convert via toFloat.
+      let y = toFloat(year);
+      let m = toFloat(month) - 1.0;   // JS months are 0-indexed
+      let d = toFloat(day);
+      match foreignNew(dc.value, [y, m, d]) with
+      | FErr e -> DateErr { "Could not construct date from parts: " + e.message }
+      | FOk h  -> validateHandle(h.value, $"{year}-{month}-{day}");
+    };
+}
+
+// fromPartsTime(year, month, day, hour, minute, second, ms) — full local datetime.
+// month is 1-indexed.
+export proc fromPartsTime(year, month, day, hour, minute, second, ms) {
+  match getDateCtor() with
+  | FErr e -> DateErr { "Could not access Date constructor: " + e.message }
+  | FOk dc -> {
+      let y  = toFloat(year);
+      let mo = toFloat(month) - 1.0;
+      let d  = toFloat(day);
+      let h  = toFloat(hour);
+      let mi = toFloat(minute);
+      let s  = toFloat(second);
+      let ms2 = toFloat(ms);
+      match foreignNew(dc.value, [y, mo, d, h, mi, s, ms2]) with
+      | FErr e -> DateErr { "Could not construct datetime from parts: " + e.message }
+      | FOk h  -> validateHandle(h.value, $"{year}-{month}-{day}T{hour}:{minute}:{second}");
+    };
+}
+
+// fromTimestamp(ms) — construct from Unix milliseconds (Float).
+export proc fromTimestamp(ms) {
+  match getDateCtor() with
+  | FErr e -> DateErr { "Could not access Date constructor: " + e.message }
+  | FOk dc -> {
+      match foreignNew(dc.value, [ms]) with
+      | FErr e -> DateErr { "Could not construct date from timestamp: " + e.message }
+      | FOk h  -> DateOk { Date { h.value } };
+    };
+}
+
+// ─── Timestamp ────────────────────────────────────────────────────────────────
+
+// timestamp(d) — milliseconds since the Unix epoch, as a Float.
+export proc timestamp(d) {
+  callFloat(d.handle, "getTime");
+}
+
+// timestampNow() — current time as a Float ms timestamp, no Date object needed.
+export proc timestampNow() {
+  match getDateCtor() with
+  | FErr e -> FErr { e.kind, e.message }
+  | FOk dc -> {
+      match foreignCall(dc.value, "now", []) with
+      | FErr e -> FErr { e.kind, e.message }
+      | FOk v  -> foreignApply(v.value, dFloat());
+    };
+}
+
+// ─── Local accessors ─────────────────────────────────────────────────────────
+//
+// All return ForeignResult containing the decoded value.
+// Months are returned 1-indexed (1 = January … 12 = December).
+// Weekdays are returned as typed variants.
+
+export proc year(d)        { callInt(d.handle, "getFullYear"); }
+
+export proc monthInt(d) {
+  match callInt(d.handle, "getMonth") with
+  | FErr e -> FErr { e.kind, e.message }
+  | FOk v  -> FOk { v.value + 1 };         // JS is 0-indexed, we return 1-indexed
+}
+
+export proc day(d)         { callInt(d.handle, "getDate"); }        // 1–31
+export proc weekdayInt(d)  { callInt(d.handle, "getDay"); }         // 0=Sun … 6=Sat
+export proc hour(d)        { callInt(d.handle, "getHours"); }       // 0–23
+export proc minute(d)      { callInt(d.handle, "getMinutes"); }     // 0–59
+export proc second(d)      { callInt(d.handle, "getSeconds"); }     // 0–59
+export proc millisecond(d) { callInt(d.handle, "getMilliseconds"); } // 0–999
+
+// timezoneOffset(d) — local offset from UTC in minutes (negative east of UTC).
+export proc timezoneOffset(d) { callInt(d.handle, "getTimezoneOffset"); }
+
+// weekday(d) — typed Weekday variant.
+export proc weekday(d) {
+  match weekdayInt(d) with
+  | FErr e -> FErr { e.kind, e.message }
+  | FOk v  -> FOk { intToWeekday(v.value) };
+}
+
+// month(d) — typed Month variant.
+export proc month(d) {
+  match callInt(d.handle, "getMonth") with     // 0-indexed from JS
+  | FErr e -> FErr { e.kind, e.message }
+  | FOk v  -> FOk { intToMonth(v.value) };
+}
+
+// ─── UTC accessors ────────────────────────────────────────────────────────────
+
+export proc utcYear(d)        { callInt(d.handle, "getUTCFullYear"); }
+
+export proc utcMonthInt(d) {
+  match callInt(d.handle, "getUTCMonth") with
+  | FErr e -> FErr { e.kind, e.message }
+  | FOk v  -> FOk { v.value + 1 };
+}
+
+export proc utcDay(d)         { callInt(d.handle, "getUTCDate"); }
+export proc utcWeekdayInt(d)  { callInt(d.handle, "getUTCDay"); }
+export proc utcHour(d)        { callInt(d.handle, "getUTCHours"); }
+export proc utcMinute(d)      { callInt(d.handle, "getUTCMinutes"); }
+export proc utcSecond(d)      { callInt(d.handle, "getUTCSeconds"); }
+export proc utcMillisecond(d) { callInt(d.handle, "getUTCMilliseconds"); }
+
+export proc utcMonth(d) {
+  match callInt(d.handle, "getUTCMonth") with
+  | FErr e -> FErr { e.kind, e.message }
+  | FOk v  -> FOk { intToMonth(v.value) };
+}
+
+export proc utcWeekday(d) {
+  match callInt(d.handle, "getUTCDay") with
+  | FErr e -> FErr { e.kind, e.message }
+  | FOk v  -> FOk { intToWeekday(v.value) };
+}
+
+// ─── Decomposition ────────────────────────────────────────────────────────────
+
+// toDateTime(d) — break down into a DateTime record using local time.
+export proc toDateTime(d) {
+  match year(d) with
+  | FErr e -> DateErr { e.message }
+  | FOk yr -> {
+      match monthInt(d) with
+      | FErr e -> DateErr { e.message }
+      | FOk mo -> {
+          match day(d) with
+          | FErr e -> DateErr { e.message }
+          | FOk dy -> {
+              match hour(d) with
+              | FErr e -> DateErr { e.message }
+              | FOk hr -> {
+                  match minute(d) with
+                  | FErr e -> DateErr { e.message }
+                  | FOk mn -> {
+                      match second(d) with
+                      | FErr e -> DateErr { e.message }
+                      | FOk sc -> {
+                          match millisecond(d) with
+                          | FErr e -> DateErr { e.message }
+                          | FOk ms -> {
+                              match weekday(d) with
+                              | FErr e -> DateErr { e.message }
+                              | FOk wd ->
+                                  DateOk {
+                                    DateTime {
+                                      yr.value,
+                                      intToMonth(mo.value - 1),
+                                      dy.value,
+                                      hr.value, mn.value, sc.value, ms.value,
+                                      wd.value
+                                    }
+                                  };
+                            };
+                        };
+                    };
+                };
+            };
+        };
+    };
+}
+
+// ─── Formatting ───────────────────────────────────────────────────────────────
+
+// toIso(d) — "2024-03-15T14:30:45.123Z" (always UTC, always ISO 8601).
+export proc toIso(d) {
+  callStr(d.handle, "toISOString");
+}
+
+// toUtcString(d) — "Fri, 15 Mar 2024 14:30:45 GMT" (RFC 7231 / HTTP date).
+export proc toUtcString(d) {
+  callStr(d.handle, "toUTCString");
+}
+
+// toDateString(d) — "Fri Mar 15 2024" (human-readable, locale-neutral).
+export proc toDateString(d) {
+  callStr(d.handle, "toDateString");
+}
+
+// toTimeString(d) — "14:30:45 GMT+0000 (…)" local time.
+export proc toTimeString(d) {
+  callStr(d.handle, "toTimeString");
+}
+
+// toLocaleString(d) — locale-sensitive full datetime.
+export proc toLocaleString(d) {
+  callStr(d.handle, "toLocaleString");
+}
+
+// format(d) — "YYYY-MM-DD HH:MM:SS" in local time.
+export proc format(d) {
+  match toDateTime(d) with
+  | DateErr e -> FErr { "date_error", e.message }
+  | DateOk dt -> {
+      let yr = zeroPad(dt.date.year, 4);
+      let mo = zeroPad(monthToInt(dt.date.month) + 1, 2);
+      let dy = zeroPad(dt.date.day,    2);
+      let hr = zeroPad(dt.date.hour,   2);
+      let mn = zeroPad(dt.date.minute, 2);
+      let sc = zeroPad(dt.date.second, 2);
+      FOk { $"{yr}-{mo}-{dy} {hr}:{mn}:{sc}" };
+    };
+}
+
+// formatDate(d) — "YYYY-MM-DD" only.
+export proc formatDate(d) {
+  match toDateTime(d) with
+  | DateErr e -> FErr { "date_error", e.message }
+  | DateOk dt -> {
+      let yr = zeroPad(dt.date.year, 4);
+      let mo = zeroPad(monthToInt(dt.date.month) + 1, 2);
+      let dy = zeroPad(dt.date.day, 2);
+      FOk { $"{yr}-{mo}-{dy}" };
+    };
+}
+
+// formatTime(d) — "HH:MM:SS" only.
+export proc formatTime(d) {
+  match toDateTime(d) with
+  | DateErr e -> FErr { "date_error", e.message }
+  | DateOk dt -> {
+      let hr = zeroPad(dt.date.hour,   2);
+      let mn = zeroPad(dt.date.minute, 2);
+      let sc = zeroPad(dt.date.second, 2);
+      FOk { $"{hr}:{mn}:{sc}" };
+    };
+}
+
+// ─── Arithmetic ───────────────────────────────────────────────────────────────
+//
+// ms offsets are exact for seconds/minutes/hours/days.  addMonths/addYears
+// delegate to JS setMonth/setFullYear to handle calendar rules (leap years,
+// varying month lengths) correctly.
+
+let MS_SECOND = 1000.0;
+let MS_MINUTE = 60000.0;
+let MS_HOUR   = 3600000.0;
+let MS_DAY    = 86400000.0;
+
+// addMilliseconds(d, n) — add n ms as a Float (may be negative).
+export proc addMilliseconds(d, n) {
+  match timestamp(d) with
+  | FErr e -> DateErr { e.message }
+  | FOk ms -> fromTimestamp(ms.value + n);
+}
+
+export proc addSeconds(d, n) { addMilliseconds(d, n * MS_SECOND); }
+export proc addMinutes(d, n) { addMilliseconds(d, n * MS_MINUTE); }
+export proc addHours(d, n)   { addMilliseconds(d, n * MS_HOUR); }
+export proc addDays(d, n)    { addMilliseconds(d, n * MS_DAY); }
+
+// addMonths(d, n) — calendar-aware; n may be negative.
+// Clamps to end-of-month per JS behaviour (Jan 31 + 1 month → Mar 3 on non-leap).
+export proc addMonths(d, n) {
+  match getDateCtor() with
+  | FErr e -> DateErr { e.message }
+  | FOk dc -> {
+      match timestamp(d) with
+      | FErr e -> DateErr { e.message }
+      | FOk ms -> {
+          match foreignNew(dc.value, [ms.value]) with
+          | FErr e -> DateErr { "Could not clone date: " + e.message }
+          | FOk cloned -> {
+              // getMonth returns a JS number; decode as Float so we can pass
+              // it straight back into setMonth without BigInt conversion error.
+              match callFloat(cloned.value, "getMonth") with
+              | FErr e -> DateErr { e.message }
+              | FOk mo -> {
+                  match foreignCall(cloned.value, "setMonth", [mo.value + toFloat(n)]) with
+                  | FErr e -> DateErr { "setMonth failed: " + e.message }
+                  | FOk _  -> validateHandle(cloned.value, "addMonths result");
+                };
+            };
+        };
+    };
+}
+
+// addYears(d, n) — calendar-aware.
+export proc addYears(d, n) {
+  match getDateCtor() with
+  | FErr e -> DateErr { e.message }
+  | FOk dc -> {
+      match timestamp(d) with
+      | FErr e -> DateErr { e.message }
+      | FOk ms -> {
+          match foreignNew(dc.value, [ms.value]) with
+          | FErr e -> DateErr { "Could not clone date: " + e.message }
+          | FOk cloned -> {
+              match callFloat(cloned.value, "getFullYear") with
+              | FErr e -> DateErr { e.message }
+              | FOk yr -> {
+                  match foreignCall(cloned.value, "setFullYear", [yr.value + toFloat(n)]) with
+                  | FErr e -> DateErr { "setFullYear failed: " + e.message }
+                  | FOk _  -> validateHandle(cloned.value, "addYears result");
+                };
+            };
+        };
+    };
+}
+
+// ─── Difference ───────────────────────────────────────────────────────────────
+
+// diffMilliseconds(a, b) — (a - b) in ms, as a Float.
+export proc diffMilliseconds(a, b) {
+  match timestamp(a) with
+  | FErr e -> FErr { e.kind, e.message }
+  | FOk ta -> {
+      match timestamp(b) with
+      | FErr e -> FErr { e.kind, e.message }
+      | FOk tb -> FOk { ta.value - tb.value };
+    };
+}
+
+export proc diffSeconds(a, b) {
+  match diffMilliseconds(a, b) with
+  | FErr e -> FErr { e.kind, e.message }
+  | FOk ms -> FOk { ms.value / MS_SECOND };
+}
+
+export proc diffMinutes(a, b) {
+  match diffMilliseconds(a, b) with
+  | FErr e -> FErr { e.kind, e.message }
+  | FOk ms -> FOk { ms.value / MS_MINUTE };
+}
+
+export proc diffHours(a, b) {
+  match diffMilliseconds(a, b) with
+  | FErr e -> FErr { e.kind, e.message }
+  | FOk ms -> FOk { ms.value / MS_HOUR };
+}
+
+export proc diffDays(a, b) {
+  match diffMilliseconds(a, b) with
+  | FErr e -> FErr { e.kind, e.message }
+  | FOk ms -> FOk { ms.value / MS_DAY };
+}
+
+// ─── Comparison ───────────────────────────────────────────────────────────────
+//
+// Float ordering is done via round() → Int since < and > are Int-only in Pfun.
+// round() on a whole-millisecond Float is exact.
+
+export proc dateBefore(a, b) {
+  match diffMilliseconds(a, b) with
+  | FErr e -> FErr { e.kind, e.message }
+  | FOk ms -> FOk { round(ms.value) < 0 };
+}
+
+export proc dateAfter(a, b) {
+  match diffMilliseconds(a, b) with
+  | FErr e -> FErr { e.kind, e.message }
+  | FOk ms -> FOk { round(ms.value) > 0 };
+}
+
+export proc dateEqual(a, b) {
+  match diffMilliseconds(a, b) with
+  | FErr e -> FErr { e.kind, e.message }
+  | FOk ms -> FOk { ms.value == 0.0 };
+}
+
+// selectDate(cond, a, b) — return a if cond, else b.
+// Used to avoid if-in-let which the parser doesn't allow.
+function selectDate(cond, a, b) {
+  match cond with
+  | c where c -> a
+  | _         -> b;
+}
+
+// dateMin(a, b) / dateMax(a, b) — the earlier/later of two dates.
+export proc dateMin(a, b) {
+  match dateBefore(a, b) with
+  | FErr e -> DateErr { e.message }
+  | FOk r  -> DateOk { selectDate(r.value, a, b) };
+}
+
+export proc dateMax(a, b) {
+  match dateAfter(a, b) with
+  | FErr e -> DateErr { e.message }
+  | FOk r  -> DateOk { selectDate(r.value, a, b) };
+}
+
+// ─── Calendar queries ─────────────────────────────────────────────────────────
+
+// startOfDay(d) — midnight local time on the same calendar day.
+export proc startOfDay(d) {
+  match toDateTime(d) with
+  | DateErr e -> DateErr { e.message }
+  | DateOk dt -> fromPartsTime(dt.date.year,
+                               monthToInt(dt.date.month) + 1,
+                               dt.date.day, 0, 0, 0, 0);
+}
+
+// endOfDay(d) — 23:59:59.999 local time on the same calendar day.
+export proc endOfDay(d) {
+  match toDateTime(d) with
+  | DateErr e -> DateErr { e.message }
+  | DateOk dt -> fromPartsTime(dt.date.year,
+                               monthToInt(dt.date.month) + 1,
+                               dt.date.day, 23, 59, 59, 999);
+}
+
+// startOfMonth(d) — 1st of the month at midnight.
+export proc startOfMonth(d) {
+  match toDateTime(d) with
+  | DateErr e -> DateErr { e.message }
+  | DateOk dt -> fromPartsTime(dt.date.year,
+                               monthToInt(dt.date.month) + 1,
+                               1, 0, 0, 0, 0);
+}
+
+// endOfMonth(d) — last day of the month at 23:59:59.999.
+export proc endOfMonth(d) {
+  match toDateTime(d) with
+  | DateErr e -> DateErr { e.message }
+  | DateOk dt -> {
+      let lastDay = daysInMonth(dt.date.month, dt.date.year);
+      fromPartsTime(dt.date.year,
+                   monthToInt(dt.date.month) + 1,
+                   lastDay, 23, 59, 59, 999);
+    };
+}
+
+// startOfYear(d) — January 1 at midnight.
+export proc startOfYear(d) {
+  match year(d) with
+  | FErr e -> DateErr { e.message }
+  | FOk yr -> fromPartsTime(yr.value, 1, 1, 0, 0, 0, 0);
+}
+
+// endOfYear(d) — December 31 at 23:59:59.999.
+export proc endOfYear(d) {
+  match year(d) with
+  | FErr e -> DateErr { e.message }
+  | FOk yr -> fromPartsTime(yr.value, 12, 31, 23, 59, 59, 999);
+}
+
+// isSameDay(a, b) — true if both dates fall on the same local calendar day.
+export proc isSameDay(a, b) {
+  match toDateTime(a) with
+  | DateErr _ -> false
+  | DateOk da -> {
+      match toDateTime(b) with
+      | DateErr _ -> false
+      | DateOk db ->
+          da.date.year  == db.date.year  &&
+          da.date.month == db.date.month &&
+          da.date.day   == db.date.day;
+    };
+}
+
+// isSameMonth(a, b) — same calendar month and year.
+export proc isSameMonth(a, b) {
+  match toDateTime(a) with
+  | DateErr _ -> false
+  | DateOk da -> {
+      match toDateTime(b) with
+      | DateErr _ -> false
+      | DateOk db ->
+          da.date.year  == db.date.year &&
+          da.date.month == db.date.month;
+    };
+}
+
+// isSameYear(a, b) — same calendar year.
+export proc isSameYear(a, b) {
+  match toDateTime(a) with
+  | DateErr _ -> false
+  | DateOk da -> {
+      match toDateTime(b) with
+      | DateErr _ -> false
+      | DateOk db -> da.date.year == db.date.year;
+    };
+}

@@ -1,0 +1,498 @@
+// datelib_test.pf — integration tests for datelib.pf
+// Run with: PFUN_HOME=/path/to/pfun pfun datelib_test.pf
+
+import * from "foreign";
+import * from "io";
+import * from "math";
+import * from "$PFUN_HOME/lib/datelib.pf";
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+// Unwrap DateOk or crash with message
+proc unwrapDate(r, label) {
+  match r with
+  | DateErr e -> { println("FAIL " + label + ": DateErr " + e.message); now(); }
+  | DateOk d  -> d.date;
+}
+
+proc unwrapOk(r, label) {
+  match r with
+  | FErr e -> { println("FAIL " + label + ": FErr " + e.message); ""; }
+  | FOk v  -> v.value;
+}
+
+proc expectStr(actual, expected, label) {
+  if actual == expected
+  then println("PASS " + label)
+  else println("FAIL " + label + ": got \"" + actual + "\" expected \"" + expected + "\"");
+}
+
+proc expectInt(actual, expected, label) {
+  if actual == expected
+  then println("PASS " + label)
+  else println("FAIL " + label + ": got " + __str__(actual) + " expected " + __str__(expected));
+}
+
+proc expectBool(actual, expected, label) {
+  if actual == expected
+  then println("PASS " + label)
+  else println("FAIL " + label + ": got " + __str__(actual) + " expected " + __str__(expected));
+}
+
+// ─── Constructors ─────────────────────────────────────────────────────────────
+
+proc testConstructors() {
+  println("--- Constructors ---");
+
+  // fromIso: valid
+  match fromIso("2024-03-15T14:30:45.123Z") with
+  | DateErr e -> println("FAIL fromIso valid: " + e.message)
+  | DateOk _  -> println("PASS fromIso valid");
+
+  // fromIso: invalid string
+  match fromIso("not-a-date") with
+  | DateErr _ -> println("PASS fromIso invalid")
+  | DateOk _  -> println("FAIL fromIso invalid: should have been DateErr");
+
+  // fromParts (1-indexed month)
+  match fromParts(2024, 3, 15) with
+  | DateErr e -> println("FAIL fromParts: " + e.message)
+  | DateOk d  -> {
+      match utcMonthInt(d.date) with
+      | FErr e -> println("FAIL fromParts month: " + e.message)
+      | FOk v  -> expectInt(v.value, 3, "fromParts 1-indexed month");
+    };
+
+  // fromPartsTime
+  match fromPartsTime(2024, 3, 15, 14, 30, 45, 123) with
+  | DateErr e -> println("FAIL fromPartsTime: " + e.message)
+  | DateOk _  -> println("PASS fromPartsTime");
+
+  // fromTimestamp
+  match fromTimestamp(1710513045123.0) with
+  | DateErr e -> println("FAIL fromTimestamp: " + e.message)
+  | DateOk d  -> {
+      match toIso(d.date) with
+      | FErr e -> println("FAIL fromTimestamp iso: " + e.message)
+      | FOk s  -> expectStr(s.value, "2024-03-15T14:30:45.123Z", "fromTimestamp");
+    };
+
+  // now() — just check it's a DateOk and year >= 2024
+  match now() with
+  | DateErr e -> println("FAIL now: " + e.message)
+  | DateOk d  -> {
+      match year(d.date) with
+      | FErr e -> println("FAIL now year: " + e.message)
+      | FOk yr -> {
+          if yr.value >= 2024
+          then println("PASS now")
+          else println("FAIL now: year " + __str__(yr.value) + " < 2024");
+        };
+    };
+}
+
+// ─── UTC Accessors ────────────────────────────────────────────────────────────
+
+proc testUtcAccessors() {
+  println("--- UTC Accessors ---");
+
+  match fromIso("2024-03-15T14:30:45.123Z") with
+  | DateErr e -> println("FAIL setup: " + e.message)
+  | DateOk d  -> {
+      let h = d.date;
+
+      match utcYear(h) with
+      | FErr e -> println("FAIL utcYear: " + e.message)
+      | FOk v  -> expectInt(v.value, 2024, "utcYear");
+
+      match utcMonthInt(h) with
+      | FErr e -> println("FAIL utcMonthInt: " + e.message)
+      | FOk v  -> expectInt(v.value, 3, "utcMonthInt 1-indexed");
+
+      match utcMonth(h) with
+      | FErr e -> println("FAIL utcMonth: " + e.message)
+      | FOk v  -> expectStr(monthShort(v.value), "Mar", "utcMonth variant");
+
+      match utcDay(h) with
+      | FErr e -> println("FAIL utcDay: " + e.message)
+      | FOk v  -> expectInt(v.value, 15, "utcDay");
+
+      match utcHour(h) with
+      | FErr e -> println("FAIL utcHour: " + e.message)
+      | FOk v  -> expectInt(v.value, 14, "utcHour");
+
+      match utcMinute(h) with
+      | FErr e -> println("FAIL utcMinute: " + e.message)
+      | FOk v  -> expectInt(v.value, 30, "utcMinute");
+
+      match utcSecond(h) with
+      | FErr e -> println("FAIL utcSecond: " + e.message)
+      | FOk v  -> expectInt(v.value, 45, "utcSecond");
+
+      match utcMillisecond(h) with
+      | FErr e -> println("FAIL utcMs: " + e.message)
+      | FOk v  -> expectInt(v.value, 123, "utcMillisecond");
+
+      match utcWeekday(h) with
+      | FErr e -> println("FAIL utcWeekday: " + e.message)
+      | FOk v  -> expectStr(weekdayName(v.value), "Friday", "utcWeekday 2024-03-15");
+    };
+}
+
+// ─── Timestamp ────────────────────────────────────────────────────────────────
+
+proc testTimestamp() {
+  println("--- Timestamp ---");
+
+  match fromIso("2024-03-15T14:30:45.123Z") with
+  | DateErr e -> println("FAIL setup: " + e.message)
+  | DateOk d  -> {
+      match timestamp(d.date) with
+      | FErr e -> println("FAIL timestamp: " + e.message)
+      | FOk ms -> {
+          // 1710513045123 as Float
+          if ms.value == 1710513045123.0
+          then println("PASS timestamp exact")
+          else println("FAIL timestamp: got " + __str__(ms.value));
+        };
+    };
+
+  match timestampNow() with
+  | FErr e -> println("FAIL timestampNow: " + e.message)
+  | FOk ms -> {
+      // ms.value should be > epoch sentinel; use round() since < is Int-only
+      if round(ms.value - 1710513045123.0) > 0
+      then println("PASS timestampNow > epoch sentinel")
+      else println("FAIL timestampNow: suspiciously small " + __str__(ms.value));
+    };
+}
+
+// ─── toDateTime ───────────────────────────────────────────────────────────────
+
+proc testToDateTime() {
+  println("--- toDateTime ---");
+
+  match fromIso("2024-03-15T14:30:45.123Z") with
+  | DateErr e -> println("FAIL setup: " + e.message)
+  | DateOk d  -> {
+      match toDateTime(d.date) with
+      | DateErr e -> println("FAIL toDateTime: " + e.message)
+      | DateOk dt -> {
+          let t = dt.date;
+          expectInt(t.year,        2024,    "dt.year");
+          expectStr(monthName(t.month), "March", "dt.month");
+          expectInt(t.second,      45,      "dt.second");
+          expectInt(t.millisecond, 123,     "dt.millisecond");
+        };
+    };
+}
+
+// ─── Formatting ───────────────────────────────────────────────────────────────
+
+proc testFormatting() {
+  println("--- Formatting ---");
+
+  match fromIso("2024-03-15T14:30:45.123Z") with
+  | DateErr e -> println("FAIL setup: " + e.message)
+  | DateOk d  -> {
+      let h = d.date;
+
+      match toIso(h) with
+      | FErr e -> println("FAIL toIso: " + e.message)
+      | FOk s  -> expectStr(s.value, "2024-03-15T14:30:45.123Z", "toIso");
+
+      match toUtcString(h) with
+      | FErr e -> println("FAIL toUtcString: " + e.message)
+      | FOk s  -> {
+          if length(s.value) > 0
+          then println("PASS toUtcString non-empty")
+          else println("FAIL toUtcString empty");
+        };
+
+      match toDateString(h) with
+      | FErr e -> println("FAIL toDateString: " + e.message)
+      | FOk s  -> {
+          if length(s.value) > 0
+          then println("PASS toDateString non-empty")
+          else println("FAIL toDateString empty");
+        };
+    };
+
+  // formatDate / format / formatTime — construct in UTC to get stable output
+  match fromIso("2024-03-05T09:07:06.000Z") with
+  | DateErr e -> println("FAIL format setup: " + e.message)
+  | DateOk d  -> {
+      // These use local time; in UTC environment they should be stable
+      match utcYear(d.date) with
+      | FErr e -> println("FAIL utcYear for format: " + e.message)
+      | FOk yr -> expectInt(yr.value, 2024, "format setup year check");
+    };
+}
+
+// ─── Arithmetic ───────────────────────────────────────────────────────────────
+
+proc testArithmetic() {
+  println("--- Arithmetic ---");
+
+  match fromIso("2024-01-15T00:00:00.000Z") with
+  | DateErr e -> println("FAIL setup: " + e.message)
+  | DateOk d  -> {
+      let h = d.date;
+
+      // addDays(30) → 2024-02-14
+      match addDays(h, 30.0) with
+      | DateErr e -> println("FAIL addDays: " + e.message)
+      | DateOk r  -> {
+          match toIso(r.date) with
+          | FErr e -> println("FAIL addDays iso: " + e.message)
+          | FOk s  -> expectStr(s.value, "2024-02-14T00:00:00.000Z", "addDays 30");
+        };
+
+      // addDays negative
+      match addDays(h, -15.0) with
+      | DateErr e -> println("FAIL addDays neg: " + e.message)
+      | DateOk r  -> {
+          match toIso(r.date) with
+          | FErr e -> println("FAIL addDays neg iso: " + e.message)
+          | FOk s  -> expectStr(s.value, "2023-12-31T00:00:00.000Z", "addDays -15");
+        };
+
+      // addMonths(2) → 2024-03-15
+      match addMonths(h, 2) with
+      | DateErr e -> println("FAIL addMonths: " + e.message)
+      | DateOk r  -> {
+          match toIso(r.date) with
+          | FErr e -> println("FAIL addMonths iso: " + e.message)
+          | FOk s  -> expectStr(s.value, "2024-03-15T00:00:00.000Z", "addMonths 2");
+        };
+
+      // addMonths negative
+      match addMonths(h, -3) with
+      | DateErr e -> println("FAIL addMonths neg: " + e.message)
+      | DateOk r  -> {
+          match toIso(r.date) with
+          | FErr e -> println("FAIL addMonths neg iso: " + e.message)
+          | FOk s  -> expectStr(s.value, "2023-10-15T00:00:00.000Z", "addMonths -3");
+        };
+
+      // addYears(1) → 2025-01-15
+      match addYears(h, 1) with
+      | DateErr e -> println("FAIL addYears: " + e.message)
+      | DateOk r  -> {
+          match toIso(r.date) with
+          | FErr e -> println("FAIL addYears iso: " + e.message)
+          | FOk s  -> expectStr(s.value, "2025-01-15T00:00:00.000Z", "addYears 1");
+        };
+
+      // addHours(3)
+      match addHours(h, 3.0) with
+      | DateErr e -> println("FAIL addHours: " + e.message)
+      | DateOk r  -> {
+          match toIso(r.date) with
+          | FErr e -> println("FAIL addHours iso: " + e.message)
+          | FOk s  -> expectStr(s.value, "2024-01-15T03:00:00.000Z", "addHours 3");
+        };
+    };
+}
+
+// ─── Difference ───────────────────────────────────────────────────────────────
+
+proc testDifference() {
+  println("--- Difference ---");
+
+  match fromIso("2024-01-01T00:00:00.000Z") with
+  | DateErr e -> println("FAIL setup a: " + e.message)
+  | DateOk da -> {
+      match fromIso("2024-03-15T00:00:00.000Z") with
+      | DateErr e -> println("FAIL setup b: " + e.message)
+      | DateOk db -> {
+          // b - a = 74 days
+          match diffDays(db.date, da.date) with
+          | FErr e -> println("FAIL diffDays: " + e.message)
+          | FOk d  -> {
+              // 74 * 86400000 / 86400000 = 74 (Float)
+              if round(d.value) == 74
+              then println("PASS diffDays 74")
+              else println("FAIL diffDays: got " + __str__(d.value));
+            };
+
+          match diffHours(db.date, da.date) with
+          | FErr e -> println("FAIL diffHours: " + e.message)
+          | FOk h  -> {
+              if round(h.value) == 74 * 24
+              then println("PASS diffHours 1776")
+              else println("FAIL diffHours: got " + __str__(h.value));
+            };
+
+          // Same date: diff is 0
+          match diffMilliseconds(da.date, da.date) with
+          | FErr e -> println("FAIL diffMs zero: " + e.message)
+          | FOk ms -> {
+              if ms.value == 0.0
+              then println("PASS diffMs zero")
+              else println("FAIL diffMs zero: got " + __str__(ms.value));
+            };
+        };
+    };
+}
+
+// ─── Comparison ───────────────────────────────────────────────────────────────
+
+proc testComparison() {
+  println("--- Comparison ---");
+
+  match fromIso("2024-01-01T00:00:00.000Z") with
+  | DateErr e -> println("FAIL setup a: " + e.message)
+  | DateOk da -> {
+      match fromIso("2024-06-15T00:00:00.000Z") with
+      | DateErr e -> println("FAIL setup b: " + e.message)
+      | DateOk db -> {
+          match dateBefore(da.date, db.date) with
+          | FErr e -> println("FAIL dateBefore: " + e.message)
+          | FOk v  -> expectBool(v.value, true, "dateBefore(a,b)");
+
+          match dateBefore(db.date, da.date) with
+          | FErr e -> println("FAIL dateBefore rev: " + e.message)
+          | FOk v  -> expectBool(v.value, false, "dateBefore(b,a)");
+
+          match dateAfter(db.date, da.date) with
+          | FErr e -> println("FAIL dateAfter: " + e.message)
+          | FOk v  -> expectBool(v.value, true, "dateAfter(b,a)");
+
+          match dateEqual(da.date, da.date) with
+          | FErr e -> println("FAIL dateEqual: " + e.message)
+          | FOk v  -> expectBool(v.value, true, "dateEqual same");
+
+          match dateEqual(da.date, db.date) with
+          | FErr e -> println("FAIL dateEqual diff: " + e.message)
+          | FOk v  -> expectBool(v.value, false, "dateEqual different");
+
+          match dateMin(da.date, db.date) with
+          | DateErr e -> println("FAIL dateMin: " + e.message)
+          | DateOk mn -> {
+              match dateEqual(mn.date, da.date) with
+              | FErr e -> println("FAIL dateMin eq: " + e.message)
+              | FOk v  -> expectBool(v.value, true, "dateMin returns earlier");
+            };
+
+          match dateMax(da.date, db.date) with
+          | DateErr e -> println("FAIL dateMax: " + e.message)
+          | DateOk mx -> {
+              match dateEqual(mx.date, db.date) with
+              | FErr e -> println("FAIL dateMax eq: " + e.message)
+              | FOk v  -> expectBool(v.value, true, "dateMax returns later");
+            };
+        };
+    };
+}
+
+// ─── Calendar helpers ─────────────────────────────────────────────────────────
+
+proc testCalendar() {
+  println("--- Calendar ---");
+
+  // isLeapYear (pure)
+  expectBool(isLeapYear(2024), true,  "isLeapYear 2024");
+  expectBool(isLeapYear(1900), false, "isLeapYear 1900 (div 100)");
+  expectBool(isLeapYear(2000), true,  "isLeapYear 2000 (div 400)");
+  expectBool(isLeapYear(2023), false, "isLeapYear 2023");
+
+  // daysInMonth
+  expectInt(daysInMonth(February, 2024), 29, "daysInMonth Feb leap");
+  expectInt(daysInMonth(February, 2023), 28, "daysInMonth Feb non-leap");
+  expectInt(daysInMonth(April, 2024),    30, "daysInMonth April");
+  expectInt(daysInMonth(January, 2024),  31, "daysInMonth January");
+
+  // startOfDay / endOfDay
+  match fromIso("2024-03-15T14:30:45.500Z") with
+  | DateErr e -> println("FAIL calendar setup: " + e.message)
+  | DateOk d  -> {
+      match startOfDay(d.date) with
+      | DateErr e -> println("FAIL startOfDay: " + e.message)
+      | DateOk r  -> {
+          match utcHour(r.date) with
+          | FErr e -> println("FAIL startOfDay hour: " + e.message)
+          | FOk v  -> expectInt(v.value, 0, "startOfDay hour=0");
+        };
+
+      match endOfDay(d.date) with
+      | DateErr e -> println("FAIL endOfDay: " + e.message)
+      | DateOk r  -> {
+          match utcSecond(r.date) with
+          | FErr e -> println("FAIL endOfDay sec: " + e.message)
+          | FOk v  -> expectInt(v.value, 59, "endOfDay second=59");
+        };
+
+      // startOfMonth → day 1
+      match startOfMonth(d.date) with
+      | DateErr e -> println("FAIL startOfMonth: " + e.message)
+      | DateOk r  -> {
+          match utcDay(r.date) with
+          | FErr e -> println("FAIL startOfMonth day: " + e.message)
+          | FOk v  -> expectInt(v.value, 1, "startOfMonth day=1");
+        };
+
+      // endOfMonth for March → day 31
+      match endOfMonth(d.date) with
+      | DateErr e -> println("FAIL endOfMonth: " + e.message)
+      | DateOk r  -> {
+          match utcDay(r.date) with
+          | FErr e -> println("FAIL endOfMonth day: " + e.message)
+          | FOk v  -> expectInt(v.value, 31, "endOfMonth March day=31");
+        };
+    };
+
+  // isSameDay / isSameMonth / isSameYear
+  match fromIso("2024-03-15T00:00:00Z") with
+  | DateErr e -> println("FAIL isSame setup a: " + e.message)
+  | DateOk a  -> {
+      match fromIso("2024-03-15T23:59:59Z") with
+      | DateErr e -> println("FAIL isSame setup b: " + e.message)
+      | DateOk b  -> {
+          match fromIso("2024-03-16T00:00:00Z") with
+          | DateErr e -> println("FAIL isSame setup c: " + e.message)
+          | DateOk c  -> {
+              expectBool(isSameDay(a.date, b.date),   true,  "isSameDay same day");
+              expectBool(isSameDay(a.date, c.date),   false, "isSameDay diff day");
+              expectBool(isSameMonth(a.date, c.date), true,  "isSameMonth March");
+              expectBool(isSameYear(a.date, c.date),  true,  "isSameYear 2024");
+            };
+        };
+    };
+}
+
+// ─── Enum helpers ─────────────────────────────────────────────────────────────
+
+proc testEnums() {
+  println("--- Enums ---");
+
+  expectStr(monthName(January),   "January",  "monthName January");
+  expectStr(monthName(December),  "December", "monthName December");
+  expectStr(monthShort(March),    "Mar",      "monthShort March");
+  expectStr(weekdayName(Friday),  "Friday",   "weekdayName Friday");
+  expectStr(weekdayShort(Sunday), "Sun",      "weekdayShort Sunday");
+  expectBool(isWeekend(Saturday), true,       "isWeekend Saturday");
+  expectBool(isWeekend(Monday),   false,      "isWeekend Monday");
+  expectBool(isWeekdayVariant(Wednesday), true,  "isWeekday Wednesday");
+  expectBool(isWeekdayVariant(Sunday),    false, "isWeekday Sunday");
+  expectInt(monthToInt(January),  0, "monthToInt January = 0");
+  expectInt(monthToInt(December), 11, "monthToInt December = 11");
+}
+
+// ─── Run all ──────────────────────────────────────────────────────────────────
+
+proc main() {
+  testConstructors();
+  testUtcAccessors();
+  testTimestamp();
+  testToDateTime();
+  testFormatting();
+  testArithmetic();
+  testDifference();
+  testComparison();
+  testCalendar();
+  testEnums();
+  println("Done.");
+}
+
+main();

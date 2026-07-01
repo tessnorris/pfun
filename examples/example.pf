@@ -7,6 +7,7 @@
 
 import * from "io";
 import * from "file";
+import * from "foreign";
 
 /*
   1. COMMENTS & VARIABLES
@@ -2073,3 +2074,234 @@ proc buffer_demo() {
   | Err _ -> 0;
 }
 buffer_demo();
+
+
+// ============================================================================
+/*
+  26. DATE LIBRARY
+  datelib.pf wraps the JavaScript Date API via the foreign FFI.
+  Import it with: import * from "$PFUN_HOME/lib/datelib.pf";
+
+  Key design points:
+  - Dates are opaque records { handle } wrapping a live JS Date.
+  - All constructors return DateResult (DateOk / DateErr) so invalid
+    strings surface as errors rather than propagating silently.
+  - month() / weekday() return typed variants (Month, Weekday).
+  - utc* accessors read UTC fields; local accessors read machine-local time.
+  - Arithmetic: addDays/addHours/etc. are exact ms offsets;
+    addMonths/addYears delegate to JS for calendar correctness.
+  - Float ordering is Int-only in Pfun; diff results use round() -> Int.
+  - Int (bigint) args going back into JS Date methods use toFloat().
+
+  All examples below use fromIso("...Z") + utc* accessors so output is
+  identical regardless of the machine's local timezone.
+*/
+
+import * from "$PFUN_HOME/lib/datelib.pf";
+
+println("--- 26. Date Library ---");
+
+// ── Construction ─────────────────────────────────────────────────────────────
+
+// fromIso: parse an ISO 8601 string; "Z" suffix → UTC
+match fromIso("2024-03-15T14:30:45.123Z") with
+| DateErr e -> println("ERROR: " + e.message)
+| DateOk d  -> {
+    // toIso round-trips exactly
+    match toIso(d.date) with
+    | FErr e -> println("ERROR: " + e.message)
+    | FOk s  -> println(s.value);                    // 2024-03-15T14:30:45.123Z
+
+    // UTC accessors — timezone-invariant
+    match utcYear(d.date) with
+    | FErr e -> println("ERROR: " + e.message)
+    | FOk v  -> println("year: " + __str__(v.value));  // year: 2024
+
+    match utcMonthInt(d.date) with
+    | FErr e -> println("ERROR: " + e.message)
+    | FOk v  -> println("month: " + __str__(v.value)); // month: 3
+
+    match utcDay(d.date) with
+    | FErr e -> println("ERROR: " + e.message)
+    | FOk v  -> println("day: " + __str__(v.value));   // day: 15
+
+    match utcHour(d.date) with
+    | FErr e -> println("ERROR: " + e.message)
+    | FOk v  -> println("hour: " + __str__(v.value));  // hour: 14
+
+    // Typed Month and Weekday variants
+    match utcMonth(d.date) with
+    | FErr e -> println("ERROR: " + e.message)
+    | FOk v  -> println(monthName(v.value));            // March
+
+    match utcWeekday(d.date) with
+    | FErr e -> println("ERROR: " + e.message)
+    | FOk v  -> println(weekdayName(v.value));          // Friday
+  };
+
+// fromTimestamp: construct from a Unix millisecond timestamp (Float).
+// 1735084800000 = 2024-12-25T00:00:00.000Z
+match fromTimestamp(1735084800000.0) with
+| DateErr e -> println("ERROR: " + e.message)
+| DateOk d  -> {
+    match toIso(d.date) with
+    | FErr e -> println("ERROR: " + e.message)
+    | FOk s  -> println(s.value);                    // 2024-12-25T00:00:00.000Z
+  };
+
+// Invalid date string → DateErr
+match fromIso("not-a-date") with
+| DateOk _  -> println("ERROR: should have been invalid")
+| DateErr e -> println("invalid: " + e.message);     // invalid: Invalid date: not-a-date
+
+// ── UTC accessors ─────────────────────────────────────────────────────────────
+//
+// Use utc* accessors for timezone-stable output.
+
+match fromIso("2024-07-04T09:05:03.007Z") with
+| DateErr e -> println("ERROR: " + e.message)
+| DateOk d  -> {
+    match utcYear(d.date) with
+    | FErr e -> println("ERROR: " + e.message)
+    | FOk v  -> println(__str__(v.value));              // 2024
+
+    match utcMonth(d.date) with
+    | FErr e -> println("ERROR: " + e.message)
+    | FOk v  -> println(monthShort(v.value));           // Jul
+
+    match utcDay(d.date) with
+    | FErr e -> println("ERROR: " + e.message)
+    | FOk v  -> println(__str__(v.value));              // 4
+
+    match utcHour(d.date) with
+    | FErr e -> println("ERROR: " + e.message)
+    | FOk v  -> println(__str__(v.value));              // 9
+
+    match utcMinute(d.date) with
+    | FErr e -> println("ERROR: " + e.message)
+    | FOk v  -> println(__str__(v.value));              // 5
+
+    match utcSecond(d.date) with
+    | FErr e -> println("ERROR: " + e.message)
+    | FOk v  -> println(__str__(v.value));              // 3
+
+    match utcMillisecond(d.date) with
+    | FErr e -> println("ERROR: " + e.message)
+    | FOk v  -> println(__str__(v.value));              // 7
+
+    match utcWeekday(d.date) with
+    | FErr e -> println("ERROR: " + e.message)
+    | FOk v  -> println(weekdayShort(v.value));         // Thu
+  };
+
+// ── Arithmetic ────────────────────────────────────────────────────────────────
+
+match fromIso("2024-01-31T00:00:00.000Z") with
+| DateErr e -> println("ERROR: " + e.message)
+| DateOk d  -> {
+    // addDays: exact millisecond offset
+    match addDays(d.date, 30.0) with
+    | DateErr e -> println("ERROR: " + e.message)
+    | DateOk r  -> {
+        match toIso(r.date) with
+        | FErr e -> println("ERROR: " + e.message)
+        | FOk s  -> println(s.value);                // 2024-03-01T00:00:00.000Z
+      };
+
+    // addMonths: calendar-aware via JS setMonth.
+    // Jan 31 + 1 month: Feb 2024 has 29 days, so day 31 overflows by 2 → Mar 2.
+    match addMonths(d.date, 1) with
+    | DateErr e -> println("ERROR: " + e.message)
+    | DateOk r  -> {
+        match toIso(r.date) with
+        | FErr e -> println("ERROR: " + e.message)
+        | FOk s  -> println(s.value);                // 2024-03-02T00:00:00.000Z
+      };
+
+    // addYears
+    match addYears(d.date, 1) with
+    | DateErr e -> println("ERROR: " + e.message)
+    | DateOk r  -> {
+        match toIso(r.date) with
+        | FErr e -> println("ERROR: " + e.message)
+        | FOk s  -> println(s.value);                // 2025-01-31T00:00:00.000Z
+      };
+  };
+
+// ── Difference ────────────────────────────────────────────────────────────────
+
+match fromIso("2024-01-01T00:00:00.000Z") with
+| DateErr e -> println("ERROR: " + e.message)
+| DateOk a  -> {
+    match fromIso("2024-03-15T00:00:00.000Z") with
+    | DateErr e -> println("ERROR: " + e.message)
+    | DateOk b  -> {
+        // diffDays returns Float; round() → Int for display
+        match diffDays(b.date, a.date) with
+        | FErr e -> println("ERROR: " + e.message)
+        | FOk d  -> println("days apart: " + __str__(round(d.value)));  // days apart: 74
+      };
+  };
+
+// ── Comparison ────────────────────────────────────────────────────────────────
+
+match fromIso("2024-01-01T00:00:00.000Z") with
+| DateErr e -> println("ERROR: " + e.message)
+| DateOk a  -> {
+    match fromIso("2024-06-01T00:00:00.000Z") with
+    | DateErr e -> println("ERROR: " + e.message)
+    | DateOk b  -> {
+        match dateBefore(a.date, b.date) with
+        | FErr e -> println("ERROR: " + e.message)
+        | FOk v  -> println("before: " + __str__(v.value));  // before: true
+
+        match dateAfter(b.date, a.date) with
+        | FErr e -> println("ERROR: " + e.message)
+        | FOk v  -> println("after: " + __str__(v.value));   // after: true
+
+        match dateEqual(a.date, a.date) with
+        | FErr e -> println("ERROR: " + e.message)
+        | FOk v  -> println("equal: " + __str__(v.value));   // equal: true
+      };
+  };
+
+// ── Calendar helpers (pure) ───────────────────────────────────────────────────
+
+println(__str__(isLeapYear(2024)));              // true
+println(__str__(isLeapYear(1900)));              // false  (div by 100, not 400)
+println(__str__(isLeapYear(2000)));              // true   (div by 400)
+println(__str__(daysInMonth(February, 2024)));   // 29
+println(__str__(daysInMonth(February, 2023)));   // 28
+
+// isSameDay: compare utcDay fields directly (timezone-invariant)
+match fromIso("2024-03-15T00:00:00.000Z") with
+| DateErr e -> println("ERROR: " + e.message)
+| DateOk a  -> {
+    match fromIso("2024-03-15T23:59:59.999Z") with
+    | DateErr e -> println("ERROR: " + e.message)
+    | DateOk b  -> {
+        match utcDay(a.date) with
+        | FErr e -> println("ERROR: " + e.message)
+        | FOk da -> {
+            match utcDay(b.date) with
+            | FErr e -> println("ERROR: " + e.message)
+            | FOk db -> println(__str__(da.value == db.value));   // true (both day 15)
+          };
+      };
+  };
+// isSameDay across a day boundary
+println(__str__(isSameDay(
+  match fromIso("2024-03-15T00:00:00.000Z") with | DateErr _ -> now() | DateOk d -> d.date,
+  match fromIso("2024-03-16T00:00:00.000Z") with | DateErr _ -> now() | DateOk d -> d.date
+)));                                               // false
+
+// ── Enum helpers (pure) ───────────────────────────────────────────────────────
+
+println(monthName(January));       // January
+println(monthName(December));      // December
+println(monthShort(September));    // Sep
+println(weekdayName(Wednesday));   // Wednesday
+println(weekdayShort(Saturday));   // Sat
+println(__str__(isWeekend(Saturday)));       // true
+println(__str__(isWeekend(Monday)));         // false
+println(__str__(isWeekdayVariant(Friday)));  // true

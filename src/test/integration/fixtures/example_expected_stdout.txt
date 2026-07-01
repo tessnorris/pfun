@@ -332,3 +332,43 @@ hello world
 5
 104
 101
+--- 26. Date Library ---
+2024-03-15T14:30:45.123Z
+year: 2024
+month: 3
+day: 15
+hour: 14
+March
+Friday
+2024-12-25T00:00:00.000Z
+invalid: Invalid date: not-a-date
+2024
+Jul
+4
+9
+5
+3
+7
+Thu
+2024-03-01T00:00:00.000Z
+2024-03-02T00:00:00.000Z
+2025-01-31T00:00:00.000Z
+days apart: 74
+before: true
+after: true
+equal: true
+true
+false
+true
+29
+28
+true
+false
+January
+December
+Sep
+Wednesday
+Sat
+true
+false
+true

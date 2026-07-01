@@ -1,0 +1,156 @@
+// foreign.pf
+// Pfun-level wrapper and combinator helpers for the FFI.
+//
+// Import with:  import * from "foreign";
+//
+// This module re-exports the native effect ops and decoder primitives from
+// the "foreign" native module, and adds pure Pfun combinator helpers on top.
+//
+// ─── Effect ops (all proc-only) ──────────────────────────────────────────────
+//
+//   foreignRequire(path)                 : Str -> ForeignResult<Foreign>
+//   foreignGlobal(name)                  : Str -> ForeignResult<Foreign>
+//   foreignGet(handle, prop)             : Foreign * Str -> ForeignResult<Foreign>
+//   foreignSet(handle, prop, value)      : Foreign * Str * a -> ForeignResult<unit>
+//   foreignCall(handle, method, args)    : Foreign * Str * List<a> -> ForeignResult<Foreign>
+//   foreignInvoke(fn, args)              : Foreign * List<a> -> ForeignResult<Foreign>
+//   foreignNew(ctor, args)               : Foreign * List<a> -> ForeignResult<Foreign>
+//   foreignDelete(handle, prop)          : Foreign * Str -> ForeignResult<unit>
+//   foreignTypeof(handle)                : Foreign -> ForeignResult<Str>
+//   foreignAwait(handle)                 : Foreign -> Promise<ForeignResult<Foreign>>
+//   foreignCallback(proc, argsDecoder)   : proc * Decoder<List<a>> -> ForeignResult<Foreign>
+//   foreignApply(handle, decoder)        : Foreign * Decoder<a> -> ForeignResult<a>
+//
+// ─── Decoder primitives (pure values) ────────────────────────────────────────
+//
+//   dForeign    : Decoder<Foreign>              always succeeds
+//   dUnit       : Decoder<unit>                 ignores value
+//   dBool       : Decoder<Bool>
+//   dInt        : Decoder<Int>
+//   dFloat      : Decoder<Float>
+//   dStr        : Decoder<Str>
+//   dList(d)    : Decoder<a> -> Decoder<List<a>>
+//   dOption(d)  : Decoder<a> -> Decoder<Option<a>>
+//   dDict(d)    : Decoder<a> -> Decoder<Dict<Str,a>>
+//   dField(k,d) : Str * Decoder<a> -> Decoder<a>     (reads one property)
+//   dMap(f,d)   : (a->b) * Decoder<a> -> Decoder<b>
+//   dAndThen(f,d): (a->Decoder<b>) * Decoder<a> -> Decoder<b>
+//   dOneOf(ds)  : List<Decoder<a>> -> Decoder<a>
+
+import * from "foreign";
+
+// ─── ForeignResult helpers ────────────────────────────────────────────────────
+//
+// These helpers are pure functions that let you work with ForeignResult
+// values without writing a full match every time.
+
+// foreignOk(r) — extract the value or error from a ForeignResult.
+// Equivalent to the Elm-style "unwrap or default" pattern.
+export function foreignOrElse(fallback, r) {
+  match r with
+  | FOk v    -> v.value
+  | FErr _   -> fallback;
+}
+
+// foreignMap(f, r) — transform the success value of a ForeignResult.
+export function foreignMap(f, r) {
+  match r with
+  | FOk v  -> FOk { f(v.value) }
+  | FErr _ -> r;
+}
+
+// foreignAndThen(f, r) — chain ForeignResult operations.
+// f : a -> ForeignResult<b>
+export function foreignAndThen(f, r) {
+  match r with
+  | FOk v  -> f(v.value)
+  | FErr _ -> r;
+}
+
+// foreignIsOk(r) — Bool predicate.
+export function foreignIsOk(r) {
+  match r with
+  | FOk _  -> true
+  | FErr _ -> false;
+}
+
+// ─── Decoder pipeline helper ──────────────────────────────────────────────────
+//
+// dPipe(value, decoders) — run a list of decoders in sequence. Each decoder
+// receives the output of the previous. Fails on the first error.
+// Equivalent to folding foreignAndThen over the decoder list.
+
+export function dPipe(decoders) {
+  dOneOf(decoders);
+}
+
+// ─── Record decoder builder ───────────────────────────────────────────────────
+//
+// dFields([("x", dInt), ("y", dInt)]) runs each (key, decoder) pair and
+// collects results into a list of [key, value] pairs — useful before passing
+// to a record constructor.
+//
+// Example:
+//   let coords = foreignGet(handle, "point", dFields([("x", dFloat), ("y", dFloat)]));
+//   match coords with
+//   | FOk fields ->
+//       let x = find(fn p => p.key == "x", fields);
+//       ...
+//   | FErr e -> ...
+
+export function dFields(pairs, handle) {
+  function go(ps, acc) {
+    if length(ps) == 0 then FOk { reverse(acc) }
+    else {
+      let p    = head(ps);
+      let key  = p.key;
+      let dec  = p.value;
+      let r    = foreignApply(handle, dField(key, dec));
+      match r with
+      | FErr _ -> r
+      | FOk v  -> go(tail(ps), [Pair { key, v.value }] + acc);
+    }
+  }
+  go(pairs, []);
+}
+
+// ─── Convenient typed-get shorthands ─────────────────────────────────────────
+//
+// These combine foreignGet with a specific decoder. In practice they are
+// the most common pattern: "get this property as a specific type".
+
+export proc getString(handle, prop) {
+  match foreignGet(handle, prop) with
+  | FErr e -> FErr { e.kind, e.message }
+  | FOk v  ->
+      match foreignApply(v.value, dStr) with
+      | FErr e -> FErr { e.kind, e.message }
+      | FOk s  -> FOk { s.value };
+}
+
+export proc getInt(handle, prop) {
+  match foreignGet(handle, prop) with
+  | FErr e -> FErr { e.kind, e.message }
+  | FOk v  ->
+      match foreignApply(v.value, dInt) with
+      | FErr e -> FErr { e.kind, e.message }
+      | FOk n  -> FOk { n.value };
+}
+
+export proc getFloat(handle, prop) {
+  match foreignGet(handle, prop) with
+  | FErr e -> FErr { e.kind, e.message }
+  | FOk v  ->
+      match foreignApply(v.value, dFloat) with
+      | FErr e -> FErr { e.kind, e.message }
+      | FOk f  -> FOk { f.value };
+}
+
+export proc getBool(handle, prop) {
+  match foreignGet(handle, prop) with
+  | FErr e -> FErr { e.kind, e.message }
+  | FOk v  ->
+      match foreignApply(v.value, dBool) with
+      | FErr e -> FErr { e.kind, e.message }
+      | FOk b  -> FOk { b.value };
+}

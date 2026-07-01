@@ -759,6 +759,13 @@ function emitStmt(s: Stmt): Node[] {
         ]},
         'async': { file: _bpaths['async'] ?? 'pfun-async', names: ['sleep','asyncAll','asyncRace'] },
         'http':  { file: _bpaths['http']  ?? 'pfun-http',  names: ['httpGet','httpGetBytes','httpListen'] },
+        'foreign': { file: _bpaths['foreign'] ?? 'pfun-foreign', names: [
+          'foreignRequire','foreignGlobal','foreignGet','foreignSet',
+          'foreignCall','foreignInvoke','foreignNew','foreignDelete',
+          'foreignTypeof','foreignAwait','foreignCallback','foreignApply',
+          'dForeign','dUnit','dBool','dInt','dFloat','dStr',
+          'dList','dOption','dDict','dField','dMap','dAndThen','dOneOf',
+        ]},
         'db/postgresql': { file: _bpaths['db/postgresql'] ?? 'pfun-db-postgresql', names: ['dbConnect','dbQuery','dbClose','DbNull'] },
         'db/mariadb':    { file: _bpaths['db/mariadb']    ?? 'pfun-db-mariadb',    names: ['dbConnect','dbQuery','dbClose','DbNull'] },
       };
