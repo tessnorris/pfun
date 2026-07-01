@@ -44,6 +44,7 @@
   - [26. `http`](#26-http)
   - [27. `db/postgresql` and `db/mariadb`](#27-dbpostgresql-and-dbmariadb)
   - [28. Bundled libraries: the web stack](#28-bundled-libraries-the-web-stack)
+  - [29. Data model persistence](#29-data-model-persistence)
 - [Appendix A — Reserved words and symbols](#appendix-a--reserved-words-and-symbols)
 - [Appendix B — Known gaps and ambiguities](#appendix-b--known-gaps-and-ambiguities)
 
@@ -397,6 +398,17 @@ why you can freely mix `Some { 1 }` and `Some { "x" }` across a file.
 > `Ok`/`Err` (from `Result`, which *is* generic) the payloads may differ, but a
 > *hand‑declared* non‑generic union's constructors will unify. When in doubt and
 > the payloads vary, add `generic`.
+
+> **When the conflict actually fires.** The clash surfaces when some code *pins*
+> the payload to a concrete type — typically a `match` arm that reads a
+> type‑specific sub‑field of the payload. Merely *constructing* a plain union's
+> variant with different payloads in separate functions may compile on its own;
+> the error appears once a use pins the field. This is why a generated model
+> module full of `InsertOk { … }` constructions can compile in isolation, yet a
+> consumer that inserts two different models *and* inspects `.model` on both
+> triggers the mismatch. Marking the result type `generic` removes the hazard
+> entirely, which is the recommendation for any result union reused across
+> payloads.
 
 ### 2.5 Guarantees provided
 
@@ -1855,18 +1867,39 @@ floating‑point infinity — see [§7](#7-lazy-and-infinite-lists).)
 
 ## 20. Built-in types
 
-Four union/record types are built in and always available.
+These union/record types are defined by the standard library rather than by user
+code, but they differ in how you bring them into scope:
 
-| Type | Variants / fields | Used by |
-|---|---|---|
-| `Option` | `Some { value }` \| `None` | `find`, `findSlice`, `readln`, `readChar`, `jsonSerialize`, `jsonDeserialize`, user code |
-| `Result` | `Ok { value }` \| `Err { message }` | `file`, `http`, `db/*` |
-| `ReadResult` | `Ok { value }` \| `Eof` \| `Err { message }` | streaming file reads |
-| `Pair` | `{ key, value }` (generic record) | `dictToList`/`listToDict`, db rows |
+| Type | Variants / fields | Availability | Used by |
+|---|---|---|---|
+| `Option` | `Some { value }` \| `None` | **always in scope** (no import) | `find`, `findSlice`, `readln`, `readChar`, `jsonSerialize`, `jsonDeserialize`, user code |
+| `Pair` | `{ key, value }` (generic record) | **always in scope** (no import) | `dictToList`/`listToDict`, db rows |
+| `Result` | `Ok { value }` \| `Err { message }` | in scope once you `import` a module that uses it | `file`, `http`, `db/*` |
+| `ReadResult` | `Ok { value }` \| `Eof` \| `Err { message }` | in scope once you `import "file"` | streaming file reads |
+
+`Option` and `Pair` are registered globally, so you can construct and match
+`Some`/`None`/`Pair` in any program. **`Ok`/`Err`/`Eof` are *not* standalone
+globals** — they enter scope through the module that defines them. Importing
+`file`, `http`, or a `db/*` driver makes `Ok`/`Err` (and, for `file`, `Eof`)
+available for both matching *and* construction; without such an import,
+`Ok { … }` reports *"Unknown type 'Ok'."* This is why library modules that want
+to return `Ok`/`Err` themselves **re-declare** the type locally (see the note
+below and [§29](#29-data-model-persistence)).
 
 Because `Ok`/`Err` are shared by `Result` and `ReadResult`, `match` uses the
 subject's type to decide which variants are required (see
 [§10.4](#104-matching-multi-variant-results)).
+
+> **Constructing `Ok`/`Err` in your own module.** If a module needs to *build*
+> `Ok`/`Err` values (rather than only match ones returned by `file`/`db`), the
+> reliable idiom — used throughout the corpus — is to declare the type in that
+> module:
+> ```pfun
+> generic type Result = { | Ok : value | Err : message }
+> ```
+> Declaring it `generic` also sidesteps the payload‑unification described in
+> [§2.4](#24-constructor-monomorphism-and-generic-types); a *plain* re‑declaration
+> makes `Ok`'s payload monomorphic within that module.
 
 ## 21. `io` — console I/O
 
@@ -2385,6 +2418,184 @@ generated data access.
 
 ---
 
+# 29. Data model persistence
+
+Above the raw drivers of [§27](#27-dbpostgresql-and-dbmariadb) sits a schema‑driven persistence
+layer that turns a live PostgreSQL schema into a strongly‑typed Pfun data‑access
+module. It is a three‑stage pipeline:
+
+1. **Introspect** — read the database's own catalog into schema metadata
+   (`dbschema.pf`).
+2. **Generate** — transform that metadata into a complete `.pf` module of model
+   types and CRUD procedures (`dataModelGen.pf`, a *pure* function).
+3. **Use** — import the generated module and call its typed `insert`/`find`/
+   `update`/`delete` procedures, matching on their result unions.
+
+Stages 1 and 2 are separated deliberately: introspection is effectful (it hits
+the database), but generation is a pure `String`‑to‑`String` transform, so it is
+easy to test with fixtures and produces deterministic output.
+
+### 29.1 Schema introspection (`dbschema`)
+
+`dbschema.pf` connects to a schema and reads `information_schema` into records —
+`Table`, `Column`, `Constraint` — plus a `PgType` union classifying each column's
+SQL type. Its loaders return the dedicated result unions noted in
+[§17.2](#172-choosing-option-vs-result-vs-a-custom-union) (`ColsResult`, `ConsResult`,
+`TableResult`, `SchemaResult`), one per payload so their success types don't
+unify. It also computes a **schema fingerprint** — a hash of the structural
+shape — used later for drift detection.
+
+### 29.2 The generated module
+
+`dataModelGen.pf`'s entry point is
+`generateOutput(schemaName, tables, lookupValues, lookupTableNames)`, returning
+the full text of a `.pf` file. For each table it emits:
+
+**A model record** named in PascalCase (`order_items` → `OrderItemModel`), whose
+fields are the columns in camelCase (`customer_id` → `customerId`), and whose
+first field is the primary key wrapped in `MaybeId` (below). Column names that
+collide with keywords are suffixed with `_` (`type` → `type_`), via
+`safeFieldName`.
+
+**Lookup enums.** A table designated a *lookup table* becomes a variant‑only
+union instead of a record — `AnnouncementTypeModel = { | Event | Info | Urgent |
+Warning }` — with `parseX`/`xToStr` converters. Parsing returns a purpose‑built
+`ParseResult = { | ParseOk : val | ParseFail }` rather than `Option`, again to
+avoid payload unification across the many generated parsers.
+
+**Row helpers.** Typed getters (`getStr`, `getInt`, `getFloat`, `getBool`) read a
+`DbValue` out of a row (a `list<Pair<String, DbValue>>`), and `rowToXModel`
+assembles a model from a result row.
+
+**CRUD procedures** (all `async proc`), described in
+[§29.4](#294-the-generated-crud-contract).
+
+**A fingerprint + `verifySchema`**, described in
+[§29.5](#295-schema-drift-detection).
+
+The generated file opens by **re‑declaring the core types locally** — `MaybeId`,
+`InsertResult`, `FindResult`, `MutResult` — because `Ok`/`Err`‑style constructors
+must be in scope in the module that builds them ([§20](#20-built-in-types)).
+
+### 29.3 The `MaybeId` lifecycle
+
+Every model's identity field has type `MaybeId = { | New | Id : value }`,
+capturing whether a record has been persisted yet:
+
+- **`New`** — an in‑memory record not yet written to the database. You construct
+  models this way before inserting.
+- **`Id { value }`** — a record with a database‑assigned primary key, as returned
+  by `insert`/`find`.
+
+This makes the persistence boundary explicit in the type. `update` and `delete`
+pattern‑match on it and refuse an unsaved record rather than silently doing
+nothing:
+
+```pfun
+export async proc updateAnnouncement(conn, m) {
+  match m.maybeId with
+  | New  -> MutErr { "Cannot update unsaved Announcement" }
+  | Id _ -> { /* UPDATE … WHERE id = $n */ }
+}
+```
+
+### 29.4 The generated CRUD contract
+
+Each table gets five procedures with a uniform result contract:
+
+| Procedure | Returns | Notes |
+|---|---|---|
+| `insertX(conn, m)` | `InsertResult` | `INSERT … RETURNING *`; on success `InsertOk { rowToXModel(row) }` — the returned model carries its new `Id` |
+| `findXById(conn, id)` | `FindResult` | `FindErr { "Not found" }` when no row matches |
+| `findAllX(conn)` | `list<XModel>` | returns `[]` on query error (a list, not a result union) |
+| `updateX(conn, m)` | `MutResult` | requires `Id`; refreshes `updated_at`/`modified_at` to `now()` |
+| `deleteX(conn, m)` | `MutResult` | requires `Id` |
+
+The three result unions are:
+
+```pfun
+generic type InsertResult = { | InsertOk : model | InsertErr : message }
+generic type FindResult   = { | FindOk   : model | FindErr   : message }
+generic type MutResult    = { | MutOk            | MutErr    : message }
+```
+
+Auto‑timestamp columns (`created_at`, `updated_at`, `modified_at`,
+`last_modified`) are handled for you: omitted from the `INSERT` column list and
+set to `now()` on `UPDATE`, so they never appear as user‑supplied fields.
+
+Consuming them is a `match`:
+
+```pfun
+async proc addAnnouncement(conn, draft) {
+  match await insertAnnouncement(conn, draft) with
+  | InsertOk saved -> println("saved a new announcement")
+  | InsertErr e    -> println("insert failed: " + e.message);
+}
+```
+
+> **A caveat on `generic` in generated code.** The `dbschema.pf` library declares
+> `InsertResult`/`FindResult`/`MutResult` as `generic` (correct, since one union
+> wraps every model's payload). The generator currently emits them **without**
+> `generic` into each generated module. Such a module still compiles on its own —
+> nothing inside it pins a payload ([§2.4](#24-constructor-monomorphism-and-generic-types)) —
+> but it is fragile: a single consumer module that inserts *two different models*
+> and inspects `.model` on both will hit the payload‑unification error. If you
+> write such a consumer, the fix is to make the generated declarations `generic`
+> (or split the consuming code across modules). This is a rough edge worth
+> knowing about rather than a settled convention.
+
+### 29.5 Schema drift detection
+
+The generator embeds the fingerprint it computed and emits a `verifySchema`
+procedure:
+
+```pfun
+export let SCHEMA_FINGERPRINT = "965745436";
+export async proc verifySchema(conn) { /* re-hash the live schema, compare */ }
+```
+
+Calling `verifySchema(conn)` at startup re‑introspects the live database and
+compares its fingerprint against the compiled‑in constant, so a schema that has
+drifted from the generated model is caught immediately instead of surfacing as a
+mismatched column at query time. The generated lookup parsers reinforce this: an
+unrecognized enum value prints a `[Schema drift]` diagnostic.
+
+### 29.6 Running the generator
+
+`dbschema_gen.pf` is the effectful driver that wires the pieces together. Its
+`main()` connects with the configured connection string, calls
+`loadSchema(conn, schema)`, fetches lookup‑table values, calls `generateOutput`,
+and writes the result to disk. Connection string, schema name, lookup tables, and
+output path live in `dbschema_config.pf`, keeping credentials and targets out of
+the generator. Regeneration is a single command:
+
+```
+pfun examples/db/dbschema_gen.pf
+```
+
+The generated file carries a `// Generated by dbschema_gen.pf -- do not edit by
+hand.` header; treat it as a build artifact and re‑run the generator when the
+schema changes.
+
+### 29.7 Putting it together
+
+A typical stack layers cleanly on top of the generated module:
+
+- the **generated model module** provides typed rows and CRUD;
+- a hand‑written **repository** (`announcements_repo.pf`) wraps CRUD with
+  domain‑level operations and translates `XResult` values into the application's
+  own reply union;
+- **`serverDispatch`** ([§28.5](#285-serverdispatch--declarative-server-dispatch))
+  exposes those operations over HTTP, using its closed `ServerCmd` set to run the
+  effect and reply;
+- a **client** shares the request/response protocol union and matches it
+  exhaustively.
+
+The `announcements_*` programs (`_schema.sql`, `_protocol`, `_repo`, `_server`,
+`_client`) are the worked end‑to‑end example of exactly this layering.
+
+---
+
 # Appendix A — Reserved words and symbols
 
 **Declaration & module keywords:** `function`, `fn`, `proc`, `memo`, `async`,
@@ -2393,8 +2604,11 @@ generated data access.
 **Control & expression keywords:** `if`, `then`, `else`, `match`, `with`,
 `where`, `for`, `while`, `return`, `eval`, `await`, `true`, `false`.
 
-**Built‑in constructors always in scope:** `Some`, `None`, `Ok`, `Err`, `Eof`,
-`Pair`; the literal keywords `dict` and `array`.
+**Built‑in constructors always in scope:** `Some`, `None`, `Pair`; the literal
+keywords `dict` and `array`. (`Ok`, `Err`, and `Eof` are *not* unconditional
+globals — they come into scope by importing a module that defines them, `file` /
+`http` / `db/*`, or by a local `type Result`/`ReadResult` declaration; see
+[§20](#20-built-in-types).)
 
 **Literal affixes:** `b` (byte suffix, `255b`), `0x` (hex prefix), `@` (raw
 string prefix), `$` (format string prefix).
