@@ -135,14 +135,17 @@ logic as possible into the pure layer and keeps the procedural shell thin.
 
 - `proc` and `async proc` with arbitrary side effects.
 - Mutable `var` bindings and assignment.
-- Mutable collections: `dict` and `array`.
-- Statement sequencing, `if` without `else`, and early `return`.
+- Mutable collections: `dict`, `array`, and growable byte/string buffers.
+- Statement sequencing, `if` without `else`, `while` loops, and early `return`.
 - Console, file, network, and database I/O.
 - `async`/`await` cooperative concurrency.
 
-Recursion — not loops — is the universal iteration mechanism in **both** layers;
-Pfun has no `while` or C‑style `for` statement. Deep recursion is made practical
-by tail‑call optimization.
+Both layers can iterate by **recursion**, made practical everywhere by tail‑call
+optimization. The procedural layer *additionally* has a `while` loop
+([§14.3](#143-while-loops)) for straightforward imperative counting and
+accumulation; `while` is rejected inside a pure `function`, where recursion
+remains the only iteration mechanism. Pfun has no C‑style `for` statement — the
+only `for` is the list‑comprehension generator ([§6.4](#64-list-comprehensions)).
 
 ## The type system at a glance
 
@@ -155,14 +158,15 @@ throughout. Several characteristics give the type system its particular flavor:
   types. The compiler infers each field's type from first use and then enforces
   it everywhere. Once `Square { 10 }` fixes `side` to be an integer, a later
   `Square { "ten" }` is a *Type mismatch* error.
-- **Monomorphic data constructors.** Inference unifies the payload type of a
-  given constructor across a module. The database libraries note this directly:
-  using the built‑in `Ok`/`Err` for several functions that return *different*
-  payload types in one file makes inference "unify all `Ok.value` types," so the
-  idiom is to declare a dedicated named result union per distinct payload (see
-  [§17](#17-result-based-error-handling)). Generic constructors like `Some`/`Ok`
-  are perfectly usable when the payload type is consistent within an inference
-  context.
+- **Monomorphic data constructors — with an opt‑in generic escape hatch.**
+  By default, inference unifies the payload type of a given constructor across a
+  module, so a constructor effectively has one payload type per file. Marking a
+  type declaration `generic` turns that off, letting each use site carry its own
+  payload type — this is how the built‑in `Pair`, `Option`, and `Result` behave,
+  and you can request it for your own types (see
+  [§2.4](#24-constructor-monomorphism-and-generic-types)). The database
+  libraries use both: a plain named result union when one payload type suffices,
+  and `generic type` when one result union must wrap many different payloads.
 - **Exhaustiveness checking.** `match` on a union must handle every variant (or
   carry a wildcard); `match` on a known scalar must be provably total. Missing
   cases are caught at compile time where statically determinable.
@@ -186,7 +190,7 @@ I/O, and no immutable binding is reassigned.
 | Effects | forbidden | allowed |
 | Collections | lists, records (immutable) | `dict`, `array` (mutable) |
 | Error handling | return `Option`/`Result` values | `match` on `Result`, print/branch |
-| Iteration | recursion, HOFs, comprehensions | recursion, sequenced statements |
+| Iteration | recursion, HOFs, comprehensions | recursion, **`while`**, sequenced statements |
 | `match` | an expression that yields a value | also usable as a statement |
 | `if` | requires `else` (must yield a value) | `else` optional (statement) |
 | Memoization | available (`memo`) | never |
@@ -295,7 +299,7 @@ and the guarantees the type system provides.
   suffix. `Byte` is separate from `Int` and `Char`; there are no implicit
   conversions. Byte arithmetic is range‑checked and errors on overflow or
   underflow. `0b` is falsy and any non‑zero `Byte` is truthy. (See
-  [§4.6](#46-bytes) and [§22](#22-file--files-and-binary-io).)
+  [§4.6](#46-bytes-and-characters) and [§22](#22-file--files-and-binary-io).)
 - **`Char`** — a single Unicode character (`'A'`), distinct from a one‑character
   string. Convert with `asc` (char → code point) and `chr` (code point → char).
 - **`Bool`** — `true` or `false`.
@@ -341,31 +345,58 @@ This yields nominal typing (two record types with the same field names are still
 different types) with the ergonomics of inference (you never spell the field
 types out).
 
-### 2.4 Monomorphic constructors (an important subtlety)
+### 2.4 Constructor monomorphism and `generic` types
 
-Because inference unifies the payload type of a constructor across a module,
-**a given union constructor effectively has one payload type per module.** The
-`dbschema` sources call this out explicitly:
+By default, inference unifies the payload type of a constructor across a module,
+so **a given union constructor has one payload type per module.** The `dbschema`
+sources describe the effect of ignoring this:
 
 > Using `Ok`/`Err` directly causes HM inference to unify all `Ok.value` types
-> across the file. Dedicated result types keep each return type separate.
+> across the file.
 
-The practical consequences and the idiom:
+Concretely, if two functions in one file both return `Ok { … }` but with
+different payloads (say an `Ok { columns }` and an `Ok { table }`), inference
+tries to make those payloads the *same* type and reports a mismatch.
 
-- Using a built‑in generic constructor (`Some`, `Ok`, …) is fine when every use
-  in the relevant inference context carries the same payload type.
-- When several functions in one module must return *different* payloads, declare
-  a distinct named union for each, instead of reusing `Ok`/`Err`:
+There are two ways to handle this — pick per situation:
+
+**1. A dedicated named result union** — when a module has a *few* fallible
+operations, give each its own union so their payloads never unify:
 
 ```pfun
-// Each loader returns a different payload, so each gets its own result union:
 export type ColsResult  = { | ColsOk  : columns | ColsErr  : message }
 export type ConsResult  = { | ConsOk  : cons    | ConsErr  : message }
 export type TableResult = { | TableOk : table   | TableErr : message }
 ```
 
-Based on available examples, this is the single most important type‑system habit
-to internalize when writing larger Pfun modules.
+**2. A `generic` type** — when one result union must wrap *many* different
+payloads, declare it once with the `generic` keyword. A `generic type` opts its
+constructors out of cross‑use‑site unification, so each use may carry a different
+payload type — exactly like the built‑in `Pair`/`Option`/`Result`:
+
+```pfun
+// From dbschema.pf — one result union reused across every generated model:
+export generic type InsertResult = { | InsertOk : model | InsertErr : message }
+export generic type FindResult   = { | FindOk   : model | FindErr   : message }
+export generic type MutResult    = { | MutOk            | MutErr    : message }
+```
+
+Here `insertUser` may return `InsertOk { aUserRecord }` and `insertOrder` may
+return `InsertOk { anOrderRecord }` in the *same* module without their `model`
+fields being forced to unify. The keyword goes before `type`, works on both
+record and union declarations, and composes with `export`
+(`export generic type …`).
+
+The rule of thumb: reach for a **plain named union** when the distinct payloads
+are few and worth naming; reach for **`generic type`** when a single result shape
+is genuinely reused across many unrelated payloads (as generated database code
+is). The built‑ins `Pair`, `Option`, and `Result` are all `generic`, which is
+why you can freely mix `Some { 1 }` and `Some { "x" }` across a file.
+
+> **Non‑generic constructors still unify per module.** If you use the built‑in
+> `Ok`/`Err` (from `Result`, which *is* generic) the payloads may differ, but a
+> *hand‑declared* non‑generic union's constructors will unify. When in doubt and
+> the payloads vary, add `generic`.
 
 ### 2.5 Guarantees provided
 
@@ -447,25 +478,93 @@ In a pure (value‑producing) context, the `else` branch is mandatory — the
 expression must yield a value on every path. (In procedural code, `if` may be
 used as a statement with no `else`; see [§14](#14-statement-control-flow).)
 
-### 3.5 Observed precedence
+### 3.5 Precedence
 
-Precedence, as evidenced by unparenthesized usage in the corpus, from highest to
-lowest:
+Precedence, from highest (binds tightest) to lowest:
 
-1. unary `!`, unary `-`
-2. `*` `/` `%`
-3. `+` `-`
-4. comparisons `<` `>` `<=` `>=`
-5. equality `==` `!=`
-6. `&&`
-7. `||`
-8. ternary `? :`
+1. postfix `.` field access, `(…)` call, `[…]` index
+2. unary `!`, unary `-`
+3. `*` `/` `%`
+4. `+` `-`
+5. shifts `<<` `>>`
+6. bitwise `&`
+7. bitwise `|`
+8. comparisons `<` `>` `<=` `>=`
+9. equality `==` `!=`
+10. `&&`
+11. `||`
+12. ternary `? :`
+13. forward pipe `|>`  (see [§3.6](#36-the-pipe-operator))
+14. assignment `=`
 
-The relative precedence of the bitwise operators (`&`, `|`, `<<`, `>>`) against
-the comparison operators is **not** clearly fixed by the corpus, which always
-writes bitwise expressions in isolation or in parentheses (e.g.,
-`0xF0b | 0x0Fb`). When mixing bitwise operators with arithmetic or comparison,
-parenthesize explicitly.
+Two consequences worth noting because they differ from C:
+
+- **Bitwise operators bind *tighter* than comparison and equality.** In Pfun
+  `x & MASK == 0` parses as `(x & MASK) == 0` — the usually‑intended reading —
+  whereas C parses the same text as `x & (MASK == 0)`. Shifts bind tighter than
+  `&`, which binds tighter than `|`, which binds tighter than comparison.
+- **Arithmetic binds tighter than the pipe**, so `a + b |> f` means `f(a + b)`,
+  and **the pipe binds looser than the ternary**, so `c ? x : y |> f` means
+  `f(c ? x : y)`.
+
+Bitwise expressions were left unparenthesized‑ambiguous in earlier drafts of this
+manual; the ordering above is now fixed by the parser. You may still
+parenthesize for readability, but you no longer need to.
+
+### 3.6 The pipe operator
+
+`x |> f` is the **forward pipe**: it desugars to `f(x)`. It reads left to right,
+so a chain of transformations is written in the order they happen instead of
+inside‑out:
+
+```pfun
+// instead of the inside-out  h(g(f(x))) :
+x |> f |> g |> h            // f then g then h
+```
+
+`|>` is left‑associative and low‑precedence (just above assignment), so the whole
+expression to its left is what gets piped:
+
+```pfun
+function double(x) { x * 2; }
+function addOne(x) { x + 1; }
+
+println(5 |> double);              // 10
+println(3 |> addOne |> double);    // 8      ((3+1)*2)
+println(2 + 3 |> double);          // 10     double(2 + 3), arithmetic binds tighter
+println(["a","b","c"] |> length);  // 3      works with any function, built-in or not
+println([1,2,3] |> reverse |> __str__);   // [3, 2, 1]
+```
+
+**Inline lambdas** pipe cleanly for one‑off steps:
+
+```pfun
+let msg = "hello"
+  |> fn s => s + " world"
+  |> fn s => s + "!";            // "hello world!"
+
+// sum of squares of the even numbers in 1..10
+let total = [1,2,3,4,5,6,7,8,9,10]
+  |> fn xs => filter(fn x => x % 2 == 0, xs)
+  |> fn xs => map(fn x => x * x, xs)
+  |> fn xs => reduce(fn a, x => a + x, 0, xs);   // 220
+```
+
+**Piping into a partially applied function.** The right operand may itself be a
+call that returns a function; the piped value is then applied as that function's
+*next* (in practice, last) argument. Because Pfun curries
+([§5.5](#55-currying-and-partial-application)), `x |> f(y)` becomes `f(y)(x)`,
+i.e. `f(y, x)`:
+
+```pfun
+// addTest(t, s) takes a test and a suite; piping the suite in fills `s`:
+let suite = emptySuite("math")
+  |> addTest(test("adds", addsTest))       // addTest(test(...), suite)
+  |> addTest(test("subs", subsTest));
+```
+
+Because `|>` is pure sugar for a call, it is usable in both `function`s and
+`proc`s, and it works with lazy lists exactly as an ordinary call would.
 
 ## 4. Strings and characters
 
@@ -907,6 +1006,12 @@ type Msg = { | Increment | Decrement | Reset }
 type Page = { | PageAbout | PageComputed | PageContact | PageCounter }
 ```
 
+A union declaration may be prefixed with `generic` to make its constructors
+polymorphic in their payloads — each use site may then carry a different field
+type instead of unifying module‑wide. This is the mechanism behind the built‑in
+`Option`/`Result` and behind reusable result unions like `dbschema`'s
+`InsertResult`; see [§2.4](#24-constructor-monomorphism-and-generic-types).
+
 ### 9.2 Constructing variants
 
 Field‑carrying variants use the same three syntaxes as records; zero‑field
@@ -1047,7 +1152,7 @@ let area = match sq with
   }
   ```
 
-### 10.4 Matching multi‑variant results
+### 10.4 Matching multi-variant results
 
 The same constructor name may appear in more than one union (e.g. both `Result`
 and `ReadResult` have `Ok`/`Err`). `match` resolves which variants are required
@@ -1120,7 +1225,7 @@ A recurring pattern in the database examples is to re‑declare a union type
 locally in a module that needs its variants in scope (e.g. `dbschema_demo.pf`
 re‑declares `MaybeId`, `MutResult`, etc.). This is a practical consequence of the
 monomorphic, per‑module nature of constructors described in
-[§2.4](#24-monomorphic-constructors-an-important-subtlety): re‑declaring ensures
+[§2.4](#24-constructor-monomorphism-and-generic-types): re‑declaring ensures
 the variant tags are registered in that module's type context.
 
 ---
@@ -1247,11 +1352,11 @@ if length(cs) > 0 then {     // no else needed
 the key contrast with the functional layer, where `if` is an expression that
 *must* yield a value and therefore requires `else` (see [§3.4](#34-ifthenelse-as-an-expression)).
 
-### 14.2 Iteration is recursion
+### 14.2 Iteration by recursion
 
-Pfun has **no `while` or C‑style `for` statement**. Procedural iteration is
-expressed with recursion — made practical by tail‑call optimization — often with
-a locally defined helper procedure:
+Recursion is the primary iteration mechanism in both layers, made practical by
+tail‑call optimization, and it is the *only* one available in pure functions.
+Procedural loops are often written with a locally defined helper procedure:
 
 ```pfun
 proc readAllLines(path) {
@@ -1275,7 +1380,71 @@ Note that procedures may be **nested** inside other procedures (`readLoop` insid
 `readAllLines`, `loop` inside `replLoop` in `tiny-lisp.pf`), capturing the
 enclosing procedure's bindings.
 
-### 14.3 Sequencing and blocks
+For straightforward imperative counting and accumulation, procedural code may
+also use a `while` loop, covered next.
+
+### 14.3 `while` loops
+
+A `while` loop is a **statement** available in procedural contexts only —
+procedures and the top level. It is rejected inside a pure `function`
+(`"'while' loops are not allowed in pure functions. Move the loop to a
+procedure."`), where recursion remains the way to iterate.
+
+```
+while (<condition>) { <statements> }
+```
+
+- The parentheses around the condition and the braces around the body are
+  **required** (the body is always a block, even for a single statement).
+- The condition is re‑evaluated before every iteration; the loop runs while it
+  is truthy.
+- There is **no `break` or `continue`.** Exit by making the condition false —
+  fold the early‑exit test into the condition itself.
+- Each iteration runs its body in a fresh inner scope, so a `var` declared
+  *inside* the body is recreated each pass; the loop‑control `var` lives in the
+  enclosing scope and persists across iterations.
+
+```pfun
+proc countTo(n) {
+  var i = 1;
+  while (i <= n) {
+    print(__str__(i) + " ");
+    i = i + 1;
+  }
+  println("");
+}
+countTo(5);                 // 1 2 3 4 5
+
+// "early exit" folded into the condition:
+proc firstMultipleOf7(factor, limit) {
+  var n = factor;
+  while (n <= limit && n % 7 != 0) {
+    n = n + factor;
+  }
+  if n <= limit then println("found: " + __str__(n))
+  else println("none found");
+}
+firstMultipleOf7(3, 50);    // found: 21
+
+// accumulating into a var, with nested loops:
+proc collatz(n) {
+  var seq = [n];
+  var x   = n;
+  while (x != 1) {
+    if x % 2 == 0 then x = x / 2 else x = x * 3 + 1;
+    seq = seq + [x];
+  }
+  seq;
+}
+println(__str__(length(collatz(6))));   // 9
+```
+
+`while` and recursion are interchangeable for most loops; choose whichever reads
+better. Recursion is required in pure code and often clearer for
+list‑structured traversals; `while` is frequently clearer for counter‑driven
+mutation of a `var`, a `dict`, or an `array`.
+
+### 14.4 Sequencing and blocks
 
 Within a procedure, statements execute top to bottom. A `{ … }` block groups
 statements; in a `match` arm a block lets an arm perform several effects:
@@ -1284,6 +1453,20 @@ statements; in a `match` arm a block lets an arm perform several effects:
 match writeFile(dst, o.value) with
 | Ok _  -> 0
 | Err e -> println("Write failed: " + e.message);
+```
+
+### 14.5 `eval` — forcing a value
+
+`eval <expr>;` evaluates an expression and **fully forces** its result. It is a
+statement (procedural / top‑level), distinct from a bare expression statement in
+that it forces lazy structure rather than leaving unevaluated thunks in place.
+Its main uses are in the REPL — where `eval` displays the forced value of an
+expression — and, occasionally, to force a lazy computation purely for its
+timing. In ordinary programs you rarely need it: `print`/`println` and pattern
+matching already force what they consume.
+
+```pfun
+eval take(5, iterate(fn x => x + 1, 1));   // forces [1, 2, 3, 4, 5]
 ```
 
 ## 15. Mutable collections: dictionaries and arrays
@@ -1377,6 +1560,46 @@ let snap = toList(employees);           // immutable snapshot
 > **`length` vs. `arrayLength`.** `length()` operates on immutable lists and
 > strings and does **not** accept arrays; use `arrayLength()` for arrays.
 
+### 15.3 Growable buffers (byte and string builders)
+
+A **buffer** is a mutable, growable sequence of bytes — Pfun's equivalent of a
+byte builder or string builder. It avoids the quadratic cost of repeatedly
+concatenating immutable strings in a loop. A buffer is created in one of two
+modes: `ByteMode` for raw bytes, `CharMode` for UTF‑8 text.
+
+| Call | Kind | Effect |
+|---|---|---|
+| `makeBuffer(mode)` | — | new empty buffer (`mode` = `ByteMode` \| `CharMode`) |
+| `makeStringBuffer(str)` | — | new `CharMode` buffer pre‑filled with `str` |
+| `appendChar(buf, char)` | proc‑only | UTF‑8 encode and append one `Char` |
+| `appendString(buf, str)` | proc‑only | UTF‑8 encode and append a `String` |
+| `appendBuffer(buf, bytes)` | proc‑only | append a `List<Byte>` |
+| `bufferLength(buf)` | pure | current length in bytes |
+| `bufferToBytes(buf)` | pure | snapshot as `List<Byte>` |
+| `bufferToString(buf)` | pure | UTF‑8 decode to a `String` (`CharMode` buffers) |
+
+The three `append*` operations mutate the buffer and are therefore procedure‑only
+(a pure `function` that calls them is rejected: *"Functions cannot use
+'appendString'"*). The read‑back operations are pure.
+
+```pfun
+proc buildCsvRow(cells) {
+  var buf = makeStringBuffer("");
+  proc go(cs, first) {
+    if length(cs) == 0 then return bufferToString(buf);
+    if !first then appendChar(buf, ',');
+    appendString(buf, head(cs));
+    go(tail(cs), false);
+  }
+  go(cells, true);
+}
+println(buildCsvRow(["a", "b", "c"]));   // a,b,c
+```
+
+`makeBuffer(ByteMode)` with `appendBuffer` is the byte‑oriented counterpart, used
+when assembling binary output before a single `writeBytes`/`writeBuffer`
+([§22.4](#224-binary-and-buffer-io)).
+
 ## 16. Console input and output
 
 Console I/O is effectful and therefore procedure‑only. (The underlying functions
@@ -1458,11 +1681,16 @@ proc copyFile(src, dst) {
 
 - Use **`Option`** when absence carries no explanation (a lookup miss).
 - Use **`Result`** when failure has a message (I/O, parsing, the network).
-- Use a **dedicated named union** when a module has several fallible operations
-  with *different* success payloads, to avoid the monomorphic‑constructor
-  unification described in [§2.4](#24-monomorphic-constructors-an-important-subtlety).
-  `dbschema.pf` does exactly this, returning `ColsResult`, `ConsResult`,
-  `TableResult`, and `SchemaResult` from its different loaders.
+- Use a **dedicated named union** when a module has a few fallible operations
+  with *different* success payloads, to avoid the constructor unification
+  described in [§2.4](#24-constructor-monomorphism-and-generic-types).
+  `dbschema.pf` does this with `ColsResult`, `ConsResult`, `TableResult`, and
+  `SchemaResult` for its metadata loaders.
+- Use a **`generic type`** result union when one result shape must wrap *many*
+  different payloads across the module (as generated model code does):
+  `dbschema.pf`'s `generic type InsertResult`/`FindResult`/`MutResult` each wrap
+  whatever model record a given generated function returns. See
+  [§2.4](#24-constructor-monomorphism-and-generic-types).
 
 ## 18. Asynchronous procedures
 
@@ -1601,6 +1829,30 @@ the `dict { … }` literal and `d[key]` access/assignment — see
 `toArray`, `toDict`, plus the `array { … }` literal and `a[i]` access/assignment
 — see [§15.2](#152-arrays).
 
+### 19.6 Rounding and numeric predicates
+
+These operate on `Int`/`Float` and are always available (no import — they are
+distinct from the `math` module in [§23](#23-math)):
+
+| Function | Result | Notes |
+|---|---|---|
+| `floor(x)` | round toward −∞ (`Int`) | integer input returned unchanged |
+| `ceil(x)` | round toward +∞ (`Int`) | integer input returned unchanged |
+| `round(x)` | round to nearest, half up (`Int`) | errors on `NaN`/`Infinity` |
+| `isNaN(x)` | `Bool` | `true` only for a `Float` `NaN` |
+| `isFinite(x)` | `Bool` | `true` for any `Int`; for a `Float`, false on `NaN`/`Infinity` |
+
+```pfun
+println(floor(2.9));       // 2
+println(ceil(2.1));        // 3
+println(round(2.5));       // 3
+println(isFinite(1.0));    // true
+println(isNaN(0.0 / 0.0)); // true
+```
+
+(`isInfinite(x)` is unrelated: it tests whether a value is a *lazy list*, not a
+floating‑point infinity — see [§7](#7-lazy-and-infinite-lists).)
+
 ## 20. Built-in types
 
 Four union/record types are built in and always available.
@@ -1627,6 +1879,13 @@ subject's type to decide which variants are required (see
 | `flushStdout()` | () → () | flush buffered stdout |
 | `readln()` | () → `Option<String>` | read a line (newline stripped); `None` at EOF — proc‑only |
 | `readChar()` | () → `Option<Char>` | read one character; `None` at EOF — proc‑only |
+| `scriptArgs()` | () → `List<String>` | command‑line arguments to the program — proc‑only |
+| `getEnv(name)` | `String` → `Option<String>` | one environment variable; `None` if unset — proc‑only |
+| `envVars()` | () → `Dict<String,String>` | all environment variables as a dict — proc‑only |
+
+`scriptArgs`, `getEnv`, and `envVars` read the process environment, so they are
+effectful (a pure `function` calling `getEnv` would be reading a side channel)
+and are proc‑only like the input procedures.
 
 > **Availability note.** `println` is used in `hello.pf` with *no* import, so
 > basic output appears to be globally available; nevertheless every multi‑file
@@ -1709,20 +1968,48 @@ proc byte_io_demo() {
 
 `import * from "math";`
 
-| Function | Signature → result |
+**Constants** (each is a nullary function you call — `pi()`, not `pi`):
+
+| Constant | Value |
 |---|---|
-| `sqrt(x)` | square root (`Float`) |
-| `pow(base, exp)` | `base` raised to `exp` (`Float`) |
-| `abs(x)` | absolute value |
-| `round(x)` | round a `Float` to the nearest integer |
-| `lerp(a, b, t)` | linear interpolation between `a` and `b` by `t` |
+| `pi()` | π |
+| `e()` | Euler's number |
+| `tau()` | 2π |
+| `inf()` | positive infinity |
+| `nan()` | not‑a‑number |
+
+**General functions:**
+
+| Function | Signature → result | Notes |
+|---|---|---|
+| `sqrt(x)` | square root (`Float`) | |
+| `cbrt(x)` | cube root (`Float`) | |
+| `pow(base, exp)` | `base` raised to `exp` (`Float`) | |
+| `exp(x)` | eˣ | |
+| `log(x)` | natural logarithm | |
+| `log2(x)` / `log10(x)` | base‑2 / base‑10 logarithm | |
+| `abs(x)` | absolute value | preserves `Int`/`Float` |
+| `sign(x)` | −1, 0, or 1 | preserves `Int`/`Float` |
+| `min(a, b)` / `max(a, b)` | smaller / larger of two | |
+| `clamp(lo, hi, x)` | constrain `x` to `[lo, hi]` | |
+| `fmod(x, y)` | floating‑point remainder | |
+| `hypot(x, y)` | √(x²+y²) | |
+| `lerp(a, b, t)` | linear interpolation `a → b` by `t` | |
+
+**Trigonometry** (radians): `sin`, `cos`, `tan`, `asin`, `acos`, `atan`,
+`atan2(y, x)`, and the hyperbolic `sinh`, `cosh`, `tanh`.
 
 ```pfun
-println(sqrt(2.0));                    // 1.41421356...
-println(pow(2.0, 16.0));               // 65536
-println(abs(-7));                      // 7
-println(round(lerp(0.0, 100.0, 0.25))); // 25
+println(sqrt(2.0));                       // 1.41421356...
+println(pow(2.0, 16.0));                  // 65536
+println(clamp(0, 100, 150));              // 100
+println(round(lerp(0.0, 100.0, 0.25)));   // 25
+println(atan2(1.0, 1.0));                 // 0.7853981... (π/4)
 ```
+
+> `round`, `ceil`, `floor`, `isFinite`, and `isNaN` are **core built‑ins**, not
+> part of the `math` module — they need no import. See
+> [§19.6](#196-rounding-and-numeric-predicates).
 
 (Arbitrary‑precision integer arithmetic — `factorial(30)`, `square(10^12)` — needs
 no library; it is built into the `Int` type. See [§2.1](#21-scalar-types).)
@@ -1807,11 +2094,12 @@ httpListen(7999, handleRequest);
 
 ### 26.2 Client
 
+The command‑line/server HTTP client is **GET‑only**:
+
 | Function | Result | Body type |
 |---|---|---|
 | `httpGet(url)` | Promise of `Ok { value }` / `Err { message }` | `value.body` is UTF‑8 text |
 | `httpGetBytes(url)` | same | `value.body` is a `List<Byte>` |
-| `httpPost(url, value)` | same | sends `value` as `__pfun`‑tagged JSON |
 
 On success, `value` has fields `status`, `headers`, and `body`. These calls
 **never reject** — failure is reported as `Err`, so you always `match` rather than
@@ -1823,6 +2111,17 @@ match home with
 | Ok r  -> println("GET / -> " + r.value.status + ": " + r.value.body)
 | Err e -> println("GET / failed: " + e.message);
 ```
+
+> **`httpPost` is browser‑only.** There is a `httpPost(url, value)` that sends
+> `value` as `__pfun`‑tagged JSON and returns the deserialized reply, but it is
+> available **only in the browser target** (it uses the browser's `fetch`). Under
+> the command‑line interpreter it returns `Err { "httpPost() is browser-only." }`.
+> In practice you rarely call it directly: the TEA runtime's `Send` command
+> ([§28.3](#283-tea--the-elm-architecture-runtime)) is what issues browser POSTs,
+> and on the server side `serverDispatch`
+> ([§28.5](#285-serverdispatch--declarative-server-dispatch)) receives them. For
+> server‑to‑server POSTs, expose the operation over your own HTTP handler
+> instead.
 
 ## 27. `db/postgresql` and `db/mariadb`
 
@@ -1954,13 +2253,19 @@ A `View` is what a pure `view` function returns. It describes *interactive* UI:
 buttons that emit messages, inputs that transform their value into a message, and
 containers. Static `htmllib` blocks embed via `VContent`.
 
-Exported `View` variants: `VText`, `VEl`, `VButton`, `VTextInput`, `VCheckbox`,
-`VSelect`, `VContent`.
+Exported `View` variants: `VText`, `VEl` (a generic container with `tag`,
+`attrs`, `children`), `VButton` (with optional `attrs`), `VTextInput`,
+`VCheckbox`, `VSelect`, `VColorInput`, `VRangeInput`, and `VContent` (embed a
+static `htmllib` `Block`).
 
 Exported constructors: `vtext`, `vbutton`, `vbuttonClass`, `vdiv`, `vspan`, `vp`,
 `vh`, `vdivClass`, `vdivId`, `vspanId`, `vinput`, `vcheckbox`, `vselect`,
-`vcontent`; renderers `renderView`, `renderViews`, `renderViewChoice`; helper
-`boolStr`.
+`vcolor`, `vrange`, `vcontent`; renderers `renderView`, `renderViews`,
+`renderViewChoice`; helper `boolStr`.
+
+`vcolor(name, value, onInput)` renders a color picker and `vrange(name, value,
+min, max, step, onInput)` a slider; both feed their new value through an
+`fn Str -> Msg` transformer, exactly like `vinput`.
 
 Event sites carry either a message value or a transformer function
 (`fn Str -> Msg`):
@@ -2024,15 +2329,69 @@ the web stack — `mountHtml(html)`, `clearOutput()`, and
 `attachDomHandler(key, fn)` — which are available in browser execution mode and
 are the bridge between rendered strings and the live DOM.
 
+### 28.5 `serverDispatch` — declarative server dispatch
+
+`serverDispatch` is the **server‑side counterpart to `tea`**: where `tea` runs a
+pure `update` against browser events, `serverDispatch` runs a pure `update`
+against incoming requests, and owns the effectful shell (connect, parse, run the
+operation, serialize the reply). It ties together `http`, `db/*`, `json`, and a
+shared request/response union, and it exists precisely for the full‑stack pattern
+the memory of the corpus revolves around: a `ClientMsg`/reply union shared by
+client and server, matched exhaustively on both ends.
+
+Its closed effect set mirrors `tea`'s `Cmd`:
+
+| `ServerCmd` variant | Meaning |
+|---|---|
+| `Reply { msg }` | terminal — the loop ends and `msg` is sent back to the client |
+| `Perform { op, onResult }` | run the typed operation `op`, then feed its typed result back through `update` via `onResult : result -> msg` |
+| `NoOp` | `update` declined to act — treated as a dispatch error, since every chain must end in `Reply` |
+
+The library never constructs or inspects `op`/`result`; the application supplies
+an exhaustive `runOp` interpreter, and each `Perform`'s `onResult` closure keeps
+the chain fully typed (the app's own `update` clauses pin `result`'s type by
+pattern matching). This is the same closed‑union technique that makes `tea`'s
+`Send` total, applied to server effects.
+
+Exported interface:
+
+| Name | Kind | Purpose |
+|---|---|---|
+| `ServerCmd` | type | `Reply` \| `Perform` \| `NoOp` |
+| `runDispatch(msg, update, runOp, mkErr, conn)` | async proc | drives one request's `update`→`Perform`→…→`Reply` chain to its terminal reply |
+| `dispatchHttp(req, res, wrapIncoming, update, runOp, mkErr, connectionString)` | async proc | full HTTP boundary: connects, `jsonDeserialize`s the body into the wire `ClientMsg`, lifts it with `wrapIncoming`, runs `runDispatch`, serializes the reply, and closes the connection |
+
+`dispatchHttp` owns only the connection lifecycle and the JSON/HTTP envelope;
+*what* a request does and what an error reply looks like are the application's,
+supplied as `runOp` and `mkErr`. A handler is then a one‑liner:
+
+```pfun
+async proc handle(req, res) {
+  dispatchHttp(
+    req, res,
+    fn c => Incoming { c },        // wrapIncoming: ClientMsg -> SvrMsg
+    update,                        // pure: SvrMsg -> ServerCmd
+    runOp,                         // async: (op, conn) -> result
+    fn m => ServerErr { m },       // mkErr:  String -> reply
+    CONNECTION_STRING
+  );
+}
+httpListen(8080, handle);
+```
+
+The `announcements_*` programs (`_protocol`, `_repo`, `_server`, `_client`) are a
+worked full‑stack example built on this library together with `dataModelGen`‑style
+generated data access.
+
 ---
 
 # Appendix A — Reserved words and symbols
 
 **Declaration & module keywords:** `function`, `fn`, `proc`, `memo`, `async`,
-`let`, `var`, `type`, `export`, `import`, `from`, `as`.
+`let`, `var`, `type`, `generic`, `export`, `import`, `from`, `as`.
 
 **Control & expression keywords:** `if`, `then`, `else`, `match`, `with`,
-`where`, `for`, `return`, `await`, `true`, `false`.
+`where`, `for`, `while`, `return`, `eval`, `await`, `true`, `false`.
 
 **Built‑in constructors always in scope:** `Some`, `None`, `Ok`, `Err`, `Eof`,
 `Pair`; the literal keywords `dict` and `array`.
@@ -2041,34 +2400,36 @@ are the bridge between rendered strings and the live DOM.
 string prefix), `$` (format string prefix).
 
 **Operators:** `+ - * / %` · `== != < > <= >=` · `&& || !` · `& | << >>` ·
-`? :` · `=` (assignment) · `->` (match arm) · `=>` (lambda) · `<-` (comprehension
-generator) · `|` (variant / union separator) · `.` (field access) · `[]`
-(index / list) · `{}` (block / record).
+`? :` · `|>` (forward pipe) · `=` (assignment) · `->` (match arm) · `=>` (lambda)
+· `<-` (comprehension generator) · `|` (variant / union separator) · `.` (field
+access) · `[]` (index / list) · `{}` (block / record).
 
 # Appendix B — Known gaps and ambiguities
 
 The following points are not fully determined by the available corpus; they are
 flagged so readers do not over‑rely on them:
 
-- **Bitwise operator precedence.** Bitwise expressions always appear isolated or
-  parenthesized; the precedence of `& | << >>` relative to comparison/arithmetic
-  is not demonstrated. Parenthesize when mixing. (See [§3.5](#35-observed-precedence).)
 - **`async function`.** The documentation states both `async function` and
   `async proc` may use `await`, but only `async proc` is demonstrated. Treat
   async functions as supported‑but‑unexercised.
 - **General truthiness.** Only `Byte` truthiness is documented explicitly (`0b`
-  falsy, non‑zero truthy). All other conditionals in the corpus use boolean
-  expressions; whether other types have an implicit truthiness is not shown.
+  falsy, non‑zero truthy), and `while`/`if` conditions are forced through the
+  same truthiness test the runtime uses. Whether types beyond `Bool`/`Byte` have
+  a useful implicit truthiness is not exercised in the corpus; prefer explicit
+  boolean conditions.
 - **`println` without import.** `hello.pf` uses `println` with no import, while
   every other program imports `io`. Basic output appears globally available, but
   the corpus is not explicit about exactly which I/O names are global versus
   module‑scoped. The safe convention is to `import * from "io";`.
-- **Monomorphic constructors.** The precise scope over which a constructor's
-  payload type unifies (whole file vs. connected inference cluster) is described
-  by the database modules' guidance but not formally specified. When in doubt,
-  follow their idiom: declare a dedicated named result union per distinct payload
-  type. (See [§2.4](#24-monomorphic-constructors-an-important-subtlety).)
 - **Legacy `printf`.** Referenced in comments as a former interpolating print, but
   never called in the corpus. Use `$"…"` format strings.
+
+The following gaps flagged in earlier drafts are now **resolved** and folded into
+the body of the manual:
+
+- *Bitwise operator precedence* is fixed and documented in
+  [§3.5](#35-precedence).
+- *Monomorphic constructors* have an opt‑in escape hatch, the `generic` keyword,
+  documented in [§2.4](#24-constructor-monomorphism-and-generic-types).
 
 *End of manual.*
