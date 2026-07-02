@@ -2075,23 +2075,11 @@ proc buffer_demo() {
 }
 buffer_demo();
 
-
 // ============================================================================
 /*
   26. DATE LIBRARY
   datelib.pf wraps the JavaScript Date API via the foreign FFI.
   Import it with: import * from "$PFUN_HOME/lib/datelib.pf";
-
-  Key design points:
-  - Dates are opaque records { handle } wrapping a live JS Date.
-  - All constructors return DateResult (DateOk / DateErr) so invalid
-    strings surface as errors rather than propagating silently.
-  - month() / weekday() return typed variants (Month, Weekday).
-  - utc* accessors read UTC fields; local accessors read machine-local time.
-  - Arithmetic: addDays/addHours/etc. are exact ms offsets;
-    addMonths/addYears delegate to JS for calendar correctness.
-  - Float ordering is Int-only in Pfun; diff results use round() -> Int.
-  - Int (bigint) args going back into JS Date methods use toFloat().
 
   All examples below use fromIso("...Z") + utc* accessors so output is
   identical regardless of the machine's local timezone.
@@ -2101,134 +2089,70 @@ import * from "$PFUN_HOME/lib/datelib.pf";
 
 println("--- 26. Date Library ---");
 
-// ── Construction ─────────────────────────────────────────────────────────────
-
-// fromIso: parse an ISO 8601 string; "Z" suffix → UTC
 match fromIso("2024-03-15T14:30:45.123Z") with
 | DateErr e -> println("ERROR: " + e.message)
 | DateOk d  -> {
-    // toIso round-trips exactly
     match toIso(d.date) with
     | FErr e -> println("ERROR: " + e.message)
-    | FOk s  -> println(s.value);                    // 2024-03-15T14:30:45.123Z
-
-    // UTC accessors — timezone-invariant
+    | FOk s  -> println(s.value);
     match utcYear(d.date) with
     | FErr e -> println("ERROR: " + e.message)
-    | FOk v  -> println("year: " + __str__(v.value));  // year: 2024
-
+    | FOk v  -> println("year: " + __str__(v.value));
     match utcMonthInt(d.date) with
     | FErr e -> println("ERROR: " + e.message)
-    | FOk v  -> println("month: " + __str__(v.value)); // month: 3
-
+    | FOk v  -> println("month: " + __str__(v.value));
     match utcDay(d.date) with
     | FErr e -> println("ERROR: " + e.message)
-    | FOk v  -> println("day: " + __str__(v.value));   // day: 15
-
+    | FOk v  -> println("day: " + __str__(v.value));
     match utcHour(d.date) with
     | FErr e -> println("ERROR: " + e.message)
-    | FOk v  -> println("hour: " + __str__(v.value));  // hour: 14
-
-    // Typed Month and Weekday variants
+    | FOk v  -> println("hour: " + __str__(v.value));
     match utcMonth(d.date) with
     | FErr e -> println("ERROR: " + e.message)
-    | FOk v  -> println(monthName(v.value));            // March
-
+    | FOk v  -> println(monthName(v.value));
     match utcWeekday(d.date) with
     | FErr e -> println("ERROR: " + e.message)
-    | FOk v  -> println(weekdayName(v.value));          // Friday
+    | FOk v  -> println(weekdayName(v.value));
   };
 
-// fromTimestamp: construct from a Unix millisecond timestamp (Float).
-// 1735084800000 = 2024-12-25T00:00:00.000Z
 match fromTimestamp(1735084800000.0) with
 | DateErr e -> println("ERROR: " + e.message)
 | DateOk d  -> {
     match toIso(d.date) with
     | FErr e -> println("ERROR: " + e.message)
-    | FOk s  -> println(s.value);                    // 2024-12-25T00:00:00.000Z
+    | FOk s  -> println(s.value);
   };
 
-// Invalid date string → DateErr
 match fromIso("not-a-date") with
 | DateOk _  -> println("ERROR: should have been invalid")
-| DateErr e -> println("invalid: " + e.message);     // invalid: Invalid date: not-a-date
-
-// ── UTC accessors ─────────────────────────────────────────────────────────────
-//
-// Use utc* accessors for timezone-stable output.
+| DateErr e -> println("invalid: " + e.message);
 
 match fromIso("2024-07-04T09:05:03.007Z") with
 | DateErr e -> println("ERROR: " + e.message)
 | DateOk d  -> {
-    match utcYear(d.date) with
-    | FErr e -> println("ERROR: " + e.message)
-    | FOk v  -> println(__str__(v.value));              // 2024
-
-    match utcMonth(d.date) with
-    | FErr e -> println("ERROR: " + e.message)
-    | FOk v  -> println(monthShort(v.value));           // Jul
-
-    match utcDay(d.date) with
-    | FErr e -> println("ERROR: " + e.message)
-    | FOk v  -> println(__str__(v.value));              // 4
-
-    match utcHour(d.date) with
-    | FErr e -> println("ERROR: " + e.message)
-    | FOk v  -> println(__str__(v.value));              // 9
-
-    match utcMinute(d.date) with
-    | FErr e -> println("ERROR: " + e.message)
-    | FOk v  -> println(__str__(v.value));              // 5
-
-    match utcSecond(d.date) with
-    | FErr e -> println("ERROR: " + e.message)
-    | FOk v  -> println(__str__(v.value));              // 3
-
-    match utcMillisecond(d.date) with
-    | FErr e -> println("ERROR: " + e.message)
-    | FOk v  -> println(__str__(v.value));              // 7
-
-    match utcWeekday(d.date) with
-    | FErr e -> println("ERROR: " + e.message)
-    | FOk v  -> println(weekdayShort(v.value));         // Thu
+    match utcYear(d.date) with | FErr e -> println("ERROR: " + e.message) | FOk v -> println(__str__(v.value));
+    match utcMonth(d.date) with | FErr e -> println("ERROR: " + e.message) | FOk v -> println(monthShort(v.value));
+    match utcDay(d.date) with | FErr e -> println("ERROR: " + e.message) | FOk v -> println(__str__(v.value));
+    match utcHour(d.date) with | FErr e -> println("ERROR: " + e.message) | FOk v -> println(__str__(v.value));
+    match utcMinute(d.date) with | FErr e -> println("ERROR: " + e.message) | FOk v -> println(__str__(v.value));
+    match utcSecond(d.date) with | FErr e -> println("ERROR: " + e.message) | FOk v -> println(__str__(v.value));
+    match utcMillisecond(d.date) with | FErr e -> println("ERROR: " + e.message) | FOk v -> println(__str__(v.value));
+    match utcWeekday(d.date) with | FErr e -> println("ERROR: " + e.message) | FOk v -> println(weekdayShort(v.value));
   };
-
-// ── Arithmetic ────────────────────────────────────────────────────────────────
 
 match fromIso("2024-01-31T00:00:00.000Z") with
 | DateErr e -> println("ERROR: " + e.message)
 | DateOk d  -> {
-    // addDays: exact millisecond offset
     match addDays(d.date, 30.0) with
     | DateErr e -> println("ERROR: " + e.message)
-    | DateOk r  -> {
-        match toIso(r.date) with
-        | FErr e -> println("ERROR: " + e.message)
-        | FOk s  -> println(s.value);                // 2024-03-01T00:00:00.000Z
-      };
-
-    // addMonths: calendar-aware via JS setMonth.
-    // Jan 31 + 1 month: Feb 2024 has 29 days, so day 31 overflows by 2 → Mar 2.
+    | DateOk r  -> { match toIso(r.date) with | FErr e -> println("ERROR: " + e.message) | FOk s -> println(s.value); };
     match addMonths(d.date, 1) with
     | DateErr e -> println("ERROR: " + e.message)
-    | DateOk r  -> {
-        match toIso(r.date) with
-        | FErr e -> println("ERROR: " + e.message)
-        | FOk s  -> println(s.value);                // 2024-03-02T00:00:00.000Z
-      };
-
-    // addYears
+    | DateOk r  -> { match toIso(r.date) with | FErr e -> println("ERROR: " + e.message) | FOk s -> println(s.value); };
     match addYears(d.date, 1) with
     | DateErr e -> println("ERROR: " + e.message)
-    | DateOk r  -> {
-        match toIso(r.date) with
-        | FErr e -> println("ERROR: " + e.message)
-        | FOk s  -> println(s.value);                // 2025-01-31T00:00:00.000Z
-      };
+    | DateOk r  -> { match toIso(r.date) with | FErr e -> println("ERROR: " + e.message) | FOk s -> println(s.value); };
   };
-
-// ── Difference ────────────────────────────────────────────────────────────────
 
 match fromIso("2024-01-01T00:00:00.000Z") with
 | DateErr e -> println("ERROR: " + e.message)
@@ -2236,14 +2160,11 @@ match fromIso("2024-01-01T00:00:00.000Z") with
     match fromIso("2024-03-15T00:00:00.000Z") with
     | DateErr e -> println("ERROR: " + e.message)
     | DateOk b  -> {
-        // diffDays returns Float; round() → Int for display
         match diffDays(b.date, a.date) with
         | FErr e -> println("ERROR: " + e.message)
-        | FOk d  -> println("days apart: " + __str__(round(d.value)));  // days apart: 74
+        | FOk d  -> println("days apart: " + __str__(round(d.value)));
       };
   };
-
-// ── Comparison ────────────────────────────────────────────────────────────────
 
 match fromIso("2024-01-01T00:00:00.000Z") with
 | DateErr e -> println("ERROR: " + e.message)
@@ -2251,29 +2172,18 @@ match fromIso("2024-01-01T00:00:00.000Z") with
     match fromIso("2024-06-01T00:00:00.000Z") with
     | DateErr e -> println("ERROR: " + e.message)
     | DateOk b  -> {
-        match dateBefore(a.date, b.date) with
-        | FErr e -> println("ERROR: " + e.message)
-        | FOk v  -> println("before: " + __str__(v.value));  // before: true
-
-        match dateAfter(b.date, a.date) with
-        | FErr e -> println("ERROR: " + e.message)
-        | FOk v  -> println("after: " + __str__(v.value));   // after: true
-
-        match dateEqual(a.date, a.date) with
-        | FErr e -> println("ERROR: " + e.message)
-        | FOk v  -> println("equal: " + __str__(v.value));   // equal: true
+        match dateBefore(a.date, b.date) with | FErr e -> println("ERROR: " + e.message) | FOk v -> println("before: " + __str__(v.value));
+        match dateAfter(b.date, a.date) with | FErr e -> println("ERROR: " + e.message) | FOk v -> println("after: " + __str__(v.value));
+        match dateEqual(a.date, a.date) with | FErr e -> println("ERROR: " + e.message) | FOk v -> println("equal: " + __str__(v.value));
       };
   };
 
-// ── Calendar helpers (pure) ───────────────────────────────────────────────────
+println(__str__(isLeapYear(2024)));
+println(__str__(isLeapYear(1900)));
+println(__str__(isLeapYear(2000)));
+println(__str__(daysInMonth(February, 2024)));
+println(__str__(daysInMonth(February, 2023)));
 
-println(__str__(isLeapYear(2024)));              // true
-println(__str__(isLeapYear(1900)));              // false  (div by 100, not 400)
-println(__str__(isLeapYear(2000)));              // true   (div by 400)
-println(__str__(daysInMonth(February, 2024)));   // 29
-println(__str__(daysInMonth(February, 2023)));   // 28
-
-// isSameDay: compare utcDay fields directly (timezone-invariant)
 match fromIso("2024-03-15T00:00:00.000Z") with
 | DateErr e -> println("ERROR: " + e.message)
 | DateOk a  -> {
@@ -2285,23 +2195,99 @@ match fromIso("2024-03-15T00:00:00.000Z") with
         | FOk da -> {
             match utcDay(b.date) with
             | FErr e -> println("ERROR: " + e.message)
-            | FOk db -> println(__str__(da.value == db.value));   // true (both day 15)
+            | FOk db -> println(__str__(da.value == db.value));
           };
       };
   };
-// isSameDay across a day boundary
 println(__str__(isSameDay(
   match fromIso("2024-03-15T00:00:00.000Z") with | DateErr _ -> now() | DateOk d -> d.date,
   match fromIso("2024-03-16T00:00:00.000Z") with | DateErr _ -> now() | DateOk d -> d.date
-)));                                               // false
+)));
 
-// ── Enum helpers (pure) ───────────────────────────────────────────────────────
+println(monthName(January));
+println(monthName(December));
+println(monthShort(September));
+println(weekdayName(Wednesday));
+println(weekdayShort(Saturday));
+println(__str__(isWeekend(Saturday)));
+println(__str__(isWeekend(Monday)));
+println(__str__(isWeekdayVariant(Friday)));
 
-println(monthName(January));       // January
-println(monthName(December));      // December
-println(monthShort(September));    // Sep
-println(weekdayName(Wednesday));   // Wednesday
-println(weekdayShort(Saturday));   // Sat
-println(__str__(isWeekend(Saturday)));       // true
-println(__str__(isWeekend(Monday)));         // false
-println(__str__(isWeekdayVariant(Friday)));  // true
+// ============================================================================
+/*
+  27. RANDOM LIBRARY
+  random.pf provides random number generation via the foreign FFI.
+  Import it with: import * from "$PFUN_HOME/lib/random.pf";
+
+  All functions are procs (they read from the RNG, which is an external
+  source). They cannot be called from pure functions.
+
+  Results are non-deterministic, so examples check properties
+  (finiteness, bounds, length) rather than exact values.
+*/
+
+import * from "$PFUN_HOME/lib/random.pf";
+
+println("--- 27. Random Library ---");
+
+let f = randomFloat();
+println("float finite: " + __str__(isFinite(f)));
+let bucket = floor(f * 1000.0);
+println("float bucket in [0,999]: " + __str__(bucket >= 0 && bucket < 1000));
+
+var inRange = true;
+var sawOne  = false;
+var sawSix  = false;
+var ri = 0;
+while (ri < 200) {
+  let n = randomInt(1, 6);
+  if n < 1 || n > 6 then inRange = false;
+  if n == 1 then sawOne = true;
+  if n == 6 then sawSix = true;
+  ri = ri + 1;
+}
+println("ints in [1,6]: " + __str__(inRange));
+println("saw 1: " + __str__(sawOne));
+println("saw 6: " + __str__(sawSix));
+
+var trues = 0;
+var bi = 0;
+while (bi < 100) {
+  if randomBool() then trues = trues + 1;
+  bi = bi + 1;
+}
+println("bool has trues: " + __str__(trues > 0));
+println("bool has falses: " + __str__(trues < 100));
+
+match randomElement([]) with
+| None   -> println("empty list: None")
+| Some _ -> println("UNEXPECTED");
+
+let colors = ["red", "green", "blue"];
+match randomElement(colors) with
+| None   -> println("UNEXPECTED")
+| Some v -> println("element in list: " + __str__(v.value == "red" || v.value == "green" || v.value == "blue"));
+
+let lst  = [1, 2, 3, 4, 5];
+let shuf = randomShuffle(lst);
+println("shuffle length: " + __str__(length(shuf)));
+let total = reduce(fn a, x => a + x, 0, shuf);
+println("shuffle sum: " + __str__(total));
+
+let bs    = randomBytes(8);
+println("bytes length: " + __str__(length(bs)));
+var allOk = true;
+proc checkBytes(xs) {
+  if length(xs) == 0 then 0
+  else {
+    let b = toInt(head(xs));
+    if b < 0 || b > 255 then allOk = false;
+    checkBytes(tail(xs));
+  }
+}
+checkBytes(bs);
+println("bytes in range: " + __str__(allOk));
+
+let uuid = randomUUID();
+println("uuid length: " + __str__(length(uuid)));
+println("uuid unique: " + __str__(randomUUID() != randomUUID()));

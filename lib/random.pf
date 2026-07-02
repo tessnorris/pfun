@@ -1,0 +1,161 @@
+// random.pf
+// Random number generation for Pfun, built on the JavaScript RNG via foreign.pf.
+//
+// Import with: import * from "$PFUN_HOME/lib/random.pf";
+//
+// ─── Design notes ────────────────────────────────────────────────────────────
+//
+// Every function here transitively calls a foreign* op, so every function is a
+// `proc`.  A pure `function` therefore cannot call any of them — the purity
+// wall is enforced by construction, with no explicit guard needed.
+//
+// Sources:
+//   randomFloat / randomBool / randomElement / randomShuffle  →  Math.random
+//   randomInt / randomBytes / randomUUID                      →  Node crypto
+//
+// randomInt uses crypto.randomInt, which is exclusive on the right; this
+// library exposes an INCLUSIVE [min, max] range to match Pfun's fencepost
+// conventions elsewhere.
+//
+// ─── API ────────────────────────────────────────────────────────────────────
+//
+//   randomFloat()          Float in [0.0, 1.0)
+//   randomInt(min, max)    Int in [min, max]  (both inclusive)
+//   randomBool()           Bool
+//   randomElement(list)    Option<a>          (None on empty list)
+//   randomShuffle(list)    List<a>            (new list, Fisher-Yates)
+//   randomBytes(n)         List<Byte>
+//   randomUUID()           Str
+
+import * from "foreign";
+
+// ─── Internal helpers ─────────────────────────────────────────────────────────
+
+// mathRandom() — a raw Float in [0.0, 1.0) from Math.random(), or a fallback.
+// The FFI can only fail if the Math global is somehow unavailable, which never
+// happens in a real JS host; we fall back to 0.0 defensively.
+proc mathRandom() {
+  match foreignGlobal("Math") with
+  | FErr _ -> 0.0
+  | FOk m  -> {
+      match foreignCall(m.value, "random", []) with
+      | FErr _ -> 0.0
+      | FOk v  -> {
+          match foreignApply(v.value, dFloat()) with
+          | FErr _ -> 0.0
+          | FOk f  -> f.value;
+        };
+    };
+}
+
+// cryptoRandomInt(lo, hiExclusive) — Int in [lo, hiExclusive) via crypto.randomInt.
+// Returns 0 defensively if the FFI fails (crypto is always present in Node).
+proc cryptoRandomInt(lo, hiExclusive) {
+  match foreignRequire("crypto") with
+  | FErr _ -> 0
+  | FOk c  -> {
+      match foreignCall(c.value, "randomInt", [lo, hiExclusive]) with
+      | FErr _ -> 0
+      | FOk v  -> {
+          match foreignApply(v.value, dInt()) with
+          | FErr _ -> 0
+          | FOk n  -> n.value;
+        };
+    };
+}
+
+// ─── Public API ───────────────────────────────────────────────────────────────
+
+// randomFloat() — a Float uniformly distributed in [0.0, 1.0).
+export proc randomFloat() {
+  mathRandom();
+}
+
+// randomInt(min, max) — an Int uniformly distributed in [min, max] inclusive.
+// crypto.randomInt is exclusive on the right, so we pass max + 1.
+export proc randomInt(min, max) {
+  cryptoRandomInt(min, max + 1);
+}
+
+// randomBool() — true or false with equal probability.
+// mathRandom() < 0.5, but < is Int-only on Floats, so scale to an Int test:
+// floor(mathRandom() * 2) is 0 or 1.
+export proc randomBool() {
+  let bit = floor(mathRandom() * 2.0);
+  bit == 1;
+}
+
+// randomElement(list) — Some { value } for a uniformly chosen element,
+// or None if the list is empty.
+export proc randomElement(list) {
+  let n = length(list);
+  if n == 0 then None
+  else {
+    // NOTE: `idx` is bound with `var`, not `let`. A `let` binding is lazy and
+    // does not memoize effects, so an effectful value (cryptoRandomInt) used
+    // more than once would re-run the RNG each time. `var` forces once.
+    var idx = cryptoRandomInt(0, n);   // [0, n)
+    Some { nth(list, idx) };
+  }
+}
+
+// randomShuffle(list) — a new list with the elements in uniformly random order.
+// Functional Fisher-Yates: repeatedly pull a random element out of the
+// remaining list and prepend it to the accumulator.
+export proc randomShuffle(list) {
+  proc go(remaining, acc) {
+    let n = length(remaining);
+    if n == 0 then acc
+    else {
+      // `idx` MUST be `var`: it is used three times below (nth + two slices),
+      // and as an effectful value a lazy `let` would re-run the RNG on each
+      // use, corrupting the shuffle. `var` forces and memoizes it once.
+      var idx    = cryptoRandomInt(0, n);
+      let picked = nth(remaining, idx);
+      // remaining with index idx removed
+      let rest   = slice(0, idx, remaining) + slice(idx + 1, n - idx - 1, remaining);
+      go(rest, [picked] + acc);
+    }
+  }
+  go(list, []);
+}
+
+// randomBytes(n) — a List<Byte> of n cryptographically random bytes.
+// crypto.randomBytes returns a Node Buffer (a live handle, not a list), so we
+// convert it to a real array with Array.from before decoding.
+export proc randomBytes(n) {
+  match foreignRequire("crypto") with
+  | FErr e -> []
+  | FOk c  -> {
+      match foreignCall(c.value, "randomBytes", [n]) with
+      | FErr e -> []
+      | FOk buf -> {
+          match foreignGlobal("Array") with
+          | FErr e -> []
+          | FOk arr -> {
+              match foreignCall(arr.value, "from", [buf.value]) with
+              | FErr e -> []
+              | FOk lst -> {
+                  match foreignApply(lst.value, dList(dInt())) with
+                  | FErr e -> []
+                  | FOk xs -> map(fn b => toByte(b), xs.value);
+                };
+            };
+        };
+    };
+}
+
+// randomUUID() — a random RFC 4122 version 4 UUID string.
+export proc randomUUID() {
+  match foreignRequire("crypto") with
+  | FErr _ -> ""
+  | FOk c  -> {
+      match foreignCall(c.value, "randomUUID", []) with
+      | FErr _ -> ""
+      | FOk v  -> {
+          match foreignApply(v.value, dStr()) with
+          | FErr _ -> ""
+          | FOk s  -> s.value;
+        };
+    };
+}

@@ -1,0 +1,211 @@
+// random_test.pf — integration tests for random.pf
+// Run with: PFUN_HOME=/path/to/pfun pfun lib/test/random_test.pf
+//
+// The functions are non-deterministic, so tests check ranges, shapes,
+// coverage, and distribution properties over repeated sampling.
+
+import * from "io";
+import * from "$PFUN_HOME/lib/random.pf";
+
+proc expectBool(actual, expected, label) {
+  if actual == expected
+  then println("PASS " + label)
+  else println("FAIL " + label + ": got " + __str__(actual) + " expected " + __str__(expected));
+}
+
+// ─── randomFloat ─────────────────────────────────────────────────────────────
+
+proc testRandomFloat() {
+  println("--- randomFloat ---");
+  // All samples finite and in [0.0, 1.0). Float ordering is Int-only, so we
+  // test the bounds by scaling to an Int bucket: floor(f * 1000) in [0, 999].
+  var allInRange = true;
+  var allFinite  = true;
+  var i = 0;
+  while (i < 1000) {
+    let f = randomFloat();
+    if !isFinite(f) then allFinite = false;
+    let bucket = floor(f * 1000.0);
+    if bucket < 0 || bucket > 999 then allInRange = false;
+    i = i + 1;
+  }
+  expectBool(allFinite, true, "randomFloat all finite");
+  expectBool(allInRange, true, "randomFloat in [0.0, 1.0)");
+}
+
+// ─── randomInt ───────────────────────────────────────────────────────────────
+
+proc testRandomInt() {
+  println("--- randomInt ---");
+  var inRange = true;
+  var sawMin  = false;
+  var sawMax  = false;
+  var i = 0;
+  while (i < 2000) {
+    let n = randomInt(1, 6);
+    if n < 1 || n > 6 then inRange = false;
+    if n == 1 then sawMin = true;
+    if n == 6 then sawMax = true;
+    i = i + 1;
+  }
+  expectBool(inRange, true, "randomInt in [1,6]");
+  expectBool(sawMin, true, "randomInt hits min (1, inclusive)");
+  expectBool(sawMax, true, "randomInt hits max (6, inclusive)");
+
+  // min == max always returns min
+  var fixed = true;
+  var j = 0;
+  while (j < 10) {
+    if randomInt(7, 7) != 7 then fixed = false;
+    j = j + 1;
+  }
+  expectBool(fixed, true, "randomInt(7,7) always 7");
+
+  // negative range
+  var negOk = true;
+  var k = 0;
+  while (k < 500) {
+    let n = randomInt(-3, 3);
+    if n < -3 || n > 3 then negOk = false;
+    k = k + 1;
+  }
+  expectBool(negOk, true, "randomInt handles negative range");
+}
+
+// ─── randomBool ──────────────────────────────────────────────────────────────
+
+proc testRandomBool() {
+  println("--- randomBool ---");
+  var trues  = 0;
+  var falses = 0;
+  var i = 0;
+  while (i < 1000) {
+    let b = randomBool();
+    if b then trues = trues + 1 else falses = falses + 1;
+    i = i + 1;
+  }
+  // Both outcomes occur, and neither dominates absurdly (350..650 of 1000).
+  expectBool(trues > 0 && falses > 0, true, "randomBool produces both");
+  expectBool(trues > 350 && trues < 650, true, "randomBool roughly fair");
+}
+
+// ─── randomElement ────────────────────────────────────────────────────────────
+
+proc testRandomElement() {
+  println("--- randomElement ---");
+
+  // Empty list → None
+  match randomElement([]) with
+  | None   -> println("PASS randomElement [] is None")
+  | Some _ -> println("FAIL randomElement []: expected None");
+
+  // Singleton → that element
+  match randomElement([42]) with
+  | None   -> println("FAIL randomElement singleton: got None")
+  | Some v -> expectBool(v.value == 42, true, "randomElement singleton");
+
+  // Covers all elements over many samples
+  let lst = [1, 2, 3, 4, 5];
+  var saw1 = false; var saw5 = false; var inSet = true;
+  var i = 0;
+  while (i < 500) {
+    match randomElement(lst) with
+    | None   -> inSet = false
+    | Some v -> {
+        if v.value < 1 || v.value > 5 then inSet = false;
+        if v.value == 1 then saw1 = true;
+        if v.value == 5 then saw5 = true;
+      };
+    i = i + 1;
+  }
+  expectBool(inSet, true, "randomElement always in list");
+  expectBool(saw1 && saw5, true, "randomElement covers endpoints");
+}
+
+// ─── randomShuffle ────────────────────────────────────────────────────────────
+
+proc testRandomShuffle() {
+  println("--- randomShuffle ---");
+
+  let lst  = [1, 2, 3, 4, 5];
+  let shuf = randomShuffle(lst);
+
+  // Same length
+  expectBool(length(shuf) == 5, true, "randomShuffle preserves length");
+
+  // Original not mutated
+  expectBool(length(lst) == 5, true, "randomShuffle leaves original intact");
+
+  // Same multiset: sum is invariant (1+2+3+4+5 = 15)
+  let total = reduce(fn a, x => a + x, 0, shuf);
+  expectBool(total == 15, true, "randomShuffle preserves elements (sum=15)");
+
+  // Empty list → empty
+  expectBool(length(randomShuffle([])) == 0, true, "randomShuffle [] is []");
+
+  // Produces more than one ordering over many shuffles
+  var distinct = 0;
+  var seenFirst = 0;
+  var i = 0;
+  while (i < 50) {
+    let s = randomShuffle(lst);
+    let f = nth(s, 0);
+    if f != seenFirst then distinct = distinct + 1;
+    seenFirst = f;
+    i = i + 1;
+  }
+  expectBool(distinct > 5, true, "randomShuffle varies order");
+}
+
+// ─── randomBytes ─────────────────────────────────────────────────────────────
+
+proc testRandomBytes() {
+  println("--- randomBytes ---");
+
+  let bs = randomBytes(16);
+  expectBool(length(bs) == 16, true, "randomBytes length");
+
+  // All in [0, 255] — bytes compare as Int
+  var inRange = true;
+  proc check(xs) {
+    if length(xs) == 0 then 0
+    else {
+      let b = toInt(head(xs));
+      if b < 0 || b > 255 then inRange = false;
+      check(tail(xs));
+    }
+  }
+  check(bs);
+  expectBool(inRange, true, "randomBytes all in [0,255]");
+
+  // n = 0 → empty
+  expectBool(length(randomBytes(0)) == 0, true, "randomBytes(0) is empty");
+}
+
+// ─── randomUUID ───────────────────────────────────────────────────────────────
+
+proc testRandomUUID() {
+  println("--- randomUUID ---");
+
+  let u = randomUUID();
+  // v4 UUIDs are always 36 chars: 8-4-4-4-12 with hyphens
+  expectBool(length(u) == 36, true, "randomUUID length 36");
+
+  // Two calls differ
+  expectBool(randomUUID() != randomUUID(), true, "randomUUID values differ");
+}
+
+// ─── Run all ──────────────────────────────────────────────────────────────────
+
+proc main() {
+  testRandomFloat();
+  testRandomInt();
+  testRandomBool();
+  testRandomElement();
+  testRandomShuffle();
+  testRandomBytes();
+  testRandomUUID();
+  println("Done.");
+}
+
+main();

@@ -372,3 +372,19 @@ Sat
 true
 false
 true
+--- 27. Random Library ---
+float finite: true
+float bucket in [0,999]: true
+ints in [1,6]: true
+saw 1: true
+saw 6: true
+bool has trues: true
+bool has falses: true
+empty list: None
+element in list: true
+shuffle length: 5
+shuffle sum: 15
+bytes length: 8
+bytes in range: true
+uuid length: 36
+uuid unique: true
