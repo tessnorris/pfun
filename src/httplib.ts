@@ -295,4 +295,126 @@ export const httplibFunctions: RegistryFunction[] = [
       return undefined;
     },
   },
+
+  // ─── Extended client ──────────────────────────────────────────────────────
+
+  // httpRequest(method, url, headers, body) -> Promise<HttpResult>
+  // General HTTP client supporting arbitrary methods, request headers, and body.
+  //   method  : Str — "GET", "POST", "PUT", "PATCH", "DELETE", etc.
+  //   url     : Str — full URL including scheme
+  //   headers : Dict<Str,Str> — request headers; pass empty dict for none
+  //   body    : Str — request body; pass "" to omit (required for GET/HEAD)
+  // Returns Ok { status, headers, body } (body is UTF-8 string) or Err { message }.
+  {
+    name: 'httpRequest',
+    arity: 4,
+    fn: (args, interp) => {
+      if (interp.inPureContext) throw new Error("Functions cannot use 'httpRequest': side effects are not allowed in pure functions.");
+      const method  = interp.force(args[0]);
+      const url     = interp.force(args[1]);
+      const headers = interp.force(args[2]);
+      const body    = interp.force(args[3]);
+      if (typeof method !== 'string') throw new Error("httpRequest() requires a string method.");
+      if (typeof url    !== 'string') throw new Error("httpRequest() requires a string URL.");
+      if (typeof body   !== 'string') throw new Error("httpRequest() requires a string body (pass \"\" for no body).");
+      const headersObj: Record<string, string> = {};
+      if (headers instanceof PfunDict) {
+        for (const [k, v] of headers.entries.entries()) {
+          if (typeof v === 'string') headersObj[k.slice(2)] = v;
+        }
+      }
+      const fetchOpts: RequestInit = { method, headers: headersObj };
+      if (body !== '') fetchOpts.body = body;
+      return fetch(url, fetchOpts)
+        .then(async (res) => {
+          const resBody = await res.text();
+          const resHeaders: Record<string, string> = {};
+          res.headers.forEach((value, key) => { resHeaders[key] = value; });
+          return ok({ status: BigInt(res.status), headers: dictFromRecord(resHeaders), body: resBody });
+        })
+        .catch((e: any) => err(e instanceof Error ? e.message : String(e)));
+    },
+  },
+
+  // httpRequestBytes(method, url, headers, body) -> Promise<HttpResult>
+  // Identical to httpRequest but the response body is returned as List<Byte>.
+  {
+    name: 'httpRequestBytes',
+    arity: 4,
+    fn: (args, interp) => {
+      if (interp.inPureContext) throw new Error("Functions cannot use 'httpRequestBytes': side effects are not allowed in pure functions.");
+      const method  = interp.force(args[0]);
+      const url     = interp.force(args[1]);
+      const headers = interp.force(args[2]);
+      const body    = interp.force(args[3]);
+      if (typeof method !== 'string') throw new Error("httpRequestBytes() requires a string method.");
+      if (typeof url    !== 'string') throw new Error("httpRequestBytes() requires a string URL.");
+      if (typeof body   !== 'string') throw new Error("httpRequestBytes() requires a string body (pass \"\" for no body).");
+      const headersObj: Record<string, string> = {};
+      if (headers instanceof PfunDict) {
+        for (const [k, v] of headers.entries.entries()) {
+          if (typeof v === 'string') headersObj[k.slice(2)] = v;
+        }
+      }
+      const fetchOpts: RequestInit = { method, headers: headersObj };
+      if (body !== '') fetchOpts.body = body;
+      return fetch(url, fetchOpts)
+        .then(async (res) => {
+          const arrayBuf = await res.arrayBuffer();
+          const resBody = bufferToByteList(Buffer.from(arrayBuf));
+          const resHeaders: Record<string, string> = {};
+          res.headers.forEach((value, key) => { resHeaders[key] = value; });
+          return ok({ status: BigInt(res.status), headers: dictFromRecord(resHeaders), body: resBody });
+        })
+        .catch((e: any) => err(e instanceof Error ? e.message : String(e)));
+    },
+  },
+
+  // fetchWithTimeout(url, ms) -> Promise<HttpResult>
+  // GET request aborted with Err if no response arrives within ms milliseconds.
+  // Uses AbortController so the in-flight connection is cancelled on timeout.
+  //   url : Str — full URL
+  //   ms  : Int — timeout in milliseconds
+  // Returns Ok { status, headers, body } or Err { message } on timeout/error.
+  {
+    name: 'fetchWithTimeout',
+    arity: 2,
+    fn: (args, interp) => {
+      if (interp.inPureContext) throw new Error("Functions cannot use 'fetchWithTimeout': side effects are not allowed in pure functions.");
+      const url = interp.force(args[0]);
+      const ms  = interp.force(args[1]);
+      if (typeof url !== 'string') throw new Error("fetchWithTimeout() requires a string URL.");
+      if (typeof ms !== 'bigint') throw new Error("fetchWithTimeout() requires an integer timeout in milliseconds.");
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), Number(ms));
+      return fetch(url, { signal: controller.signal })
+        .then(async (res) => {
+          clearTimeout(timer);
+          const body = await res.text();
+          const headers: Record<string, string> = {};
+          res.headers.forEach((value, key) => { headers[key] = value; });
+          return ok({ status: BigInt(res.status), headers: dictFromRecord(headers), body });
+        })
+        .catch((e: any) => {
+          clearTimeout(timer);
+          const msg = e instanceof Error ? e.message : String(e);
+          return err(e.name === "AbortError" ? `timeout after ${Number(ms)}ms` : msg);
+        });
+    },
+  },
+
+  // urlEncode(s) -> Str
+  // Percent-encode a string for use in a URL query parameter value.
+  // Wraps JavaScript's encodeURIComponent — encodes everything except
+  // A-Z a-z 0-9 - _ . ! ~ * ' ( )
+  // Pure function: no side effects, usable in both functions and procs.
+  {
+    name: 'urlEncode',
+    arity: 1,
+    fn: (args, interp) => {
+      const s = interp.force(args[0]);
+      if (typeof s !== 'string') throw new Error("urlEncode() requires a string.");
+      return encodeURIComponent(s);
+    },
+  },
 ];

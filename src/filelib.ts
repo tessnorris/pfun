@@ -21,7 +21,7 @@
 // All other functions require an explicit handle from fileOpen/fileClose.
 
 import * as fs from 'fs';
-import { RegistryFunction, RegistryType, PfunChar, PfunByte } from './interpreter';
+import { RegistryFunction, RegistryType, PfunChar, PfunByte, PfunFunction } from './interpreter';
 import { PfunBuffer } from './mutStructures';
 
 // ─── FileHandle runtime objects ───────────────────────────────────────────────
@@ -132,6 +132,22 @@ export const filelibTypes: RegistryType[] = [
       { name: 'ByteMode', fields: [] },
       { name: 'CharMode', fields: [] },
     ],
+  },
+  // DirEntry — one entry returned by listDir.
+  // name : Str  — the entry's base name (not the full path)
+  // isDir : Bool — true if the entry is a directory
+  {
+    kind: 'plain',
+    name: 'DirEntry',
+    fields: ['name', 'isDir'],
+  },
+  // WatchEvent — delivered to the watchDir handler on each filesystem event.
+  // eventType : Str — 'rename' or 'change' (the raw Node.js fs.watch event type)
+  // filename  : Str — the affected filename within the directory, or "" if unavailable
+  {
+    kind: 'plain',
+    name: 'WatchEvent',
+    fields: ['eventType', 'filename'],
   },
 ];
 
@@ -455,5 +471,108 @@ export const filelibFunctions: RegistryFunction[] = [
     const pbuf = interp.force(args[0]);
     if (!(pbuf instanceof PfunBuffer)) throw new Error("bufferLength: argument must be a Buffer.");
     return BigInt(pbuf.pos);
+  }},
+
+  // ─── Directory & metadata operations ─────────────────────────────────────
+
+  // listDir(path) — list the contents of a directory.
+  // Returns Ok { List<DirEntry> } where each DirEntry is { name, isDir }.
+  // name is the base filename (not the full path); isDir is a Bool.
+  // Returns Err { message } if the path doesn't exist or isn't a directory.
+  { name: 'listDir', fn: (args, interp) => {
+    if (interp.inPureContext) throw new Error("Functions cannot use 'listDir': side effects not allowed in pure functions.");
+    const dirPath = interp.force(args[0]);
+    if (typeof dirPath !== 'string') throw new Error("listDir: path must be a string.");
+    try {
+      const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+      const pfunEntries = entries.map((e: any) => ({
+        __type: 'DirEntry',
+        name: e.name,
+        isDir: e.isDirectory(),
+      }));
+      return ok(pfunEntries);
+    } catch (e) { return err(nodeErrMsg(e)); }
+  }},
+
+  // isDir(path) — test whether a path refers to a directory.
+  // Returns true if path exists and is a directory, false for any other case
+  // (including non-existent paths and files), matching fileExists semantics.
+  { name: 'isDir', fn: (args, interp) => {
+    if (interp.inPureContext) throw new Error("Functions cannot use 'isDir': side effects not allowed in pure functions.");
+    const dirPath = interp.force(args[0]);
+    if (typeof dirPath !== 'string') throw new Error("isDir: path must be a string.");
+    try {
+      return fs.statSync(dirPath).isDirectory();
+    } catch { return false; }
+  }},
+
+  // fileSize(path) — return the size of a file in bytes as an Int.
+  // Returns Ok { Int } or Err { message } (e.g. path doesn't exist).
+  { name: 'fileSize', fn: (args, interp) => {
+    if (interp.inPureContext) throw new Error("Functions cannot use 'fileSize': side effects not allowed in pure functions.");
+    const filePath = interp.force(args[0]);
+    if (typeof filePath !== 'string') throw new Error("fileSize: path must be a string.");
+    try {
+      return ok(BigInt(fs.statSync(filePath).size));
+    } catch (e) { return err(nodeErrMsg(e)); }
+  }},
+
+  // renameFile(from, to) — rename/move a file or directory.
+  // Returns Ok { 0 } or Err { message }.
+  // Works across directories on the same filesystem (delegates to fs.renameSync).
+  { name: 'renameFile', arity: 2, fn: (args, interp) => {
+    if (interp.inPureContext) throw new Error("Functions cannot use 'renameFile': side effects not allowed in pure functions.");
+    const srcPath = interp.force(args[0]);
+    const dstPath = interp.force(args[1]);
+    if (typeof srcPath !== 'string') throw new Error("renameFile: source path must be a string.");
+    if (typeof dstPath !== 'string') throw new Error("renameFile: destination path must be a string.");
+    try {
+      fs.renameSync(srcPath, dstPath);
+      return ok(0n);
+    } catch (e) { return err(nodeErrMsg(e)); }
+  }},
+
+  // watchDir(path, handler) — watch a directory for changes.
+  // handler : proc (WatchEvent -> unit) — called on each filesystem event.
+  // The WatchEvent record has fields:
+  //   eventType : Str  — "rename" or "change"
+  //   filename  : Str  — the affected filename, or "" if not available
+  //
+  // watchDir itself is non-blocking and returns immediately with Ok { 0 }.
+  // The watcher runs until the program exits (or the interpreter is torn down).
+  // The handler is spawned as a task (fire-and-forget) on each event, so
+  // multiple events may be in flight concurrently.
+  //
+  // Returns Ok { 0 } or Err { message } if the path can't be watched.
+  { name: 'watchDir', arity: 2, fn: (args, interp) => {
+    if (interp.inPureContext) throw new Error("Functions cannot use 'watchDir': side effects not allowed in pure functions.");
+    const dirPath = interp.force(args[0]);
+    const handler = interp.force(args[1]);
+    if (typeof dirPath !== 'string') throw new Error("watchDir: path must be a string.");
+    // Accept any callable that looks like a PfunFunction (duck-type check for
+    // cross-module-instance safety in test environments).
+    if (!handler || (typeof (handler as any).execute !== 'function' && typeof handler !== 'function'))
+      throw new Error("watchDir: handler must be a procedure.");
+    try {
+      const watcher = fs.watch(dirPath, { persistent: false }, (eventType: string, filename: string | null) => {
+        const event = {
+          __type: 'WatchEvent',
+          eventType,
+          filename: filename ?? '',
+        };
+        interp.spawnPfunCallback(
+          handler,
+          [event],
+          (e: unknown) => {
+            const message = e instanceof Error ? e.message : String(e);
+            // eslint-disable-next-line no-console
+            console.error(`[watchDir] handler error: ${message}`);
+          },
+        );
+      });
+      // Register the watcher for cleanup when the interpreter is torn down.
+      interp._resources.push({ close: () => watcher.close() });
+      return ok(0n);
+    } catch (e) { return err(nodeErrMsg(e)); }
   }},
 ];

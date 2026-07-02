@@ -1,0 +1,180 @@
+// stringlib.pf
+// String utilities for Pfun.
+//
+// Import with: import * from "$PFUN_HOME/lib/stringlib.pf";
+//
+// ─── API ────────────────────────────────────────────────────────────────────
+//
+//   trim(s)                        strip leading and trailing whitespace
+//   startsWith(s, prefix)          Bool — does s begin with prefix?
+//   endsWith(s, suffix)            Bool — does s end with suffix?
+//   replace(s, s1, s2)             replace first occurrence of s1 with s2
+//   replaceAll(s, s1, s2)          replace all occurrences of s1 with s2
+//   strMatch(s, matchFn)           Bool — does any char satisfy matchFn?
+//   replaceMatch(s, matchFn, replaceFn)  replace each matching char
+//   takeWhile(s, pred)             leading chars satisfying pred
+//   dropWhile(s, pred)             s with leading chars satisfying pred removed
+//
+// ─── Design notes ────────────────────────────────────────────────────────────
+//
+// All functions are pure. They work by splitting strings into character lists
+// (via split(s, "")), operating on those lists with standard list functions,
+// then rejoining with join(chars, "").
+//
+// matchFn / pred are functions of type  Str -> Bool  operating on single
+// characters (one-char strings, as returned by split(s, "")).
+//
+// replace uses split+join: split on the delimiter gives the parts between
+// occurrences, then rejoin with the replacement. replace (first only) puts
+// the replacement once then rejoins the tail with the original delimiter.
+// replaceAll joins all parts with the replacement.
+//
+// Naming: the function that tests whether any character matches is called
+// `strMatch` to avoid colliding with the `match` keyword.
+
+// ─── Whitespace predicate ─────────────────────────────────────────────────────
+
+// isWhitespace(c) — true if c is a whitespace character.
+// Used internally by trim, takeWhile, dropWhile.
+export function isWhitespace(c) {
+  c == " " || c == "\t" || c == "\n";
+}
+
+// ─── Trim ─────────────────────────────────────────────────────────────────────
+
+// dropLeading(chars, pred) — drop leading chars satisfying pred, return rest.
+function dropLeading(cs, pred) {
+  if length(cs) == 0 then []
+  else if pred(head(cs)) then dropLeading(tail(cs), pred)
+  else cs;
+}
+
+// trim(s) — remove leading and trailing whitespace from s.
+export function trim(s) {
+  join(reverse(dropLeading(reverse(dropLeading(split(s, ""), isWhitespace)), isWhitespace)), "");
+}
+
+// trimLeft(s) — remove leading whitespace only.
+export function trimLeft(s) {
+  join(dropLeading(split(s, ""), isWhitespace), "");
+}
+
+// trimRight(s) — remove trailing whitespace only.
+export function trimRight(s) {
+  join(reverse(dropLeading(reverse(split(s, "")), isWhitespace)), "");
+}
+
+// ─── Prefix / suffix ─────────────────────────────────────────────────────────
+
+// startsWith(s, prefix) — true if s begins with prefix.
+export function startsWith(s, prefix) {
+  let m = length(prefix);
+  if m > length(s) then false
+  else slice(0, m, s) == prefix;
+}
+
+// endsWith(s, suffix) — true if s ends with suffix.
+export function endsWith(s, suffix) {
+  let m = length(suffix);
+  let n = length(s);
+  if m > n then false
+  else slice(n - m, m, s) == suffix;
+}
+
+// ─── Replace ─────────────────────────────────────────────────────────────────
+
+// replace(s, s1, s2) — replace the first occurrence of s1 in s with s2.
+// If s1 is not found, returns s unchanged.
+export function replace(s, s1, s2) {
+  if length(s1) == 0 then s
+  else {
+    let parts = split(s, s1);
+    if length(parts) == 1 then s    // s1 not found
+    else head(parts) + s2 + join(tail(parts), s1);
+  }
+}
+
+// replaceAll(s, s1, s2) — replace every occurrence of s1 in s with s2.
+// If s1 is empty or not found, returns s unchanged.
+export function replaceAll(s, s1, s2) {
+  if length(s1) == 0 then s
+  else join(split(s, s1), s2);
+}
+
+// ─── Character-level predicates ───────────────────────────────────────────────
+
+// strMatch(s, matchFn) — true if any character in s satisfies matchFn.
+// matchFn : Str -> Bool, applied to each single-character string.
+export function strMatch(s, matchFn) {
+  length(filter(matchFn, split(s, ""))) > 0;
+}
+
+// ─── replaceMatch helper ──────────────────────────────────────────────────────
+
+// replaceCharIf(c, matchFn, replaceFn) — apply replaceFn to c if matchFn(c),
+// else return c unchanged. A named helper because `if` cannot appear in a
+// `fn` lambda body directly.
+function replaceCharIf(c, matchFn, replaceFn) {
+  if matchFn(c) then replaceFn(c) else c;
+}
+
+// replaceMatch(s, matchFn, replaceFn) — replace each character satisfying
+// matchFn by applying replaceFn to it.
+// matchFn : Str -> Bool
+// replaceFn : Str -> Str
+export function replaceMatch(s, matchFn, replaceFn) {
+  join(map(fn c => replaceCharIf(c, matchFn, replaceFn), split(s, "")), "");
+}
+
+// ─── takeWhile / dropWhile ────────────────────────────────────────────────────
+
+// takeWhile(s, pred) — the longest leading substring of s whose characters
+// all satisfy pred.
+export function takeWhile(s, pred) {
+  function go(cs) {
+    if length(cs) == 0 then []
+    else if pred(head(cs)) then [head(cs)] + go(tail(cs))
+    else [];
+  }
+  join(go(split(s, "")), "");
+}
+
+// dropWhile(s, pred) — s with the longest leading substring of characters
+// satisfying pred removed.
+export function dropWhile(s, pred) {
+  join(dropLeading(split(s, ""), pred), "");
+}
+
+// ─── Extras ───────────────────────────────────────────────────────────────────
+
+// contains(s, sub) — true if sub appears anywhere in s.
+export function contains(s, sub) {
+  if length(sub) == 0 then true
+  else length(split(s, sub)) > 1;
+}
+
+// repeat(s, n) — concatenate s with itself n times.
+export function strRepeat(s, n) {
+  function go(i, acc) {
+    if i <= 0 then acc else go(i - 1, acc + s);
+  }
+  go(n, "");
+}
+
+// padLeft(s, n, fill) — pad s on the left with fill chars to reach length n.
+export function padLeft(s, n, fill) {
+  let deficit = n - length(s);
+  if deficit <= 0 then s else strRepeat(fill, deficit) + s;
+}
+
+// padRight(s, n, fill) — pad s on the right with fill chars to reach length n.
+export function padRight(s, n, fill) {
+  let deficit = n - length(s);
+  if deficit <= 0 then s else s + strRepeat(fill, deficit);
+}
+
+// indexOf(s, sub) — Option<Int>: index of the first occurrence of sub in s,
+// or None if not found. Uses findSlice on char lists.
+export function indexOf(s, sub) {
+  findSlice(split(s, ""), split(sub, ""));
+}

@@ -18,6 +18,7 @@ import { mathlibFunctions } from './mathlib';
 import { asynclibFunctions } from './asynclib';
 import { httplibFunctions, httplibTypes } from './httplib';
 import { foreignlibFunctions, foreignlibTypes } from './foreignlib';
+import { timerlibFunctions } from './timerlib';
 import { dblibTypes } from './dblib';
 import { dblibPostgresqlFunctions } from './dblibPostgresql';
 import { dblibMariadbFunctions } from './dblibMariadb';
@@ -33,7 +34,7 @@ function setupInterpreter(interp: Interpreter): void {
   interp.registerLibrary(mutStructuresFunctions, mutStructuresTypes);
 }
 
-/** Register all built-in system modules ('io', 'file', 'json', 'math', 'async', 'http', 'foreign', 'db/postgresql', 'db/mariadb') on a loader. */
+/** Register all built-in system modules ('io', 'file', 'json', 'math', 'async', 'http', 'foreign', 'random', 'db/postgresql', 'db/mariadb') on a loader. */
 export function registerBuiltinModules(loader: ModuleLoader): void {
   loader.registerBuiltin('io', iolibFunctions);
   loader.registerBuiltin('file', filelibFunctions, filelibTypes);
@@ -42,6 +43,7 @@ export function registerBuiltinModules(loader: ModuleLoader): void {
   loader.registerBuiltin('async', asynclibFunctions);
   loader.registerBuiltin('http', httplibFunctions, httplibTypes);
   loader.registerBuiltin('foreign', foreignlibFunctions, foreignlibTypes);
+  loader.registerBuiltin('timer', timerlibFunctions);
   loader.registerBuiltin('db/postgresql', dblibPostgresqlFunctions, dblibTypes);
   loader.registerBuiltin('db/mariadb', dblibMariadbFunctions, dblibTypes);
 }
@@ -731,7 +733,7 @@ if (require.main === module) {
 
     // Builtins are handled by separate pfun-*.js runtime modules; skip them.
     const BUILTIN_PATHS = new Set([
-      'io','file','math','json','async','http','foreign','db/postgresql','db/mariadb',
+      'io','file','math','json','async','http','foreign','random','timer','db/postgresql','db/mariadb',
     ]);
 
     // Maps pfun module name → libs filename (without path).
@@ -742,6 +744,8 @@ if (require.main === module) {
       'async': 'pfun-async.js',
       'http': 'pfun-http.js',
       'foreign': 'pfun-foreign.js',
+      'timer': 'pfun-timer.js',
+      'random': 'pfun-random.js',
       'db/postgresql': 'pfun-db-postgresql.js',
       'db/mariadb': 'pfun-db-mariadb.js',
     };
@@ -1219,7 +1223,7 @@ main();
     }
 
     const BUILTIN_PATHS_BROWSER = new Set([
-      'io','file','math','json','async','http','foreign','db/postgresql','db/mariadb',
+      'io','file','math','json','async','http','foreign','random','timer','db/postgresql','db/mariadb',
     ]);
     const builtinUnionResolverForServe = builtinUnionResolver;
 
@@ -1516,7 +1520,7 @@ ${bundledJs}
         }
         const sd    = path.dirname(absPath);
         const BUILTIN_PATHS_SERVER = new Set([
-          'io','file','math','json','async','http','foreign','db/postgresql','db/mariadb',
+          'io','file','math','json','async','http','foreign','random','timer','db/postgresql','db/mariadb',
         ]);
         for (const stmt of stmts) {
           if (stmt.type !== 'ImportStmt') continue;
@@ -1559,6 +1563,8 @@ ${bundledJs}
           'io': 'pfun-io', 'file': 'pfun-file', 'math': 'pfun-math',
           'json': 'pfun-json', 'async': 'pfun-async', 'http': 'pfun-http',
           'foreign': 'pfun-foreign',
+          'timer': 'pfun-timer',
+          'random': 'pfun-random',
           'db/postgresql': 'pfun-db-postgresql', 'db/mariadb': 'pfun-db-mariadb',
         };
         for (const [mod, lib] of Object.entries(BUILTIN_LIB_FILES_LOCAL)) {
@@ -1614,7 +1620,7 @@ ${bundledJs}
       const libDir = path.join(projectRoot, 'output', 'lib');
       fs.mkdirSync(libDir, { recursive: true });
       const RT_LIBS = ['pfun-runtime','pfun-io','pfun-json','pfun-http',
-                       'pfun-math','pfun-file','pfun-async','pfun-foreign',
+                       'pfun-math','pfun-file','pfun-async','pfun-foreign','pfun-timer','pfun-random',
                        'pfun-db-postgresql','pfun-db-mariadb'];
       for (const lib of RT_LIBS) {
         const dest = path.join(libDir, lib + '.js');

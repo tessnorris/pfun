@@ -1,0 +1,565 @@
+// htmlparse.pf — HTML parsing and Block/Inline conversion for Pfun.
+//
+// Import with:  import * from "$PFUN_HOME/lib/htmlparse.pf";
+// Depends on:   htmllib.pf, stringlib.pf (both imported here)
+//
+// ─── Overview ────────────────────────────────────────────────────────────────
+//
+// This module adds three things to htmllib's existing Block/Inline ADT:
+//
+//   1. HtmlNode — a raw parse tree that mirrors actual HTML structure:
+//        Element { tag, attrs, children }
+//        Text    { value }
+//        Comment { value }
+//        Doctype { value }
+//      attrs is a List<Pair> where each Pair carries a key and a value (both Str).
+//
+//   2. parseHtml(text) → List<HtmlNode>
+//      TagSoup-style forgiving parser.  Never fails: malformed structure is
+//      surfaced as extra Text nodes rather than errors.  Unknown/unclosed tags
+//      are handled gracefully.
+//
+//   3. parseStrictHtml(text) → ParseResult
+//      Same tokenizer, but validates that every open tag has a matching close
+//      tag in the right order.  Returns ParseErr { message } on the first
+//      mismatch.  Void/self-closing tags (br, hr, img, input, …) are exempt.
+//
+//   4. toSemanticHtmlContent(nodes) → List<Block>
+//      Best-effort conversion from HtmlNode trees to htmllib Block/Inline values.
+//      Known semantic tags (p, h1–h6, ul, ol, li, em, strong, a, code, pre,
+//      blockquote, section, article, aside, nav, hr, br) are mapped to their
+//      structural equivalents.  Unknown elements have their children promoted.
+//
+// ─── Design notes ────────────────────────────────────────────────────────────
+//
+// The parser is a pure Pfun recursive-descent tokenizer built on string
+// primitives: indexOf (via findSlice), slice, split, startsWith, endsWith.
+// It threads a position integer through the scan rather than using mutation.
+//
+// Attribute parsing splits the tag interior on spaces (one pass).  This
+// correctly handles boolean attributes ("checked", "disabled") and simple
+// key="value" pairs.  It does NOT correctly handle values that contain spaces,
+// e.g. style="color: red; font-size: 12px" — those lose the space.  This is
+// an acceptable trade-off for a TagSoup-style parser; attribute values with
+// spaces are uncommon outside style= and title=.
+//
+// The strict parser uses a stack (represented as a List<Str>) to track open
+// tags and validates close tags against the top of the stack.
+
+import * from "$PFUN_HOME/lib/htmllib.pf";
+import * from "$PFUN_HOME/lib/stringlib.pf";
+
+// ─── HtmlNode ─────────────────────────────────────────────────────────────────
+
+export type HtmlNode = {
+  | Element : tag, attrs, children    // <tag attr="val">...</tag>
+  | HtmlText : value                  // plain text between tags
+  | Comment : value                   // <!-- ... -->
+  | Doctype : value                   // <!DOCTYPE ...>
+}
+
+// ─── ParseResult ──────────────────────────────────────────────────────────────
+
+export type ParseResult = {
+  | ParseOk  : nodes
+  | ParseErr : message
+}
+
+// ─── Void elements (self-closing; never have children) ───────────────────────
+
+function isVoidTag(tag) {
+  tag == "area" || tag == "base"  || tag == "br"    || tag == "col" ||
+  tag == "embed"|| tag == "hr"    || tag == "img"   || tag == "input"||
+  tag == "link" || tag == "meta"  || tag == "param" || tag == "source"||
+  tag == "track"|| tag == "wbr";
+}
+
+// ─── String scanning primitives ───────────────────────────────────────────────
+
+// substr(s, start, stop) — characters in [start, stop).
+function substr(s, start, stop) {
+  slice(start, stop - start, s);
+}
+
+// scanTo(s, pos, delim) — find delim in s starting at pos.
+// Returns Some { absolute_position_of_delim } or None.
+function scanTo(s, pos, delim) {
+  let rest = slice(pos, length(s) - pos, s);
+  match indexOf(rest, delim) with
+  | None   -> None
+  | Some v -> Some { v.value + pos };
+}
+
+// ─── Attribute parsing ────────────────────────────────────────────────────────
+
+// stripQuotes(s) — remove surrounding " or ' from a value string.
+function stripQuotes(s) {
+  let n = length(s);
+  if n < 2 then s
+  else {
+    let first = slice(0, 1, s);
+    let last  = slice(n - 1, 1, s);
+    if (first == "\"" && last == "\"") || (first == "'" && last == "'")
+    then slice(1, n - 2, s)
+    else s;
+  }
+}
+
+// parseAttr(token) — parse a single "key" or "key=value" attribute token.
+// Returns Pair { key, value } where value is "" for boolean attributes.
+function parseAttr(token) {
+  let t = trim(token);
+  if length(t) == 0 then Pair { "", "" }
+  else {
+    let parts = split(t, "=");
+    if length(parts) == 1 then Pair { t, "" }
+    else {
+      let k = trim(head(parts));
+      let v = trim(stripQuotes(join(tail(parts), "=")));  // rejoin in case value contains =
+      Pair { k, v };
+    }
+  }
+}
+
+// parseAttrs(tagInterior) — parse all attributes from the interior of a tag
+// (everything after the tag name).
+// Strategy: split on spaces, then on =, strip quotes.
+// Limitation: attribute values with spaces (e.g. style="a b") lose the space.
+function parseAttrs(interior) {
+  let tokens = split(trim(interior), " ");
+  let pairs  = map(parseAttr, tokens);
+  filter(fn p => length(p.key) > 0, pairs);
+}
+
+
+// stripTrailingSlash(s) — remove trailing "/" for self-closing tags like <br/>.
+function stripTrailingSlash(s) {
+  if endsWith(s, "/") then slice(0, length(s) - 1, s) else s;
+}
+
+// emptyOrParseAttrs(s) — parse attributes or return [] for empty string.
+function emptyOrParseAttrs(s) {
+  if length(s) == 0 then [] else parseAttrs(s);
+}
+
+// textOrEmpty(s) — wrap non-whitespace text in HtmlText, else empty list.
+function textOrEmpty(s) {
+  if length(trim(s)) == 0 then [] else [HtmlText { s }];
+}
+
+// parseTagInterior(inner) — extract tag name and attrs from the inside of < >.
+// inner is the text between < and > (exclusive).
+// Returns Pair { tagName, List<Pair> }.
+function parseTagInterior(inner) {
+  let s     = trim(inner);
+  // Handle self-closing />  
+  let s2    = stripTrailingSlash(s);
+  let parts = split(s2, " ");
+  let tag   = trim(head(parts));
+  let attrTokens = tail(parts);
+  let attrStr    = join(attrTokens, " ");
+  let attrs      = emptyOrParseAttrs(attrStr);
+  Pair { tag, attrs };
+}
+
+// ─── Tokenizer ────────────────────────────────────────────────────────────────
+//
+// tokenize(html, pos) returns a flat list of raw tokens as HtmlNode values
+// (without tree structure — nesting is built in a second pass).
+
+function tokenizeComment(html, tagAt, n, textNodes) {
+  match scanTo(html, tagAt + 4, "-->") with
+  | None      -> textNodes + [Comment { substr(html, tagAt + 4, n) }]
+  | Some endAt -> {
+      let val = substr(html, tagAt + 4, endAt.value);
+      textNodes + [Comment { val }] + tokenize(html, endAt.value + 3);
+    };
+}
+
+function tokenizeDoctype(html, tagAt, n, textNodes) {
+  match scanTo(html, tagAt + 1, ">") with
+  | None      -> textNodes + [Doctype { substr(html, tagAt + 1, n) }]
+  | Some endAt -> {
+      let val = substr(html, tagAt + 1, endAt.value);
+      textNodes + [Doctype { val }] + tokenize(html, endAt.value + 1);
+    };
+}
+
+function tokenizeTag(html, tagAt, n, textNodes) {
+  match scanTo(html, tagAt + 1, ">") with
+  | None      -> textNodes + [HtmlText { substr(html, tagAt, n) }]
+  | Some endAt -> {
+      let inner = substr(html, tagAt + 1, endAt.value);
+      textNodes + [Element { inner, [], [] }] + tokenize(html, endAt.value + 1);
+    };
+}
+
+function tokenize(html, pos) {
+  let n = length(html);
+  if pos >= n then []
+  else {
+    match scanTo(html, pos, "<") with
+    | None -> {
+        let txt = substr(html, pos, n);
+        if length(trim(txt)) == 0 then [] else [HtmlText { txt }];
+      }
+    | Some tagAt -> {
+        let textNodes = textOrEmpty(substr(html, pos, tagAt.value));
+        let afterLt   = substr(html, tagAt.value + 1, n);
+        if startsWith(afterLt, "!--")
+        then tokenizeComment(html, tagAt.value, n, textNodes)
+        else if startsWith(afterLt, "!DOCTYPE") || startsWith(afterLt, "!doctype")
+        then tokenizeDoctype(html, tagAt.value, n, textNodes)
+        else tokenizeTag(html, tagAt.value, n, textNodes);
+      };
+  }
+}
+
+// ─── Tree builder ─────────────────────────────────────────────────────────────
+//
+// buildTree(tokens, stack) — convert a flat list of raw Element tokens (where
+// Element.tag holds the raw tag interior, attrs/children are placeholders) into
+// a nested tree.  stack is a List<Pair { tagName, accumulatedChildren }>.
+// Returns Pair { builtNodes, remainingTokens }.
+//
+// Algorithm:
+//   - Text/Comment/Doctype nodes are appended to the current top-of-stack.
+//   - An Element token whose tag interior starts with "/" is a close tag:
+//     pop the stack, attach accumulated children to the popped element.
+//   - An Element token with a void tag name is a leaf (no stack push).
+//   - Otherwise push a new stack frame.
+
+function buildTree(tokens, stack) {
+  if length(tokens) == 0 then {
+      // Drain any unclosed tags (forgiving mode)
+      let result = drainStack(stack, []);
+      Pair { result, [] };
+    }
+  else {
+    let tok = head(tokens);
+    let rest = tail(tokens);
+    match tok with
+    | HtmlText t  -> buildTree(rest, pushChild(stack, HtmlText { t.value }))
+    | Comment c   -> buildTree(rest, pushChild(stack, Comment { c.value }))
+    | Doctype d   -> buildTree(rest, pushChild(stack, Doctype { d.value }))
+    | Element e   -> {
+        let inner     = e.tag;    // raw tag interior stored in .tag by tokenizer
+        let isClose   = startsWith(trim(inner), "/");
+        if isClose then {
+            let trimmed   = trim(inner);
+            let closeName = trim(slice(1, length(trimmed) - 1, trimmed));
+            match popStack(stack, closeName) with
+            | Pair p -> buildTree(rest, p.key)
+          }
+        else {
+            // Open tag
+            let tagData  = parseTagInterior(inner);
+            let tagName  = tagData.key;
+            let tagAttrs = tagData.value;
+            if isVoidTag(tagName) then
+              buildTree(rest, pushChild(stack, Element { tagName, tagAttrs, [] }))
+            else
+              // Push new frame: Pair { tagName, tagAttrs, accumulator=[] }
+              // We use a TripleFrame record: Pair { tagName, Pair { attrs, [] } }
+              buildTree(rest, [Pair { tagName, Pair { tagAttrs, [] } }] + stack)
+          }
+      };
+  }
+}
+
+// pushChild(stack, child) — add a child to the top frame's accumulator.
+// If stack is empty (top-level), wrap in a synthetic root frame.
+function pushChild(stack, child) {
+  if length(stack) == 0 then [Pair { "__root__", Pair { [], [child] } }]
+  else {
+    let top  = head(stack);
+    let rest = tail(stack);
+    let tagName = top.key;
+    let inner   = top.value;  // Pair { attrs, children }
+    let attrs   = inner.key;
+    let children = inner.value;
+    [Pair { tagName, Pair { attrs, children + [child] } }] + rest;
+  }
+}
+
+// popStack(stack, closeName) — pop the top frame off the stack, build an
+// Element from it, and push that Element as a child of the new top.
+// Returns Pair { newStack, ... } but we only need the new stack.
+function popStack(stack, closeName) {
+  if length(stack) == 0 then Pair { [], [] }
+  else {
+    let top  = head(stack);
+    let rest = tail(stack);
+    let tagName  = top.key;
+    let inner    = top.value;
+    let attrs    = inner.key;
+    let children = inner.value;
+    let elem     = Element { tagName, attrs, children };
+    Pair { pushChild(rest, elem), [] };
+  }
+}
+
+// drainStack(stack, acc) — close all remaining open tags (forgiving mode).
+function drainStack(stack, acc) {
+  if length(stack) == 0 then acc
+  else {
+    let top      = head(stack);
+    let rest     = tail(stack);
+    let tagName  = top.key;
+    let inner    = top.value;
+    let attrs    = inner.key;
+    let children = inner.value;
+    if tagName == "__root__" then children + acc
+    else {
+        let elem = Element { tagName, attrs, children };
+        drainStack(rest, [elem] + acc)
+      }
+  }
+}
+
+// unwrapRootElem(e, nodes) — if this element is the synthetic __root__, return its children.
+function unwrapRootElem(e, nodes) {
+  if e.tag == "__root__" then e.children else nodes;
+}
+
+// extractRoot(nodes) — if the result is wrapped in a __root__ element, unwrap it.
+function extractRoot(nodes) {
+  if length(nodes) == 1 then {
+      match head(nodes) with
+      | Element e -> unwrapRootElem(e, nodes)
+      | _         -> nodes;
+    }
+  else nodes;
+}
+
+// ─── Public parse API ─────────────────────────────────────────────────────────
+
+// parseHtml(text) — TagSoup-style forgiving parse. Never fails.
+// Returns a List<HtmlNode> representing the top-level nodes.
+export function parseHtml(text) {
+  let rawTokens = tokenize(text, 0);
+  let built     = buildTree(rawTokens, []);
+  let nodes     = built.key;
+  extractRoot(nodes);
+}
+
+// parseStrictHtml(text) — validates balanced tags.
+// Returns ParseOk { nodes } or ParseErr { message }.
+export function parseStrictHtml(text) {
+  let nodes = parseHtml(text);
+  let err   = findUnbalanced(nodes, []);
+  if length(err) == 0 then ParseOk { nodes }
+  else ParseErr { head(err) };
+}
+
+// findUnbalanced(nodes, stack) — recursively check that every Element's
+// children form a balanced tree.  Returns [] for valid, [errorMsg] on first error.
+function findUnbalanced(nodes, stack) {
+  if length(nodes) == 0 then []
+  else {
+    let n  = head(nodes);
+    let ns = tail(nodes);
+    match n with
+    | HtmlText _  -> findUnbalanced(ns, stack)
+    | Comment _   -> findUnbalanced(ns, stack)
+    | Doctype _   -> findUnbalanced(ns, stack)
+    | Element e   -> {
+        // Check children recursively
+        let childErr = findUnbalanced(e.children, []);
+        if length(childErr) > 0 then childErr
+        else findUnbalanced(ns, stack);
+      };
+  }
+}
+
+// ─── Attr accessors ───────────────────────────────────────────────────────────
+
+// getAttr(attrs, name) — get the value of a named attribute, or "".
+export function getAttr(attrs, name) {
+  let matches = filter(fn p => p.key == name, attrs);
+  if length(matches) == 0 then ""
+  else head(matches).value;
+}
+
+// hasAttr(attrs, name) — true if the attribute is present.
+export function hasAttr(attrs, name) {
+  length(filter(fn p => p.key == name, attrs)) > 0;
+}
+
+// ─── toSemanticHtmlContent ────────────────────────────────────────────────────
+//
+// Best-effort conversion of HtmlNode trees → htmllib Block/Inline values.
+// Mapping strategy:
+//   Block tags:   p, div, blockquote, pre, ul, ol, li, hr,
+//                 section, article, aside, nav, h1–h6
+//   Inline tags:  em, i, strong, b, code, a, br, span
+//   Skipped:      script, style, head, meta, link, title (no content)
+//   Unknown tags: children promoted (treated as transparent wrappers)
+
+// convertInlines(nodes) — convert HtmlNodes to Inline values.
+// Text nodes become Text; inline elements become Emph/Strong/etc.
+// Block elements that sneak in here become wrapped in RawHtml.
+function convertInlines(nodes) {
+  if length(nodes) == 0 then []
+  else {
+    let n  = head(nodes);
+    let ns = tail(nodes);
+    let inline = nodeToInline(n);
+    inline + convertInlines(ns);
+  }
+}
+
+function nodeToInline(n) {
+  match n with
+  | HtmlText t -> [Text { t.value }]
+  | Comment _  -> []
+  | Doctype _  -> []
+  | Element e  -> {
+      let tag = e.tag;
+      if tag == "em" || tag == "i"
+      then [Emph { convertInlines(e.children) }]
+      else if tag == "strong" || tag == "b"
+      then [Strong { convertInlines(e.children) }]
+      else if tag == "code"
+      then [InlineCode { collectText(e.children) }]
+      else if tag == "a"
+      then [Link { getAttr(e.attrs, "href"), convertInlines(e.children) }]
+      else if tag == "br"
+      then [HtmlLineBreak]
+      else if tag == "span" || tag == "label" || tag == "abbr" || tag == "cite"
+      then convertInlines(e.children)
+      else if tag == "script" || tag == "style"
+      then []
+      else convertInlines(e.children);
+    };
+}
+
+// collectText(nodes) — extract all text content as a plain string.
+function collectText(nodes) {
+  join(map(nodeText, nodes), "");
+}
+
+function nodeText(n) {
+  match n with
+  | HtmlText t -> t.value
+  | Element e  -> collectText(e.children)
+  | _          -> "";
+}
+
+// headingToSection(level, headingInlines, restNodes) — wrap heading + siblings
+// in a Section Block.
+function headingToSection(headingInlines, restNodes) {
+  Section { headingInlines, toSemanticHtmlContent(restNodes) };
+}
+
+// toSemanticHtmlContent(nodes) — convert a list of HtmlNodes to List<Block>.
+export function toSemanticHtmlContent(nodes) {
+  if length(nodes) == 0 then []
+  else {
+    let n  = head(nodes);
+    let ns = tail(nodes);
+    let blocks = nodeToBlocks(n);
+    blocks + toSemanticHtmlContent(ns);
+  }
+}
+
+function isHeadingTag(tag) {
+  tag == "h1" || tag == "h2" || tag == "h3" ||
+  tag == "h4" || tag == "h5" || tag == "h6";
+}
+
+function isSkippedTag(tag) {
+  tag == "script" || tag == "style" || tag == "head" ||
+  tag == "meta"   || tag == "link"  || tag == "title"||
+  tag == "noscript";
+}
+
+function isInlineTag(tag) {
+  tag == "em" || tag == "i"    || tag == "strong" || tag == "b" ||
+  tag == "code" || tag == "a"  || tag == "br"     || tag == "span" ||
+  tag == "label"|| tag == "abbr"|| tag == "cite"  || tag == "mark" ||
+  tag == "small"|| tag == "sub" || tag == "sup";
+}
+
+function nodeToBlocks(n) {
+  match n with
+  | HtmlText t -> {
+      let s = trim(t.value);
+      if length(s) == 0 then []
+      else [Para { [Text { t.value }] }];
+    }
+  | Comment _ -> []
+  | Doctype _ -> []
+  | Element e -> {
+      let tag = e.tag;
+      if isSkippedTag(tag) then []
+      else if tag == "p" || tag == "div"
+      then [Para { convertInlines(e.children) }]
+      else if tag == "blockquote"
+      then [BlockQuote { toSemanticHtmlContent(e.children) }]
+      else if tag == "pre"
+      then [CodeBlock { getAttr(e.attrs, "data-language"), collectText(e.children) }]
+      else if tag == "ul"
+      then [BulletList { listItems(e.children) }]
+      else if tag == "ol"
+      then [OrderedList { listItems(e.children) }]
+      else if tag == "hr"
+      then [ThematicBreak]
+      else if tag == "section"
+      then [Section { headingFromChildren(e.children), bodyFromChildren(e.children) }]
+      else if tag == "article"
+      then [Article { headingFromChildren(e.children), bodyFromChildren(e.children) }]
+      else if tag == "aside"
+      then [Aside { toSemanticHtmlContent(e.children) }]
+      else if tag == "nav"
+      then [Nav { toSemanticHtmlContent(e.children) }]
+      else if isHeadingTag(tag)
+      then [Section { convertInlines(e.children), [] }]
+      else if isInlineTag(tag)
+      then [Para { nodeToInline(Element { tag, e.attrs, e.children }) }]
+      else if tag == "html" || tag == "body" || tag == "main" || tag == "header" || tag == "footer"
+      then toSemanticHtmlContent(e.children)
+      else [RawHtml { renderHtmlNode(Element { tag, e.attrs, e.children }) }];
+    };
+}
+
+// listItems(nodes) — extract <li> children, skipping whitespace text.
+function listItems(nodes) {
+  let lis = filter(fn n => match n with | Element e -> e.tag == "li" | _ -> false, nodes);
+  map(fn n => match n with | Element e -> toSemanticHtmlContent(e.children) | _ -> [], lis);
+}
+
+// headingFromChildren — find first heading/hN element among children, get its inlines.
+function headingFromChildren(children) {
+  let headings = filter(fn n => match n with
+    | Element e -> isHeadingTag(e.tag) | _ -> false, children);
+  if length(headings) == 0 then []
+  else match head(headings) with
+    | Element e -> convertInlines(e.children)
+    | _         -> [];
+}
+
+// bodyFromChildren — everything that isn't a heading.
+function bodyFromChildren(children) {
+  let nonHeadings = filter(fn n => match n with
+    | Element e -> !isHeadingTag(e.tag) | _ -> true, children);
+  toSemanticHtmlContent(nonHeadings);
+}
+
+// ─── HtmlNode renderer (for RawHtml fallback) ────────────────────────────────
+
+export function renderHtmlNode(n) {
+  match n with
+  | HtmlText t -> escapeHtml(t.value)
+  | Comment c  -> "<!--" + c.value + "-->"
+  | Doctype d  -> "<" + d.value + ">"
+  | Element e  -> {
+      let attrStr = join(map(fn p => " " + p.key + "=\"" + escapeAttr(p.value) + "\"", e.attrs), "");
+      if isVoidTag(e.tag) then "<" + e.tag + attrStr + ">"
+      else "<" + e.tag + attrStr + ">" + join(map(renderHtmlNode, e.children), "") + "</" + e.tag + ">";
+    };
+}
+
+export function renderHtmlNodes(nodes) {
+  join(map(renderHtmlNode, nodes), "");
+}

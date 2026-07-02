@@ -388,3 +388,66 @@ bytes length: 8
 bytes in range: true
 uuid length: 36
 uuid unique: true
+--- 28. String Library ---
+hello world
+pfun
+[hi  ]
+[  hi]
+true
+false
+true
+false
+a-b.c.d
+a-b-c-d
+hello
+true
+false
+world at: 6
+true
+false
+h_ll_ w_rld
+[   ]
+hello
+123
+abc
+----------
+000042
+hi......
+--- 29. HTML Parsing ---
+top-level nodes: 1
+outer tag: div
+div children: 2
+inner tag: p
+tag: a
+href: /about
+class: nav
+doc nodes: 3
+doctype: ok
+comment: ok
+recovered: section
+strict: valid
+blocks: 4
+h1->Section, heading inlines: 1
+p->Para, inlines: 3
+ul->BulletList, items: 2
+hr->ThematicBreak
+<p class="hi">Hello <em>world</em>!</p>
+--- 31. Timers ---
+ids are positive: true
+ids are distinct: true
+pending timers cleared: ok
+double-clear is safe: ok
+cleared timer did not fire: ok
+setTimer and clearTimer: ok
+--- 30. HTTP Client (Extended) ---
+hello%20world
+a%3D1%26b%3D2
+no-change_here.ok
+GET status: 200
+GET body: GET|none|
+POST: POST|secret|payload
+PUT: PUT|none|updated
+bytes status: 200
+bytes length > 0: true
+timeout ok: GET|none|
+refused: Err

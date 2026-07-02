@@ -1,0 +1,208 @@
+// stringlib_test.pf — tests for stringlib.pf
+// Run with: PFUN_HOME=/path/to/pfun pfun lib/test/stringlib_test.pf
+
+import * from "io";
+import * from "$PFUN_HOME/lib/stringlib.pf";
+
+proc pass(label) { println("PASS " + label); }
+proc fail(label, got, expected) {
+  println("FAIL " + label + ": got \"" + __str__(got) + "\" expected \"" + __str__(expected) + "\"");
+}
+
+proc expectStr(got, expected, label) {
+  if got == expected then pass(label) else fail(label, got, expected);
+}
+proc expectBool(got, expected, label) {
+  if got == expected then pass(label) else fail(label, got, expected);
+}
+proc expectInt(got, expected, label) {
+  if got == expected then pass(label) else fail(label, got, expected);
+}
+
+// ─── Helpers shared across tests ──────────────────────────────────────────────
+
+function isDigit(c) {
+  c == "0" || c == "1" || c == "2" || c == "3" || c == "4" ||
+  c == "5" || c == "6" || c == "7" || c == "8" || c == "9";
+}
+function isPunct(c) { c == "." || c == "," || c == "!" || c == "?"; }
+
+// ─── trim ─────────────────────────────────────────────────────────────────────
+
+proc testTrim() {
+  println("--- trim ---");
+  expectStr(trim("  hello  "),    "hello",  "trim both sides");
+  expectStr(trim("hello"),        "hello",  "trim no whitespace");
+  expectStr(trim("  "),           "",       "trim all whitespace");
+  expectStr(trim(""),             "",       "trim empty string");
+  expectStr(trim("\t hi \n"),     "hi",     "trim tabs and newlines");
+  expectStr(trim("  hello"),      "hello",  "trim leading only");
+  expectStr(trim("hello  "),      "hello",  "trim trailing only");
+  expectStr(trimLeft("  hi  "),   "hi  ",   "trimLeft");
+  expectStr(trimRight("  hi  "),  "  hi",   "trimRight");
+}
+
+// ─── startsWith / endsWith ────────────────────────────────────────────────────
+
+proc testPrefixSuffix() {
+  println("--- startsWith / endsWith ---");
+  expectBool(startsWith("hello world", "hello"),  true,  "startsWith match");
+  expectBool(startsWith("hello world", "world"),  false, "startsWith no match");
+  expectBool(startsWith("hello",        ""),      true,  "startsWith empty prefix");
+  expectBool(startsWith("hi",           "hello"), false, "startsWith longer than s");
+  expectBool(startsWith("",             ""),      true,  "startsWith both empty");
+  expectBool(endsWith("hello world", "world"),    true,  "endsWith match");
+  expectBool(endsWith("hello world", "hello"),    false, "endsWith no match");
+  expectBool(endsWith("hello",        ""),        true,  "endsWith empty suffix");
+  expectBool(endsWith("hi",           "hello"),   false, "endsWith longer than s");
+  expectBool(endsWith("",             ""),        true,  "endsWith both empty");
+}
+
+// ─── replace ──────────────────────────────────────────────────────────────────
+
+proc testReplace() {
+  println("--- replace ---");
+  expectStr(replace("hello world",       "world", "Pfun"),  "hello Pfun",       "replace basic");
+  expectStr(replace("a.b.c",             ".",      "-"),     "a-b.c",            "replace first only");
+  expectStr(replace("hello",             "xyz",   "ZZZ"),   "hello",             "replace not found");
+  expectStr(replace("aaa",               "a",     "b"),     "baa",               "replace first of repeated");
+  expectStr(replace("",                  "a",     "b"),     "",                  "replace empty string");
+  expectStr(replace("hello",             "",      "X"),     "hello",             "replace empty pattern");
+  expectStr(replaceAll("a.b.c",          ".",     "-"),     "a-b-c",             "replaceAll basic");
+  expectStr(replaceAll("hello world hello", "hello", "hi"), "hi world hi",       "replaceAll multiple");
+  expectStr(replaceAll("hello",          "xyz",   "ZZZ"),   "hello",             "replaceAll not found");
+  expectStr(replaceAll("aaa",            "a",     "bb"),    "bbbbbb",            "replaceAll all chars");
+  expectStr(replaceAll("",              "a",     "b"),      "",                  "replaceAll empty string");
+  expectStr(replaceAll("hello",         "",      "X"),      "hello",             "replaceAll empty pattern");
+}
+
+// ─── strMatch ─────────────────────────────────────────────────────────────────
+
+proc testStrMatch() {
+  println("--- strMatch ---");
+  expectBool(strMatch("abc123", isDigit),   true,  "strMatch digit found");
+  expectBool(strMatch("abc",    isDigit),   false, "strMatch digit not found");
+  expectBool(strMatch("123",    isDigit),   true,  "strMatch all digits");
+  expectBool(strMatch("",       isDigit),   false, "strMatch empty string");
+  expectBool(strMatch("a.b!c",  isPunct),   true,  "strMatch punct found");
+  expectBool(strMatch("abc",    isPunct),   false, "strMatch punct not found");
+  expectBool(strMatch(" ",      isWhitespace), true, "strMatch whitespace");
+}
+
+// ─── replaceMatch ─────────────────────────────────────────────────────────────
+
+proc testReplaceMatch() {
+  println("--- replaceMatch ---");
+  expectStr(replaceMatch("h3ll0 w0rld", isDigit, fn _ => "_"),
+            "h_ll_ w_rld",  "replaceMatch digits with underscore");
+  expectStr(replaceMatch("hello", isDigit, fn _ => "_"),
+            "hello",        "replaceMatch no match");
+  expectStr(replaceMatch("", isDigit, fn _ => "_"),
+            "",             "replaceMatch empty string");
+  expectStr(replaceMatch("abc", isPunct, fn c => "(" + c + ")"),
+            "abc",          "replaceMatch no punct");
+  expectStr(replaceMatch("a.b,c!", isPunct, fn c => "-"),
+            "a-b-c-",       "replaceMatch all punct");
+  // replaceFn can transform: uppercase digits → letter
+  expectStr(replaceMatch("a1b2c3", isDigit, fn _ => "X"),
+            "aXbXcX",       "replaceMatch interleaved");
+}
+
+// ─── takeWhile / dropWhile ────────────────────────────────────────────────────
+
+proc testTakeDropWhile() {
+  println("--- takeWhile / dropWhile ---");
+  expectStr(takeWhile("   hello",  isWhitespace), "   ",    "takeWhile leading spaces");
+  expectStr(takeWhile("hello   ",  isWhitespace), "",       "takeWhile no leading spaces");
+  expectStr(takeWhile("",          isWhitespace), "",       "takeWhile empty");
+  expectStr(takeWhile("   ",       isWhitespace), "   ",    "takeWhile all whitespace");
+  expectStr(takeWhile("123abc",    isDigit),      "123",    "takeWhile digits");
+  expectStr(takeWhile("abc",       isDigit),      "",       "takeWhile none match");
+
+  expectStr(dropWhile("   hello",  isWhitespace), "hello",  "dropWhile leading spaces");
+  expectStr(dropWhile("hello   ",  isWhitespace), "hello   ","dropWhile no leading spaces");
+  expectStr(dropWhile("",          isWhitespace), "",       "dropWhile empty");
+  expectStr(dropWhile("   ",       isWhitespace), "",       "dropWhile all whitespace");
+  expectStr(dropWhile("123abc",    isDigit),      "abc",    "dropWhile digits");
+  expectStr(dropWhile("abc",       isDigit),      "abc",    "dropWhile none match");
+}
+
+// ─── contains ─────────────────────────────────────────────────────────────────
+
+proc testContains() {
+  println("--- contains ---");
+  expectBool(contains("hello world", "world"), true,  "contains found");
+  expectBool(contains("hello world", "xyz"),   false, "contains not found");
+  expectBool(contains("hello",       ""),      true,  "contains empty sub");
+  expectBool(contains("",            ""),      true,  "contains both empty");
+  expectBool(contains("",            "a"),     false, "contains empty string");
+  expectBool(contains("aaa",         "aa"),    true,  "contains overlap");
+}
+
+// ─── strRepeat / padLeft / padRight ──────────────────────────────────────────
+
+proc testPadRepeat() {
+  println("--- strRepeat / padLeft / padRight ---");
+  expectStr(strRepeat("ab",  3),       "ababab", "strRepeat 3 times");
+  expectStr(strRepeat("x",   1),       "x",      "strRepeat once");
+  expectStr(strRepeat("x",   0),       "",       "strRepeat zero");
+  expectStr(padLeft("hi",    5, " "),  "   hi",  "padLeft spaces");
+  expectStr(padLeft("hello", 3, " "),  "hello",  "padLeft no-op (already long)");
+  expectStr(padLeft("7",     3, "0"),  "007",    "padLeft zero-pad");
+  expectStr(padRight("hi",   5, "."),  "hi...",  "padRight dots");
+  expectStr(padRight("hello",3, "."),  "hello",  "padRight no-op");
+}
+
+// ─── indexOf ──────────────────────────────────────────────────────────────────
+
+proc testIndexOf() {
+  println("--- indexOf ---");
+  match indexOf("hello world", "world") with
+  | None   -> println("FAIL indexOf world: got None")
+  | Some v -> expectInt(v.value, 6, "indexOf world at 6");
+
+  match indexOf("hello world", "hello") with
+  | None   -> println("FAIL indexOf hello: got None")
+  | Some v -> expectInt(v.value, 0, "indexOf hello at 0");
+
+  match indexOf("hello world", "xyz") with
+  | None   -> pass("indexOf not found gives None")
+  | Some _ -> println("FAIL indexOf not found: expected None");
+
+  match indexOf("", "a") with
+  | None   -> pass("indexOf empty string")
+  | Some _ -> println("FAIL indexOf empty string: expected None");
+
+  match indexOf("aababc", "ab") with
+  | None   -> println("FAIL indexOf first ab: got None")
+  | Some v -> expectInt(v.value, 1, "indexOf first ab at 1");
+}
+
+// ─── isWhitespace ─────────────────────────────────────────────────────────────
+
+proc testIsWhitespace() {
+  println("--- isWhitespace ---");
+  expectBool(isWhitespace(" "),  true,  "isWhitespace space");
+  expectBool(isWhitespace("\t"), true,  "isWhitespace tab");
+  expectBool(isWhitespace("\n"), true,  "isWhitespace newline");
+  expectBool(isWhitespace("a"),  false, "isWhitespace letter");
+  expectBool(isWhitespace(""),   false, "isWhitespace empty");
+}
+
+// ─── Run all ──────────────────────────────────────────────────────────────────
+
+proc main() {
+  testTrim();
+  testPrefixSuffix();
+  testReplace();
+  testStrMatch();
+  testReplaceMatch();
+  testTakeDropWhile();
+  testContains();
+  testPadRepeat();
+  testIndexOf();
+  testIsWhitespace();
+  println("Done.");
+}
+
+main();

@@ -1,0 +1,368 @@
+// htmlparse_test.pf — tests for htmlparse.pf
+// Run with: PFUN_HOME=/path/to/pfun pfun lib/test/htmlparse_test.pf
+
+import * from "io";
+import * from "$PFUN_HOME/lib/htmllib.pf";
+import * from "$PFUN_HOME/lib/htmlparse.pf";
+
+proc pass(label) { println("PASS " + label); }
+proc fail(label, msg) { println("FAIL " + label + ": " + msg); }
+proc expectInt(got, expected, label) {
+  if got == expected then pass(label)
+  else fail(label, "got " + __str__(got) + " expected " + __str__(expected));
+}
+proc expectStr(got, expected, label) {
+  if got == expected then pass(label)
+  else fail(label, "got \"" + got + "\" expected \"" + expected + "\"");
+}
+proc expectBool(got, expected, label) {
+  if got == expected then pass(label)
+  else fail(label, "got " + __str__(got) + " expected " + __str__(expected));
+}
+
+// ─── parseHtml — basic structure ─────────────────────────────────────────────
+
+proc testBasicStructure() {
+  println("--- parseHtml: basic structure ---");
+
+  // Simple element
+  let n1 = parseHtml("<p>hello</p>");
+  expectInt(length(n1), 1, "simple element: 1 node");
+  match head(n1) with
+  | Element e -> {
+      expectStr(e.tag, "p", "tag is p");
+      expectInt(length(e.children), 1, "p has 1 child");
+      match head(e.children) with
+      | HtmlText t -> expectStr(t.value, "hello", "text content")
+      | _ -> fail("text child", "not HtmlText");
+    }
+  | _ -> fail("element", "not Element");
+
+  // Nested elements
+  let n2 = parseHtml("<div><p>hi</p></div>");
+  expectInt(length(n2), 1, "nested: 1 top-level node");
+  match head(n2) with
+  | Element div -> {
+      expectStr(div.tag, "div", "outer tag div");
+      expectInt(length(div.children), 1, "div has 1 child");
+    }
+  | _ -> fail("nested", "not Element");
+
+  // Multiple siblings
+  let n3 = parseHtml("<p>one</p><p>two</p>");
+  expectInt(length(n3), 2, "siblings: 2 nodes");
+
+  // Empty element
+  let n4 = parseHtml("<div></div>");
+  expectInt(length(n4), 1, "empty div: 1 node");
+  match head(n4) with
+  | Element e -> expectInt(length(e.children), 0, "empty div has 0 children")
+  | _ -> fail("empty div", "not Element");
+}
+
+// ─── parseHtml — text nodes ───────────────────────────────────────────────────
+
+proc testTextNodes() {
+  println("--- parseHtml: text nodes ---");
+
+  // Plain text at top level
+  let n1 = parseHtml("hello world");
+  expectInt(length(n1), 1, "plain text: 1 node");
+  match head(n1) with
+  | HtmlText t -> expectStr(t.value, "hello world", "text value")
+  | _ -> fail("plain text", "not HtmlText");
+
+  // Text + tag
+  let n2 = parseHtml("before<br>after");
+  let textBefore = head(n2);
+  match textBefore with
+  | HtmlText t -> pass("text before tag")
+  | _ -> fail("text before tag", "not HtmlText");
+
+  // Mixed inline content
+  let n3 = parseHtml("<p>Hello <em>world</em>!</p>");
+  match head(n3) with
+  | Element p -> {
+      expectInt(length(p.children), 3, "p has 3 inline children");
+      match head(p.children) with
+      | HtmlText t -> expectStr(t.value, "Hello ", "leading text")
+      | _ -> fail("leading text", "not HtmlText");
+    }
+  | _ -> fail("mixed inline", "not Element");
+}
+
+// ─── parseHtml — attributes ───────────────────────────────────────────────────
+
+proc testAttributes() {
+  println("--- parseHtml: attributes ---");
+
+  let n1 = parseHtml("<a href=\"https://example.com\">link</a>");
+  match head(n1) with
+  | Element e -> {
+      expectInt(length(e.attrs), 1, "a has 1 attr");
+      expectStr(getAttr(e.attrs, "href"), "https://example.com", "href value");
+    }
+  | _ -> fail("attrs", "not Element");
+
+  // Multiple attrs
+  let n2 = parseHtml("<div class=\"foo\" id=\"bar\">x</div>");
+  match head(n2) with
+  | Element e -> {
+      expectInt(length(e.attrs), 2, "div has 2 attrs");
+      expectStr(getAttr(e.attrs, "class"), "foo", "class value");
+      expectStr(getAttr(e.attrs, "id"), "bar", "id value");
+    }
+  | _ -> fail("multi attrs", "not Element");
+
+  // Boolean attribute
+  let n3 = parseHtml("<input disabled>");
+  match head(n3) with
+  | Element e -> {
+      expectBool(hasAttr(e.attrs, "disabled"), true, "disabled attr present");
+    }
+  | _ -> fail("bool attr", "not Element");
+
+  // Missing attribute returns ""
+  let n4 = parseHtml("<p>hi</p>");
+  match head(n4) with
+  | Element e -> expectStr(getAttr(e.attrs, "class"), "", "missing attr is empty")
+  | _ -> fail("missing attr", "not Element");
+}
+
+// ─── parseHtml — special nodes ────────────────────────────────────────────────
+
+proc testSpecialNodes() {
+  println("--- parseHtml: special nodes ---");
+
+  // Comment
+  let n1 = parseHtml("<!-- this is a comment -->");
+  expectInt(length(n1), 1, "comment: 1 node");
+  match head(n1) with
+  | Comment c -> pass("comment node")
+  | _ -> fail("comment", "not Comment");
+
+  // Comment with > inside
+  let n2 = parseHtml("<!-- x > y -->text");
+  match head(n2) with
+  | Comment _ -> pass("comment with > inside")
+  | _ -> fail("comment with >", "not Comment");
+
+  // Doctype
+  let n3 = parseHtml("<!DOCTYPE html><p>hi</p>");
+  match head(n3) with
+  | Doctype _ -> pass("doctype node")
+  | _ -> fail("doctype", "not Doctype");
+
+  // Void elements (no children)
+  match head(parseHtml("<br>")) with
+  | Element e -> expectStr(e.tag, "br", "br is void")
+  | _ -> fail("br void", "not Element");
+  match head(parseHtml("<hr>")) with
+  | Element e -> expectInt(length(e.children), 0, "hr has no children")
+  | _ -> fail("hr void", "not Element");
+}
+
+// ─── parseHtml — forgiving (TagSoup-style) ───────────────────────────────────
+
+proc testForgiving() {
+  println("--- parseHtml: forgiving ---");
+
+  // Unclosed tag — still produces a node
+  let n1 = parseHtml("<p>unclosed");
+  expectInt(length(n1), 1, "unclosed tag: still 1 node");
+  match head(n1) with
+  | Element e -> expectStr(e.tag, "p", "unclosed p tag name")
+  | _ -> fail("unclosed", "not Element");
+
+  // Extra close tag — ignored gracefully
+  let n2 = parseHtml("<p>ok</p></div>");
+  expectInt(length(n2), 1, "extra close tag: 1 node");
+
+  // Malformed attrs — still parses the tag
+  let n3 = parseHtml("<p class=>text</p>");
+  expectInt(length(n3), 1, "malformed attr: still parses");
+}
+
+// ─── parseStrictHtml ─────────────────────────────────────────────────────────
+
+proc testStrictParse() {
+  println("--- parseStrictHtml ---");
+
+  match parseStrictHtml("<p>hello</p>") with
+  | ParseErr e -> fail("valid html", "unexpected error: " + e.message)
+  | ParseOk _  -> pass("valid html: ParseOk");
+
+  match parseStrictHtml("<div><p>nested</p></div>") with
+  | ParseErr e -> fail("valid nested", "unexpected error: " + e.message)
+  | ParseOk _  -> pass("valid nested: ParseOk");
+
+  // Void elements are always valid (never need closing)
+  match parseStrictHtml("<p>Hello<br>World</p>") with
+  | ParseErr e -> fail("void in strict", "unexpected error: " + e.message)
+  | ParseOk _  -> pass("void element in strict: ParseOk");
+}
+
+// ─── toSemanticHtmlContent ───────────────────────────────────────────────────
+
+proc testSemanticConversion() {
+  println("--- toSemanticHtmlContent ---");
+
+  // <p> → Para
+  let blocks1 = toSemanticHtmlContent(parseHtml("<p>hello</p>"));
+  expectInt(length(blocks1), 1, "p gives 1 block");
+  match head(blocks1) with
+  | Para p -> {
+      pass("p gives Para");
+      expectInt(length(p.content), 1, "para has 1 inline");
+    }
+  | _ -> fail("p→Para", "not Para");
+
+  // <h1> → Section
+  let blocks2 = toSemanticHtmlContent(parseHtml("<h1>Title</h1>"));
+  expectInt(length(blocks2), 1, "h1 gives 1 block");
+  match head(blocks2) with
+  | Section s -> {
+      pass("h1 gives Section");
+      expectInt(length(s.heading), 1, "section heading has 1 inline");
+    }
+  | _ -> fail("h1→Section", "not Section");
+
+  // <ul>/<li> → BulletList
+  let blocks3 = toSemanticHtmlContent(parseHtml("<ul><li>one</li><li>two</li></ul>"));
+  expectInt(length(blocks3), 1, "ul gives 1 block");
+  match head(blocks3) with
+  | BulletList ul -> {
+      pass("ul gives BulletList");
+      expectInt(length(ul.items), 2, "ul has 2 items");
+    }
+  | _ -> fail("ul→BulletList", "not BulletList");
+
+  // <ol>/<li> → OrderedList
+  let blocks4 = toSemanticHtmlContent(parseHtml("<ol><li>a</li><li>b</li></ol>"));
+  match head(blocks4) with
+  | OrderedList ol -> {
+      pass("ol gives OrderedList");
+      expectInt(length(ol.items), 2, "ol has 2 items");
+    }
+  | _ -> fail("ol→OrderedList", "not OrderedList");
+
+  // <hr> → ThematicBreak
+  let blocks5 = toSemanticHtmlContent(parseHtml("<hr>"));
+  match head(blocks5) with
+  | ThematicBreak -> pass("hr gives ThematicBreak")
+  | _ -> fail("hr→ThematicBreak", "not ThematicBreak");
+
+  // <blockquote> → BlockQuote
+  let blocks6 = toSemanticHtmlContent(parseHtml("<blockquote><p>quote</p></blockquote>"));
+  match head(blocks6) with
+  | BlockQuote _ -> pass("blockquote gives BlockQuote")
+  | _ -> fail("blockquote→BlockQuote", "not BlockQuote");
+
+  // <em> inline → Para with Emph
+  let blocks7 = toSemanticHtmlContent(parseHtml("<p>Hello <em>world</em></p>"));
+  match head(blocks7) with
+  | Para p -> {
+      pass("p with em gives Para");
+      expectInt(length(p.content), 2, "para has 2 inlines (text + emph)");
+      match nth(p.content, 1) with
+      | Emph _ -> pass("em gives Emph")
+      | _ -> fail("em→Emph", "not Emph");
+    }
+  | _ -> fail("p with em", "not Para");
+
+  // <strong>/<b> → Strong
+  let blocks8 = toSemanticHtmlContent(parseHtml("<p><strong>bold</strong></p>"));
+  match head(blocks8) with
+  | Para p -> {
+      match head(p.content) with
+      | Strong _ -> pass("strong gives Strong")
+      | _ -> fail("strong→Strong", "not Strong");
+    }
+  | _ -> fail("p with strong", "not Para");
+
+  // <a> → Link
+  let blocks9 = toSemanticHtmlContent(parseHtml("<p><a href=\"/\">home</a></p>"));
+  match head(blocks9) with
+  | Para p -> {
+      match head(p.content) with
+      | Link l -> {
+          pass("a gives Link");
+          expectStr(l.href, "/", "link href");
+        }
+      | _ -> fail("a→Link", "not Link");
+    }
+  | _ -> fail("p with a", "not Para");
+
+  // <aside>/<nav> → Aside/Nav
+  let blocksA = toSemanticHtmlContent(parseHtml("<aside><p>side</p></aside>"));
+  match head(blocksA) with
+  | Aside _ -> pass("aside gives Aside")
+  | _ -> fail("aside→Aside", "not Aside");
+
+  let blocksN = toSemanticHtmlContent(parseHtml("<nav><a href=\"/\">home</a></nav>"));
+  match head(blocksN) with
+  | Nav _ -> pass("nav gives Nav")
+  | _ -> fail("nav→Nav", "not Nav");
+
+  // Transparent wrappers: html/body promote children
+  let blocksT = toSemanticHtmlContent(parseHtml("<html><body><p>hi</p></body></html>"));
+  match head(blocksT) with
+  | Para _ -> pass("html/body promote children to Para")
+  | _ -> fail("transparent wrapper", "not Para");
+}
+
+// ─── renderHtmlNode ──────────────────────────────────────────────────────────
+
+proc testRenderHtmlNode() {
+  println("--- renderHtmlNode ---");
+
+  // Round-trip simple element
+  let nodes = parseHtml("<p>hello</p>");
+  let rendered = renderHtmlNodes(nodes);
+  expectStr(rendered, "<p>hello</p>", "round-trip p");
+
+  // Comment preserved
+  let n2 = parseHtml("<!-- hi -->");
+  let r2 = renderHtmlNodes(n2);
+  expectStr(r2, "<!-- hi -->", "round-trip comment");
+
+  // Void tag (no closing tag in output)
+  let n3 = parseHtml("<br>");
+  let r3 = renderHtmlNodes(n3);
+  expectStr(r3, "<br>", "round-trip void br");
+
+  // Attrs rendered
+  let n4 = parseHtml("<a href=\"/\">link</a>");
+  let r4 = renderHtmlNodes(n4);
+  expectStr(r4, "<a href=\"/\">link</a>", "round-trip a with href");
+}
+
+// ─── getAttr / hasAttr ───────────────────────────────────────────────────────
+
+proc testAttrHelpers() {
+  println("--- getAttr / hasAttr ---");
+
+  let attrs = [Pair { "class", "foo" }, Pair { "id", "bar" }, Pair { "disabled", "" }];
+  expectStr(getAttr(attrs, "class"),    "foo", "getAttr class");
+  expectStr(getAttr(attrs, "id"),       "bar", "getAttr id");
+  expectStr(getAttr(attrs, "missing"),  "",    "getAttr missing → empty");
+  expectBool(hasAttr(attrs, "disabled"), true,  "hasAttr disabled");
+  expectBool(hasAttr(attrs, "missing"),  false, "hasAttr missing");
+}
+
+// ─── Run all ──────────────────────────────────────────────────────────────────
+
+proc main() {
+  testBasicStructure();
+  testTextNodes();
+  testAttributes();
+  testSpecialNodes();
+  testForgiving();
+  testStrictParse();
+  testSemanticConversion();
+  testRenderHtmlNode();
+  testAttrHelpers();
+  println("Done.");
+}
+
+main();

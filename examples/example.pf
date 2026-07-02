@@ -2079,10 +2079,7 @@ buffer_demo();
 /*
   26. DATE LIBRARY
   datelib.pf wraps the JavaScript Date API via the foreign FFI.
-  Import it with: import * from "$PFUN_HOME/lib/datelib.pf";
-
-  All examples below use fromIso("...Z") + utc* accessors so output is
-  identical regardless of the machine's local timezone.
+  All examples use fromIso("...Z") + utc* accessors for timezone-invariant output.
 */
 
 import * from "$PFUN_HOME/lib/datelib.pf";
@@ -2092,41 +2089,16 @@ println("--- 26. Date Library ---");
 match fromIso("2024-03-15T14:30:45.123Z") with
 | DateErr e -> println("ERROR: " + e.message)
 | DateOk d  -> {
-    match toIso(d.date) with
-    | FErr e -> println("ERROR: " + e.message)
-    | FOk s  -> println(s.value);
-    match utcYear(d.date) with
-    | FErr e -> println("ERROR: " + e.message)
-    | FOk v  -> println("year: " + __str__(v.value));
-    match utcMonthInt(d.date) with
-    | FErr e -> println("ERROR: " + e.message)
-    | FOk v  -> println("month: " + __str__(v.value));
-    match utcDay(d.date) with
-    | FErr e -> println("ERROR: " + e.message)
-    | FOk v  -> println("day: " + __str__(v.value));
-    match utcHour(d.date) with
-    | FErr e -> println("ERROR: " + e.message)
-    | FOk v  -> println("hour: " + __str__(v.value));
-    match utcMonth(d.date) with
-    | FErr e -> println("ERROR: " + e.message)
-    | FOk v  -> println(monthName(v.value));
-    match utcWeekday(d.date) with
-    | FErr e -> println("ERROR: " + e.message)
-    | FOk v  -> println(weekdayName(v.value));
+    match toIso(d.date) with | FErr e -> println("ERROR: " + e.message) | FOk s -> println(s.value);
+    match utcYear(d.date) with | FErr e -> println("ERROR: " + e.message) | FOk v -> println("year: " + __str__(v.value));
+    match utcMonthInt(d.date) with | FErr e -> println("ERROR: " + e.message) | FOk v -> println("month: " + __str__(v.value));
+    match utcDay(d.date) with | FErr e -> println("ERROR: " + e.message) | FOk v -> println("day: " + __str__(v.value));
+    match utcHour(d.date) with | FErr e -> println("ERROR: " + e.message) | FOk v -> println("hour: " + __str__(v.value));
+    match utcMonth(d.date) with | FErr e -> println("ERROR: " + e.message) | FOk v -> println(monthName(v.value));
+    match utcWeekday(d.date) with | FErr e -> println("ERROR: " + e.message) | FOk v -> println(weekdayName(v.value));
   };
-
-match fromTimestamp(1735084800000.0) with
-| DateErr e -> println("ERROR: " + e.message)
-| DateOk d  -> {
-    match toIso(d.date) with
-    | FErr e -> println("ERROR: " + e.message)
-    | FOk s  -> println(s.value);
-  };
-
-match fromIso("not-a-date") with
-| DateOk _  -> println("ERROR: should have been invalid")
-| DateErr e -> println("invalid: " + e.message);
-
+match fromTimestamp(1735084800000.0) with | DateErr e -> println("ERROR: " + e.message) | DateOk d -> { match toIso(d.date) with | FErr e -> println("ERROR: " + e.message) | FOk s -> println(s.value); };
+match fromIso("not-a-date") with | DateOk _ -> println("ERROR") | DateErr e -> println("invalid: " + e.message);
 match fromIso("2024-07-04T09:05:03.007Z") with
 | DateErr e -> println("ERROR: " + e.message)
 | DateOk d  -> {
@@ -2139,91 +2111,28 @@ match fromIso("2024-07-04T09:05:03.007Z") with
     match utcMillisecond(d.date) with | FErr e -> println("ERROR: " + e.message) | FOk v -> println(__str__(v.value));
     match utcWeekday(d.date) with | FErr e -> println("ERROR: " + e.message) | FOk v -> println(weekdayShort(v.value));
   };
-
 match fromIso("2024-01-31T00:00:00.000Z") with
 | DateErr e -> println("ERROR: " + e.message)
 | DateOk d  -> {
-    match addDays(d.date, 30.0) with
-    | DateErr e -> println("ERROR: " + e.message)
-    | DateOk r  -> { match toIso(r.date) with | FErr e -> println("ERROR: " + e.message) | FOk s -> println(s.value); };
-    match addMonths(d.date, 1) with
-    | DateErr e -> println("ERROR: " + e.message)
-    | DateOk r  -> { match toIso(r.date) with | FErr e -> println("ERROR: " + e.message) | FOk s -> println(s.value); };
-    match addYears(d.date, 1) with
-    | DateErr e -> println("ERROR: " + e.message)
-    | DateOk r  -> { match toIso(r.date) with | FErr e -> println("ERROR: " + e.message) | FOk s -> println(s.value); };
+    match addDays(d.date, 30.0) with | DateErr e -> println("ERROR: " + e.message) | DateOk r -> { match toIso(r.date) with | FErr e -> println("ERROR: " + e.message) | FOk s -> println(s.value); };
+    match addMonths(d.date, 1) with | DateErr e -> println("ERROR: " + e.message) | DateOk r -> { match toIso(r.date) with | FErr e -> println("ERROR: " + e.message) | FOk s -> println(s.value); };
+    match addYears(d.date, 1) with | DateErr e -> println("ERROR: " + e.message) | DateOk r -> { match toIso(r.date) with | FErr e -> println("ERROR: " + e.message) | FOk s -> println(s.value); };
   };
-
-match fromIso("2024-01-01T00:00:00.000Z") with
-| DateErr e -> println("ERROR: " + e.message)
-| DateOk a  -> {
-    match fromIso("2024-03-15T00:00:00.000Z") with
-    | DateErr e -> println("ERROR: " + e.message)
-    | DateOk b  -> {
-        match diffDays(b.date, a.date) with
-        | FErr e -> println("ERROR: " + e.message)
-        | FOk d  -> println("days apart: " + __str__(round(d.value)));
-      };
-  };
-
-match fromIso("2024-01-01T00:00:00.000Z") with
-| DateErr e -> println("ERROR: " + e.message)
-| DateOk a  -> {
-    match fromIso("2024-06-01T00:00:00.000Z") with
-    | DateErr e -> println("ERROR: " + e.message)
-    | DateOk b  -> {
-        match dateBefore(a.date, b.date) with | FErr e -> println("ERROR: " + e.message) | FOk v -> println("before: " + __str__(v.value));
-        match dateAfter(b.date, a.date) with | FErr e -> println("ERROR: " + e.message) | FOk v -> println("after: " + __str__(v.value));
-        match dateEqual(a.date, a.date) with | FErr e -> println("ERROR: " + e.message) | FOk v -> println("equal: " + __str__(v.value));
-      };
-  };
-
-println(__str__(isLeapYear(2024)));
-println(__str__(isLeapYear(1900)));
-println(__str__(isLeapYear(2000)));
-println(__str__(daysInMonth(February, 2024)));
-println(__str__(daysInMonth(February, 2023)));
-
-match fromIso("2024-03-15T00:00:00.000Z") with
-| DateErr e -> println("ERROR: " + e.message)
-| DateOk a  -> {
-    match fromIso("2024-03-15T23:59:59.999Z") with
-    | DateErr e -> println("ERROR: " + e.message)
-    | DateOk b  -> {
-        match utcDay(a.date) with
-        | FErr e -> println("ERROR: " + e.message)
-        | FOk da -> {
-            match utcDay(b.date) with
-            | FErr e -> println("ERROR: " + e.message)
-            | FOk db -> println(__str__(da.value == db.value));
-          };
-      };
-  };
-println(__str__(isSameDay(
-  match fromIso("2024-03-15T00:00:00.000Z") with | DateErr _ -> now() | DateOk d -> d.date,
-  match fromIso("2024-03-16T00:00:00.000Z") with | DateErr _ -> now() | DateOk d -> d.date
-)));
-
-println(monthName(January));
-println(monthName(December));
-println(monthShort(September));
-println(weekdayName(Wednesday));
-println(weekdayShort(Saturday));
-println(__str__(isWeekend(Saturday)));
-println(__str__(isWeekend(Monday)));
-println(__str__(isWeekdayVariant(Friday)));
+match fromIso("2024-01-01T00:00:00.000Z") with | DateErr e -> println("ERROR: " + e.message) | DateOk a -> { match fromIso("2024-03-15T00:00:00.000Z") with | DateErr e -> println("ERROR: " + e.message) | DateOk b -> { match diffDays(b.date, a.date) with | FErr e -> println("ERROR: " + e.message) | FOk d -> println("days apart: " + __str__(round(d.value))); }; };
+match fromIso("2024-01-01T00:00:00.000Z") with | DateErr e -> println("ERROR: " + e.message) | DateOk a -> { match fromIso("2024-06-01T00:00:00.000Z") with | DateErr e -> println("ERROR: " + e.message) | DateOk b -> { match dateBefore(a.date, b.date) with | FErr e -> println("ERROR: " + e.message) | FOk v -> println("before: " + __str__(v.value)); match dateAfter(b.date, a.date) with | FErr e -> println("ERROR: " + e.message) | FOk v -> println("after: " + __str__(v.value)); match dateEqual(a.date, a.date) with | FErr e -> println("ERROR: " + e.message) | FOk v -> println("equal: " + __str__(v.value)); }; };
+println(__str__(isLeapYear(2024))); println(__str__(isLeapYear(1900))); println(__str__(isLeapYear(2000)));
+println(__str__(daysInMonth(February, 2024))); println(__str__(daysInMonth(February, 2023)));
+match fromIso("2024-03-15T00:00:00.000Z") with | DateErr e -> println("ERROR: " + e.message) | DateOk a -> { match fromIso("2024-03-15T23:59:59.999Z") with | DateErr e -> println("ERROR: " + e.message) | DateOk b -> { match utcDay(a.date) with | FErr e -> println("ERROR: " + e.message) | FOk da -> { match utcDay(b.date) with | FErr e -> println("ERROR: " + e.message) | FOk db -> println(__str__(da.value == db.value)); }; }; };
+println(__str__(isSameDay(match fromIso("2024-03-15T00:00:00.000Z") with | DateErr _ -> now() | DateOk d -> d.date, match fromIso("2024-03-16T00:00:00.000Z") with | DateErr _ -> now() | DateOk d -> d.date)));
+println(monthName(January)); println(monthName(December)); println(monthShort(September));
+println(weekdayName(Wednesday)); println(weekdayShort(Saturday));
+println(__str__(isWeekend(Saturday))); println(__str__(isWeekend(Monday))); println(__str__(isWeekdayVariant(Friday)));
 
 // ============================================================================
 /*
   27. RANDOM LIBRARY
   random.pf provides random number generation via the foreign FFI.
-  Import it with: import * from "$PFUN_HOME/lib/random.pf";
-
-  All functions are procs (they read from the RNG, which is an external
-  source). They cannot be called from pure functions.
-
-  Results are non-deterministic, so examples check properties
-  (finiteness, bounds, length) rather than exact values.
+  Examples check properties (bounds, length) rather than exact values.
 */
 
 import * from "$PFUN_HOME/lib/random.pf";
@@ -2234,60 +2143,271 @@ let f = randomFloat();
 println("float finite: " + __str__(isFinite(f)));
 let bucket = floor(f * 1000.0);
 println("float bucket in [0,999]: " + __str__(bucket >= 0 && bucket < 1000));
-
-var inRange = true;
-var sawOne  = false;
-var sawSix  = false;
-var ri = 0;
-while (ri < 200) {
-  let n = randomInt(1, 6);
-  if n < 1 || n > 6 then inRange = false;
-  if n == 1 then sawOne = true;
-  if n == 6 then sawSix = true;
-  ri = ri + 1;
-}
-println("ints in [1,6]: " + __str__(inRange));
-println("saw 1: " + __str__(sawOne));
-println("saw 6: " + __str__(sawSix));
-
-var trues = 0;
-var bi = 0;
-while (bi < 100) {
-  if randomBool() then trues = trues + 1;
-  bi = bi + 1;
-}
-println("bool has trues: " + __str__(trues > 0));
-println("bool has falses: " + __str__(trues < 100));
-
-match randomElement([]) with
-| None   -> println("empty list: None")
-| Some _ -> println("UNEXPECTED");
-
+var inRange = true; var sawOne = false; var sawSix = false; var ri = 0;
+while (ri < 200) { let n = randomInt(1, 6); if n < 1 || n > 6 then inRange = false; if n == 1 then sawOne = true; if n == 6 then sawSix = true; ri = ri + 1; }
+println("ints in [1,6]: " + __str__(inRange)); println("saw 1: " + __str__(sawOne)); println("saw 6: " + __str__(sawSix));
+var trues = 0; var bi = 0;
+while (bi < 100) { if randomBool() then trues = trues + 1; bi = bi + 1; }
+println("bool has trues: " + __str__(trues > 0)); println("bool has falses: " + __str__(trues < 100));
+match randomElement([]) with | None -> println("empty list: None") | Some _ -> println("UNEXPECTED");
 let colors = ["red", "green", "blue"];
-match randomElement(colors) with
-| None   -> println("UNEXPECTED")
-| Some v -> println("element in list: " + __str__(v.value == "red" || v.value == "green" || v.value == "blue"));
-
-let lst  = [1, 2, 3, 4, 5];
-let shuf = randomShuffle(lst);
+match randomElement(colors) with | None -> println("UNEXPECTED") | Some v -> println("element in list: " + __str__(v.value == "red" || v.value == "green" || v.value == "blue"));
+let rlst = [1, 2, 3, 4, 5]; let shuf = randomShuffle(rlst);
 println("shuffle length: " + __str__(length(shuf)));
-let total = reduce(fn a, x => a + x, 0, shuf);
-println("shuffle sum: " + __str__(total));
-
-let bs    = randomBytes(8);
-println("bytes length: " + __str__(length(bs)));
+let stotal = reduce(fn a, x => a + x, 0, shuf); println("shuffle sum: " + __str__(stotal));
+let bs = randomBytes(8); println("bytes length: " + __str__(length(bs)));
 var allOk = true;
-proc checkBytes(xs) {
-  if length(xs) == 0 then 0
-  else {
-    let b = toInt(head(xs));
-    if b < 0 || b > 255 then allOk = false;
-    checkBytes(tail(xs));
-  }
-}
-checkBytes(bs);
-println("bytes in range: " + __str__(allOk));
-
-let uuid = randomUUID();
-println("uuid length: " + __str__(length(uuid)));
+proc checkBytes(xs) { if length(xs) == 0 then 0 else { let b = toInt(head(xs)); if b < 0 || b > 255 then allOk = false; checkBytes(tail(xs)); } }
+checkBytes(bs); println("bytes in range: " + __str__(allOk));
+let uuid = randomUUID(); println("uuid length: " + __str__(length(uuid)));
 println("uuid unique: " + __str__(randomUUID() != randomUUID()));
+
+// ============================================================================
+/*
+  28. STRING LIBRARY
+  stringlib.pf provides pure-Pfun string utilities.
+  Import with: import * from "$PFUN_HOME/lib/stringlib.pf";
+*/
+
+import * from "$PFUN_HOME/lib/stringlib.pf";
+
+println("--- 28. String Library ---");
+
+println(trim("  hello world  "));
+println(trim("\t pfun \n"));
+println("[" + trimLeft("  hi  ") + "]");
+println("[" + trimRight("  hi  ") + "]");
+println(__str__(startsWith("hello world", "hello")));
+println(__str__(startsWith("hello world", "world")));
+println(__str__(endsWith("hello world", "world")));
+println(__str__(endsWith("hello world", "hello")));
+println(replace("a.b.c.d", ".", "-"));
+println(replaceAll("a.b.c.d", ".", "-"));
+println(replace("hello", "xyz", "ZZZ"));
+println(__str__(contains("hello world", "world")));
+println(__str__(contains("hello world", "xyz")));
+match indexOf("hello world", "world") with | None -> println("not found") | Some v -> println("world at: " + __str__(v.value));
+function isD(c) { c == "0" || c == "1" || c == "2" || c == "3" || c == "4" || c == "5" || c == "6" || c == "7" || c == "8" || c == "9"; }
+println(__str__(strMatch("abc123", isD))); println(__str__(strMatch("abc", isD)));
+println(replaceMatch("h3ll0 w0rld", isD, fn _ => "_"));
+println("[" + takeWhile("   hello", isWhitespace) + "]");
+println(dropWhile("   hello", isWhitespace));
+println(takeWhile("123abc", isD)); println(dropWhile("123abc", isD));
+println(strRepeat("-", 10)); println(padLeft("42", 6, "0")); println(padRight("hi", 8, "."));
+
+// ============================================================================
+/*
+  29. HTML PARSING
+  htmlparse.pf parses HTML text into HtmlNode trees and converts them to
+  htmllib Block/Inline values. Requires lib/htmllib.pf to be imported directly
+  because types from transitive imports are not in scope.
+*/
+
+import * from "$PFUN_HOME/lib/htmllib.pf";
+import * from "$PFUN_HOME/lib/htmlparse.pf";
+
+println("--- 29. HTML Parsing ---");
+
+let nodes = parseHtml("<div><p>Hello <em>world</em>!</p><hr></div>");
+println("top-level nodes: " + __str__(length(nodes)));
+match head(nodes) with
+| Element div -> {
+    println("outer tag: " + div.tag);
+    println("div children: " + __str__(length(div.children)));
+    match head(div.children) with
+    | Element p -> println("inner tag: " + p.tag)
+    | _ -> println("unexpected");
+  }
+| _ -> println("unexpected");
+
+let linked = parseHtml("<a href=\"/about\" class=\"nav\">About</a>");
+match head(linked) with
+| Element e -> {
+    println("tag: " + e.tag);
+    println("href: " + getAttr(e.attrs, "href"));
+    println("class: " + getAttr(e.attrs, "class"));
+  }
+| _ -> println("unexpected");
+
+let doc = parseHtml("<!DOCTYPE html><!-- page -->text");
+println("doc nodes: " + __str__(length(doc)));
+match head(doc) with | Doctype _ -> println("doctype: ok") | _ -> println("no doctype");
+match nth(doc, 1) with | Comment _ -> println("comment: ok") | _ -> println("no comment");
+
+let unclosed = parseHtml("<section><p>open");
+match head(unclosed) with
+| Element e -> println("recovered: " + e.tag)
+| _ -> println("unexpected");
+
+match parseStrictHtml("<article><p>valid</p></article>") with
+| ParseErr e -> println("error: " + e.message)
+| ParseOk _  -> println("strict: valid");
+
+let semantic = toSemanticHtmlContent(parseHtml(
+  "<h1>Title</h1><p>Hello <strong>world</strong>.</p><ul><li>one</li><li>two</li></ul><hr>"
+));
+println("blocks: " + __str__(length(semantic)));
+match head(semantic) with
+| Section s -> println("h1->Section, heading inlines: " + __str__(length(s.heading)))
+| _ -> println("unexpected");
+match nth(semantic, 1) with
+| Para p -> println("p->Para, inlines: " + __str__(length(p.content)))
+| _ -> println("unexpected");
+match nth(semantic, 2) with
+| BulletList ul -> println("ul->BulletList, items: " + __str__(length(ul.items)))
+| _ -> println("unexpected");
+match nth(semantic, 3) with
+| ThematicBreak -> println("hr->ThematicBreak")
+| _ -> println("unexpected");
+
+let rt = renderHtmlNodes(parseHtml("<p class=\"hi\">Hello <em>world</em>!</p>"));
+println(rt);
+
+// ============================================================================
+/*
+  30. HTTP CLIENT — EXTENDED
+  The four new httplib functions demonstrated against a local test server.
+
+  urlEncode(s)                              pure — no server needed
+  httpRequest(method, url, headers, body)   general client, string body
+  httpRequestBytes(method, url, headers, body)  same, binary body
+  fetchWithTimeout(url, ms)                 GET with abort on timeout
+
+  The server is started with httpListen and shut down at the end via a
+  sentinel /quit route (process.exit through the foreign FFI).
+*/
+
+import * from "http";
+import * from "async";
+
+function exGetHeader(headers, name) {
+  if has(headers, name) then headers[name] else "none";
+}
+
+proc exExitProcess() {
+  match foreignGlobal("process") with
+  | FErr _ -> 0
+  | FOk p  -> {
+      foreignCall(p.value, "exit", [0]);
+      0;
+    };
+}
+
+async proc httpExamples() {
+  let port = 13172;
+  let baseUrl = "http://127.0.0.1:" + __str__(port);
+
+  proc exHandler(req, res) {
+    if req.path == "/quit" then {
+      res.text(200, "bye");
+      exExitProcess();
+    }
+    else {
+      let xToken = exGetHeader(req.headers, "x-token");
+      res.text(200, req.method + "|" + xToken + "|" + req.body);
+    }
+  }
+  httpListen(port, exHandler);
+  eval await sleep(50);
+
+  println("--- 30. HTTP Client (Extended) ---");
+
+  // urlEncode — pure, works without a server
+  println(urlEncode("hello world"));            // hello%20world
+  println(urlEncode("a=1&b=2"));               // a%3D1%26b%3D2
+  println(urlEncode("no-change_here.ok"));     // no-change_here.ok
+
+  // httpRequest — GET (empty headers dict, empty body)
+  match await httpRequest("GET", baseUrl + "/ping", listToDict([]), "") with
+  | Err e -> println("err: " + e.message)
+  | Ok  r -> {
+      println("GET status: " + __str__(r.value.status));
+      println("GET body: " + r.value.body);
+    };
+
+  // httpRequest — POST with custom header and body
+  var postHeaders = listToDict([Pair { "x-token", "secret" }]);
+  match await httpRequest("POST", baseUrl + "/data", postHeaders, "payload") with
+  | Err e -> println("err: " + e.message)
+  | Ok  r -> println("POST: " + r.value.body);
+
+  // httpRequest — PUT
+  match await httpRequest("PUT", baseUrl + "/item", listToDict([]), "updated") with
+  | Err e -> println("err: " + e.message)
+  | Ok  r -> println("PUT: " + r.value.body);
+
+  // httpRequestBytes — body returned as List<Byte>
+  match await httpRequestBytes("GET", baseUrl + "/ping", listToDict([]), "") with
+  | Err e -> println("err: " + e.message)
+  | Ok  r -> {
+      println("bytes status: " + __str__(r.value.status));
+      println("bytes length > 0: " + __str__(length(r.value.body) > 0));
+    };
+
+  // fetchWithTimeout — fast server, generous timeout -> Ok
+  match await fetchWithTimeout(baseUrl + "/ping", 5000) with
+  | Err e -> println("err: " + e.message)
+  | Ok  r -> println("timeout ok: " + r.value.body);
+
+  // fetchWithTimeout — connection refused -> Err
+  match await fetchWithTimeout("http://127.0.0.1:19999", 500) with
+  | Ok  _ -> println("unexpected ok")
+  | Err _ -> println("refused: Err");
+
+  eval await httpRequest("GET", baseUrl + "/quit", listToDict([]), "");
+}
+
+// ============================================================================
+/*
+  31. TIMERS
+  import * from "timer";
+
+  setTimer(ms, action)  — schedule action() once after ms milliseconds.
+                          Returns an Int timer ID.
+  clearTimer(id)        — cancel a pending timer before it fires.
+                          No-op if the timer has already fired or been cleared.
+
+  Timer actions run as spawned tasks, so they can use await. The timer ID
+  returned by setTimer can be stored and passed to clearTimer at any point
+  before the timer fires.
+*/
+
+import * from "timer";
+
+async proc timerExamples() {
+  println("--- 31. Timers ---");
+
+  // setTimer returns a positive Int ID; successive calls give distinct IDs
+  proc noop() { 0; }
+  let id1 = setTimer(1000, noop);
+  let id2 = setTimer(2000, noop);
+  let id3 = setTimer(3000, noop);
+  println("ids are positive: " + __str__(id1 > 0 && id2 > 0 && id3 > 0));
+  println("ids are distinct: " + __str__(id1 != id2 && id2 != id3 && id1 != id3));
+
+  // clearTimer cancels pending timers; all three are cancelled here
+  clearTimer(id1);
+  clearTimer(id2);
+  clearTimer(id3);
+  println("pending timers cleared: ok");
+
+  // clearTimer is idempotent — safe to call twice or after the timer fired
+  clearTimer(id1);
+  println("double-clear is safe: ok");
+
+  // A timer that is cleared before its delay never fires
+  proc shouldNotFire() { println("ERROR: should not have fired"); }
+  let idX = setTimer(10, shouldNotFire);
+  clearTimer(idX);
+  eval await sleep(50);
+  println("cleared timer did not fire: ok");
+
+  // Timer actions run in their own task (can use await)
+  proc asyncAction() { 0; }
+  eval setTimer(0, asyncAction);
+  eval await sleep(20);
+
+  println("setTimer and clearTimer: ok");
+}
+timerExamples();
+httpExamples();

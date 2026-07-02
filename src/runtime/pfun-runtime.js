@@ -541,12 +541,15 @@ function $map(f, v) {
   if ($isLazy(v)) return new $LazyMap(f, v);
   if (typeof v === 'string') {
     const mapped = [...v].map(c => f(new PfunChar(c)));
-    if (mapped.every(x => x instanceof PfunChar)) return mapped.map(x => x.value).join('');
+    // Guard: an empty mapped result is always a list [], never a string.
+    // [].every() is vacuously true and would misclassify [] as a char-list.
+    if (mapped.length > 0 && mapped.every(x => x instanceof PfunChar)) return mapped.map(x => x.value).join('');
     return mapped;
   }
   if (Array.isArray(v)) {
     const mapped = v.map(x => f(x));
-    if (mapped.every(x => x instanceof PfunChar)) return mapped.map(x => x.value).join('');
+    // Same guard: map(fn, []) must return [] not "".
+    if (mapped.length > 0 && mapped.every(x => x instanceof PfunChar)) return mapped.map(x => x.value).join('');
     return mapped;
   }
   throw new Error('map() requires a list, string, or lazy sequence.');

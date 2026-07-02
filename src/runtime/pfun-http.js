@@ -170,5 +170,91 @@ function httpListen(port, handler) {
   return undefined;
 }
 
+// ─── Extended client ─────────────────────────────────────────────────────────
+
+// Convert a PfunDict to a plain JS headers object { key: value }.
+function dictToHeaders(dict) {
+  const obj = {};
+  if (dict && dict.entries instanceof Map) {
+    for (const [k, v] of dict.entries.entries()) {
+      if (typeof v === 'string') obj[k.slice(2)] = v;
+    }
+  }
+  return obj;
+}
+
+// httpRequest(method, url, headers, body) -> Promise<HttpResult>
+// General HTTP client supporting arbitrary methods, request headers, and body.
+//   method  : Str — "GET", "POST", "PUT", "PATCH", "DELETE", etc.
+//   url     : Str — full URL including scheme
+//   headers : Dict<Str,Str> — request headers; pass empty dict {} for none
+//   body    : Str — request body; pass "" to omit (required for GET/HEAD)
+async function httpRequest(method, url, headers, body) {
+  if (typeof method !== 'string') throw new Error('httpRequest() requires a string method.');
+  if (typeof url    !== 'string') throw new Error('httpRequest() requires a string URL.');
+  if (typeof body   !== 'string') throw new Error('httpRequest() requires a string body (pass "" for no body).');
+  try {
+    const fetchOpts = { method, headers: dictToHeaders(headers) };
+    if (body !== '') fetchOpts.body = body;
+    const res = await fetch(url, fetchOpts);
+    const resBody = await res.text();
+    const resHeaders = {};
+    res.headers.forEach((value, key) => { resHeaders[key] = value; });
+    return ok({ status: BigInt(res.status), headers: dictFromRecord(resHeaders), body: resBody });
+  } catch (e) {
+    return err(e instanceof Error ? e.message : String(e));
+  }
+}
+
+// httpRequestBytes(method, url, headers, body) -> Promise<HttpResult>
+// Identical to httpRequest but the response body is returned as List<Byte>.
+async function httpRequestBytes(method, url, headers, body) {
+  if (typeof method !== 'string') throw new Error('httpRequestBytes() requires a string method.');
+  if (typeof url    !== 'string') throw new Error('httpRequestBytes() requires a string URL.');
+  if (typeof body   !== 'string') throw new Error('httpRequestBytes() requires a string body (pass "" for no body).');
+  try {
+    const fetchOpts = { method, headers: dictToHeaders(headers) };
+    if (body !== '') fetchOpts.body = body;
+    const res = await fetch(url, fetchOpts);
+    const arrayBuf = await res.arrayBuffer();
+    const resBody = bufferToByteList(Buffer.from(arrayBuf));
+    const resHeaders = {};
+    res.headers.forEach((value, key) => { resHeaders[key] = value; });
+    return ok({ status: BigInt(res.status), headers: dictFromRecord(resHeaders), body: resBody });
+  } catch (e) {
+    return err(e instanceof Error ? e.message : String(e));
+  }
+}
+
+// fetchWithTimeout(url, ms) -> Promise<HttpResult>
+// GET request aborted with Err if no response arrives within ms milliseconds.
+// Uses AbortController so the in-flight connection is cancelled on timeout.
+async function fetchWithTimeout(url, ms) {
+  if (typeof url !== 'string') throw new Error('fetchWithTimeout() requires a string URL.');
+  if (typeof ms !== 'bigint') throw new Error('fetchWithTimeout() requires an integer timeout in milliseconds.');
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), Number(ms));
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    clearTimeout(timer);
+    const body = await res.text();
+    const headers = {};
+    res.headers.forEach((value, key) => { headers[key] = value; });
+    return ok({ status: BigInt(res.status), headers: dictFromRecord(headers), body });
+  } catch (e) {
+    clearTimeout(timer);
+    const msg = e instanceof Error ? e.message : String(e);
+    return err(e.name === 'AbortError' ? `timeout after ${Number(ms)}ms` : msg);
+  }
+}
+
+// urlEncode(s) -> Str
+// Percent-encode a string for use as a URL query parameter value.
+// Wraps encodeURIComponent. Pure — no side effects.
+function urlEncode(s) {
+  if (typeof s !== 'string') throw new Error('urlEncode() requires a string.');
+  return encodeURIComponent(s);
+}
+
 // ─── Exports ─────────────────────────────────────────────────────────────────
-module.exports = { httpGet, httpGetBytes, httpListen };
+module.exports = { httpGet, httpGetBytes, httpListen, httpRequest, httpRequestBytes, fetchWithTimeout, urlEncode };
