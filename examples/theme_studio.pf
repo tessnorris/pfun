@@ -1,0 +1,730 @@
+/*
+  theme_studio.pf — client-only semantic web theme selector.
+
+  The user edits a semantic Theme record. Pure functions translate that theme
+  into live preview styles and generated CSS. No backend, no protocol, no DB.
+*/
+
+import * from "$PFUN_HOME/lib/htmllib";
+import * from "$PFUN_HOME/lib/viewlib";
+import * from "$PFUN_HOME/lib/tea";
+
+// ── Types ────────────────────────────────────────────────────────────────────
+
+type Theme = {
+  name,
+
+  headingFont,
+  bodyFont,
+  monoFont,
+
+  background,
+  surface,
+  primarySurface,
+
+  text,
+  mutedText,
+
+  primary,
+  secondary,
+  accent,
+
+  success,
+  warning,
+  danger,
+
+  border,
+
+  radius,
+  spacing,
+  shadow,
+  fontSize
+}
+
+type Model = { theme, previewMode }
+type UpdateResult = { model, cmd }
+
+type ThemeField = {
+  | FieldName
+  | FieldHeadingFont
+  | FieldBodyFont
+  | FieldMonoFont
+  | FieldBackground
+  | FieldSurface
+  | FieldPrimarySurface
+  | FieldText
+  | FieldMutedText
+  | FieldPrimary
+  | FieldSecondary
+  | FieldAccent
+  | FieldSuccess
+  | FieldWarning
+  | FieldDanger
+  | FieldBorder
+  | FieldRadius
+  | FieldSpacing
+  | FieldShadow
+  | FieldFontSize
+}
+
+type Msg = {
+  | SetTheme : field, value
+  | SetPreviewMode : value
+  | ApplyPreset : value
+  | ResetTheme
+}
+
+// ── Presets ──────────────────────────────────────────────────────────────────
+
+function lightTheme() {
+  Theme {
+    "Fresh Linen",
+    "Georgia, serif",
+    "Inter, system-ui, sans-serif",
+    "Courier New, monospace",
+    "#f8fafc",
+    "#ffffff",
+    "#eff6ff",
+    "#0f172a",
+    "#64748b",
+    "#2563eb",
+    "#7c3aed",
+    "#f97316",
+    "#16a34a",
+    "#f59e0b",
+    "#dc2626",
+    "#cbd5e1",
+    "14",
+    "16",
+    "20",
+    "16"
+  };
+}
+
+function darkTheme() {
+  Theme {
+    "Neon Dusk",
+    "Trebuchet MS, system-ui, sans-serif",
+    "Inter, system-ui, sans-serif",
+    "Courier New, monospace",
+    "#0f172a",
+    "#111827",
+    "#1f2937",
+    "#f8fafc",
+    "#94a3b8",
+    "#a855f7",
+    "#06b6d4",
+    "#facc15",
+    "#22c55e",
+    "#f59e0b",
+    "#f87171",
+    "#334155",
+    "18",
+    "18",
+    "36",
+    "16"
+  };
+}
+
+function warmTheme() {
+  Theme {
+    "Warm Clay",
+    "Palatino, Georgia, serif",
+    "system-ui, sans-serif",
+    "Courier New, monospace",
+    "#fff7ed",
+    "#fffbeb",
+    "#fed7aa",
+    "#431407",
+    "#9a3412",
+    "#ea580c",
+    "#b45309",
+    "#db2777",
+    "#15803d",
+    "#ca8a04",
+    "#dc2626",
+    "#fdba74",
+    "20",
+    "18",
+    "22",
+    "17"
+  };
+}
+
+function coolTheme() {
+  Theme {
+    "Cool Current",
+    "Inter, system-ui, sans-serif",
+    "system-ui, sans-serif",
+    "Courier New, monospace",
+    "#ecfeff",
+    "#ffffff",
+    "#cffafe",
+    "#164e63",
+    "#0891b2",
+    "#0284c7",
+    "#0d9488",
+    "#6366f1",
+    "#059669",
+    "#d97706",
+    "#e11d48",
+    "#a5f3fc",
+    "16",
+    "17",
+    "18",
+    "16"
+  };
+}
+
+function highContrastTheme() {
+  Theme {
+    "Sharp Contrast",
+    "Verdana, system-ui, sans-serif",
+    "Arial, system-ui, sans-serif",
+    "Courier New, monospace",
+    "#000000",
+    "#111111",
+    "#1f1f1f",
+    "#ffffff",
+    "#d4d4d4",
+    "#ffff00",
+    "#00ffff",
+    "#ff00ff",
+    "#00ff66",
+    "#ffcc00",
+    "#ff3366",
+    "#ffffff",
+    "6",
+    "18",
+    "0",
+    "18"
+  };
+}
+
+function springTheme() {
+  Theme {
+    "Spring Bloom",
+    "Georgia, serif",
+    "Inter, system-ui, sans-serif",
+    "Courier New, monospace",
+    "#f7fee7",
+    "#ffffff",
+    "#dcfce7",
+    "#14532d",
+    "#4d7c0f",
+    "#65a30d",
+    "#16a34a",
+    "#f472b6",
+    "#22c55e",
+    "#eab308",
+    "#e11d48",
+    "#bbf7d0",
+    "18",
+    "18",
+    "20",
+    "16"
+  };
+}
+
+function summerTheme() {
+  Theme {
+    "Summer Citrus",
+    "Trebuchet MS, system-ui, sans-serif",
+    "system-ui, sans-serif",
+    "Courier New, monospace",
+    "#fff7ed",
+    "#fffbeb",
+    "#fed7aa",
+    "#7c2d12",
+    "#c2410c",
+    "#f97316",
+    "#06b6d4",
+    "#facc15",
+    "#16a34a",
+    "#f59e0b",
+    "#dc2626",
+    "#fdba74",
+    "22",
+    "20",
+    "24",
+    "17"
+  };
+}
+
+function fallTheme() {
+  Theme {
+    "Autumn Library",
+    "Palatino, Georgia, serif",
+    "Georgia, serif",
+    "Courier New, monospace",
+    "#292524",
+    "#44403c",
+    "#57534e",
+    "#fafaf9",
+    "#d6d3d1",
+    "#ea580c",
+    "#b45309",
+    "#dc2626",
+    "#84cc16",
+    "#f59e0b",
+    "#f87171",
+    "#78716c",
+    "16",
+    "18",
+    "28",
+    "17"
+  };
+}
+
+function winterTheme() {
+  Theme {
+    "Winter Glass",
+    "Inter, system-ui, sans-serif",
+    "system-ui, sans-serif",
+    "Courier New, monospace",
+    "#f8fafc",
+    "#ffffff",
+    "#e0f2fe",
+    "#0f172a",
+    "#64748b",
+    "#0284c7",
+    "#6366f1",
+    "#38bdf8",
+    "#059669",
+    "#ca8a04",
+    "#dc2626",
+    "#bae6fd",
+    "24",
+    "18",
+    "32",
+    "16"
+  };
+}
+
+function presetTheme(name) {
+  if name == "light" then lightTheme()
+  else if name == "dark" then darkTheme()
+  else if name == "warm" then warmTheme()
+  else if name == "cool" then coolTheme()
+  else if name == "contrast" then highContrastTheme()
+  else if name == "spring" then springTheme()
+  else if name == "summer" then summerTheme()
+  else if name == "fall" then fallTheme()
+  else if name == "winter" then winterTheme()
+  else lightTheme();
+}
+
+// ── Theme update ─────────────────────────────────────────────────────────────
+
+function setTheme(field, value, t) {
+  match field with
+  | FieldName -> Theme { value, t.headingFont, t.bodyFont, t.monoFont, t.background, t.surface, t.primarySurface, t.text, t.mutedText, t.primary, t.secondary, t.accent, t.success, t.warning, t.danger, t.border, t.radius, t.spacing, t.shadow, t.fontSize }
+  | FieldHeadingFont -> Theme { t.name, value, t.bodyFont, t.monoFont, t.background, t.surface, t.primarySurface, t.text, t.mutedText, t.primary, t.secondary, t.accent, t.success, t.warning, t.danger, t.border, t.radius, t.spacing, t.shadow, t.fontSize }
+  | FieldBodyFont -> Theme { t.name, t.headingFont, value, t.monoFont, t.background, t.surface, t.primarySurface, t.text, t.mutedText, t.primary, t.secondary, t.accent, t.success, t.warning, t.danger, t.border, t.radius, t.spacing, t.shadow, t.fontSize }
+  | FieldMonoFont -> Theme { t.name, t.headingFont, t.bodyFont, value, t.background, t.surface, t.primarySurface, t.text, t.mutedText, t.primary, t.secondary, t.accent, t.success, t.warning, t.danger, t.border, t.radius, t.spacing, t.shadow, t.fontSize }
+  | FieldBackground -> Theme { t.name, t.headingFont, t.bodyFont, t.monoFont, value, t.surface, t.primarySurface, t.text, t.mutedText, t.primary, t.secondary, t.accent, t.success, t.warning, t.danger, t.border, t.radius, t.spacing, t.shadow, t.fontSize }
+  | FieldSurface -> Theme { t.name, t.headingFont, t.bodyFont, t.monoFont, t.background, value, t.primarySurface, t.text, t.mutedText, t.primary, t.secondary, t.accent, t.success, t.warning, t.danger, t.border, t.radius, t.spacing, t.shadow, t.fontSize }
+  | FieldPrimarySurface -> Theme { t.name, t.headingFont, t.bodyFont, t.monoFont, t.background, t.surface, value, t.text, t.mutedText, t.primary, t.secondary, t.accent, t.success, t.warning, t.danger, t.border, t.radius, t.spacing, t.shadow, t.fontSize }
+  | FieldText -> Theme { t.name, t.headingFont, t.bodyFont, t.monoFont, t.background, t.surface, t.primarySurface, value, t.mutedText, t.primary, t.secondary, t.accent, t.success, t.warning, t.danger, t.border, t.radius, t.spacing, t.shadow, t.fontSize }
+  | FieldMutedText -> Theme { t.name, t.headingFont, t.bodyFont, t.monoFont, t.background, t.surface, t.primarySurface, t.text, value, t.primary, t.secondary, t.accent, t.success, t.warning, t.danger, t.border, t.radius, t.spacing, t.shadow, t.fontSize }
+  | FieldPrimary -> Theme { t.name, t.headingFont, t.bodyFont, t.monoFont, t.background, t.surface, t.primarySurface, t.text, t.mutedText, value, t.secondary, t.accent, t.success, t.warning, t.danger, t.border, t.radius, t.spacing, t.shadow, t.fontSize }
+  | FieldSecondary -> Theme { t.name, t.headingFont, t.bodyFont, t.monoFont, t.background, t.surface, t.primarySurface, t.text, t.mutedText, t.primary, value, t.accent, t.success, t.warning, t.danger, t.border, t.radius, t.spacing, t.shadow, t.fontSize }
+  | FieldAccent -> Theme { t.name, t.headingFont, t.bodyFont, t.monoFont, t.background, t.surface, t.primarySurface, t.text, t.mutedText, t.primary, t.secondary, value, t.success, t.warning, t.danger, t.border, t.radius, t.spacing, t.shadow, t.fontSize }
+  | FieldSuccess -> Theme { t.name, t.headingFont, t.bodyFont, t.monoFont, t.background, t.surface, t.primarySurface, t.text, t.mutedText, t.primary, t.secondary, t.accent, value, t.warning, t.danger, t.border, t.radius, t.spacing, t.shadow, t.fontSize }
+  | FieldWarning -> Theme { t.name, t.headingFont, t.bodyFont, t.monoFont, t.background, t.surface, t.primarySurface, t.text, t.mutedText, t.primary, t.secondary, t.accent, t.success, value, t.danger, t.border, t.radius, t.spacing, t.shadow, t.fontSize }
+  | FieldDanger -> Theme { t.name, t.headingFont, t.bodyFont, t.monoFont, t.background, t.surface, t.primarySurface, t.text, t.mutedText, t.primary, t.secondary, t.accent, t.success, t.warning, value, t.border, t.radius, t.spacing, t.shadow, t.fontSize }
+  | FieldBorder -> Theme { t.name, t.headingFont, t.bodyFont, t.monoFont, t.background, t.surface, t.primarySurface, t.text, t.mutedText, t.primary, t.secondary, t.accent, t.success, t.warning, t.danger, value, t.radius, t.spacing, t.shadow, t.fontSize }
+  | FieldRadius -> Theme { t.name, t.headingFont, t.bodyFont, t.monoFont, t.background, t.surface, t.primarySurface, t.text, t.mutedText, t.primary, t.secondary, t.accent, t.success, t.warning, t.danger, t.border, value, t.spacing, t.shadow, t.fontSize }
+  | FieldSpacing -> Theme { t.name, t.headingFont, t.bodyFont, t.monoFont, t.background, t.surface, t.primarySurface, t.text, t.mutedText, t.primary, t.secondary, t.accent, t.success, t.warning, t.danger, t.border, t.radius, value, t.shadow, t.fontSize }
+  | FieldShadow -> Theme { t.name, t.headingFont, t.bodyFont, t.monoFont, t.background, t.surface, t.primarySurface, t.text, t.mutedText, t.primary, t.secondary, t.accent, t.success, t.warning, t.danger, t.border, t.radius, t.spacing, value, t.fontSize }
+  | FieldFontSize -> Theme { t.name, t.headingFont, t.bodyFont, t.monoFont, t.background, t.surface, t.primarySurface, t.text, t.mutedText, t.primary, t.secondary, t.accent, t.success, t.warning, t.danger, t.border, t.radius, t.spacing, t.shadow, value };
+}
+
+function noCmd(model) { UpdateResult { model, cmdNone() }; }
+
+function update(msg, model) {
+  match msg with
+  | SetTheme s -> noCmd(Model { setTheme(s.field, s.value, model.theme), model.previewMode })
+  | SetPreviewMode s -> noCmd(Model { model.theme, s.value })
+  | ApplyPreset p -> noCmd(Model { presetTheme(p.value), model.previewMode })
+  | ResetTheme -> noCmd(Model { lightTheme(), model.previewMode });
+}
+
+// ── CSS / style helpers ──────────────────────────────────────────────────────
+
+function px(value) { value + "px"; }
+function cssLine(name, value) { "  --" + name + ": " + value + ";\n"; }
+function stylePair(name, value) { Pair { name, value }; }
+function joinStyles(styles) { join(map(fn p => p.key + ": " + p.value, styles), "; "); }
+
+function shadowCss(t) {
+  if t.shadow == "0" then "none"
+  else "0 " + px(t.shadow) + " " + px(toInt(toFloat(t.shadow)) * 2) + " rgba(0,0,0,0.18)";
+}
+
+function appShellStyle(t) {
+  joinStyles([
+    stylePair("min-height", "100vh"),
+    stylePair("background", t.background),
+    stylePair("color", t.text),
+    stylePair("font-family", t.bodyFont),
+    stylePair("font-size", px(t.fontSize)),
+    stylePair("padding", "24px")
+  ]);
+}
+
+function layoutStyle() {
+  joinStyles([
+    stylePair("display", "grid"),
+    stylePair("grid-template-columns", "360px 1fr"),
+    stylePair("gap", "20px"),
+    stylePair("align-items", "start")
+  ]);
+}
+
+function panelStyle(t) {
+  joinStyles([
+    stylePair("background", t.surface),
+    stylePair("color", t.text),
+    stylePair("border", "1px solid " + t.border),
+    stylePair("border-radius", px(t.radius)),
+    stylePair("padding", px(t.spacing)),
+    stylePair("box-shadow", shadowCss(t))
+  ]);
+}
+
+function softPanelStyle(t) {
+  joinStyles([
+    stylePair("background", t.primarySurface),
+    stylePair("color", t.text),
+    stylePair("border", "1px solid " + t.border),
+    stylePair("border-radius", px(t.radius)),
+    stylePair("padding", px(t.spacing))
+  ]);
+}
+
+function headingStyle(t) {
+  joinStyles([
+    stylePair("font-family", t.headingFont),
+    stylePair("color", t.text),
+    stylePair("margin", "0 0 8px 0")
+  ]);
+}
+
+function mutedStyle(t) {
+  joinStyles([
+    stylePair("color", t.mutedText),
+    stylePair("margin", "0")
+  ]);
+}
+
+function fieldStyle() {
+  joinStyles([
+    stylePair("display", "grid"),
+    stylePair("gap", "6px"),
+    stylePair("margin-bottom", "12px")
+  ]);
+}
+
+function rowStyle() {
+  joinStyles([
+    stylePair("display", "flex"),
+    stylePair("gap", "8px"),
+    stylePair("align-items", "center"),
+    stylePair("flex-wrap", "wrap")
+  ]);
+}
+
+function buttonStyle(t, bg, fg) {
+  joinStyles([
+    stylePair("background", bg),
+    stylePair("color", fg),
+    stylePair("border", "1px solid " + bg),
+    stylePair("border-radius", px(t.radius)),
+    stylePair("padding", "10px 14px"),
+    stylePair("font-family", t.bodyFont),
+    stylePair("font-weight", "700"),
+    stylePair("display", "inline-block"),
+    stylePair("margin-right", "8px")
+  ]);
+}
+
+function inputPreviewStyle(t) {
+  joinStyles([
+    stylePair("background", t.background),
+    stylePair("color", t.text),
+    stylePair("border", "1px solid " + t.border),
+    stylePair("border-radius", px(t.radius)),
+    stylePair("padding", "10px 12px"),
+    stylePair("font-family", t.bodyFont)
+  ]);
+}
+
+function alertStyle(t, bg) {
+  joinStyles([
+    stylePair("background", bg),
+    stylePair("color", t.text),
+    stylePair("border", "1px solid " + t.border),
+    stylePair("border-radius", px(t.radius)),
+    stylePair("padding", "12px 14px"),
+    stylePair("margin-top", "12px")
+  ]);
+}
+
+function codeStyle(t) {
+  joinStyles([
+    stylePair("background", t.background),
+    stylePair("color", t.text),
+    stylePair("border", "1px solid " + t.border),
+    stylePair("border-radius", px(t.radius)),
+    stylePair("padding", "12px"),
+    stylePair("font-family", t.monoFont),
+    stylePair("white-space", "pre-wrap"),
+    stylePair("overflow", "auto")
+  ]);
+}
+
+function cssOutput(t) {
+  ":root {\n" +
+  cssLine("theme-name", "\"" + t.name + "\"") +
+  cssLine("font-heading", t.headingFont) +
+  cssLine("font-body", t.bodyFont) +
+  cssLine("font-mono", t.monoFont) +
+  "\n" +
+  cssLine("color-background", t.background) +
+  cssLine("color-surface", t.surface) +
+  cssLine("color-primary-surface", t.primarySurface) +
+  cssLine("color-text", t.text) +
+  cssLine("color-muted-text", t.mutedText) +
+  cssLine("color-primary", t.primary) +
+  cssLine("color-secondary", t.secondary) +
+  cssLine("color-accent", t.accent) +
+  cssLine("color-success", t.success) +
+  cssLine("color-warning", t.warning) +
+  cssLine("color-danger", t.danger) +
+  cssLine("color-border", t.border) +
+  "\n" +
+  cssLine("radius", px(t.radius)) +
+  cssLine("spacing", px(t.spacing)) +
+  cssLine("shadow", shadowCss(t)) +
+  cssLine("font-size-base", px(t.fontSize)) +
+  "}\n\n" +
+
+  "body {\n" +
+  "  margin: 0;\n" +
+  "  background: var(--color-background);\n" +
+  "  color: var(--color-text);\n" +
+  "  font-family: var(--font-body);\n" +
+  "  font-size: var(--font-size-base);\n" +
+  "}\n\n" +
+
+  "h1, h2, h3 {\n" +
+  "  font-family: var(--font-heading);\n" +
+  "}\n\n" +
+
+  ".card {\n" +
+  "  background: var(--color-surface);\n" +
+  "  border: 1px solid var(--color-border);\n" +
+  "  border-radius: var(--radius);\n" +
+  "  padding: var(--spacing);\n" +
+  "  box-shadow: var(--shadow);\n" +
+  "}\n\n" +
+
+  ".button-primary {\n" +
+  "  background: var(--color-primary);\n" +
+  "  color: var(--color-background);\n" +
+  "  border: 1px solid var(--color-primary);\n" +
+  "  border-radius: var(--radius);\n" +
+  "  padding: 0.65rem 0.9rem;\n" +
+  "  font-weight: 700;\n" +
+  "}\n";
+}
+
+// ── View helpers ─────────────────────────────────────────────────────────────
+
+function attrsStyle(style) { Attrs { None, [], Some { style } }; }
+function elStyle(tag, style, children) { VEl { tag, attrsStyle(style), children }; }
+function divStyle(style, children) { elStyle("div", style, children); }
+function spanStyle(style, children) { elStyle("span", style, children); }
+function pStyle(style, textValue) { elStyle("p", style, [vtext(textValue)]); }
+function hStyle(level, style, textValue) { elStyle("h" + __str__(level), style, [vtext(textValue)]); }
+function raw(html) { vcontent(RawHtml { html }); }
+
+function msg(field) { fn value => SetTheme { field, value }; }
+
+function labeled(label, control) {
+  divStyle(fieldStyle(), [
+    elStyle("label", mutedStyle(lightTheme()), [vtext(label)]),
+    control
+  ]);
+}
+
+function colorField(label, name, field, value) {
+  divStyle(fieldStyle(), [
+    elStyle("label", joinStyles([stylePair("font-weight", "700")]), [vtext(label + "  " + value)]),
+    vcolor(name, value, msg(field))
+  ]);
+}
+
+function textField(label, name, field, value, placeholder) {
+  divStyle(fieldStyle(), [
+    elStyle("label", joinStyles([stylePair("font-weight", "700")]), [vtext(label)]),
+    vinput(name, value, placeholder, msg(field))
+  ]);
+}
+
+function rangeField(label, name, field, value, min, max, step) {
+  divStyle(fieldStyle(), [
+    elStyle("label", joinStyles([stylePair("font-weight", "700")]), [vtext(label + ": " + value + "px")]),
+    vrange(name, value, min, max, step, msg(field))
+  ]);
+}
+
+function fontChoices() {
+  [
+    choice("Inter, system-ui, sans-serif", "Inter / system"),
+    choice("system-ui, sans-serif", "System UI"),
+    choice("Arial, system-ui, sans-serif", "Arial"),
+    choice("Verdana, system-ui, sans-serif", "Verdana"),
+    choice("Trebuchet MS, system-ui, sans-serif", "Trebuchet"),
+    choice("Georgia, serif", "Georgia"),
+    choice("Palatino, Georgia, serif", "Palatino"),
+    choice("Courier New, monospace", "Courier New")
+  ];
+}
+
+function fontField(label, name, field, value) {
+  divStyle(fieldStyle(), [
+    elStyle("label", joinStyles([stylePair("font-weight", "700")]), [vtext(label)]),
+    vselect(name, fontChoices(), value, msg(field))
+  ]);
+}
+
+function presetButton(label, value) {
+  vbutton(label, ApplyPreset { value });
+}
+
+function editorPanel(t) {
+  divStyle(panelStyle(t), [
+    hStyle(2, headingStyle(t), "Theme Studio"),
+    pStyle(mutedStyle(t), "Edit the meaning of your theme. The CSS is generated."),
+
+    hStyle(3, headingStyle(t), "Basics"),
+    textField("Theme name", "theme-name", FieldName, t.name, "My Theme"),
+    fontField("Heading font", "heading-font", FieldHeadingFont, t.headingFont),
+    fontField("Body font", "body-font", FieldBodyFont, t.bodyFont),
+    fontField("Mono font", "mono-font", FieldMonoFont, t.monoFont),
+
+    hStyle(3, headingStyle(t), "Colors"),
+    colorField("Background", "background", FieldBackground, t.background),
+    colorField("Surface", "surface", FieldSurface, t.surface),
+    colorField("Primary surface", "primary-surface", FieldPrimarySurface, t.primarySurface),
+    colorField("Text", "text", FieldText, t.text),
+    colorField("Muted text", "muted-text", FieldMutedText, t.mutedText),
+    colorField("Primary", "primary", FieldPrimary, t.primary),
+    colorField("Secondary", "secondary", FieldSecondary, t.secondary),
+    colorField("Accent", "accent", FieldAccent, t.accent),
+    colorField("Success", "success", FieldSuccess, t.success),
+    colorField("Warning", "warning", FieldWarning, t.warning),
+    colorField("Danger", "danger", FieldDanger, t.danger),
+    colorField("Border", "border", FieldBorder, t.border),
+
+    hStyle(3, headingStyle(t), "Shape"),
+    rangeField("Radius", "radius", FieldRadius, t.radius, "0", "36", "1"),
+    rangeField("Spacing", "spacing", FieldSpacing, t.spacing, "8", "32", "1"),
+    rangeField("Shadow", "shadow", FieldShadow, t.shadow, "0", "48", "1"),
+    rangeField("Base font size", "font-size", FieldFontSize, t.fontSize, "12", "22", "1"),
+
+    hStyle(3, headingStyle(t), "Presets"),
+    divStyle(rowStyle(), [
+      presetButton("Light", "light"),
+      presetButton("Dark", "dark"),
+      presetButton("Warm", "warm"),
+      presetButton("Cool", "cool"),
+      presetButton("Contrast", "contrast"),
+      presetButton("Spring", "spring"),
+      presetButton("Summer", "summer"),
+      presetButton("Fall", "fall"),
+      presetButton("Winter", "winter"),
+      vbutton("Reset", ResetTheme)
+    ])
+  ]);
+}
+
+function previewNav(t) {
+  divStyle(joinStyles([
+    stylePair("background", t.primary),
+    stylePair("color", t.background),
+    stylePair("border-radius", px(t.radius)),
+    stylePair("padding", "12px 16px"),
+    stylePair("display", "flex"),
+    stylePair("justify-content", "space-between"),
+    stylePair("align-items", "center"),
+    stylePair("margin-bottom", "16px")
+  ]), [
+    spanStyle(joinStyles([stylePair("font-family", t.headingFont), stylePair("font-weight", "800")]), [vtext(t.name)]),
+    spanStyle(joinStyles([stylePair("opacity", "0.85")]), [vtext("Home · Docs · Contact")])
+  ]);
+}
+
+function previewPanel(t) {
+  divStyle(panelStyle(t), [
+    previewNav(t),
+    hStyle(1, headingStyle(t), "A semantic theme preview"),
+    pStyle(mutedStyle(t), "This preview shows how your theme feels across common UI pieces."),
+
+    divStyle(softPanelStyle(t), [
+      hStyle(2, headingStyle(t), "Card heading"),
+      pStyle(mutedStyle(t), "Cards use surface color, border color, radius, spacing, and shadow."),
+      divStyle(rowStyle(), [
+        spanStyle(buttonStyle(t, t.primary, t.background), [vtext("Primary")]),
+        spanStyle(buttonStyle(t, t.secondary, t.background), [vtext("Secondary")]),
+        spanStyle(buttonStyle(t, t.accent, t.background), [vtext("Accent")])
+      ])
+    ]),
+
+    divStyle(joinStyles([stylePair("height", "16px")]), []),
+
+    divStyle(softPanelStyle(t), [
+      hStyle(3, headingStyle(t), "Form sample"),
+      raw("<input style=\"" + escapeAttr(inputPreviewStyle(t)) + "\" value=\"Example input\">"),
+      raw("<br><br>"),
+      raw("<select style=\"" + escapeAttr(inputPreviewStyle(t)) + "\"><option>Option one</option><option>Option two</option></select>")
+    ]),
+
+    divStyle(alertStyle(t, t.success), [vtext("Success: the theme feels consistent.")]),
+    divStyle(alertStyle(t, t.warning), [vtext("Warning: check contrast before production.")]),
+    divStyle(alertStyle(t, t.danger), [vtext("Danger: destructive actions should stand out.")]),
+
+    divStyle(joinStyles([stylePair("height", "16px")]), []),
+
+    divStyle(codeStyle(t), [vtext("const theme = \"" + t.name + "\";\nbutton.className = \"button-primary\";")])
+  ]);
+}
+
+function cssPanel(t) {
+  divStyle(panelStyle(t), [
+    hStyle(2, headingStyle(t), "Generated CSS"),
+    pStyle(mutedStyle(t), "Copy this into a stylesheet as a starting point."),
+    divStyle(codeStyle(t), [vtext(cssOutput(t))])
+  ]);
+}
+
+function view(model) {
+  let t = model.theme;
+  divStyle(appShellStyle(t), [
+    divStyle(layoutStyle(), [
+      editorPanel(t),
+      divStyle(joinStyles([stylePair("display", "grid"), stylePair("gap", "20px")]), [
+        previewPanel(t),
+        cssPanel(t)
+      ])
+    ])
+  ]);
+}
+
+function init() {
+  UpdateResult { Model { springTheme(), "components" }, cmdNone() };
+}
+
+run(init(), view, update);
