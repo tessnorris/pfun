@@ -14,6 +14,13 @@ import * from "./htmllib";
 
 // ── View ─────────────────────────────────────────────────────────────────────
 
+export type OptionButtonState = {
+  | OptionAvailable
+  | OptionSelected
+  | OptionDisabled
+  | OptionLocked : reason
+}
+
 export type View = {
   | VText : value
   | VEl : tag, attrs, children
@@ -22,6 +29,11 @@ export type View = {
   | VFieldBlock : title, fields
   | VDefinition : term, description
   | VDefinitionList : title, definitions
+  | VOptionButton : value, label, icon
+  | VOptionButtonGroup : name, options, selected, onSelect
+  | VToggleButtonGroup : name, options, selected, onToggle
+  | VChoiceButton : value, label, icon, state
+  | VChoiceButtonGroup : name, options, onSelect
   | VButton : label, attrs, onClick
   | VTextInput : name, value, placeholder, onInput
   | VCheckbox : name, checked, label, onToggle
@@ -73,6 +85,26 @@ export function vdefinition(term, description) {
 
 export function vdefinitionList(title, definitions) {
   VDefinitionList { title, definitions };
+}
+
+export function voption(value, label, icon) {
+  VOptionButton { value, label, icon };
+}
+
+export function voptionButtonGroup(name, options, selected, onSelect) {
+  VOptionButtonGroup { name, options, selected, onSelect };
+}
+
+export function vtoggleButtonGroup(name, options, selected, onToggle) {
+  VToggleButtonGroup { name, options, selected, onToggle };
+}
+
+export function vchoice(value, label, icon, state) {
+  VChoiceButton { value, label, icon, state };
+}
+
+export function vchoiceGroup(name, options, onSelect) {
+  VChoiceButtonGroup { name, options, onSelect };
 }
 
 export function vp(children) {
@@ -154,6 +186,103 @@ function joinedAccept(values) {
   join(values, ",");
 }
 
+
+function optionSelected(value, selected) {
+  value == selected;
+}
+
+function toggleSelected(value, selected) {
+  match find(selected, value) with
+  | Some _ -> true
+  | None -> false;
+}
+
+function selectedClass(isSelected) {
+  if isSelected then " pf-option-selected" else "";
+}
+
+function renderOptionButton(name, selected, option, prefix) {
+  let isSelected = optionSelected(option.value, selected);
+  "<button class=\"pf-option-button" + selectedClass(isSelected) + "\" data-pfun-click=\"" + prefix + "option_" + escapeAttr(name) + "\">" +
+  "<span class=\"pf-option-icon\">" + escapeHtml(option.icon) + "</span>" +
+  "<span class=\"pf-option-label\">" + escapeHtml(option.label) + "</span>" +
+  "</button>\n";
+}
+
+
+export function optionChoiceClickable(option) {
+  match option.state with
+  | OptionAvailable -> true
+  | OptionSelected -> true
+  | OptionDisabled -> false
+  | OptionLocked _ -> false;
+}
+
+function optionStateClass(state) {
+  match state with
+  | OptionAvailable -> ""
+  | OptionSelected -> " pf-option-selected"
+  | OptionDisabled -> " pf-option-disabled"
+  | OptionLocked _ -> " pf-option-selected pf-option-locked";
+}
+
+function optionStateTitle(state) {
+  match state with
+  | OptionAvailable -> ""
+  | OptionSelected -> ""
+  | OptionDisabled -> " title=\"Not available for this choice\""
+  | OptionLocked locked -> " title=\"Locked by " + escapeAttr(locked.reason) + "\"";
+}
+
+function optionStateCaption(state) {
+  match state with
+  | OptionAvailable -> ""
+  | OptionSelected -> ""
+  | OptionDisabled -> ""
+  | OptionLocked locked -> "<span class=\"pf-option-caption\">" + escapeHtml(locked.reason) + "</span>";
+}
+
+function renderStaticChoiceButton(option) {
+  "<span class=\"pf-option-button" + optionStateClass(option.state) + "\">" +
+  "<span class=\"pf-option-icon\">" + escapeHtml(option.icon) + "</span>" +
+  "<span class=\"pf-option-label\">" + escapeHtml(option.label) + "</span>" +
+  optionStateCaption(option.state) +
+  "</span>\n";
+}
+
+function choiceButtonData(name, prefix, clickable) {
+  if clickable then
+    " data-pfun-click=\"" + prefix + "choice_" + escapeAttr(name) + "\""
+  else
+    "";
+}
+
+function choiceButtonDisabled(clickable) {
+  if clickable then
+    ""
+  else
+    " disabled";
+}
+
+function renderChoiceButton(name, option, prefix) {
+  let clickable = optionChoiceClickable(option);
+  let data = choiceButtonData(name, prefix, clickable);
+  let disabled = choiceButtonDisabled(clickable);
+  "<button class=\"pf-option-button" + optionStateClass(option.state) + "\"" + data + disabled + optionStateTitle(option.state) + ">" +
+  "<span class=\"pf-option-icon\">" + escapeHtml(option.icon) + "</span>" +
+  "<span class=\"pf-option-label\">" + escapeHtml(option.label) + "</span>" +
+  optionStateCaption(option.state) +
+  "</button>\n";
+}
+
+function renderToggleButton(name, selected, option, prefix) {
+  let isSelected = toggleSelected(option.value, selected);
+  "<button class=\"pf-option-button" + selectedClass(isSelected) + "\" data-pfun-click=\"" + prefix + "toggle_" + escapeAttr(name) + "\">" +
+  "<span class=\"pf-option-icon\">" + escapeHtml(option.icon) + "</span>" +
+  "<span class=\"pf-option-label\">" + escapeHtml(option.label) + "</span>" +
+  "</button>\n";
+}
+
 // ── Rendering ────────────────────────────────────────────────────────────────
 
 export function renderViews(views, prefix) {
@@ -181,6 +310,21 @@ export function renderView(view, prefix) {
     }
   | VDefinitionList l -> {
       "<section class=\"pf-definition-list\"><h3>" + escapeHtml(l.title) + "</h3>" + renderViews(l.definitions, prefix) + "</section>\n";
+    }
+  | VOptionButton o -> {
+      "<span class=\"pf-option-button\"><span class=\"pf-option-icon\">" + escapeHtml(o.icon) + "</span><span class=\"pf-option-label\">" + escapeHtml(o.label) + "</span></span>\n";
+    }
+  | VOptionButtonGroup g -> {
+      "<div class=\"pf-option-group\" role=\"radiogroup\">" + join(map(fn o => renderOptionButton(g.name, g.selected, o, prefix), g.options), "") + "</div>\n";
+    }
+  | VToggleButtonGroup g -> {
+      "<div class=\"pf-option-group\">" + join(map(fn o => renderToggleButton(g.name, g.selected, o, prefix), g.options), "") + "</div>\n";
+    }
+  | VChoiceButton o -> {
+      renderStaticChoiceButton(o);
+    }
+  | VChoiceButtonGroup g -> {
+      "<div class=\"pf-option-group pf-choice-group\">" + join(map(fn o => renderChoiceButton(g.name, o, prefix), g.options), "") + "</div>\n";
     }
   | VButton b -> {
       let a = attrsHtml(b.attrs);

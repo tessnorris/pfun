@@ -1,0 +1,258 @@
+// crypto.pf — Cryptography utilities for Pfun.
+//
+// Import with: import * from "$PFUN_HOME/lib/crypto.pf";
+// Also import: import * from "foreign"; — to match on FOk / FErr results.
+//
+// ─── API ─────────────────────────────────────────────────────────────────────
+//
+//   hashPassword(pw)                    Str
+//     Hash a plaintext password for storage using scrypt.
+//     Returns an opaque string containing the algorithm, parameters,
+//     salt, and hash — suitable for storing in a database.
+//     Never returns the same string twice (random salt each call).
+//
+//   verifyPassword(pw, hash)            Bool
+//     Return true if pw matches the stored hash produced by hashPassword.
+//     Uses timing-safe comparison to prevent timing attacks.
+//     Returns false (not an error) for malformed hash strings.
+//
+//   aesGcmEncrypt(keyBytes, plaintext, aad)   FOk { List<Byte> }  |  FErr
+//     Encrypt plaintext with AES-GCM using keyBytes (16, 24, or 32 bytes
+//     for AES-128, AES-192, or AES-256 respectively).
+//     aad (additional authenticated data) is authenticated but not encrypted;
+//     pass [] for no AAD.
+//     Returns a box as List<Byte>: IV (12 bytes) ++ auth tag (16 bytes) ++
+//     ciphertext.  The box is self-contained; keep keyBytes secret separately.
+//
+//   aesGcmDecrypt(keyBytes, box, aad)   FOk { List<Byte> }  |  FErr
+//     Decrypt and verify a box produced by aesGcmEncrypt.
+//     Returns FErr if the key is wrong, the box is tampered, or the AAD
+//     does not match.  The FErr message is deliberately vague to avoid
+//     leaking information to attackers.
+//
+// ─── Design notes ────────────────────────────────────────────────────────────
+//
+// hashPassword uses scrypt (RFC 7914) with parameters N=16384, r=8, p=1,
+// a 16-byte random salt, and a 64-byte derived key.  The stored format is:
+//   "scrypt:<N>:<r>:<p>:<salt_base64url>:<hash_base64url>"
+// which is self-describing so future parameter changes don't break old hashes.
+//
+// aesGcmEncrypt generates a fresh 96-bit (12-byte) random IV for every call
+// using crypto.randomBytes.  Never reuse a (key, IV) pair with AES-GCM.
+//
+// Pfun Byte values are PfunByte objects in the interpreter rather than plain
+// JS numbers, so every Buffer.from() call uses a helper that unwraps .value
+// if present.  This matches the approach in compress.pf.
+
+import * from "foreign";
+
+// ─── Buffer helpers ───────────────────────────────────────────────────────────
+
+// cryptoBytesToBuf(bytes) — convert Pfun List<Byte> to a Node.js Buffer.
+proc cryptoBytesToBuf(bytes) {
+  match foreignGlobal("Function") with
+  | FErr e -> FErr { e.kind, e.message }
+  | FOk fc -> {
+      let body = "return Buffer.from(arguments[0].map(function(b){return typeof b==='number'?b:(b&&b.value!==undefined?b.value:Number(b));}));";
+      match foreignNew(fc.value, ["", body]) with
+      | FErr e -> FErr { e.kind, e.message }
+      | FOk wrapper -> foreignInvoke(wrapper.value, [bytes]);
+    };
+}
+
+// cryptoBufToBytes(buf) — convert a Buffer handle to Pfun List<Byte>.
+proc cryptoBufToBytes(bufHandle) {
+  match foreignGlobal("Array") with
+  | FErr e -> FErr { e.kind, e.message }
+  | FOk arr -> {
+      match foreignCall(arr.value, "from", [bufHandle]) with
+      | FErr e -> FErr { e.kind, e.message }
+      | FOk lst -> {
+          match foreignApply(lst.value, dList(dInt())) with
+          | FErr e -> FErr { e.kind, e.message }
+          | FOk xs -> FOk { map(fn b => toByte(b), xs.value) };
+        };
+    };
+}
+
+// cryptoBufToStr(buf) — decode a Buffer as a UTF-8 string.
+proc cryptoBufToStr(bufHandle) {
+  match foreignCall(bufHandle, "toString", ["utf8"]) with
+  | FErr e -> FErr { e.kind, e.message }
+  | FOk s  -> foreignApply(s.value, dStr());
+}
+
+// ─── Crypto module helper ─────────────────────────────────────────────────────
+
+// withCrypto(body) — run a Function-constructor body that receives a
+// require() function as its first argument (via module.createRequire),
+// then the process cwd, and finally any application args.
+// Returns a curried function: withCrypto gets (createReq, cwd), then caller
+// applies the rest.  This is the same pattern used in compress.pf.
+proc getCryptoModule() {
+  match foreignRequire("crypto") with
+  | FErr e -> FErr { e.kind, e.message }
+  | FOk c  -> FOk { c.value };
+}
+
+// ─── hashPassword ─────────────────────────────────────────────────────────────
+
+// hashPassword(pw) — derive and store a password hash.
+// Returns the stored hash string.  Panics (returns a fallback) only on
+// extreme system failure; in practice crypto.scryptSync always succeeds.
+export proc hashPassword(pw) {
+  match getCryptoModule() with
+  | FErr _ -> "error:unavailable"
+  | FOk crypto -> {
+      match foreignGlobal("Function") with
+      | FErr _ -> "error:unavailable"
+      | FOk fc -> {
+          // Generate random salt and run scrypt inside a Function body
+          // so we can use require-based crypto without require-in-Function issues.
+          // We pass the already-required crypto module as argument[0].
+          // Curry: step1 takes crypto handle -> fn(pw) -> hash string
+          let body = "var cr=arguments[0];return function(pw){var salt=cr.randomBytes(16);var h=cr.scryptSync(pw,salt,64,{N:16384,r:8,p:1});return 'scrypt:16384:8:1:'+salt.toString('base64url')+':'+h.toString('base64url');};";
+          match foreignNew(fc.value, ["", body]) with
+          | FErr _ -> "error:unavailable"
+          | FOk wrapper -> {
+              match foreignInvoke(wrapper.value, [crypto.value]) with
+              | FErr _ -> "error:unavailable"
+              | FOk step1 -> {
+                  match foreignInvoke(step1.value, [pw]) with
+                  | FErr _ -> "error:unavailable"
+                  | FOk result -> {
+                      match foreignApply(result.value, dStr()) with
+                      | FErr _ -> "error:unavailable"
+                      | FOk s  -> s.value;
+                    };
+                };
+            };
+        };
+    };
+}
+
+// ─── verifyPassword ───────────────────────────────────────────────────────────
+
+// verifyPassword(pw, storedHash) — verify a password against a stored hash.
+// Returns true on match, false on mismatch or any parse error.
+export proc verifyPassword(pw, storedHash) {
+  match getCryptoModule() with
+  | FErr _ -> false
+  | FOk crypto -> {
+      match foreignGlobal("Function") with
+      | FErr _ -> false
+      | FOk fc -> {
+          // Step1: fn(crypto) -> fn(pw, stored) -> bool
+          let body = "var cr=arguments[0];return function(pw,stored){
+            try {
+              var parts=stored.split(':');
+              if(parts.length!==6||parts[0]!=='scrypt') return false;
+              var N=+parts[1],r=+parts[2],p=+parts[3];
+              var salt=Buffer.from(parts[4],'base64url');
+              var expected=Buffer.from(parts[5],'base64url');
+              var derived=cr.scryptSync(pw,salt,expected.length,{N,r,p});
+              return cr.timingSafeEqual(derived,expected);
+            } catch(e){ return false; }
+            };
+          ";
+          match foreignNew(fc.value, ["", body]) with
+          | FErr _ -> false
+          | FOk wrapper -> {
+              // Curry: step1 takes crypto handle -> fn(pw, storedHash) -> bool
+              match foreignInvoke(wrapper.value, [crypto.value]) with
+              | FErr _ -> false
+              | FOk step1 -> {
+                  match foreignInvoke(step1.value, [pw, storedHash]) with
+                  | FErr _ -> false
+                  | FOk result -> {
+                      match foreignApply(result.value, dBool()) with
+                      | FErr _ -> false
+                      | FOk b  -> b.value;
+                    };
+                };
+            };
+        };
+    };
+}
+
+// ─── aesGcmEncrypt ────────────────────────────────────────────────────────────
+
+// aesGcmEncrypt(keyBytes, plaintext, aad) — encrypt with AES-GCM.
+// keyBytes must be 16, 24, or 32 bytes (AES-128/192/256).
+// Returns FOk { List<Byte> } where the bytes are: IV(12) ++ tag(16) ++ ciphertext.
+export proc aesGcmEncrypt(keyBytes, plaintext, aad) {
+  match cryptoBytesToBuf(keyBytes) with
+  | FErr e -> FErr { e.kind, e.message }
+  | FOk keyBuf -> {
+      match cryptoBytesToBuf(plaintext) with
+      | FErr e -> FErr { e.kind, e.message }
+      | FOk ptBuf -> {
+          match cryptoBytesToBuf(aad) with
+          | FErr e -> FErr { e.kind, e.message }
+          | FOk aadBuf -> {
+              match getCryptoModule() with
+              | FErr e -> FErr { e.kind, e.message }
+              | FOk crypto -> {
+                  match foreignGlobal("Function") with
+                  | FErr e -> FErr { e.kind, e.message }
+                  | FOk fc -> {
+                      // Curry: fn(crypto) -> fn(key, pt, aad) -> Buffer
+                      let body = "var cr=arguments[0];return function(key,pt,aad){var kl=key.length;var alg=kl===16?'aes-128-gcm':kl===24?'aes-192-gcm':kl===32?'aes-256-gcm':null;if(!alg)throw new Error('AES-GCM key must be 16, 24, or 32 bytes; got '+kl);var iv=cr.randomBytes(12);var c=cr.createCipheriv(alg,key,iv);if(aad.length>0)c.setAAD(aad);var ct=Buffer.concat([c.update(pt),c.final()]);var tag=c.getAuthTag();return Buffer.concat([iv,tag,ct]);};";
+                      match foreignNew(fc.value, ["", body]) with
+                      | FErr e -> FErr { e.kind, e.message }
+                      | FOk wrapper -> {
+                          match foreignInvoke(wrapper.value, [crypto.value]) with
+                          | FErr e -> FErr { e.kind, e.message }
+                          | FOk step1 -> {
+                              match foreignInvoke(step1.value, [keyBuf.value, ptBuf.value, aadBuf.value]) with
+                              | FErr e -> FErr { e.kind, e.message }
+                              | FOk boxBuf -> cryptoBufToBytes(boxBuf.value);
+                            };
+                        };
+                    };
+                };
+            };
+        };
+    };
+}
+
+// ─── aesGcmDecrypt ────────────────────────────────────────────────────────────
+
+// aesGcmDecrypt(keyBytes, box, aad) — decrypt and verify an AES-GCM box.
+// Returns FOk { List<Byte> } (plaintext) or FErr on auth failure / bad input.
+// The error message is intentionally vague to avoid leaking oracle information.
+export proc aesGcmDecrypt(keyBytes, box, aad) {
+  match cryptoBytesToBuf(keyBytes) with
+  | FErr e -> FErr { e.kind, e.message }
+  | FOk keyBuf -> {
+      match cryptoBytesToBuf(box) with
+      | FErr e -> FErr { e.kind, e.message }
+      | FOk boxBuf -> {
+          match cryptoBytesToBuf(aad) with
+          | FErr e -> FErr { e.kind, e.message }
+          | FOk aadBuf -> {
+              match getCryptoModule() with
+              | FErr e -> FErr { e.kind, e.message }
+              | FOk crypto -> {
+                  match foreignGlobal("Function") with
+                  | FErr e -> FErr { e.kind, e.message }
+                  | FOk fc -> {
+                      // Curry: fn(crypto) -> fn(key, box, aad) -> Buffer
+                      let body = "var cr=arguments[0];return function(key,box,aad){var kl=key.length;var alg=kl===16?'aes-128-gcm':kl===24?'aes-192-gcm':kl===32?'aes-256-gcm':null;if(!alg)throw new Error('AES-GCM key must be 16, 24, or 32 bytes; got '+kl);if(box.length<28)throw new Error('decryption failed');var iv=box.slice(0,12),tag=box.slice(12,28),ct=box.slice(28);var d=cr.createDecipheriv(alg,key,iv);if(aad.length>0)d.setAAD(aad);d.setAuthTag(tag);try{var pt=Buffer.concat([d.update(ct),d.final()]);return pt;}catch(e){throw new Error('decryption failed');}};";
+                      match foreignNew(fc.value, ["", body]) with
+                      | FErr e -> FErr { e.kind, e.message }
+                      | FOk wrapper -> {
+                          match foreignInvoke(wrapper.value, [crypto.value]) with
+                          | FErr e -> FErr { e.kind, e.message }
+                          | FOk step1 -> {
+                              match foreignInvoke(step1.value, [keyBuf.value, boxBuf.value, aadBuf.value]) with
+                              | FErr e -> FErr { e.kind, e.message }
+                              | FOk ptBuf -> cryptoBufToBytes(ptBuf.value);
+                            };
+                        };
+                    };
+                };
+            };
+        };
+    };
+}

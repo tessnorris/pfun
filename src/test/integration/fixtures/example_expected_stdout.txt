@@ -448,6 +448,16 @@ corrupt data: FErr
 gzipFile: ok
 gz exists: true
 round-trip ok: true
+--- 33. Cryptography ---
+hash format: scrypt
+verify correct: true
+verify wrong: false
+hashes differ: true
+both verify: true
+box length: 41
+plaintext length: 13
+first byte: 72
+wrong aad: FErr
 --- 30. HTTP Client (Extended) ---
 hello%20world
 a%3D1%26b%3D2

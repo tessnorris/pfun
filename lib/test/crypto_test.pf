@@ -1,0 +1,252 @@
+// crypto_test.pf — tests for crypto.pf
+// Run with: PFUN_HOME=/path/to/pfun pfun lib/test/crypto_test.pf
+
+import * from "io";
+import * from "foreign";
+import * from "$PFUN_HOME/lib/crypto.pf";
+
+proc pass(label) { println("PASS " + label); }
+proc fail(label, msg) { println("FAIL " + label + ": " + msg); }
+proc expectBool(got, expected, label) {
+  if got == expected then pass(label)
+  else fail(label, "got " + __str__(got));
+}
+proc expectInt(got, expected, label) {
+  if got == expected then pass(label)
+  else fail(label, "got " + __str__(got) + " expected " + __str__(expected));
+}
+
+// Key bytes
+let key16 = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15];
+let key24 = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23];
+let key32 = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31];
+let pt5   = [72,101,108,108,111];   // "Hello"
+let aad4  = [109,101,116,97];       // "meta"
+
+// ─── hashPassword ─────────────────────────────────────────────────────────────
+
+proc testHashPassword() {
+  println("--- hashPassword ---");
+
+  let h = hashPassword("correct horse battery staple");
+
+  // Format: "scrypt:16384:8:1:<salt>:<hash>"
+  let parts = split(h, ":");
+  expectBool(length(parts) == 6, true, "hash: 6 colon-delimited parts");
+  expectBool(head(parts) == "scrypt", true, "hash: algorithm is scrypt");
+  expectBool(nth(parts, 1) == "16384", true, "hash: N=16384");
+  expectBool(nth(parts, 2) == "8", true, "hash: r=8");
+  expectBool(nth(parts, 3) == "1", true, "hash: p=1");
+  expectBool(length(nth(parts, 4)) > 0, true, "hash: salt is non-empty");
+  expectBool(length(nth(parts, 5)) > 0, true, "hash: hash is non-empty");
+
+  // Each call produces a different output (random salt)
+  let h2 = hashPassword("correct horse battery staple");
+  expectBool(h != h2, true, "hash: two calls differ (random salt)");
+
+  // Different passwords produce different hashes
+  let h3 = hashPassword("different password");
+  expectBool(h != h3, true, "hash: different passwords differ");
+
+  // Empty password is valid input
+  let he = hashPassword("");
+  let pe = split(he, ":");
+  expectBool(length(pe) == 6, true, "hash: empty password has 6 parts");
+
+  // Unicode password (test with bytes that form a valid UTF-8 string)
+  let hu = hashPassword("passwrd-special");
+  expectBool(head(split(hu, ":")) == "scrypt", true, "hash: special char password");
+}
+
+// ─── verifyPassword ───────────────────────────────────────────────────────────
+
+proc testVerifyPassword() {
+  println("--- verifyPassword ---");
+
+  let h = hashPassword("swordfish");
+
+  // Correct password verifies
+  expectBool(verifyPassword("swordfish", h), true, "verify: correct password");
+
+  // Wrong password fails
+  expectBool(verifyPassword("SWORDFISH", h), false, "verify: wrong case fails");
+  expectBool(verifyPassword("sword fish", h), false, "verify: extra space fails");
+  expectBool(verifyPassword("", h), false, "verify: empty fails");
+  expectBool(verifyPassword("swordfis", h), false, "verify: truncated fails");
+
+  // Malformed hash strings return false (not an error)
+  expectBool(verifyPassword("swordfish", ""), false, "verify: empty hash -> false");
+  expectBool(verifyPassword("swordfish", "notahash"), false, "verify: random string -> false");
+  expectBool(verifyPassword("swordfish", "scrypt:not:enough"), false, "verify: short format -> false");
+  expectBool(verifyPassword("swordfish", "bcrypt:16384:8:1:abc:def"), false, "verify: wrong algo -> false");
+
+  // Cross-hash independence: hash of pw1 does not verify pw2
+  let h1 = hashPassword("password1");
+  let h2 = hashPassword("password2");
+  expectBool(verifyPassword("password1", h2), false, "verify: cross-hash fails");
+  expectBool(verifyPassword("password2", h1), false, "verify: reverse cross-hash fails");
+
+  // Verify both hashes of the same password
+  let ha = hashPassword("shared");
+  let hb = hashPassword("shared");
+  expectBool(verifyPassword("shared", ha), true, "verify: first hash correct");
+  expectBool(verifyPassword("shared", hb), true, "verify: second hash correct");
+  expectBool(verifyPassword("shared", ha) && verifyPassword("shared", hb), true, "verify: both hashes verify");
+}
+
+// ─── aesGcmEncrypt ────────────────────────────────────────────────────────────
+
+proc testAesGcmEncrypt() {
+  println("--- aesGcmEncrypt ---");
+
+  // AES-256: box is 12 (IV) + 16 (tag) + len(pt) bytes
+  match aesGcmEncrypt(key32, pt5, aad4) with
+  | FErr e -> fail("256 basic", e.message)
+  | FOk box -> {
+      expectInt(length(box.value), 33, "256: box length = 12+16+5");
+      // First 12 bytes are the random IV — just check they exist
+      expectBool(length(box.value) >= 12, true, "256: IV present");
+    };
+
+  // AES-128
+  match aesGcmEncrypt(key16, pt5, aad4) with
+  | FErr e -> fail("128 basic", e.message)
+  | FOk box -> expectInt(length(box.value), 33, "128: box length = 12+16+5");
+
+  // AES-192
+  match aesGcmEncrypt(key24, pt5, aad4) with
+  | FErr e -> fail("192 basic", e.message)
+  | FOk box -> expectInt(length(box.value), 33, "192: box length = 12+16+5");
+
+  // Empty plaintext: box is exactly 12 + 16 = 28 bytes
+  match aesGcmEncrypt(key32, [], aad4) with
+  | FErr e -> fail("empty pt", e.message)
+  | FOk box -> expectInt(length(box.value), 28, "empty pt: box = 12+16");
+
+  // No AAD
+  match aesGcmEncrypt(key32, pt5, []) with
+  | FErr e -> fail("no aad", e.message)
+  | FOk box -> expectInt(length(box.value), 33, "no aad: box = 12+16+5");
+
+  // Two encryptions of the same plaintext produce different boxes (random IV)
+  match aesGcmEncrypt(key32, pt5, aad4) with
+  | FErr e -> fail("random iv check", e.message)
+  | FOk box1 -> {
+      match aesGcmEncrypt(key32, pt5, aad4) with
+      | FErr e -> fail("random iv check 2", e.message)
+      | FOk box2 -> expectBool(box1.value != box2.value, true, "random IV: boxes differ");
+    };
+
+  // Wrong key size -> FErr
+  match aesGcmEncrypt([1,2,3,4,5], pt5, []) with
+  | FOk _  -> fail("bad key 5", "expected FErr")
+  | FErr _ -> pass("bad key 5 bytes -> FErr");
+
+  match aesGcmEncrypt([], pt5, []) with
+  | FOk _  -> fail("empty key", "expected FErr")
+  | FErr _ -> pass("empty key -> FErr");
+}
+
+// ─── aesGcmDecrypt ────────────────────────────────────────────────────────────
+
+proc testAesGcmDecrypt() {
+  println("--- aesGcmDecrypt ---");
+
+  // AES-256 round-trip
+  match aesGcmEncrypt(key32, pt5, aad4) with
+  | FErr e -> fail("256 rt encrypt", e.message)
+  | FOk box -> {
+      match aesGcmDecrypt(key32, box.value, aad4) with
+      | FErr e -> fail("256 rt decrypt", e.message)
+      | FOk plain -> {
+          expectInt(length(plain.value), 5, "256 rt: length");
+          expectInt(toInt(head(plain.value)), 72, "256 rt: first byte H");
+          expectInt(toInt(nth(plain.value, 4)), 111, "256 rt: last byte o");
+        };
+    };
+
+  // AES-128 round-trip
+  match aesGcmEncrypt(key16, pt5, []) with
+  | FErr e -> fail("128 rt encrypt", e.message)
+  | FOk box -> {
+      match aesGcmDecrypt(key16, box.value, []) with
+      | FErr e -> fail("128 rt decrypt", e.message)
+      | FOk plain -> expectInt(length(plain.value), 5, "128 rt: length");
+    };
+
+  // Empty plaintext round-trip
+  match aesGcmEncrypt(key32, [], aad4) with
+  | FErr e -> fail("empty pt rt encrypt", e.message)
+  | FOk box -> {
+      match aesGcmDecrypt(key32, box.value, aad4) with
+      | FErr e -> fail("empty pt rt decrypt", e.message)
+      | FOk plain -> expectInt(length(plain.value), 0, "empty pt rt: length 0");
+    };
+
+  // Wrong key -> FErr
+  let wrongKey = [255,254,253,252,251,250,249,248,247,246,245,244,243,242,241,240,239,238,237,236,235,234,233,232,231,230,229,228,227,226,225,224];
+  match aesGcmEncrypt(key32, pt5, aad4) with
+  | FErr e -> fail("wrong key setup", e.message)
+  | FOk box -> {
+      match aesGcmDecrypt(wrongKey, box.value, aad4) with
+      | FOk _  -> fail("wrong key", "expected FErr")
+      | FErr _ -> pass("wrong key -> FErr");
+    };
+
+  // Wrong AAD -> FErr
+  match aesGcmEncrypt(key32, pt5, aad4) with
+  | FErr e -> fail("wrong aad setup", e.message)
+  | FOk box -> {
+      match aesGcmDecrypt(key32, box.value, [99,98,97]) with
+      | FOk _  -> fail("wrong aad", "expected FErr")
+      | FErr _ -> pass("wrong aad -> FErr");
+    };
+
+  // Tampered IV (first byte) -> FErr
+  match aesGcmEncrypt(key32, pt5, aad4) with
+  | FErr e -> fail("tamper iv setup", e.message)
+  | FOk box -> {
+      let tampered = [99] + tail(box.value);
+      match aesGcmDecrypt(key32, tampered, aad4) with
+      | FOk _  -> fail("tampered IV", "expected FErr")
+      | FErr _ -> pass("tampered IV -> FErr");
+    };
+
+  // Tampered ciphertext (last byte) -> FErr
+  match aesGcmEncrypt(key32, pt5, aad4) with
+  | FErr e -> fail("tamper ct setup", e.message)
+  | FOk box -> {
+      let allButLast = take(length(box.value) - 1, box.value);
+      let tampered = allButLast + [99];
+      match aesGcmDecrypt(key32, tampered, aad4) with
+      | FOk _  -> fail("tampered ciphertext", "expected FErr")
+      | FErr _ -> pass("tampered ciphertext -> FErr");
+    };
+
+  // Box too short -> FErr
+  match aesGcmDecrypt(key32, [1,2,3], aad4) with
+  | FOk _  -> fail("short box", "expected FErr")
+  | FErr _ -> pass("short box -> FErr");
+
+  // Empty box -> FErr
+  match aesGcmDecrypt(key32, [], aad4) with
+  | FOk _  -> fail("empty box", "expected FErr")
+  | FErr _ -> pass("empty box -> FErr");
+
+  // Wrong key size -> FErr
+  match aesGcmDecrypt([1,2,3], [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0], aad4) with
+  | FOk _  -> fail("decrypt bad key", "expected FErr")
+  | FErr _ -> pass("decrypt bad key size -> FErr");
+}
+
+// ─── Run all ─────────────────────────────────────────────────────────────────
+
+proc main() {
+  testHashPassword();
+  testVerifyPassword();
+  testAesGcmEncrypt();
+  testAesGcmDecrypt();
+  println("Done.");
+}
+
+main();

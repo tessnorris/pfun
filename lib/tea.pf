@@ -40,6 +40,9 @@ export function collectHandlers(view) {
   | VTextInput i -> [Handler { "input_" + i.name, i.onInput }]
   | VCheckbox c -> [Handler { "check_" + c.name, c.onToggle }]
   | VSelect s -> [Handler { "change_" + s.name, s.onChange }]
+  | VOptionButtonGroup g -> map(fn o => Handler { "option_" + g.name, fn ignored => g.onSelect(o.value) }, g.options)
+  | VToggleButtonGroup g -> map(fn o => Handler { "toggle_" + g.name, fn ignored => g.onToggle(o.value) }, g.options)
+  | VChoiceButtonGroup g -> map(fn o => Handler { "choice_" + g.name, fn ignored => g.onSelect(o.value) }, filter(optionChoiceClickable, g.options))
   | VEl el -> collectChildHandlers(el.children)
   | VCard c -> collectChildHandlers(c.children)
   | VFieldBlock b -> collectChildHandlers(b.fields)
@@ -49,6 +52,8 @@ export function collectHandlers(view) {
   | VFileInput f -> [Handler { "file_" + f.name, f.onRead }]
   | VDownloadButton d -> [Handler { "download_" + d.label, fn ok => d.onDownload }]
   | VText _ -> []
+  | VOptionButton _ -> []
+  | VChoiceButton _ -> []
   | VField _ -> []
   | VDefinition _ -> []
   | VContent _ -> [];
