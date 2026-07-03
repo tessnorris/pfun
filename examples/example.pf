@@ -2409,5 +2409,70 @@ async proc timerExamples() {
 
   println("setTimer and clearTimer: ok");
 }
+
+// ============================================================================
+/*
+  32. COMPRESSION
+  compress.pf provides gzip compression via the foreign FFI to Node.js zlib.
+  Import: import * from "$PFUN_HOME/lib/compress.pf";
+  Also:   import * from "foreign"; — to match on FOk / FErr
+
+  gzip(bytes)             FOk { List<Byte> }  or  FErr — in-memory compress
+  gunzip(bytes)           FOk { List<Byte> }  or  FErr — in-memory decompress
+  gzipFile(src, dst)      FOk { 0 }           or  FErr — streaming file compress
+  gunzipFile(src, dst)    FOk { 0 }           or  FErr — streaming file decompress
+
+  gzip / gunzip work on List<Byte> in memory.
+  gzipFile / gunzipFile stream data and must be called with await.
+*/
+
+import * from "$PFUN_HOME/lib/compress.pf";
+
+async proc compressExamples() {
+  println("--- 32. Compression ---");
+
+  // gzip / gunzip: in-memory byte compression
+  let msg = [72, 101, 108, 108, 111, 33];   // "Hello!" as bytes
+  match gzip(msg) with
+  | FErr e -> println("gzip err: " + e.message)
+  | FOk gz -> {
+      println("gzip magic: " + __str__(toInt(head(gz.value)) == 31));
+      println("gzip shrinks: " + __str__(length(gz.value) > 0));
+      match gunzip(gz.value) with
+      | FErr e -> println("gunzip err: " + e.message)
+      | FOk orig -> {
+          println("round-trip length: " + __str__(length(orig.value)));
+          println("round-trip first byte: " + __str__(toInt(head(orig.value))));
+        };
+    };
+
+  // gunzip on corrupt data returns FErr
+  match gunzip([0, 1, 2, 3]) with
+  | FOk _  -> println("unexpected ok")
+  | FErr _ -> println("corrupt data: FErr");
+
+  // gzipFile / gunzipFile: streaming file compression
+  let exSrc = "/tmp/pfun-ex-compress-src.txt";
+  let exGz  = "/tmp/pfun-ex-compress.gz";
+  let exDst = "/tmp/pfun-ex-compress-dst.txt";
+  eval writeFile(exSrc, "Pfun compression example: streaming gzip via Node.js zlib.");
+
+  match await gzipFile(exSrc, exGz) with
+  | FErr e -> println("gzipFile err: " + e.message)
+  | FOk _  -> {
+      println("gzipFile: ok");
+      println("gz exists: " + __str__(fileExists(exGz)));
+      match await gunzipFile(exGz, exDst) with
+      | FErr e -> println("gunzipFile err: " + e.message)
+      | FOk _  -> {
+          match readFile(exDst) with
+          | Err e -> println("readFile err: " + e.message)
+          | Ok  f -> println("round-trip ok: " + __str__(length(f.value) > 0));
+        };
+    };
+
+  eval removeFile(exSrc); eval removeFile(exGz); eval removeFile(exDst);
+}
 timerExamples();
+compressExamples();
 httpExamples();

@@ -1,0 +1,162 @@
+// compress.pf — gzip compression and decompression for Pfun.
+//
+// Import with: import * from "$PFUN_HOME/lib/compress.pf";
+// Also import: import * from "foreign"; — to match on FOk / FErr results.
+//
+// ─── API ─────────────────────────────────────────────────────────────────────
+//
+//   gzip(bytes)            FOk { List<Byte> }  or  FErr { kind, message }
+//   gunzip(bytes)          FOk { List<Byte> }  or  FErr { kind, message }
+//   gzipFile(src, dst)     FOk { 0 }           or  FErr { kind, message }
+//   gunzipFile(src, dst)   FOk { 0 }           or  FErr { kind, message }
+//
+// gzip / gunzip operate on List<Byte> in memory using zlib's sync API.
+// gzipFile / gunzipFile stream data through the filesystem; both are async
+// procs and must be called with: eval await gzipFile(src, dst)
+//
+// All four functions return ForeignResult so callers match on FOk / FErr
+// without needing a separate Result type import.
+// Callers must: import * from "foreign";
+
+import * from "foreign";
+
+// ─── Buffer conversion helpers ────────────────────────────────────────────────
+//
+// Pfun Byte values are PfunByte objects in the interpreter (not plain JS
+// numbers). Buffer.from() rejects them. We use a Function-constructor wrapper
+// that maps each element through .value or Number() before building the Buffer.
+
+// byteListToBuffer(bytes) — convert Pfun List<Byte> to a Node.js Buffer handle.
+proc byteListToBuffer(bytes) {
+  match foreignGlobal("Function") with
+  | FErr e -> FErr { e.kind, e.message }
+  | FOk fc -> {
+      let body = "return Buffer.from(arguments[0].map(function(b){ return typeof b==='number'?b:(b&&b.value!==undefined?b.value:Number(b)); }));";
+      match foreignNew(fc.value, ["", body]) with
+      | FErr e -> FErr { e.kind, e.message }
+      | FOk wrapper -> foreignInvoke(wrapper.value, [bytes]);
+    };
+}
+
+// bufferToByteList(bufHandle) — convert a Node.js Buffer handle to List<Byte>.
+proc bufferToByteList(bufHandle) {
+  match foreignGlobal("Array") with
+  | FErr e -> FErr { e.kind, e.message }
+  | FOk arr -> {
+      match foreignCall(arr.value, "from", [bufHandle]) with
+      | FErr e -> FErr { e.kind, e.message }
+      | FOk lst -> {
+          match foreignApply(lst.value, dList(dInt())) with
+          | FErr e -> FErr { e.kind, e.message }
+          | FOk xs -> FOk { map(fn b => toByte(b), xs.value) };
+        };
+    };
+}
+
+// ─── zlib sync helpers ────────────────────────────────────────────────────────
+
+proc callZlibSync(method, bufHandle) {
+  match foreignRequire("zlib") with
+  | FErr e -> FErr { e.kind, e.message }
+  | FOk z  -> foreignCall(z.value, method, [bufHandle]);
+}
+
+// ─── Public API: in-memory ────────────────────────────────────────────────────
+
+// gzip(bytes) — gzip-compress a List<Byte>; returns FOk { List<Byte> } or FErr.
+export proc gzip(bytes) {
+  match byteListToBuffer(bytes) with
+  | FErr e -> FErr { e.kind, e.message }
+  | FOk buf -> {
+      match callZlibSync("gzipSync", buf.value) with
+      | FErr e -> FErr { e.kind, e.message }
+      | FOk compressed -> bufferToByteList(compressed.value);
+    };
+}
+
+// gunzip(bytes) — decompress gzip-compressed bytes; returns FOk or FErr.
+export proc gunzip(bytes) {
+  match byteListToBuffer(bytes) with
+  | FErr e -> FErr { e.kind, e.message }
+  | FOk buf -> {
+      match callZlibSync("gunzipSync", buf.value) with
+      | FErr e -> FErr { e.kind, e.message }
+      | FOk decompressed -> bufferToByteList(decompressed.value);
+    };
+}
+
+// ─── Public API: file streaming ───────────────────────────────────────────────
+//
+// gzipFile and gunzipFile use Node.js stream pipelines so large files are
+// handled without loading into memory. The modules (fs, zlib, stream) are
+// required via the FFI and passed as arguments to a Function-constructor
+// wrapper — this avoids the "require is not defined" error that occurs when
+// calling require() inside a Function body.
+
+// runFilePipeline(src, dst, transformMethod) — stream src through
+// zlib.createGzip() or zlib.createGunzip() and write to dst.
+// Uses module.createRequire to get a require function inside the
+// Function-constructor body (which otherwise has no built-in require).
+async proc runFilePipeline(src, dst, transformMethod) {
+  match foreignRequire("module") with
+  | FErr e -> FErr { e.kind, e.message }
+  | FOk modm -> {
+      match foreignGet(modm.value, "createRequire") with
+      | FErr e -> FErr { e.kind, e.message }
+      | FOk createReq -> {
+          match foreignRequire("process") with
+          | FErr e -> FErr { e.kind, e.message }
+          | FOk procm -> {
+              match foreignCall(procm.value, "cwd", []) with
+              | FErr e -> FErr { e.kind, e.message }
+              | FOk cwdResult -> {
+                  match foreignApply(cwdResult.value, dStr()) with
+                  | FErr e -> FErr { e.kind, e.message }
+                  | FOk cwd -> {
+                      match foreignGlobal("Function") with
+                      | FErr e -> FErr { e.kind, e.message }
+                      | FOk fc -> {
+                          // Factory curried in 3 steps to avoid mixed-type lists:
+                          // step1: factory(createReq) -> fn(cwd, method)  [foreign handle only]
+                          // step2: step1(cwd, method)  -> fn(src, dst)    [strings only]
+                          // step3: step2(src, dst)     -> Promise          [strings only]
+                          let factoryBody = "var cr=arguments[0];return function(cwd,m){var req=cr(cwd+'/x.js'),fs=req('fs'),zl=req('zlib'),st=req('stream');return function(s,d){return new Promise(function(ok,fail){st.pipeline(fs.createReadStream(s),zl[m](),fs.createWriteStream(d),function(e){e?fail(e):ok(null);});});};};";
+                          match foreignNew(fc.value, ["", factoryBody]) with
+                          | FErr e -> FErr { e.kind, e.message }
+                          | FOk factoryFn -> {
+                              match foreignInvoke(factoryFn.value, [createReq.value]) with
+                              | FErr e -> FErr { e.kind, e.message }
+                              | FOk step1 -> {
+                                  match foreignInvoke(step1.value, [cwd.value, transformMethod]) with
+                                  | FErr e -> FErr { e.kind, e.message }
+                                  | FOk step2 -> {
+                                      match foreignInvoke(step2.value, [src, dst]) with
+                                      | FErr e -> FErr { e.kind, e.message }
+                                      | FOk promise -> {
+                                          match await foreignAwait(promise.value) with
+                                          | FErr e -> FErr { e.kind, e.message }
+                                          | FOk _  -> FOk { 0 };
+                                        };
+                                    };
+                                };
+                            };
+                        };
+                    };
+                };
+            };
+        };
+    };
+}
+// gzipFile(src, dst) — compress the file at src and write gzip output to dst.
+// Async proc — call with: eval await gzipFile(src, dst)
+// Returns FOk { 0 } on success, FErr { kind, message } on error.
+export async proc gzipFile(src, dst) {
+  runFilePipeline(src, dst, "createGzip");
+}
+
+// gunzipFile(src, dst) — decompress the gzip file at src and write to dst.
+// Async proc — call with: eval await gunzipFile(src, dst)
+// Returns FOk { 0 } on success, FErr { kind, message } on error.
+export async proc gunzipFile(src, dst) {
+  runFilePipeline(src, dst, "createGunzip");
+}

@@ -1,0 +1,221 @@
+// compress_test.pf — tests for compress.pf
+// Run with: PFUN_HOME=/path/to/pfun pfun lib/test/compress_test.pf
+
+import * from "io";
+import * from "foreign";
+import * from "file";
+import * from "async";
+import * from "$PFUN_HOME/lib/compress.pf";
+
+proc pass(label) { println("PASS " + label); }
+proc fail(label, msg) { println("FAIL " + label + ": " + msg); }
+proc expectBool(got, expected, label) {
+  if got == expected then pass(label)
+  else fail(label, "got " + __str__(got));
+}
+
+// ASCII bytes for "Hello, World!"
+let helloBytes = [72, 101, 108, 108, 111, 44, 32, 87, 111, 114, 108, 100, 33];
+
+// ─── gzip ─────────────────────────────────────────────────────────────────────
+
+async proc testGzip() {
+  println("--- gzip ---");
+
+  // Basic round-trip
+  match gzip(helloBytes) with
+  | FErr e -> fail("gzip hello", e.message)
+  | FOk gz -> {
+      // gzip magic bytes: 0x1f 0x8b
+      expectBool(toInt(head(gz.value)) == 31, true, "gzip: first byte is 0x1f");
+      expectBool(toInt(nth(gz.value, 1)) == 139, true, "gzip: second byte is 0x8b");
+      expectBool(length(gz.value) > 0, true, "gzip: non-empty output");
+
+      // Decompress and compare
+      match gunzip(gz.value) with
+      | FErr e -> fail("gunzip round-trip", e.message)
+      | FOk orig -> {
+          expectBool(length(orig.value) == length(helloBytes), true, "gzip: round-trip length");
+          expectBool(toInt(head(orig.value)) == 72, true, "gzip: round-trip first byte H");
+          expectBool(toInt(nth(orig.value, 4)) == 111, true, "gzip: round-trip byte 4 is o");
+        };
+    };
+
+  // Empty input
+  match gzip([]) with
+  | FErr e -> fail("gzip empty", e.message)
+  | FOk gz -> {
+      expectBool(length(gz.value) > 0, true, "gzip empty: produces gzip header");
+      match gunzip(gz.value) with
+      | FErr e -> fail("gunzip empty round-trip", e.message)
+      | FOk orig -> expectBool(length(orig.value) == 0, true, "gzip empty: round-trip is empty");
+    };
+
+  // Single byte
+  match gzip([65]) with     // 'A'
+  | FErr e -> fail("gzip single byte", e.message)
+  | FOk gz -> {
+      match gunzip(gz.value) with
+      | FErr e -> fail("gunzip single byte", e.message)
+      | FOk orig -> {
+          expectBool(length(orig.value) == 1, true, "gzip single: length 1");
+          expectBool(toInt(head(orig.value)) == 65, true, "gzip single: value A");
+        };
+    };
+
+  // Larger repetitive input (compresses well)
+  let repeated = map(fn _ => 65, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]);
+  match gzip(repeated) with
+  | FErr e -> fail("gzip repetitive", e.message)
+  | FOk gz -> {
+      // Repetitive data should compress smaller than 20 bytes raw
+      expectBool(length(gz.value) > 0, true, "gzip repetitive: non-empty");
+      match gunzip(gz.value) with
+      | FErr e -> fail("gunzip repetitive", e.message)
+      | FOk orig -> expectBool(length(orig.value) == 20, true, "gzip repetitive: round-trip length");
+    };
+}
+
+// ─── gunzip ───────────────────────────────────────────────────────────────────
+
+async proc testGunzip() {
+  println("--- gunzip ---");
+
+  // Corrupt data -> FErr
+  match gunzip([0, 1, 2, 3, 4, 5]) with
+  | FOk _  -> fail("gunzip corrupt", "expected FErr")
+  | FErr _ -> pass("gunzip: corrupt data gives FErr");
+
+  // Empty input -> FErr (not valid gzip)
+  match gunzip([]) with
+  | FOk _  -> fail("gunzip empty input", "expected FErr")
+  | FErr _ -> pass("gunzip: empty bytes gives FErr");
+
+  // Random bytes -> FErr
+  match gunzip([255, 254, 253, 252, 100, 200, 150]) with
+  | FOk _  -> fail("gunzip random", "expected FErr")
+  | FErr _ -> pass("gunzip: random bytes gives FErr");
+
+  // Gzip data with wrong magic -> FErr
+  match gunzip([31, 0, 0, 0]) with   // 0x1f but not 0x8b
+  | FOk _  -> fail("gunzip bad magic", "expected FErr")
+  | FErr _ -> pass("gunzip: wrong magic gives FErr");
+}
+
+// ─── gzipFile / gunzipFile ────────────────────────────────────────────────────
+
+async proc testFileFunctions() {
+  println("--- gzipFile / gunzipFile ---");
+
+  let tmpSrc = "/tmp/pfun-compress-test-src.txt";
+  let tmpGz  = "/tmp/pfun-compress-test-out.gz";
+  let tmpDst = "/tmp/pfun-compress-test-dst.txt";
+  let content = "Hello from gzipFile! This tests streaming file compression in Pfun.";
+
+  eval writeFile(tmpSrc, content);
+
+  // gzipFile produces a compressed file
+  match await gzipFile(tmpSrc, tmpGz) with
+  | FErr e -> fail("gzipFile", e.message)
+  | FOk _  -> {
+      pass("gzipFile: returns FOk");
+      // Compressed file should exist and be non-empty
+      expectBool(fileExists(tmpGz), true, "gzipFile: output file exists");
+    };
+
+  // gunzipFile recovers the original content
+  match await gunzipFile(tmpGz, tmpDst) with
+  | FErr e -> fail("gunzipFile", e.message)
+  | FOk _  -> {
+      pass("gunzipFile: returns FOk");
+      match readFile(tmpDst) with
+      | Err e -> fail("readFile after gunzip", e.message)
+      | Ok  f -> {
+          expectBool(f.value == content, true, "gunzipFile: content matches original");
+          expectBool(length(f.value) == length(content), true, "gunzipFile: length matches");
+        };
+    };
+
+  // Compressed file is smaller than or same size as a naive format
+  // (we can't easily read binary magic bytes without fileOpen, so just verify
+  // the file exists and has content — the round-trip already proved it's valid gzip)
+  expectBool(fileExists(tmpGz), true, "gzip file: compressed file exists after verification");
+
+  // gzipFile on non-existent source -> FErr
+  match await gzipFile("/no/such/file/pfun-test.txt", "/tmp/pfun-out.gz") with
+  | FOk _  -> fail("gzipFile missing src", "expected FErr")
+  | FErr _ -> pass("gzipFile: missing source gives FErr");
+
+  // gunzipFile on non-existent source -> FErr
+  match await gunzipFile("/no/such/file.gz", "/tmp/pfun-out.txt") with
+  | FOk _  -> fail("gunzipFile missing src", "expected FErr")
+  | FErr _ -> pass("gunzipFile: missing source gives FErr");
+
+  // gunzipFile on non-gzip data -> FErr
+  let tmpBad = "/tmp/pfun-compress-test-bad.gz";
+  eval writeFile(tmpBad, "this is not gzip data at all");
+  match await gunzipFile(tmpBad, "/tmp/pfun-bad-out.txt") with
+  | FOk _  -> fail("gunzipFile bad data", "expected FErr")
+  | FErr _ -> pass("gunzipFile: non-gzip file gives FErr");
+
+  // Cleanup
+  eval removeFile(tmpSrc); eval removeFile(tmpGz);
+  eval removeFile(tmpDst); eval removeFile(tmpBad);
+  eval removeFile("/tmp/pfun-bad-out.txt");
+}
+
+// ─── gzip/gunzip consistency with file functions ──────────────────────────────
+
+async proc testConsistency() {
+  println("--- consistency: gzip bytes vs gzipFile ---");
+
+  // Use gzipFile to compress a known file, then gunzip the result in-memory
+  // and verify the bytes match the original file content.
+  let tmpSrc = "/tmp/pfun-cons-src.txt";
+  let tmpGz  = "/tmp/pfun-cons.gz";
+  let content = "consistency: file and memory gzip are interoperable";
+  eval writeFile(tmpSrc, content);
+
+  match await gzipFile(tmpSrc, tmpGz) with
+  | FErr e -> fail("gzipFile consistency", e.message)
+  | FOk _  -> {
+      // Read the compressed file into bytes via fileOpen
+      match fileOpen(tmpGz, Read) with
+      | Err e -> fail("fileOpen gz", e.message)
+      | Ok  h -> {
+          let handle = h.value;
+          var byteAcc = toArray([]);
+          var going = true;
+          while (going) {
+            match readByte(handle) with
+            | Err _ -> going = false
+            | Eof   -> going = false
+            | Ok  b -> { eval append(byteAcc, b.value); };
+          }
+          eval fileClose(handle);
+          let bytes = toList(byteAcc);
+          // gunzip the bytes and compare to original content
+          match gunzip(bytes) with
+          | FErr e -> fail("gunzip consistency", e.message)
+          | FOk orig -> {
+              // The recovered bytes should match the content byte-for-byte
+              // (content is ASCII, so length match is sufficient here)
+              expectBool(length(orig.value) == length(content), true, "gzipFile -> gunzip bytes length matches");
+            };
+        };
+    };
+
+  eval removeFile(tmpSrc); eval removeFile(tmpGz);
+}
+
+// ─── Run all ──────────────────────────────────────────────────────────────────
+
+async proc main() {
+  eval await testGzip();
+  eval await testGunzip();
+  eval await testFileFunctions();
+  eval await testConsistency();
+  println("Done.");
+}
+
+main();

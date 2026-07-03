@@ -439,6 +439,15 @@ pending timers cleared: ok
 double-clear is safe: ok
 cleared timer did not fire: ok
 setTimer and clearTimer: ok
+--- 32. Compression ---
+gzip magic: true
+gzip shrinks: true
+round-trip length: 6
+round-trip first byte: 72
+corrupt data: FErr
+gzipFile: ok
+gz exists: true
+round-trip ok: true
 --- 30. HTTP Client (Extended) ---
 hello%20world
 a%3D1%26b%3D2

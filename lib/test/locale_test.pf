@@ -1,0 +1,190 @@
+// locale_test.pf — tests for locale.pf
+// Run with: PFUN_HOME=/path/to/pfun pfun lib/test/locale_test.pf
+//
+// Output is locale-dependent, so most tests verify structural properties
+// (non-empty, contains a digit, contains a currency symbol or digit pattern)
+// rather than exact strings. A small set of tests verify exact format for
+// en-US, which is the locale of the test machine and CI environment.
+
+import * from "io";
+import * from "foreign";
+import * from "$PFUN_HOME/lib/stringlib.pf";
+import * from "$PFUN_HOME/lib/locale.pf";
+
+proc pass(label) { println("PASS " + label); }
+proc fail(label, msg) { println("FAIL " + label + ": " + msg); }
+proc expectStr(got, expected, label) {
+  if got == expected then pass(label)
+  else fail(label, "got \"" + got + "\" expected \"" + expected + "\"");
+}
+proc expectBool(got, expected, label) {
+  if got == expected then pass(label)
+  else fail(label, "got " + __str__(got));
+}
+proc expectContains(s, sub, label) {
+  if contains(s, sub) then pass(label)
+  else fail(label, "\"" + s + "\" does not contain \"" + sub + "\"");
+}
+
+function hasDigit(s) { strMatch(s, fn c => c == "0" || c == "1" || c == "2" || c == "3" || c == "4" || c == "5" || c == "6" || c == "7" || c == "8" || c == "9"); }
+
+// ─── formatLocalNumber ────────────────────────────────────────────────────────
+
+proc testFormatLocalNumber() {
+  println("--- formatLocalNumber ---");
+
+  // Always produces a non-empty string
+  let r1 = formatLocalNumber(0);
+  expectBool(length(r1) > 0, true, "zero: non-empty");
+  expectBool(hasDigit(r1), true, "zero: contains digit");
+
+  let r2 = formatLocalNumber(1234567.89);
+  expectBool(length(r2) > 0, true, "float: non-empty");
+  expectBool(hasDigit(r2), true, "float: contains digit");
+
+  let r3 = formatLocalNumber(-9876.54);
+  expectBool(length(r3) > 0, true, "negative: non-empty");
+  expectContains(r3, "9", "negative: contains 9");
+
+  let r4 = formatLocalNumber(1000000);
+  expectBool(length(r4) > 0, true, "million Int: non-empty");
+
+  // en-US specific: comma-separated thousands, dot decimal
+  expectStr(formatLocalNumber(1234567.89), "1,234,567.89", "en-US: 1234567.89");
+  expectStr(formatLocalNumber(0),          "0",            "en-US: 0");
+  expectStr(formatLocalNumber(-42),        "-42",          "en-US: -42");
+  expectStr(formatLocalNumber(1000),       "1,000",        "en-US: 1000 grouped");
+}
+
+// ─── formatLocalCurrency ─────────────────────────────────────────────────────
+
+proc testFormatLocalCurrency() {
+  println("--- formatLocalCurrency ---");
+
+  // Always produces a non-empty string
+  let r1 = formatLocalCurrency(0.0);
+  expectBool(length(r1) > 0, true, "zero: non-empty");
+
+  let r2 = formatLocalCurrency(1234.56);
+  expectBool(length(r2) > 0, true, "positive: non-empty");
+  expectBool(hasDigit(r2), true, "positive: contains digit");
+
+  let r3 = formatLocalCurrency(-99.99);
+  expectBool(length(r3) > 0, true, "negative: non-empty");
+  expectBool(hasDigit(r3), true, "negative: contains digit");
+
+  // en-US specific: USD with $ symbol
+  expectStr(formatLocalCurrency(1234.56),  "$1,234.56", "en-US: 1234.56 USD");
+  expectStr(formatLocalCurrency(0.0),      "$0.00",     "en-US: 0.00 USD");
+  expectStr(formatLocalCurrency(-99.99),   "-$99.99",   "en-US: -99.99 USD");
+  expectStr(formatLocalCurrency(1000000.0),"$1,000,000.00","en-US: million USD");
+}
+
+// ─── formatLocalCurrencyWith ─────────────────────────────────────────────────
+
+proc testFormatLocalCurrencyWith() {
+  println("--- formatLocalCurrencyWith ---");
+
+  // EUR
+  match formatLocalCurrencyWith(1234.56, "EUR") with
+  | FErr e -> fail("EUR: non-empty", e.message)
+  | FOk s  -> {
+      expectBool(length(s.value) > 0, true, "EUR: non-empty");
+      expectBool(hasDigit(s.value), true, "EUR: contains digit");
+      // en-US renders EUR as €1,234.56
+      expectStr(s.value, "€1,234.56", "en-US: EUR 1234.56");
+    };
+
+  // JPY (no decimal places, uses ¥)
+  match formatLocalCurrencyWith(1234, "JPY") with
+  | FErr e -> fail("JPY", e.message)
+  | FOk s  -> {
+      expectBool(length(s.value) > 0, true, "JPY: non-empty");
+      expectStr(s.value, "¥1,234", "en-US: JPY 1234");
+    };
+
+  // GBP
+  match formatLocalCurrencyWith(1234.56, "GBP") with
+  | FErr e -> fail("GBP", e.message)
+  | FOk s  -> {
+      expectBool(length(s.value) > 0, true, "GBP: non-empty");
+      expectStr(s.value, "£1,234.56", "en-US: GBP 1234.56");
+    };
+
+  // USD explicitly
+  match formatLocalCurrencyWith(9.99, "USD") with
+  | FErr e -> fail("USD explicit", e.message)
+  | FOk s  -> expectStr(s.value, "$9.99", "en-US: USD 9.99");
+
+  // CHF
+  match formatLocalCurrencyWith(1000.0, "CHF") with
+  | FErr e -> fail("CHF", e.message)
+  | FOk s  -> {
+      expectBool(length(s.value) > 0, true, "CHF: non-empty");
+      expectBool(hasDigit(s.value), true, "CHF: has digit");
+    };
+
+  // Negative amount
+  match formatLocalCurrencyWith(-50.0, "USD") with
+  | FErr e -> fail("negative USD", e.message)
+  | FOk s  -> expectStr(s.value, "-$50.00", "en-US: -50 USD");
+
+  // Zero
+  match formatLocalCurrencyWith(0.0, "EUR") with
+  | FErr e -> fail("zero EUR", e.message)
+  | FOk s  -> expectStr(s.value, "€0.00", "en-US: 0 EUR");
+
+  // Int argument (Pfun BigInt)
+  match formatLocalCurrencyWith(100, "USD") with
+  | FErr e -> fail("Int USD", e.message)
+  | FOk s  -> expectStr(s.value, "$100.00", "en-US: Int 100 USD");
+
+  // Invalid currency code → FErr
+  match formatLocalCurrencyWith(100.0, "INVALID") with
+  | FOk s  -> fail("invalid code", "expected FErr, got: " + s.value)
+  | FErr _ -> pass("invalid code → FErr");
+
+  match formatLocalCurrencyWith(100.0, "") with
+  | FOk s  -> fail("empty code", "expected FErr, got: " + s.value)
+  | FErr _ -> pass("empty code → FErr");
+
+  match formatLocalCurrencyWith(100.0, "NOTACURRENCY") with
+  | FOk s  -> fail("non-ISO code", "expected FErr, got: " + s.value)
+  | FErr _ -> pass("non-ISO code → FErr");
+}
+
+// ─── regionCurrency (via formatLocalCurrencyWith indirectly) ─────────────────
+
+proc testRegionCurrency() {
+  println("--- regionCurrency (structural) ---");
+
+  // formatLocalCurrency is non-empty for all numeric types
+  expectBool(length(formatLocalCurrency(0))   > 0, true, "Int 0");
+  expectBool(length(formatLocalCurrency(1))   > 0, true, "Int 1");
+  expectBool(length(formatLocalCurrency(0.0)) > 0, true, "Float 0.0");
+  expectBool(length(formatLocalCurrency(1.5)) > 0, true, "Float 1.5");
+  expectBool(length(formatLocalCurrency(-1))  > 0, true, "negative Int");
+
+  // All formatLocalCurrencyWith results for well-known codes are Ok
+  proc checkCode(code) {
+    match formatLocalCurrencyWith(1.0, code) with
+    | FErr e -> fail("code " + code, e.message)
+    | FOk _  -> pass("code " + code + " is valid");
+  }
+  checkCode("USD"); checkCode("EUR"); checkCode("GBP"); checkCode("JPY");
+  checkCode("CAD"); checkCode("AUD"); checkCode("CHF"); checkCode("CNY");
+  checkCode("SEK"); checkCode("NOK"); checkCode("DKK"); checkCode("INR");
+  checkCode("BRL"); checkCode("MXN"); checkCode("SGD"); checkCode("HKD");
+}
+
+// ─── Run all ─────────────────────────────────────────────────────────────────
+
+proc main() {
+  testFormatLocalNumber();
+  testFormatLocalCurrency();
+  testFormatLocalCurrencyWith();
+  testRegionCurrency();
+  println("Done.");
+}
+
+main();

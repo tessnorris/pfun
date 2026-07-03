@@ -1,0 +1,192 @@
+// locale.pf — Localization utilities for Pfun.
+//
+// Import with: import * from "$PFUN_HOME/lib/locale.pf";
+//
+// All formatting uses the runtime's system locale (Intl.NumberFormat with no
+// explicit locale argument), so output matches the user's own OS settings.
+//
+// These are procs (not pure functions) because they access Intl via the FFI
+// boundary; in practice they read a fixed ambient value and have no side
+// effects beyond that.
+//
+// ─── API ─────────────────────────────────────────────────────────────────────
+//
+//   formatLocalNumber(n)                  Str
+//     Format n (Int or Float) using the locale's number conventions:
+//     decimal separator, thousands grouping, etc.
+//     Example (en-US): 1234567.89 → "1,234,567.89"
+//     Example (de-DE): 1234567.89 → "1.234.567,89"
+//
+//   formatLocalCurrency(n)                Str
+//     Format n as currency, inferring the currency from the locale's region.
+//     Falls back to USD if the region isn't in the lookup table.
+//     Example (en-US): 1234.56 → "$1,234.56"
+//     Example (de-DE): 1234.56 → "1.234,56 €"
+//
+//   formatLocalCurrencyWith(n, code)      ForeignResult<Str>
+//     Format n as currency with an explicit ISO 4217 currency code (e.g. "EUR").
+//     Returns FOk { value } or FErr { kind, message } if the code is invalid.
+//     Example: formatLocalCurrencyWith(1234.56, "JPY") → FOk { "¥1,235" }
+//     Callers must: import * from "foreign"; to match on FOk/FErr.
+
+import * from "foreign";
+
+// ─── Internal: formatter construction ────────────────────────────────────────
+//
+// Intl.NumberFormat(locales?, options?) requires a plain JS options object.
+// Pfun lists of Pairs are not valid options objects. We build the formatter
+// using the JS Function constructor to produce a factory that calls
+// new Intl.NumberFormat(undefined, { ... }) with the right options inline,
+// avoiding the need to pass a JS object across the FFI boundary.
+
+// makeNumberFormatter() — create a plain Intl.NumberFormat using system locale.
+proc makeNumberFormatter() {
+  match foreignGlobal("Function") with
+  | FErr e -> FErr { e.kind, e.message }
+  | FOk fc -> {
+      match foreignNew(fc.value, ["", "return new Intl.NumberFormat();"]) with
+      | FErr e -> FErr { e.kind, e.message }
+      | FOk wrapper -> foreignInvoke(wrapper.value, []);
+    };
+}
+
+// makeCurrencyFormatter(currency) — create an Intl.NumberFormat for currency.
+// Builds the formatter inline via the Function constructor to pass a JS
+// options object with { style: "currency", currency: currencyCode }.
+proc makeCurrencyFormatter(currency) {
+  match foreignGlobal("Function") with
+  | FErr e -> FErr { e.kind, e.message }
+  | FOk fc -> {
+      let body = "return new Intl.NumberFormat(undefined,{style:'currency',currency:'" + currency + "'});";
+      match foreignNew(fc.value, ["", body]) with
+      | FErr e -> FErr { e.kind, e.message }
+      | FOk wrapper -> foreignInvoke(wrapper.value, []);
+    };
+}
+
+// applyFormatter(fmt, n) — call fmt.format(n) and decode the string result.
+proc applyFormatter(fmt, n) {
+  match foreignCall(fmt, "format", [n]) with
+  | FErr e -> FErr { e.kind, e.message }
+  | FOk s  -> foreignApply(s.value, dStr());
+}
+
+// ─── Region → currency lookup ─────────────────────────────────────────────────
+//
+// Infer an ISO 4217 currency code from a BCP 47 locale string by looking at
+// the region subtag (e.g. "en-US" → "USD", "de-DE" → "EUR").
+// Returns "USD" as a safe fallback for unknown regions.
+// This is a pure function — it does not touch the FFI.
+
+function regionCurrency(locale) {
+  let parts  = split(locale, "-");
+  let region = nth(parts, length(parts) - 1);
+  if      region == "US" then "USD"
+  else if region == "GB" then "GBP"
+  else if region == "DE" then "EUR"
+  else if region == "FR" then "EUR"
+  else if region == "IT" then "EUR"
+  else if region == "ES" then "EUR"
+  else if region == "NL" then "EUR"
+  else if region == "PT" then "EUR"
+  else if region == "AT" then "EUR"
+  else if region == "BE" then "EUR"
+  else if region == "FI" then "EUR"
+  else if region == "IE" then "EUR"
+  else if region == "GR" then "EUR"
+  else if region == "EU" then "EUR"
+  else if region == "JP" then "JPY"
+  else if region == "CN" then "CNY"
+  else if region == "KR" then "KRW"
+  else if region == "CA" then "CAD"
+  else if region == "AU" then "AUD"
+  else if region == "NZ" then "NZD"
+  else if region == "CH" then "CHF"
+  else if region == "SE" then "SEK"
+  else if region == "NO" then "NOK"
+  else if region == "DK" then "DKK"
+  else if region == "IN" then "INR"
+  else if region == "BR" then "BRL"
+  else if region == "MX" then "MXN"
+  else if region == "RU" then "RUB"
+  else if region == "SG" then "SGD"
+  else if region == "HK" then "HKD"
+  else if region == "TW" then "TWD"
+  else if region == "ZA" then "ZAR"
+  else if region == "AR" then "ARS"
+  else if region == "CL" then "CLP"
+  else if region == "CO" then "COP"
+  else if region == "PL" then "PLN"
+  else if region == "CZ" then "CZK"
+  else if region == "HU" then "HUF"
+  else if region == "RO" then "RON"
+  else if region == "TR" then "TRY"
+  else if region == "TH" then "THB"
+  else if region == "MY" then "MYR"
+  else if region == "ID" then "IDR"
+  else if region == "PH" then "PHP"
+  else if region == "VN" then "VND"
+  else if region == "SA" then "SAR"
+  else if region == "AE" then "AED"
+  else if region == "IL" then "ILS"
+  else if region == "EG" then "EGP"
+  else if region == "NG" then "NGN"
+  else if region == "KE" then "KES"
+  else "USD";
+}
+
+// detectedLocale() — read the resolved locale string from Intl.NumberFormat.
+proc detectedLocale() {
+  match foreignGlobal("Function") with
+  | FErr _ -> "en-US"
+  | FOk fc -> {
+      match foreignNew(fc.value, ["", "return new Intl.NumberFormat().resolvedOptions().locale;"]) with
+      | FErr _ -> "en-US"
+      | FOk wrapper -> {
+          match foreignInvoke(wrapper.value, []) with
+          | FErr _ -> "en-US"
+          | FOk v  -> {
+              match foreignApply(v.value, dStr()) with
+              | FErr _ -> "en-US"
+              | FOk s  -> s.value;
+            };
+        };
+    };
+}
+
+// ─── Public API ───────────────────────────────────────────────────────────────
+
+// formatLocalNumber(n) — format n with the system locale's number conventions.
+export proc formatLocalNumber(n) {
+  match makeNumberFormatter() with
+  | FErr _ -> __str__(n)
+  | FOk fmt -> {
+      match applyFormatter(fmt.value, n) with
+      | FErr _ -> __str__(n)
+      | FOk s  -> s.value;
+    };
+}
+
+// formatLocalCurrency(n) — format n as currency, inferring the currency code
+// from the system locale's region (e.g. en-US → USD, de-DE → EUR).
+export proc formatLocalCurrency(n) {
+  let locale   = detectedLocale();
+  let currency = regionCurrency(locale);
+  match makeCurrencyFormatter(currency) with
+  | FErr _ -> __str__(n)
+  | FOk fmt -> {
+      match applyFormatter(fmt.value, n) with
+      | FErr _ -> __str__(n)
+      | FOk s  -> s.value;
+    };
+}
+
+// formatLocalCurrencyWith(n, currencyCode) — format n as currency using an
+// explicit ISO 4217 currency code (e.g. "USD", "EUR", "JPY").
+// Returns FOk { value } or FErr { kind, message } if the currency code is invalid.
+// Callers must import * from "foreign" to match on FOk / FErr.
+export proc formatLocalCurrencyWith(n, currencyCode) {
+  match makeCurrencyFormatter(currencyCode) with
+  | FErr e -> FErr { e.kind, e.message }
+  | FOk fmt -> applyFormatter(fmt.value, n);
+}
