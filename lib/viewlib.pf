@@ -1,128 +1,65 @@
-/* viewlib.pf — Interactive View ADT for Pfun TEA-style applications.
+/*
+  viewlib.pf — Interactive View ADT for Pfun TEA-style applications.
 
-A View is what the pure `view` function returns. It describes interactive UI:
-buttons that emit Msg values, inputs that transform their value into a Msg,
-and containers. Static document content (Block nodes from htmllib) can be
-embedded via VContent. Msg is whatever closed union the application defines.
+  A View is what the pure `view` function returns.  It describes interactive
+  UI: buttons that emit Msg values, inputs that transform their value into a
+  Msg, and containers.  Static document content (Block nodes from htmllib) can
+  be embedded via VContent.
 
-This version adds first-class file controls:
-  - VFileInput reads a selected text file and sends its contents to TEA.
-  - VDownloadButton asks the browser/runtime to save text content.
+  Msg is whatever closed union the application defines.  The View type carries
+  Msg values or transformer functions (fn Str -> Msg) at event sites.
+
+  The runtime loop (tea.pf) owns all mutation: it calls view(), renders the
+  tree to HTML + event listeners, and re-renders on every state change.
 */
 
 import * from "./htmllib";
 
 // ── View ─────────────────────────────────────────────────────────────────────
 
-export type OptionButtonState = {
-  | OptionAvailable
-  | OptionSelected
-  | OptionDisabled
-  | OptionLocked : reason
-}
-
 export type View = {
-  | VText : value
-  | VEl : tag, attrs, children
-  | VCard : title, children
-  | VField : label, value
-  | VFieldBlock : title, fields
-  | VDefinition : term, description
-  | VDefinitionList : title, definitions
-  | VOptionButton : value, label, icon
-  | VOptionButtonGroup : name, options, selected, onSelect
-  | VToggleButtonGroup : name, options, selected, onToggle
-  | VChoiceButton : value, label, icon, state
-  | VChoiceButtonGroup : name, options, onSelect
-  | VButton : label, attrs, onClick
-  | VTextInput : name, value, placeholder, onInput
+  | VText     : value                      // plain text node
+  | VEl       : tag, attrs, children       // generic container element
+  | VButton   : label, attrs, onClick      // <button> with optional attrs
+                                           //   onClick : Msg (any value)
+  | VTextInput: name, value, placeholder, onInput
+                                           // <input type="text">
+                                           //   onInput : fn Str -> Msg
   | VCheckbox : name, checked, label, onToggle
-  | VSelect : name, choices, selected, onChange
-  | VContent : block
+                                           // <input type="checkbox">
+                                           //   onToggle : fn Bool -> Msg
+  | VSelect   : name, choices, selected, onChange
+                                           // <select>
+                                           //   choices : List<Choice>
+                                           //   onChange : fn Str -> Msg
+  | VContent  : block                      // embed a Block from htmllib
   | VColorInput : name, value, onInput
   | VRangeInput : name, value, min, max, step, onInput
-  | VFileInput : name, label, accept, onRead
-  | VDownloadButton : label, filename, contents, mimeType, onDownload
 }
 
-// ── Constructors ─────────────────────────────────────────────────────────────
+// ── Constructors ──────────────────────────────────────────────────────────────
 
-export function vtext(value) {
-  VText { value };
-}
+export function vtext(value) { VText { value }; }
 
-export function vbutton(label, onClick) {
-  VButton { label, noAttrs, onClick };
-}
+// vbutton: plain button with no extra attributes
+export function vbutton(label, onClick) { VButton { label, noAttrs, onClick }; }
 
+// vbuttonClass: button with a CSS class (for active/inactive tab styling etc.)
 export function vbuttonClass(label, classes, onClick) {
   VButton { label, Attrs { None, classes, None }, onClick };
 }
 
-export function vdiv(children) {
-  VEl { "div", noAttrs, children };
-}
-
-export function vspan(children) {
-  VEl { "span", noAttrs, children };
-}
-
-export function vcard(title, children) {
-  VCard { title, children };
-}
-
-export function vfield(label, value) {
-  VField { label, value };
-}
-
-export function vfieldBlock(title, fields) {
-  VFieldBlock { title, fields };
-}
-
-export function vdefinition(term, description) {
-  VDefinition { term, description };
-}
-
-export function vdefinitionList(title, definitions) {
-  VDefinitionList { title, definitions };
-}
-
-export function voption(value, label, icon) {
-  VOptionButton { value, label, icon };
-}
-
-export function voptionButtonGroup(name, options, selected, onSelect) {
-  VOptionButtonGroup { name, options, selected, onSelect };
-}
-
-export function vtoggleButtonGroup(name, options, selected, onToggle) {
-  VToggleButtonGroup { name, options, selected, onToggle };
-}
-
-export function vchoice(value, label, icon, state) {
-  VChoiceButton { value, label, icon, state };
-}
-
-export function vchoiceGroup(name, options, onSelect) {
-  VChoiceButtonGroup { name, options, onSelect };
-}
-
-export function vp(children) {
-  VEl { "p", noAttrs, children };
-}
-
-export function vh(level, label) {
-  VEl { "h" + __str__(level), noAttrs, [vtext(label)] };
-}
+export function vdiv(children)  { VEl { "div",  noAttrs, children }; }
+export function vspan(children) { VEl { "span", noAttrs, children }; }
+export function vp(children)    { VEl { "p",    noAttrs, children }; }
+export function vh(level, label) { VEl { "h" + __str__(level), noAttrs, [vtext(label)] }; }
 
 export function vdivClass(classes, children) {
   VEl { "div", Attrs { None, classes, None }, children };
 }
-
 export function vdivId(id, children) {
   VEl { "div", Attrs { Some { id }, [], None }, children };
 }
-
 export function vspanId(id, children) {
   VEl { "span", Attrs { Some { id }, [], None }, children };
 }
@@ -130,18 +67,13 @@ export function vspanId(id, children) {
 export function vinput(name, value, placeholder, onInput) {
   VTextInput { name, value, placeholder, onInput };
 }
-
 export function vcheckbox(name, checked, label, onToggle) {
   VCheckbox { name, checked, label, onToggle };
 }
-
 export function vselect(name, choices, selected, onChange) {
   VSelect { name, choices, selected, onChange };
 }
-
-export function vcontent(block) {
-  VContent { block };
-}
+export function vcontent(block) { VContent { block }; }
 
 export function vcolor(name, value, onInput) {
   VColorInput { name, value, onInput };
@@ -151,139 +83,13 @@ export function vrange(name, value, min, max, step, onInput) {
   VRangeInput { name, value, min, max, step, onInput };
 }
 
-export function vfile(name, label, accept, onRead) {
-  VFileInput { name, label, accept, onRead };
-}
-
-export function vdownload(label, filename, contents, mimeType, onDownload) {
-  VDownloadButton { label, filename, contents, mimeType, onDownload };
-}
-
-// ── Helpers ──────────────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 export function boolStr(cond, s) {
   if cond then s else "";
 }
 
-function classesAttr(classes) {
-  if length(classes) == 0 then
-    ""
-  else
-    " class=\"" + escapeAttr(join(classes, " ")) + "\"";
-}
-
-function attrsHtml(attrs) {
-  let idPart = match attrs.id with
-    | Some s -> " id=\"" + escapeAttr(s.value) + "\""
-    | None -> "";
-  let stylePart = match attrs.style with
-    | Some s -> " style=\"" + escapeAttr(s.value) + "\""
-    | None -> "";
-  idPart + classesAttr(attrs.classes) + stylePart;
-}
-
-function joinedAccept(values) {
-  join(values, ",");
-}
-
-
-function optionSelected(value, selected) {
-  value == selected;
-}
-
-function toggleSelected(value, selected) {
-  match find(selected, value) with
-  | Some _ -> true
-  | None -> false;
-}
-
-function selectedClass(isSelected) {
-  if isSelected then " pf-option-selected" else "";
-}
-
-function renderOptionButton(name, selected, option, prefix) {
-  let isSelected = optionSelected(option.value, selected);
-  "<button class=\"pf-option-button" + selectedClass(isSelected) + "\" data-pfun-click=\"" + prefix + "option_" + escapeAttr(name) + "\">" +
-  "<span class=\"pf-option-icon\">" + escapeHtml(option.icon) + "</span>" +
-  "<span class=\"pf-option-label\">" + escapeHtml(option.label) + "</span>" +
-  "</button>\n";
-}
-
-
-export function optionChoiceClickable(option) {
-  match option.state with
-  | OptionAvailable -> true
-  | OptionSelected -> true
-  | OptionDisabled -> false
-  | OptionLocked _ -> false;
-}
-
-function optionStateClass(state) {
-  match state with
-  | OptionAvailable -> ""
-  | OptionSelected -> " pf-option-selected"
-  | OptionDisabled -> " pf-option-disabled"
-  | OptionLocked _ -> " pf-option-selected pf-option-locked";
-}
-
-function optionStateTitle(state) {
-  match state with
-  | OptionAvailable -> ""
-  | OptionSelected -> ""
-  | OptionDisabled -> " title=\"Not available for this choice\""
-  | OptionLocked locked -> " title=\"Locked by " + escapeAttr(locked.reason) + "\"";
-}
-
-function optionStateCaption(state) {
-  match state with
-  | OptionAvailable -> ""
-  | OptionSelected -> ""
-  | OptionDisabled -> ""
-  | OptionLocked locked -> "<span class=\"pf-option-caption\">" + escapeHtml(locked.reason) + "</span>";
-}
-
-function renderStaticChoiceButton(option) {
-  "<span class=\"pf-option-button" + optionStateClass(option.state) + "\">" +
-  "<span class=\"pf-option-icon\">" + escapeHtml(option.icon) + "</span>" +
-  "<span class=\"pf-option-label\">" + escapeHtml(option.label) + "</span>" +
-  optionStateCaption(option.state) +
-  "</span>\n";
-}
-
-function choiceButtonData(name, prefix, clickable) {
-  if clickable then
-    " data-pfun-click=\"" + prefix + "choice_" + escapeAttr(name) + "\""
-  else
-    "";
-}
-
-function choiceButtonDisabled(clickable) {
-  if clickable then
-    ""
-  else
-    " disabled";
-}
-
-function renderChoiceButton(name, option, prefix) {
-  let clickable = optionChoiceClickable(option);
-  let data = choiceButtonData(name, prefix, clickable);
-  let disabled = choiceButtonDisabled(clickable);
-  "<button class=\"pf-option-button" + optionStateClass(option.state) + "\"" + data + disabled + optionStateTitle(option.state) + ">" +
-  "<span class=\"pf-option-icon\">" + escapeHtml(option.icon) + "</span>" +
-  "<span class=\"pf-option-label\">" + escapeHtml(option.label) + "</span>" +
-  optionStateCaption(option.state) +
-  "</button>\n";
-}
-
-function renderToggleButton(name, selected, option, prefix) {
-  let isSelected = toggleSelected(option.value, selected);
-  "<button class=\"pf-option-button" + selectedClass(isSelected) + "\" data-pfun-click=\"" + prefix + "toggle_" + escapeAttr(name) + "\">" +
-  "<span class=\"pf-option-icon\">" + escapeHtml(option.icon) + "</span>" +
-  "<span class=\"pf-option-label\">" + escapeHtml(option.label) + "</span>" +
-  "</button>\n";
-}
-
-// ── Rendering ────────────────────────────────────────────────────────────────
+// ── Rendering ─────────────────────────────────────────────────────────────────
 
 export function renderViews(views, prefix) {
   join(map(fn v => renderView(v, prefix), views), "");
@@ -291,92 +97,151 @@ export function renderViews(views, prefix) {
 
 export function renderView(view, prefix) {
   match view with
-  | VText t -> escapeHtml(t.value)
-  | VEl el -> {
-      let a = attrsHtml(el.attrs);
+  | VText t      -> escapeHtml(t.value)
+  | VEl el       -> {
+      let a = renderAttrs(el.attrs);
       "<" + el.tag + a + ">" + renderViews(el.children, prefix) + "</" + el.tag + ">\n";
     }
-  | VCard c -> {
-      "<section class=\"pf-card\"><h2>" + escapeHtml(c.title) + "</h2>" + renderViews(c.children, prefix) + "</section>\n";
-    }
-  | VField f -> {
-      "<div class=\"pf-field\"><div class=\"pf-field-label\">" + escapeHtml(f.label) + "</div><div class=\"pf-field-value\">" + escapeHtml(f.value) + "</div></div>\n";
-    }
-  | VFieldBlock b -> {
-      "<section class=\"pf-field-block\"><h3>" + escapeHtml(b.title) + "</h3>" + renderViews(b.fields, prefix) + "</section>\n";
-    }
-  | VDefinition d -> {
-      "<div class=\"pf-definition\"><div class=\"pf-definition-term\"><strong>" + escapeHtml(d.term) + "</strong></div><div class=\"pf-definition-description\">" + escapeHtml(d.description) + "</div></div>\n";
-    }
-  | VDefinitionList l -> {
-      "<section class=\"pf-definition-list\"><h3>" + escapeHtml(l.title) + "</h3>" + renderViews(l.definitions, prefix) + "</section>\n";
-    }
-  | VOptionButton o -> {
-      "<span class=\"pf-option-button\"><span class=\"pf-option-icon\">" + escapeHtml(o.icon) + "</span><span class=\"pf-option-label\">" + escapeHtml(o.label) + "</span></span>\n";
-    }
-  | VOptionButtonGroup g -> {
-      "<div class=\"pf-option-group\" role=\"radiogroup\">" + join(map(fn o => renderOptionButton(g.name, g.selected, o, prefix), g.options), "") + "</div>\n";
-    }
-  | VToggleButtonGroup g -> {
-      "<div class=\"pf-option-group\">" + join(map(fn o => renderToggleButton(g.name, g.selected, o, prefix), g.options), "") + "</div>\n";
-    }
-  | VChoiceButton o -> {
-      renderStaticChoiceButton(o);
-    }
-  | VChoiceButtonGroup g -> {
-      "<div class=\"pf-option-group pf-choice-group\">" + join(map(fn o => renderChoiceButton(g.name, o, prefix), g.options), "") + "</div>\n";
-    }
-  | VButton b -> {
-      let a = attrsHtml(b.attrs);
-      "<button" + a + " data-pfun-click=\"" + prefix + "click_" + escapeAttr(b.label) + "\">" + escapeHtml(b.label) + "</button>\n";
+  | VButton b    -> {
+      let a = renderAttrs(b.attrs);
+      "<button" + a + " data-pfun-click=\"" + prefix + "click_" + escapeAttr(b.label) + "\">" +
+      escapeHtml(b.label) + "</button>\n";
     }
   | VTextInput i -> {
-      "<input type=\"text\" data-pfun-input=\"" + prefix + "input_" + escapeAttr(i.name) +
-      "\" name=\"" + escapeAttr(i.name) +
-      "\" value=\"" + escapeAttr(i.value) +
-      "\" placeholder=\"" + escapeAttr(i.placeholder) + "\">\n";
+      "<input type=\"text\" data-pfun-input=\"" + prefix + "input_" + escapeAttr(i.name) + "\"" +
+      " name=\"" + escapeAttr(i.name) + "\"" +
+      " value=\"" + escapeAttr(i.value) + "\"" +
+      " placeholder=\"" + escapeAttr(i.placeholder) + "\">\n";
     }
-  | VCheckbox c -> {
-      let checked = boolStr(c.checked, " checked");
-      "<label><input type=\"checkbox\" data-pfun-check=\"" + prefix + "check_" + escapeAttr(c.name) +
-      "\" name=\"" + escapeAttr(c.name) + "\"" + checked + "> " + escapeHtml(c.label) + "</label>\n";
+  | VCheckbox c  -> {
+      "<input type=\"checkbox\" data-pfun-check=\"" + prefix + "check_" + escapeAttr(c.name) + "\"" +
+      " name=\"" + escapeAttr(c.name) + "\"" +
+      boolStr(c.checked, " checked") + ">" +
+      "<label>" + escapeHtml(c.label) + "</label>\n";
     }
-  | VSelect s -> {
-      "<select data-pfun-change=\"" + prefix + "change_" + escapeAttr(s.name) +
-      "\" name=\"" + escapeAttr(s.name) + "\">\n" +
+  | VSelect s    -> {
+      "<select data-pfun-change=\"" + prefix + "change_" + escapeAttr(s.name) + "\"" +
+      " name=\"" + escapeAttr(s.name) + "\">\n" +
       join(map(fn c => renderViewChoice(c, s.selected), s.choices), "") +
       "</select>\n";
     }
-  | VContent c -> renderBlock(c.block, 0)
+  | VContent c   -> renderBlock(c.block, 0)
   | VColorInput i -> {
-      "<input type=\"color\" data-pfun-input=\"" + prefix + "input_" + escapeAttr(i.name) +
-      "\" name=\"" + escapeAttr(i.name) +
-      "\" value=\"" + escapeAttr(i.value) + "\">\n";
+    "<input type=\"color\" data-pfun-input=\"" + prefix + "input_" + escapeAttr(i.name) + "\"" +
+    " name=\"" + escapeAttr(i.name) + "\"" +
+    " value=\"" + escapeAttr(i.value) + "\">\n";
     }
   | VRangeInput r -> {
-      "<input type=\"range\" data-pfun-input=\"" + prefix + "input_" + escapeAttr(r.name) +
-      "\" name=\"" + escapeAttr(r.name) +
-      "\" value=\"" + escapeAttr(r.value) +
-      "\" min=\"" + escapeAttr(r.min) +
-      "\" max=\"" + escapeAttr(r.max) +
-      "\" step=\"" + escapeAttr(r.step) + "\">\n";
+    "<input type=\"range\" data-pfun-input=\"" + prefix + "input_" + escapeAttr(r.name) + "\"" +
+    " name=\"" + escapeAttr(r.name) + "\"" +
+    " value=\"" + escapeAttr(r.value) + "\"" +
+    " min=\"" + escapeAttr(r.min) + "\"" +
+    " max=\"" + escapeAttr(r.max) + "\"" +
+    " step=\"" + escapeAttr(r.step) + "\">\n";
     }
-  | VFileInput f -> {
-      "<label>" + escapeHtml(f.label) + "</label>\n" +
-      "<input type=\"file\" data-pfun-file=\"" + prefix + "file_" + escapeAttr(f.name) +
-      "\" name=\"" + escapeAttr(f.name) +
-      "\" accept=\"" + escapeAttr(joinedAccept(f.accept)) + "\">\n";
-    }
-  | VDownloadButton d -> {
-      "<button data-pfun-download=\"" + prefix + "download_" + escapeAttr(d.label) +
-      "\" data-pfun-filename=\"" + escapeAttr(d.filename) +
-      "\" data-pfun-mime=\"" + escapeAttr(d.mimeType) +
-      "\" data-pfun-content=\"" + escapeAttr(d.contents) +
-      "\">" + escapeHtml(d.label) + "</button>\n";
-    };
 }
 
 export function renderViewChoice(c, selected) {
   let selectedAttr = boolStr(c.value == selected, " selected");
-  "<option value=\"" + escapeAttr(c.value) + "\"" + selectedAttr + ">" + escapeHtml(c.label) + "</option>\n";
+  "<option value=\"" + escapeAttr(c.value) + "\"" +
+  selectedAttr + ">" +
+  escapeHtml(c.label) + "</option>\n";
+}
+
+// ── Default themes ─────────────────────────────────────────────────────────
+//
+// viewlib ships two ready-made themes so any TEA app looks intentional with
+// zero styling work.  tea.pf calls useLightTheme() automatically before the
+// first render, so the default is light.  Switch to dark with one call:
+//
+//     run(init(), view, update);
+//     useDarkTheme();
+//
+// To toggle at runtime, call either proc from an update arm.
+// To override a single token (e.g. accent colour), emit a <style> block via
+// vcontent(RawHtml { "<style>:root{--pf-accent:#f97316}</style>" }) anywhere
+// in your view tree.  Token names are --pf-*.
+
+// ── Token blocks ─────────────────────────────────────────────────────────────
+
+let pfLightVars =
+  ":root{" +
+  "--pf-bg:#f9fafb;--pf-surface:#ffffff;--pf-surface-subtle:#f3f4f6;" +
+  "--pf-border:#d1d5db;--pf-border-strong:#9ca3af;" +
+  "--pf-text:#1f2937;--pf-text-muted:#6b7280;" +
+  "--pf-accent:#3b82f6;--pf-accent-hover:#2563eb;--pf-accent-text:#ffffff;" +
+  "--pf-accent-soft:rgba(59,130,246,0.16);--pf-danger:#dc2626;" +
+  "--pf-radius:10px;--pf-radius-sm:7px;" +
+  "--pf-shadow:0 1px 3px rgba(0,0,0,0.1),0 1px 2px rgba(0,0,0,0.06);" +
+  "}";
+
+let pfDarkVars =
+  ":root{" +
+  "--pf-bg:#0f172a;--pf-surface:#1e293b;--pf-surface-subtle:#172033;" +
+  "--pf-border:#334155;--pf-border-strong:#475569;" +
+  "--pf-text:#e2e8f0;--pf-text-muted:#94a3b8;" +
+  "--pf-accent:#3b82f6;--pf-accent-hover:#60a5fa;--pf-accent-text:#0b1220;" +
+  "--pf-accent-soft:rgba(59,130,246,0.22);--pf-danger:#f87171;" +
+  "--pf-radius:10px;--pf-radius-sm:7px;" +
+  "--pf-shadow:0 10px 30px rgba(0,0,0,0.35);" +
+  "}";
+
+// ── Shared control CSS ────────────────────────────────────────────────────────
+//
+// Targets only the bare HTML that viewlib's renderView already emits:
+// button, input, select, label — no layout, no application chrome.
+// The opt-in classes (.pf-primary, .pf-danger, .pf-selected, .pf-card,
+// .pf-muted) are available for apps that want semantic variants without
+// building a full theme.
+
+let pfControlCss =
+  "*{box-sizing:border-box}" +
+  "body{margin:0;background:var(--pf-bg);color:var(--pf-text);" +
+    "font-family:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont," +
+    "'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;line-height:1.5}" +
+  "#pfun-output{white-space:normal}" +
+  "#pfun-output h1,#pfun-output h2,#pfun-output h3{color:var(--pf-text);line-height:1.2}" +
+  "#pfun-output p{color:var(--pf-text-muted)}" +
+  "#pfun-output a{color:var(--pf-accent)}" +
+  "button{cursor:pointer;font:inherit;font-weight:600;padding:9px 14px;" +
+    "border-radius:var(--pf-radius-sm);border:1px solid var(--pf-border);" +
+    "background:var(--pf-surface);color:var(--pf-text);" +
+    "transition:border-color .12s,background .12s,transform .12s}" +
+  "button:hover{border-color:var(--pf-border-strong);transform:translateY(-1px)}" +
+  "button:focus-visible{outline:none;border-color:var(--pf-accent);" +
+    "box-shadow:0 0 0 3px var(--pf-accent-soft)}" +
+  "input,select{max-width:100%;font:inherit;padding:9px 11px;" +
+    "border-radius:var(--pf-radius-sm);border:1px solid var(--pf-border);" +
+    "background:var(--pf-surface);color:var(--pf-text)}" +
+  "input::placeholder{color:var(--pf-text-muted)}" +
+  "input:focus,select:focus{outline:none;border-color:var(--pf-accent);" +
+    "box-shadow:0 0 0 3px var(--pf-accent-soft)}" +
+  "label{color:var(--pf-text-muted);font-size:.9rem;font-weight:600}" +
+  ".pf-primary{background:var(--pf-accent);color:var(--pf-accent-text);" +
+    "border-color:var(--pf-accent-hover)}" +
+  ".pf-primary:hover{background:var(--pf-accent-hover)}" +
+  ".pf-danger{background:var(--pf-danger);color:#fff;border-color:var(--pf-danger)}" +
+  ".pf-selected{background:var(--pf-accent);color:var(--pf-accent-text);" +
+    "border-color:var(--pf-accent-hover);box-shadow:0 0 0 3px var(--pf-accent-soft)}" +
+  ".pf-card{padding:18px;border:1px solid var(--pf-border);" +
+    "border-radius:var(--pf-radius);background:var(--pf-surface);" +
+    "box-shadow:var(--pf-shadow)}" +
+  ".pf-muted{color:var(--pf-text-muted)}";
+
+// useLightTheme() — apply the light theme.  Called automatically by tea.pf
+// before the first render; call again to switch back from dark at runtime.
+export proc useLightTheme() {
+  setThemeStyles(pfLightVars + pfControlCss);
+}
+
+// useDarkTheme() — switch to dark.  Call after run(), or from an update arm.
+export proc useDarkTheme() {
+  setThemeStyles(pfDarkVars + pfControlCss);
+}
+
+// pfThemeCss(mode) — return the raw CSS string for "light" or "dark" without
+// injecting it.  Useful for server-rendering or embedding in a <style> tag.
+export function pfThemeCss(mode) {
+  if mode == "dark" then pfDarkVars + pfControlCss
+  else pfLightVars + pfControlCss;
 }

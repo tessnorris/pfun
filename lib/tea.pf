@@ -1,74 +1,83 @@
-/* tea.pf — The Elm Architecture runtime loop for Pfun browser applications.
+/*
+  tea.pf — The Elm Architecture runtime loop for Pfun browser applications.
 
-update returns { model, cmd } instead of just a model. Cmd is a closed union of
-effects the runtime can execute:
-  CmdNone — no effect
-  Send    — POST msg as JSON to a URL and dispatch the response as Msg
+  update now returns { model, cmd } instead of just a model.
+  Cmd is a closed union of effects the runtime can execute:
 
-view and update stay pure. run() is the proc that owns mutation, rendering,
-DOM event attachment, and effects.
+    CmdNone          — no effect
+    Send { msg }     — POST msg as JSON to /api, dispatch response as a Msg
+
+  Usage:
+    import * from "io";
+    import * from "./viewlib";
+    import * from "./tea";
+
+    type Model = { ... }
+    type Msg   = { | Increment | ServerReplied : reply | ... }
+
+    function init()             { { model = Model { ... }, cmd = CmdNone }; }
+    function view(model)        { vdiv([...]); }
+    function update(msg, model) {
+      match msg with
+      | ClickPing -> { model = model, cmd = Send { Ping } }
+      | ...;
+    }
+
+    run(init(), view, update);
+
+  view and update stay pure.  run() is the one proc that owns all mutation.
 */
 
 import * from "io";
 import * from "./viewlib";
 
-// ── Cmd ──────────────────────────────────────────────────────────────────────
+// ── Cmd ───────────────────────────────────────────────────────────────────────
 
 export type Cmd = {
-  | CmdNone
-  | Send : msg, onReply, url
+  | CmdNone              // no effect
+  | Send    : msg, onReply, url
+                         // msg     : value — posted as JSON to url
+                         // onReply : fn response -> Msg
+                         // url     : String
 }
 
-export function cmdNone() {
-  CmdNone;
-}
+export function cmdNone() { CmdNone; }
 
-// ── Handler collection ───────────────────────────────────────────────────────
+// ── Handler collection ────────────────────────────────────────────────────────
 
-export type Handler = {
-  key,
-  handler
-}
+export type Handler = { key, handler }
 
-function collectChildHandlers(children) {
-  reduce(fn acc, child => acc + collectHandlers(child), [], children);
-}
-
+// collectHandlers walks the view tree in the same order renderView does,
+// producing one Handler per interactive element.  The key encodes both
+// the element type and its label/name so $attachDomHandler can find the
+// right DOM node; when multiple elements share the same key (e.g. several
+// "Edit" buttons in a list), attachAll passes the occurrence index so
+// each handler is wired to exactly the right element.
 export function collectHandlers(view) {
   match view with
-  | VButton b -> [Handler { "click_" + b.label, fn ignored => b.onClick }]
-  | VTextInput i -> [Handler { "input_" + i.name, i.onInput }]
-  | VCheckbox c -> [Handler { "check_" + c.name, c.onToggle }]
-  | VSelect s -> [Handler { "change_" + s.name, s.onChange }]
-  | VOptionButtonGroup g -> map(fn o => Handler { "option_" + g.name, fn ignored => g.onSelect(o.value) }, g.options)
-  | VToggleButtonGroup g -> map(fn o => Handler { "toggle_" + g.name, fn ignored => g.onToggle(o.value) }, g.options)
-  | VChoiceButtonGroup g -> map(fn o => Handler { "choice_" + g.name, fn ignored => g.onSelect(o.value) }, filter(optionChoiceClickable, g.options))
-  | VEl el -> collectChildHandlers(el.children)
-  | VCard c -> collectChildHandlers(c.children)
-  | VFieldBlock b -> collectChildHandlers(b.fields)
-  | VDefinitionList l -> collectChildHandlers(l.definitions)
+  | VButton b    -> [Handler { "click_"  + b.label,  fn ignored => b.onClick  }]
+  | VTextInput i -> [Handler { "input_"  + i.name,   i.onInput  }]
+  | VCheckbox c  -> [Handler { "check_"  + c.name,   c.onToggle }]
+  | VSelect s    -> [Handler { "change_" + s.name,   s.onChange }]
+  | VEl el       -> reduce(fn acc, child => acc + collectHandlers(child), [], el.children)
   | VColorInput i -> [Handler { "input_" + i.name, i.onInput }]
   | VRangeInput r -> [Handler { "input_" + r.name, r.onInput }]
-  | VFileInput f -> [Handler { "file_" + f.name, f.onRead }]
-  | VDownloadButton d -> [Handler { "download_" + d.label, fn ok => d.onDownload }]
-  | VText _ -> []
-  | VOptionButton _ -> []
-  | VChoiceButton _ -> []
-  | VField _ -> []
-  | VDefinition _ -> []
-  | VContent _ -> [];
+  | VText _      -> []
+  | VContent _   -> [];
 }
 
-// ── Runtime ──────────────────────────────────────────────────────────────────
+// ── Runtime ───────────────────────────────────────────────────────────────────
 
+// executeCmd: run an effect after update returns.
+// Calls back into render with the result so the loop continues.
 export async proc executeCmd(cmd, model, viewFn, updateFn) {
   match cmd with
-  | CmdNone -> {}
-  | Send s -> {
+  | CmdNone  -> {}
+  | Send s   -> {
       let result = await httpPost(s.url, s.msg);
       match result with
       | Ok response -> {
-          let msg = s.onReply(response.value);
+          let msg  = s.onReply(response.value);
           let next = updateFn(msg, model);
           render(next.model, viewFn, updateFn);
           executeCmd(next.cmd, next.model, viewFn, updateFn);
@@ -78,30 +87,32 @@ export async proc executeCmd(cmd, model, viewFn, updateFn) {
 }
 
 export proc render(model, viewFn, updateFn) {
-  let tree = viewFn(model);
-  let html = renderView(tree, "");
+  let tree     = viewFn(model);
+  let html     = renderView(tree, "");
   clearOutput();
   mountHtml(html);
   let handlers = collectHandlers(tree);
   attachAll(handlers, updateFn, model, viewFn, emptyKeyCounts());
 }
 
-function emptyKeyCounts() {
-  dict {};
-}
+// emptyKeyCounts returns an empty Dict for tracking how many times each
+// handler key has been seen so far, used to wire each handler to the
+// correct occurrence of its DOM element.
+function emptyKeyCounts() { dict {}; }
 
+// getCount returns the current occurrence count for key, or 0 if unseen.
 function getCount(keyCounts, key) {
   if has(keyCounts, key) then keyCounts[key] else 0;
 }
 
 export proc attachAll(handlers, updateFn, model, viewFn, keyCounts) {
   if length(handlers) > 0 then {
-    let h = head(handlers);
-    let rest = tail(handlers);
-    let n = getCount(keyCounts, h.key);
+    let h       = head(handlers);
+    let rest    = tail(handlers);
+    let n       = getCount(keyCounts, h.key);
     keyCounts[h.key] = n + 1;
     attachDomHandler(h.key, n, proc value => {
-      let msg = h.handler(value);
+      let msg  = h.handler(value);
       let next = updateFn(msg, model);
       render(next.model, viewFn, updateFn);
       executeCmd(next.cmd, next.model, viewFn, updateFn);
@@ -110,7 +121,19 @@ export proc attachAll(handlers, updateFn, model, viewFn, keyCounts) {
   }
 }
 
+// run: entry point. init is { model, cmd } so any startup effect is possible.
+// run: entry point.  init is { model, cmd }.
+//
+// The light theme is applied automatically before the first render so every
+// TEA app is styled with no work.  To use dark instead, call useDarkTheme()
+// immediately after run() — setThemeStyles replaces rather than stacks:
+//
+//     run(init(), view, update);
+//     useDarkTheme();
+//
+// To toggle at runtime, call either proc from an update arm.
 export proc run(init, viewFn, updateFn) {
+  useLightTheme();
   render(init.model, viewFn, updateFn);
   executeCmd(init.cmd, init.model, viewFn, updateFn);
 }

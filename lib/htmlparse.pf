@@ -563,3 +563,65 @@ export function renderHtmlNode(n) {
 export function renderHtmlNodes(nodes) {
   join(map(renderHtmlNode, nodes), "");
 }
+
+// ─── Document-wrapping render functions ───────────────────────────────────────
+
+// hasDoctype(nodes) — true if any top-level node is a Doctype.
+function hasDoctype(nodes) {
+  if length(nodes) == 0 then false
+  else {
+    match head(nodes) with
+    | Doctype _ -> true
+    | _         -> hasDoctype(tail(nodes));
+  }
+}
+
+// hasHtmlElement(nodes) — true if any top-level node is <html>.
+function hasHtmlElement(nodes) {
+  if length(nodes) == 0 then false
+  else {
+    match head(nodes) with
+    | Element e -> e.tag == "html" || hasHtmlElement(tail(nodes))
+    | _         -> hasHtmlElement(tail(nodes));
+  }
+}
+
+// isFullDocument(nodes) — true if the node list already forms a full HTML
+// document (has a Doctype or an <html> element at the top level).
+function isFullDocument(nodes) {
+  hasDoctype(nodes) || hasHtmlElement(nodes);
+}
+
+// wrapDocument(title, inner) — wrap rendered inner HTML in the standard
+// document shell.
+function wrapDocument(title, inner) {
+  "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"UTF-8\">\n<title>" +
+  escapeHtml(title) +
+  "</title>\n</head>\n<body>\n" +
+  inner +
+  "</body>\n</html>\n";
+}
+
+// renderHtmlNodeDoc(title, node) — like renderHtmlNode but, when the node is
+// not already a full document, wraps the output in a standard HTML document
+// shell with the given title.
+export function renderHtmlNodeDoc(title, node) {
+  let rendered = renderHtmlNode(node);
+  match node with
+  | Doctype _ -> wrapDocument(title, rendered)
+  | Element e -> {
+      if e.tag == "html" then rendered
+      else wrapDocument(title, rendered);
+    }
+  | _ -> wrapDocument(title, rendered);
+}
+
+// renderHtmlNodesDoc(title, nodes) — like renderHtmlNodes but, when the node
+// list is not already a full document (no top-level Doctype or <html>),
+// wraps the rendered output in a standard HTML document shell with the given
+// title.
+export function renderHtmlNodesDoc(title, nodes) {
+  let rendered = renderHtmlNodes(nodes);
+  if isFullDocument(nodes) then rendered
+  else wrapDocument(title, rendered);
+}

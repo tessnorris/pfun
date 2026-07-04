@@ -784,6 +784,21 @@ function $clearOutput() {
   }
 }
 
+// $setThemeStyles(css) — inject or replace the Pfun theme stylesheet in <head>.
+// Lives in <head> under id="pfun-theme" so it survives $clearOutput (which
+// only clears #pfun-output) and repeated calls replace rather than stack.
+function $setThemeStyles(css) {
+  const text = typeof css === 'string' ? css : $stringify(css);
+  let el = document.getElementById('pfun-theme');
+  if (!el) {
+    el = document.createElement('style');
+    el.id = 'pfun-theme';
+    (document.head || document.documentElement).appendChild(el);
+  }
+  el.textContent = text;
+  return true;
+}
+
 // Save/restore focus around a full DOM replacement so that text inputs
 // don't lose focus on every keystroke.
 let _focusedInputName = null;
@@ -821,12 +836,10 @@ function $restoreFocus() {
 // elements share the same key (e.g. several "Edit" or "Dismiss" buttons
 // rendered in a list), each gets its own distinct handler closure.
 // pfunFn receives a Pfun-typed value:
-//   click    → true (Bool)
-//   input    → the string value
-//   check    → true/false (Bool)
-//   change   → the selected string value
-//   file     → selected text file contents as String
-//   download → true when save/download was requested, false on cancellation/error
+//   click  → true (Bool)
+//   input  → the string value
+//   check  → true/false (Bool)
+//   change → the selected string value
 function $attachDomHandler(key, occurrence, pfunFn) {
   const output = _getOutput();
   if (!output) return;
@@ -844,55 +857,6 @@ function $attachDomHandler(key, occurrence, pfunFn) {
   tryAttach('data-pfun-input',  'input',  e   => e.target.value);
   tryAttach('data-pfun-check',  'change', e   => e.target.checked);
   tryAttach('data-pfun-change', 'change', e   => e.target.value);
-
-  const fileEls = output.querySelectorAll(`[data-pfun-file="${CSS.escape(key)}"]`);
-  const fileEl = fileEls[n];
-  if (fileEl) {
-    fileEl.addEventListener('change', e => {
-      const file = e.target.files && e.target.files[0];
-      if (!file) return;
-      const reader = new FileReader();
-      reader.onload = () => pfunFn(String(reader.result ?? ''));
-      reader.onerror = () => pfunFn('');
-      reader.readAsText(file);
-      e.target.value = '';
-    });
-  }
-
-  const downloadEls = output.querySelectorAll(`[data-pfun-download="${CSS.escape(key)}"]`);
-  const downloadEl = downloadEls[n];
-  if (downloadEl) {
-    downloadEl.addEventListener('click', async () => {
-      const filename = downloadEl.getAttribute('data-pfun-filename') || 'download.txt';
-      const mime = downloadEl.getAttribute('data-pfun-mime') || 'text/plain';
-      const contents = downloadEl.getAttribute('data-pfun-content') || '';
-      try {
-        if (window.showSaveFilePicker) {
-          const extension = filename.includes('.') ? filename.slice(filename.lastIndexOf('.')) : '.txt';
-          const handle = await window.showSaveFilePicker({
-            suggestedName: filename,
-            types: [{ description: 'Pfun file', accept: { [mime]: [extension] } }],
-          });
-          const writable = await handle.createWritable();
-          await writable.write(new Blob([contents], { type: mime }));
-          await writable.close();
-        } else {
-          const blob = new Blob([contents], { type: mime });
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = filename;
-          document.body.appendChild(a);
-          a.click();
-          a.remove();
-          URL.revokeObjectURL(url);
-        }
-        pfunFn(true);
-      } catch (_) {
-        pfunFn(false);
-      }
-    });
-  }
 }
 
 // ─── Pre-built singletons ─────────────────────────────────────────────────────
@@ -907,7 +871,7 @@ window.__pfunRuntime = {
   PfunChar, PfunByte, PfunArray, PfunDict, PfunBuffer,
   $curry, $memoize,
   $char, $byte, $record, $registerType, $schema,
-  $stringify, $println, $print, $flushStdout, $mountHtml, $clearOutput, $saveFocus, $restoreFocus, $attachDomHandler, $httpPost, $truthy,
+  $stringify, $println, $print, $flushStdout, $mountHtml, $clearOutput, $setThemeStyles, $saveFocus, $restoreFocus, $attachDomHandler, $httpPost, $truthy,
   $readln, $readChar, $scriptArgs, $getEnv, $envVars,
   $ck,
   $add, $sub, $mul, $div, $mod, $neg,

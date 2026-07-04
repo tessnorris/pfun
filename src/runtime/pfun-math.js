@@ -112,10 +112,30 @@ const sinh = _mathFn1('sinh', Math.sinh);
 const cosh = _mathFn1('cosh', Math.cosh);
 const tanh = _mathFn1('tanh', Math.tanh);
 
+// ── Formatting ─────────────────────────────────────────────────────────────────
+
+// formatFixed(n, x) — format number n to exactly x decimal places.
+// n may be Int (BigInt) or Float (number). x must be an Int in 0–100.
+// Returns a string, e.g. formatFixed(3.14159, 2) === "3.14".
+function formatFixed(n, x) {
+  if (typeof n !== 'number' && typeof n !== 'bigint')
+    throw new Error('formatFixed() requires a numeric first argument.');
+  if (typeof x !== 'bigint')
+    throw new Error('formatFixed() requires an integer second argument (number of decimal places).');
+  const decimals = Number(x);
+  if (decimals < 0 || decimals > 100)
+    throw new Error(`formatFixed() decimal places must be 0–100, got ${decimals}.`);
+  const num = typeof n === 'bigint' ? Number(n) : n;
+  if (isNaN(num))     throw new Error('Float domain error: formatFixed() called with NaN.');
+  if (!isFinite(num)) throw new Error('Float domain error: formatFixed() called with Infinity.');
+  return num.toFixed(decimals);
+}
+
 module.exports = {
   pi, e, tau, inf, nan,
   abs, sign, min, max, clamp, lerp,
   sqrt, cbrt, exp, log, log2, log10, pow, hypot, fmod,
   sin, cos, tan, asin, acos, atan, atan2,
   sinh, cosh, tanh,
+  formatFixed,
 };

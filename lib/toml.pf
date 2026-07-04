@@ -1,0 +1,385 @@
+// toml.pf — TOML parser and emitter for Pfun.
+//
+// Import with: import * from "$PFUN_HOME/lib/toml.pf";
+// Also import: import * from "foreign"; — to match on FOk / FErr.
+//
+// ─── Data model ───────────────────────────────────────────────────────────────
+//
+//   type SettingValue =
+//     | SStr   { value : Str }       -- quoted string
+//     | SInt   { value : Int }       -- integer
+//     | SFloat { value : Float }     -- floating-point number
+//     | SBool  { value : Bool }      -- true / false
+//     | SList  { items : List<SettingValue> }   -- inline array
+//
+//   type Setting = { key : Str, value : SettingValue }
+//
+//   type SettingGroup = { name : Str, settings : List<Setting> }
+//
+// ─── API ──────────────────────────────────────────────────────────────────────
+//
+//   tomlParse(text)    FOk { List<SettingGroup> }  |  FErr { kind, message }
+//     Parse a TOML string into a list of SettingGroups.
+//     Keys before the first section header go into a group named "".
+//     Returns FErr on syntax errors.
+//
+//   tomlEmit(groups)   Str
+//     Serialize a list of SettingGroups back to TOML text.
+//     Groups with name "" are emitted without a section header.
+//     Never fails.
+//
+// ─── Supported TOML subset ────────────────────────────────────────────────────
+//
+//   [section]             section headers
+//   key = "string"        quoted strings (with \" \\ \n escapes)
+//   key = 42              integers (optionally signed)
+//   key = 3.14            floats   (optionally signed)
+//   key = true | false    booleans
+//   key = ["a","b"]       inline arrays of any uniform scalar type
+//   # comment             line comments (also trailing comments after values)
+//   blank lines           ignored
+//
+// Multi-line strings, multi-line arrays, dotted keys, inline tables, dates,
+// and TOML 1.0 features are not supported.
+
+import * from "foreign";
+import * from "$PFUN_HOME/lib/stringlib.pf";
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+export type SettingValue = {
+  | SStr   : value
+  | SInt   : value
+  | SFloat : value
+  | SBool  : value
+  | SList  : items
+}
+
+export type Setting = { key, value }
+
+export type SettingGroup = { name, settings }
+
+// ─── Internal: character classification ──────────────────────────────────────
+
+function isDigit(c) {
+  c == "0" || c == "1" || c == "2" || c == "3" || c == "4" ||
+  c == "5" || c == "6" || c == "7" || c == "8" || c == "9";
+}
+
+function isSign(c) { c == "-" || c == "+"; }
+
+// ─── Internal: string unescape ───────────────────────────────────────────────
+
+// unescapeToml(s) — convert TOML escape sequences in s (the raw content
+// between the outer quotes, with leading/trailing quote already stripped).
+function unescapeToml(s) {
+  let chars = split(s, "");
+  unescapeChars(chars, "");
+}
+
+function unescapeChars(chars, acc) {
+  if length(chars) == 0 then acc
+  else {
+    let c = head(chars);
+    let rest = tail(chars);
+    if c != "\\" then unescapeChars(rest, acc + c)
+    else if length(rest) == 0 then acc + "\\"
+    else {
+      let e = head(rest);
+      let tail2 = tail(rest);
+      if      e == "\"" then unescapeChars(tail2, acc + "\"")
+      else if e == "\\" then unescapeChars(tail2, acc + "\\")
+      else if e == "n"  then unescapeChars(tail2, acc + "\n")
+      else                   unescapeChars(tail2, acc + e);
+    }
+  }
+}
+
+// escapeToml(s) — escape a Str for TOML quoted-string output.
+function escapeToml(s) {
+  let chars = split(s, "");
+  escapeChars(chars, "");
+}
+
+function escapeChars(chars, acc) {
+  if length(chars) == 0 then acc
+  else {
+    let c = head(chars);
+    let rest = tail(chars);
+    if      c == "\"" then escapeChars(rest, acc + "\\\"")
+    else if c == "\\" then escapeChars(rest, acc + "\\\\")
+    else if c == "\n" then escapeChars(rest, acc + "\\n")
+
+    else                   escapeChars(rest, acc + c);
+  }
+}
+
+// ─── Internal: value parsing ─────────────────────────────────────────────────
+
+// stripComment(s) — remove a trailing # comment from a raw value string.
+// Careful: # inside a quoted string must not be stripped.
+function stripComment(s) {
+  let idx = findCommentStart(split(s, ""), 0, false);
+  if idx < 0 then s
+  else trim(join(take(idx, split(s, "")), ""));
+}
+
+function findCommentStart(chars, i, inStr) {
+  if length(chars) == 0 then -1
+  else {
+    let c = head(chars);
+    let rest = tail(chars);
+    if inStr then {
+      if c == "\\" then {
+        // skip escaped character
+        if length(rest) == 0 then -1
+        else findCommentStart(tail(rest), i + 2, true);
+      }
+      else if c == "\"" then findCommentStart(rest, i + 1, false)
+      else findCommentStart(rest, i + 1, true);
+    }
+    else if c == "\"" then findCommentStart(rest, i + 1, true)
+    else if c == "#"  then i
+    else findCommentStart(rest, i + 1, false);
+  }
+}
+
+// parseString(raw) — parse a quoted TOML string.
+// raw is the full raw value like: "hello world"
+// Returns SStr or FErr string.
+function parseString(raw) {
+  let t = trim(raw);
+  if length(t) < 2 then SStr { "ERR:string too short" }
+  else {
+    let first = head(split(t, ""));
+    let last  = nth(split(t, ""), length(t) - 1);
+    if first != "\"" || last != "\"" then SStr { "ERR:missing quotes" }
+    else {
+      let inner = join(take(length(t) - 2, tail(split(t, ""))), "");
+      if true then SStr { unescapeToml(inner) + "" } else SStr { "" }
+    }
+  }
+}
+
+// parseNumber(raw) — parse an Int or Float from a raw value string.
+// Returns SInt, SFloat, or a sentinel value if parse fails.
+function digitsOf(firstC, rest, chars) {
+  if isSign(firstC) then rest else chars;
+}
+
+function parseNumber(raw) {
+  let t = trim(raw);
+  let chars = split(t, "");
+  let hasDot = contains(t, ".");
+  let firstC = head(chars);
+  let rest   = tail(chars);
+  let digits = digitsOf(firstC, rest, chars);
+  let allDigDot = strMatch(join(digits, ""), fn c => isDigit(c) || c == ".");
+  if !allDigDot then SStr { "ERR:notanumber" }
+  else if hasDot then SFloat { toFloat(t) }
+  else SInt { toInt(toFloat(t)) };
+}
+
+// parseValue(raw) — dispatch to the right parser based on the raw value text.
+function parseValue(raw) {
+  let t = trim(raw);
+  if length(t) == 0 then SStr { "" }
+  else {
+    let first = head(split(t, ""));
+    if first == "\"" then parseString(t)
+    else if first == "[" then parseArray(t)
+    else if t == "true"  then SBool { true }
+    else if t == "false" then SBool { false }
+    else parseNumber(t);
+  }
+}
+
+// parseArray(raw) — parse an inline TOML array like ["a","b"] or [1,2,3].
+// Returns SList or SStr containing "ERR:...".
+function parseArray(raw) {
+  let t = trim(raw);
+  // Strip the outer [ ]
+  if length(t) < 2 then SStr { "ERR:array too short" }
+  else {
+    let inner = join(take(length(t) - 2, tail(split(t, ""))), "");
+    let innerT = trim(inner);
+    if length(innerT) == 0 then SList { [] + [] }
+    else {
+      let elems = splitArrayElements(innerT);
+      let parsed = map(fn e => parseValue(trim(e)), elems);
+      let hasErr = strMatch(join(map(fn v =>
+        match v with
+        | SStr sv -> { if startsWith(sv.value, "ERR:") then "E" else "."; }
+        | _ -> ".",
+        parsed), ""), fn c => c == "E");
+      if hasErr then SStr { "ERR:array element error" }
+      else SList { parsed + [] };
+    }
+  }
+}
+
+// splitArrayElements(inner) — split comma-separated array elements,
+// respecting quoted strings so commas inside strings are not split on.
+function splitArrayElements(s) {
+  splitElems(split(s, ""), 0, false, "", []);
+}
+
+function splitElems(chars, depth, inStr, cur, acc) {
+  if length(chars) == 0 then {
+    let t = trim(cur);
+    if length(t) == 0 then acc else acc + [t];
+  }
+  else {
+    let c = head(chars);
+    let rest = tail(chars);
+    if inStr then {
+      if c == "\\" && length(rest) > 0 then
+        splitElems(tail(rest), depth, true, cur + c + head(rest), acc)
+      else if c == "\"" then splitElems(rest, depth, false, cur + c, acc)
+      else splitElems(rest, depth, true, cur + c, acc);
+    }
+    else if c == "\"" then splitElems(rest, depth, true, cur + c, acc)
+    else if c == "," && depth == 0 then {
+      let t = trim(cur);
+      if length(t) == 0 then splitElems(rest, depth, false, "", acc)
+      else splitElems(rest, depth, false, "", acc + [t]);
+    }
+    else splitElems(rest, depth, false, cur + c, acc);
+  }
+}
+
+// ─── Internal: line parsing ───────────────────────────────────────────────────
+
+// parseLine(line) — parse one TOML line.
+// Returns one of:
+//   ["blank"]          — blank or comment line
+//   ["section", name]  — [section header]
+//   ["setting", key, rawValue]   — key = value line
+//   ["error", message]  — syntax error
+function parseLine(line) {
+  let t = trim(line);
+  if length(t) == 0              then ["blank"]
+  else if startsWith(t, "#")     then ["blank"]
+  else if startsWith(t, "[") then {
+    // Section header: [name] or [name.sub] (we treat the whole thing as the name)
+    let last = nth(split(t, ""), length(t) - 1);
+    if last != "]" then ["error", "section header missing ]"]
+    else {
+      let inner = join(take(length(t) - 2, tail(split(t, ""))), "");
+      ["section", trim(inner)];
+    }
+  }
+  else {
+    // key = value
+    match indexOf(t, "=") with
+    | None -> ["error", "no = found in: " + t]
+    | Some eqOpt -> {
+        let eqIdx = eqOpt.value;
+        let tChars = split(t, "");
+        let key = trim(join(take(eqIdx, tChars), ""));
+        let rawVal = trim(join(slice(eqIdx + 1, length(tChars) - eqIdx - 1, tChars), ""));
+        let rawNoComment = stripComment(rawVal);
+        [" setting", key, rawNoComment];
+      };
+  }
+}
+
+// ─── Internal: build result ───────────────────────────────────────────────────
+
+// buildGroups(lines, currentName, currentSettings, acc, lineNum) ->
+//   ForeignResult<List<SettingGroup>>
+function buildGroups(lines, currentName, currentSettings, acc, lineNum) {
+  if length(lines) == 0 then {
+    // Flush the last group
+    let finalGroup = SettingGroup { currentName, currentSettings };
+    FOk { acc + [finalGroup] };
+  }
+  else {
+    let line = head(lines);
+    let rest = tail(lines);
+    let parsed = parseLine(line);
+    let tag = head(parsed);
+    if tag == "blank" then
+      buildGroups(rest, currentName, currentSettings, acc, lineNum + 1)
+    else if tag == "section" then {
+      let name = nth(parsed, 1);
+      let finished = SettingGroup { currentName, currentSettings };
+      buildGroups(rest, name, [], acc + [finished], lineNum + 1);
+    }
+    else if tag == " setting" then {
+      let key    = nth(parsed, 1);
+      let rawVal = nth(parsed, 2);
+      let sv = parseValue(rawVal);
+      match sv with
+      | SStr errV -> {
+          if startsWith(errV.value, "ERR:") then
+            FErr { "parse_error", "line " + __str__(lineNum) + ": " + errV.value + " (key=" + key + ")" }
+          else {
+            let setting = Setting { key, SStr { errV.value } };
+            buildGroups(rest, currentName, currentSettings + [setting], acc, lineNum + 1);
+          }
+        }
+      | _ -> {
+          let setting = Setting { key, sv };
+          buildGroups(rest, currentName, currentSettings + [setting], acc, lineNum + 1);
+        }
+    }
+    else {
+      // tag == "error"
+      let msg = nth(parsed, 1);
+      FErr { "parse_error", "line " + __str__(lineNum) + ": " + msg };
+    }
+  }
+}
+
+// ─── Public API ───────────────────────────────────────────────────────────────
+
+// tomlParse(text) — parse TOML text into a list of SettingGroups.
+// Returns FOk { List<SettingGroup> } or FErr { kind, message }.
+// Callers must import * from "foreign" to match on FOk / FErr.
+export function tomlParse(text) {
+  let lines = split(text, "\n");
+  // Start with a synthetic "" group for top-level keys
+  buildGroups(lines, "", [], [], 1);
+}
+
+// ─── Emit helpers ─────────────────────────────────────────────────────────────
+
+// emitValue(sv) — render a SettingValue as a TOML value string.
+function emitValue(sv) {
+  match sv with
+  | SStr   v -> "\"" + escapeToml(v.value) + "\""
+  | SInt   v -> __str__(v.value)
+  | SFloat v -> {
+      let s = __str__(v.value);
+      // Ensure there's a decimal point so it reads as a TOML float
+      if contains(s, ".") then s else s + ".0";
+    }
+  | SBool  v -> { if v.value then "true" else "false"; }
+  | SList  v -> "[" + join(map(fn item => emitValue(item), v.items), ", ") + "]";
+}
+
+// emitSetting(s) — render a Setting as "key = value".
+function emitSetting(s) {
+  s.key + " = " + emitValue(s.value);
+}
+
+// emitGroup(g) — render a SettingGroup as TOML section text.
+function groupHeader(name) {
+  if length(name) == 0 then "" else "[" + name + "]\n";
+}
+
+function emitGroup(g) {
+  let header = groupHeader(g.name);
+  let body = join(map(emitSetting, g.settings), "\n");
+  if length(g.settings) == 0 then header
+  else header + body + "\n";
+}
+
+// tomlEmit(groups) — serialize a list of SettingGroups to TOML text.
+// Groups with name "" are emitted without a section header.
+// Never fails.
+export function tomlEmit(groups) {
+  let parts = map(emitGroup, groups);
+  join(parts, "\n");
+}

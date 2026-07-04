@@ -2647,3 +2647,2539 @@ the body of the manual:
   documented in [§2.4](#24-constructor-monomorphism-and-generic-types).
 
 *End of manual.*
+
+---
+
+# Appendix C — Core language reference
+
+Everything listed here is available without any `import` statement. These are the names seeded into the global environment at startup by the runtime before user code executes.
+
+Functions are grouped by what they operate on. For each function, the signature uses the following conventions:
+
+- Type variables `α`, `β` etc. denote polymorphic type parameters.
+- `List<α>` means a list (strict or lazy) whose elements are of type `α`.
+- `Str` is Pfun's string type — a sequence of characters.
+- `Char` is a single Unicode codepoint.
+- `Byte` is a value in the range 0–255.
+- `Int` is a signed arbitrary-precision integer (Pfun's `BigInt`-backed integer type).
+- `Float` is a 64-bit IEEE 754 double.
+- `Bool` is `true` or `false`.
+- `Option<α>` is `Some { value : α }` or `None`.
+
+---
+
+## C.1 Built-in types
+
+These types and their constructor names are always in scope.
+
+### `Option<α>`
+
+```
+type Option<α> = { | Some : value | None }
+```
+
+The standard optional value. Returned by `find`, `findSlice`, and any function that may produce no result. `Some { v }` wraps a value; `None` signals absence.
+
+```pfun
+match maybeValue with
+| None   -> "nothing"
+| Some v -> "got: " + __str__(v.value)
+```
+
+### `Pair<α, β>`
+
+```
+type Pair<α, β> = { key : α, value : β }
+```
+
+A generic two-field record. Used as the element type of `Dict<α, β>` when iterated via `dictToList` / `listToDict`, and available for any ad-hoc key-value pairing.
+
+```pfun
+let p = Pair { "name", "Pfun" };
+println(p.key + " = " + p.value);
+```
+
+### `BufferMode`
+
+```
+type BufferMode = { | ByteMode | CharMode }
+```
+
+Passed to `makeBuffer` to select whether the buffer stores raw bytes (`ByteMode`) or UTF-8 text characters (`CharMode`). Both variants carry no fields.
+
+---
+
+## C.2 List and sequence functions
+
+These operate on strict lists (`List<α>`), strings (`Str`), and where noted, lazy sequences.
+
+### `head(list)`
+
+```
+head : List<α> | Str → α | Char
+```
+
+Returns the first element of a list or the first character of a string. Throws on an empty argument.
+
+### `tail(list)`
+
+```
+tail : List<α> | Str → List<α> | Str
+```
+
+Returns everything after the first element. Throws on an empty argument.
+
+### `cons(x, list)`
+
+```
+cons : α → List<α> | Str → List<α> | Str
+```
+
+Prepends `x` to a list. If `x` is a `Char` and the tail is a `Str`, the result is a `Str`. Fully curried — `cons(x)` returns a function.
+
+### `map(fn, list)`
+
+```
+map : (α → β) → List<α> | Str | LazySeq<α> → List<β> | Str
+```
+
+Applies `fn` to each element. If every result is a `Char`, the output is a `Str`. Works on lazy sequences (returns a lazy sequence). Fully curried.
+
+### `filter(pred, list)`
+
+```
+filter : (α → Bool) → List<α> | Str | LazySeq<α> → List<α> | Str
+```
+
+Keeps only elements for which `pred` returns `true`. Works on lazy sequences. Fully curried.
+
+### `reduce(fn, init, list)`
+
+```
+reduce : (β → α → β) → β → List<α> | Str → β
+```
+
+Left-fold over a list. `init` is the starting accumulator. `fn` receives `(accumulator, element)`. Cannot be used on infinite sequences — call `take` first.
+
+### `length(list)`
+
+```
+length : List<α> | Str → Int
+```
+
+Returns the number of elements in a strict list, or the number of characters in a string. Does not work on lazy sequences.
+
+### `reverse(list)`
+
+```
+reverse : List<α> | Str → List<α> | Str
+```
+
+Reverses a strict list or string. Cannot be used on infinite sequences.
+
+### `nth(list, n)`
+
+```
+nth : List<α> | Str → Int → α | Char
+```
+
+Returns the element at zero-based index `n`. Throws if `n` is out of bounds.
+
+### `take(n, list)`
+
+```
+take : Int → List<α> | Str | LazySeq<α> → List<α> | Str
+```
+
+Returns the first `n` elements. Safe to call on infinite sequences — forces only `n` elements. Fully curried.
+
+### `drop(n, list)`
+
+```
+drop : Int → List<α> | Str → List<α> | Str
+```
+
+Skips the first `n` elements and returns the rest. Fully curried.
+
+### `slice(start, count, list)`
+
+```
+slice : Int → Int → List<α> | Str → List<α> | Str
+```
+
+Returns `count` elements beginning at zero-based index `start`. Equivalent to `take(count, drop(start, list))` but expressed as a single call.
+
+### `find(list, item)`
+
+```
+find : List<α> → α → Option<Int>
+```
+
+Returns `Some { index }` of the first occurrence of `item` in `list`, or `None` if not found. Uses structural equality.
+
+### `findSlice(list, pattern)`
+
+```
+findSlice : List<α> → List<α> → Option<Int>
+```
+
+Returns `Some { index }` of the first occurrence of the sub-list `pattern` inside `list`, or `None`. Used by `indexOf` in `stringlib`.
+
+### `join(list, sep)`
+
+```
+join : List<α> | List<Char> → Str → Str
+```
+
+Concatenates the string representations of elements, interspersed with `sep`. When all elements are already `Char` values, joins without conversion. Note argument order: list first, separator second.
+
+### `split(str, sep)`
+
+```
+split : Str → Str → List<Str>
+```
+
+Splits `str` on every occurrence of `sep`. If `sep` is `""`, splits into individual characters (returns a `List<Char>` rendered as a list of single-character strings).
+
+### `range(lo, hi)`
+
+```
+range : Int → Int → List<Int>
+```
+
+Returns a strict list `[lo, lo+1, … hi-1]`. If `lo >= hi` the result is `[]`.
+
+---
+
+## C.3 Lazy sequence functions
+
+These produce infinite (or potentially infinite) lazy sequences. Use `take` to materialise a finite prefix.
+
+### `iterate(fn, seed)`
+
+```
+iterate : (α → α) → α → LazySeq<α>
+```
+
+Produces `[seed, fn(seed), fn(fn(seed)), …]` lazily. Fully curried.
+
+```pfun
+let nats = iterate(fn n => n + 1, 0);
+println(__str__(take(5, nats)));   -- [0, 1, 2, 3, 4]
+```
+
+### `repeat(value)`
+
+```
+repeat : α → LazySeq<α>
+```
+
+Produces an infinite stream of `value`.
+
+```pfun
+take(3, repeat("x"))   -- ["x", "x", "x"]
+```
+
+### `cycle(list)`
+
+```
+cycle : List<α> → LazySeq<α>
+```
+
+Repeats `list` cyclically without end. The argument must be non-empty.
+
+```pfun
+take(5, cycle([1, 2, 3]))   -- [1, 2, 3, 1, 2]
+```
+
+### `isInfinite(seq)`
+
+```
+isInfinite : α → Bool
+```
+
+Returns `true` if its argument is a lazy (potentially infinite) sequence, `false` otherwise.
+
+---
+
+## C.4 Numeric functions
+
+### `toInt(n)`
+
+```
+toInt : Float | Byte → Int
+```
+
+Converts a `Float` to an `Int` by truncating toward zero, or converts a `Byte` to its integer value. Does not accept strings — parse with `toFloat` first if needed.
+
+### `toFloat(n)`
+
+```
+toFloat : Int | Float | Str → Float
+```
+
+Converts a numeric value or decimal string to `Float`. Throws if the string cannot be parsed.
+
+### `floor(n)` / `ceil(n)` / `round(n)`
+
+```
+floor, ceil, round : Float | Int → Float
+```
+
+Standard rounding functions. All accept `Int` (promoting to `Float`) and return `Float`.
+
+### `isNaN(n)`
+
+```
+isNaN : Float → Bool
+```
+
+Returns `true` if `n` is the IEEE 754 not-a-number value.
+
+### `isFinite(n)`
+
+```
+isFinite : Float → Bool
+```
+
+Returns `true` if `n` is neither `Infinity`, `-Infinity`, nor `NaN`.
+
+### `__str__(value)`
+
+```
+__str__ : α → Str
+```
+
+Converts any value to its string representation. For numbers: decimal. For booleans: `"true"` / `"false"`. For lists: `"[…]"`. For records: `"TypeName { field, … }"`. This is the underlying function the `$"…"` format-string syntax desugars to.
+
+---
+
+## C.5 Character and byte functions
+
+### `asc(c)`
+
+```
+asc : Char → Int
+```
+
+Returns the Unicode code point (as an `Int`) of character `c`. For ASCII characters this equals the ASCII value.
+
+```pfun
+asc('A')   -- 65
+```
+
+### `chr(n)`
+
+```
+chr : Int → Char
+```
+
+Returns the character with Unicode code point `n`.
+
+```pfun
+chr(65)   -- 'A'
+```
+
+### `toByte(n)`
+
+```
+toByte : Int | Byte → Byte
+```
+
+Converts an `Int` in the range 0–255 to a `Byte`. Throws if the value is out of range. Returns a `Byte` unchanged.
+
+### `toChar(b)`
+
+```
+toChar : Byte → Char
+```
+
+Converts a `Byte` value to the corresponding single-byte Unicode character.
+
+### `charBytes(c)`
+
+```
+charBytes : Char → List<Byte>
+```
+
+Returns the UTF-8 byte sequence of character `c` as a `List<Byte>`. ASCII characters return a one-element list; non-ASCII characters return two to four bytes.
+
+### `bytesToChar(bytes)`
+
+```
+bytesToChar : List<Byte> → Char
+```
+
+Reassembles a UTF-8 byte sequence into a single `Char`. Throws if the bytes do not form exactly one valid Unicode codepoint.
+
+---
+
+## C.6 Mutable array functions
+
+Mutable arrays (`Array<α>`) are distinct from Pfun lists — they support O(1) indexed access and in-place mutation. They must be stored in `var` bindings, not `let`.
+
+### `toArray(list)`
+
+```
+toArray : List<α> → Array<α>
+```
+
+Copies a strict list into a new mutable array.
+
+### `toList(arr)`
+
+```
+toList : Array<α> → List<α>
+```
+
+Returns a snapshot of the array as a strict list.
+
+### `arrayLength(arr)`
+
+```
+arrayLength : Array<α> → Int
+```
+
+Returns the number of elements currently in the array.
+
+### `append(arr, value)`
+
+```
+append : Array<α> → α → unit
+```
+
+Appends `value` to the end of `arr` in place. Side-effecting — must be called with `eval`.
+
+### `insertAt(arr, index, value)`
+
+```
+insertAt : Array<α> → Int → α → unit
+```
+
+Inserts `value` at zero-based `index`, shifting later elements right.
+
+### `removeAt(arr, index)`
+
+```
+removeAt : Array<α> → Int → unit
+```
+
+Removes the element at zero-based `index`, shifting later elements left.
+
+---
+
+## C.7 Mutable dictionary functions
+
+Mutable dictionaries (`Dict<Str, α>`) map string keys to values. They must be stored in `var` bindings.
+
+### `listToDict(pairs)`
+
+```
+listToDict : List<Pair<Str, α>> → Dict<Str, α>
+```
+
+Creates a new mutable dictionary from a list of `Pair { key, value }` entries. Keys must be `Str`.
+
+### `toDict(pairs)`
+
+```
+toDict : List<Pair<Str, α>> → Dict<Str, α>
+```
+
+Alias for `listToDict`. Both names are in scope.
+
+### `dictToList(dict)`
+
+```
+dictToList : Dict<Str, α> → List<Pair<Str, α>>
+```
+
+Returns a snapshot of the dictionary as a list of `Pair { key, value }` entries. Order is unspecified.
+
+### `has(dict, key)`
+
+```
+has : Dict<Str, α> → Str → Bool
+```
+
+Returns `true` if `key` is present in `dict`.
+
+### `remove(dict, key)`
+
+```
+remove : Dict<Str, α> → Str → unit
+```
+
+Removes `key` from `dict`. No-op if the key is absent.
+
+### `keys(dict)`
+
+```
+keys : Dict<Str, α> → List<Str>
+```
+
+Returns a snapshot of all keys. Order is unspecified.
+
+### `values(dict)`
+
+```
+values : Dict<Str, α> → List<α>
+```
+
+Returns a snapshot of all values. Order corresponds to `keys`.
+
+Dictionary entries can also be read and written via index syntax:
+
+```pfun
+var d = listToDict([Pair { "x", 1 }]);
+let v = d["x"];       -- read: 1
+d["x"] = 2;           -- write
+```
+
+---
+
+## C.8 Buffer functions
+
+Buffers are write-once, append-only byte or character accumulators that avoid repeated string concatenation. They must be stored in `var` bindings.
+
+### `makeBuffer(mode)`
+
+```
+makeBuffer : BufferMode → Buffer
+```
+
+Creates a new empty buffer. Pass `ByteMode` for raw bytes or `CharMode` for UTF-8 characters.
+
+### `makeStringBuffer()`
+
+```
+makeStringBuffer : unit → Buffer
+```
+
+Shorthand for `makeBuffer(CharMode)`.
+
+### `appendBuffer(buf, byte)`
+
+```
+appendBuffer : Buffer → Byte → unit
+```
+
+Appends a single `Byte` to a `ByteMode` buffer.
+
+### `appendChar(buf, char)`
+
+```
+appendChar : Buffer → Char → unit
+```
+
+Appends a single `Char` to a `CharMode` buffer.
+
+### `appendString(buf, str)`
+
+```
+appendString : Buffer → Str → unit
+```
+
+Appends all characters of `str` to a `CharMode` buffer.
+
+### `bufferToBytes(buf)`
+
+```
+bufferToBytes : Buffer → List<Byte>
+```
+
+Returns the accumulated contents of a `ByteMode` buffer as a `List<Byte>`.
+
+### `bufferToString(buf)`
+
+```
+bufferToString : Buffer → Str
+```
+
+Decodes the contents of a `CharMode` buffer as a UTF-8 `Str`.
+
+### `bufferLength(buf)`
+
+```
+bufferLength : Buffer → Int
+```
+
+Returns the number of bytes currently written to the buffer.
+
+---
+
+## C.9 Summary table
+
+The table below lists every globally-available name in alphabetical order together with its arity (number of required arguments) and a brief description. Names that require a library import are excluded.
+
+| Name | Arity | Description |
+|------|-------|-------------|
+| `__str__` | 1 | Convert any value to its string representation |
+| `append` | 2 | Append an element to a mutable `Array` in place |
+| `appendBuffer` | 2 | Append a `Byte` to a `ByteMode` buffer |
+| `appendChar` | 2 | Append a `Char` to a `CharMode` buffer |
+| `appendString` | 2 | Append a `Str` to a `CharMode` buffer |
+| `arrayLength` | 1 | Element count of a mutable `Array` |
+| `asc` | 1 | Unicode code point of a `Char` → `Int` |
+| `bufferLength` | 1 | Byte count of a `Buffer` |
+| `bufferToBytes` | 1 | `ByteMode` buffer → `List<Byte>` |
+| `bufferToString` | 1 | `CharMode` buffer → `Str` |
+| `bytesToChar` | 1 | UTF-8 `List<Byte>` → single `Char` |
+| `ceil` | 1 | Round a `Float` up to the nearest integer |
+| `charBytes` | 1 | `Char` → UTF-8 `List<Byte>` |
+| `chr` | 1 | Code point `Int` → `Char` |
+| `cons` | 2 | Prepend an element to a list |
+| `cycle` | 1 | Repeat a list cyclically → lazy infinite sequence |
+| `dictToList` | 1 | `Dict` → `List<Pair>` snapshot |
+| `drop` | 2 | Skip first *n* elements of a list or string |
+| `filter` | 2 | Keep elements satisfying a predicate |
+| `find` | 2 | First index of an element → `Option<Int>` |
+| `findSlice` | 2 | First index of a sub-list → `Option<Int>` |
+| `floor` | 1 | Round a `Float` down to the nearest integer |
+| `has` | 2 | Test key presence in a `Dict` |
+| `head` | 1 | First element of a list or string |
+| `insertAt` | 3 | Insert element into `Array` at an index |
+| `isFinite` | 1 | `true` if a `Float` is neither ±∞ nor NaN |
+| `isInfinite` | 1 | `true` if argument is a lazy sequence |
+| `isNaN` | 1 | `true` if a `Float` is NaN |
+| `iterate` | 2 | Unfold a lazy sequence from a seed and step function |
+| `join` | 2 | Concatenate list elements with a separator |
+| `keys` | 1 | `Dict` keys → `List<Str>` snapshot |
+| `length` | 1 | Element count of a strict list or string |
+| `listToDict` | 1 | `List<Pair>` → new mutable `Dict` |
+| `makeBuffer` | 1 | Create a new empty `Buffer` |
+| `makeStringBuffer` | 0 | Create a new empty `CharMode` `Buffer` |
+| `map` | 2 | Apply a function to every element |
+| `nth` | 2 | Element at a zero-based index |
+| `range` | 2 | `[lo … hi-1]` as a strict `List<Int>` |
+| `reduce` | 3 | Left-fold a list with an accumulator |
+| `remove` | 2 | Remove a key from a `Dict` |
+| `removeAt` | 2 | Remove element at index from an `Array` |
+| `repeat` | 1 | Infinite lazy sequence of a constant value |
+| `reverse` | 1 | Reverse a strict list or string |
+| `round` | 1 | Round a `Float` to the nearest integer |
+| `slice` | 3 | Sub-list: `slice(start, count, list)` |
+| `split` | 2 | Split a `Str` on a separator |
+| `tail` | 1 | All but the first element |
+| `take` | 2 | First *n* elements (works on lazy sequences) |
+| `toByte` | 1 | `Int` (0–255) or `Byte` → `Byte` |
+| `toChar` | 1 | `Byte` → single-byte `Char` |
+| `toArray` | 1 | Strict list → mutable `Array` |
+| `toDict` | 1 | `List<Pair>` → new mutable `Dict` (alias for `listToDict`) |
+| `toFloat` | 1 | `Int`, `Float`, or decimal `Str` → `Float` |
+| `toInt` | 1 | `Float` (truncated) or `Byte` → `Int` |
+| `toList` | 1 | Mutable `Array` → strict list snapshot |
+| `values` | 1 | `Dict` values → `List<α>` snapshot |
+
+*End of Appendix C.*
+---
+
+# Appendix D — Built-in library reference
+
+Each section below documents one import namespace. All names in a section become available after `import * from "<namespace>";`. Nothing listed here is available without that import.
+
+The same signature conventions as Appendix C apply. `Promise<α>` denotes a value that must be `await`-ed inside an `async proc`; the expression `await f(…)` has type `α`. All side-effecting functions are proc-only — calling them from a pure `function` is a compile-time purity error.
+
+---
+
+## D.1 `io` — Standard I/O
+
+```pfun
+import * from "io";
+```
+
+Provides terminal output, line input, command-line arguments, and environment access. All names are proc-only.
+
+### Output
+
+#### `print(value)`
+
+```
+print : α → α
+```
+
+Writes `__str__(value)` to stdout **without** a trailing newline, then returns `value`. Use `print` when building output incrementally across multiple calls.
+
+#### `println(value)`
+
+```
+println : α → α
+```
+
+Writes `__str__(value)` to stdout followed by a newline, then returns `value`. The most common output function.
+
+#### `flushStdout()`
+
+```
+flushStdout : unit → Bool
+```
+
+Flushes any buffered stdout output. Returns `true`. Normally not needed — `println` is synchronous — but useful before a blocking `readln` call in interactive programs.
+
+### Input
+
+#### `readChar()`
+
+```
+readChar : unit → Option<Char>
+```
+
+Reads one character from stdin. Returns `Some { char }` or `None` at end-of-file. Blocks until a character is available.
+
+#### `readln()`
+
+```
+readln : unit → Option<Str>
+```
+
+Reads one line from stdin, stripping the trailing newline. Returns `Some { line }` or `None` at end-of-file. Blocks until a full line is available.
+
+### Environment
+
+#### `scriptArgs()`
+
+```
+scriptArgs : unit → List<Str>
+```
+
+Returns the command-line arguments passed to the running script — everything after the script filename. `pfun myscript.pf foo bar` gives `["foo", "bar"]`.
+
+#### `getEnv(name)`
+
+```
+getEnv : Str → Option<Str>
+```
+
+Looks up a single environment variable by name. Returns `Some { value }` if set, `None` otherwise.
+
+#### `envVars()`
+
+```
+envVars : unit → Dict<Str, Str>
+```
+
+Returns all environment variables visible to the process as a mutable dictionary.
+
+---
+
+## D.2 `file` — Filesystem I/O
+
+```pfun
+import * from "file";
+```
+
+### Types
+
+#### `FileHandle`
+
+```
+type FileHandle = { | ReadHandle | WriteHandle }
+```
+
+An open file handle. `ReadHandle` and `WriteHandle` are zero-field variants returned by `fileOpen`.
+
+#### `FileMode`
+
+```
+type FileMode = { | Read | Write | Append }
+```
+
+Passed to `fileOpen` to select the access mode.
+
+#### `Result<α>`
+
+```
+type Result<α> = { | Ok : value | Err : message }
+```
+
+The standard two-outcome result type used throughout `file`. `Ok { value }` carries the success payload; `Err { message }` carries a human-readable error string.
+
+#### `ReadResult<α>`
+
+```
+type ReadResult<α> = { | Ok : value | Eof | Err : message }
+```
+
+Used by `readChar` and `readByte` to distinguish a successful read, end-of-file, and an I/O error.
+
+#### `DirEntry`
+
+```
+type DirEntry = { name : Str, isDir : Bool }
+```
+
+One entry returned by `listDir`. `name` is the base filename (not the full path); `isDir` is `true` for directories.
+
+#### `WatchEvent`
+
+```
+type WatchEvent = { eventType : Str, filename : Str }
+```
+
+Passed to the handler proc by `watchDir` on each filesystem event. `eventType` is `"rename"` or `"change"` (raw Node.js values). `filename` is the affected filename within the watched directory, or `""` if unavailable.
+
+### File existence and metadata
+
+#### `fileExists(path)`
+
+```
+fileExists : Str → Bool
+```
+
+Returns `true` if a file or directory exists at `path`, `false` otherwise. Never throws.
+
+#### `fileSize(path)`
+
+```
+fileSize : Str → Result<Int>
+```
+
+Returns `Ok { size }` in bytes, or `Err` if the path does not exist.
+
+#### `isDir(path)`
+
+```
+isDir : Str → Bool
+```
+
+Returns `true` if `path` exists and is a directory. Returns `false` for missing paths, files, or any error — never throws.
+
+### File operations
+
+#### `touchFile(path)`
+
+```
+touchFile : Str → Result<unit>
+```
+
+Creates an empty file at `path` if it does not exist, or updates its modification time if it does. Returns `Ok { 0 }` or `Err`.
+
+#### `removeFile(path)`
+
+```
+removeFile : Str → Result<unit>
+```
+
+Deletes the file at `path`. Returns `Ok { 0 }` or `Err`.
+
+#### `renameFile(from, to)`
+
+```
+renameFile : Str → Str → Result<unit>
+```
+
+Renames (or moves) a file or directory. Overwrites the destination atomically if it exists (POSIX semantics). Returns `Ok { 0 }` or `Err`.
+
+#### `mkdirP(path)`
+
+```
+mkdirP : Str → Result<unit>
+```
+
+Creates `path` and any missing parent directories. Equivalent to `mkdir -p`. Returns `Ok { 0 }` or `Err`.
+
+#### `readFile(path)`
+
+```
+readFile : Str → Result<Str>
+```
+
+Reads the entire file at `path` as a UTF-8 string. Returns `Ok { contents }` or `Err`.
+
+#### `writeFile(path, content)`
+
+```
+writeFile : Str → Str → Result<unit>
+```
+
+Writes `content` to `path`, creating or truncating the file. Returns `Ok { 0 }` or `Err`.
+
+### Directory operations
+
+#### `listDir(path)`
+
+```
+listDir : Str → Result<List<DirEntry>>
+```
+
+Lists the contents of a directory. Each entry is a `DirEntry { name, isDir }`. Returns `Err` if `path` does not exist or is not a directory.
+
+#### `watchDir(path, handler)`
+
+```
+watchDir : Str → proc(WatchEvent) → Result<unit>
+```
+
+Watches `path` for filesystem changes. `handler` is a proc called with a `WatchEvent` on each event; it runs as a spawned task. Returns `Ok { 0 }` immediately (non-blocking) or `Err` if the path cannot be watched. The watcher runs until the process exits.
+
+### Handle-based I/O
+
+#### `fileOpen(path, mode)`
+
+```
+fileOpen : Str → FileMode → Result<FileHandle>
+```
+
+Opens the file at `path` in the given mode. Returns `Ok { handle }` or `Err`.
+
+#### `fileClose(handle)`
+
+```
+fileClose : FileHandle → unit
+```
+
+Closes an open file handle.
+
+#### `readChar(handle)`
+
+```
+readChar : ReadHandle → ReadResult<Char>
+```
+
+Reads one UTF-8 character from an open `ReadHandle`. Returns `Ok { char }`, `Eof`, or `Err`.
+
+#### `readLine(handle)`
+
+```
+readLine : ReadHandle → ReadResult<Str>
+```
+
+Reads one line (stripping the trailing newline) from an open `ReadHandle`. Returns `Ok { line }`, `Eof`, or `Err`.
+
+#### `readByte(handle)`
+
+```
+readByte : ReadHandle → ReadResult<Byte>
+```
+
+Reads one raw byte from an open `ReadHandle`. Returns `Ok { byte }`, `Eof`, or `Err`.
+
+#### `readBytes(handle, n)`
+
+```
+readBytes : ReadHandle → Int → Result<List<Byte>>
+```
+
+Reads up to `n` raw bytes from an open `ReadHandle`. Returns `Ok { bytes }` where `bytes` may be shorter than `n` at end-of-file, or `Err`.
+
+#### `writeChar(handle, char)`
+
+```
+writeChar : WriteHandle → Char → Result<unit>
+```
+
+Writes a single character to an open `WriteHandle`.
+
+#### `writeLine(handle, str)`
+
+```
+writeLine : WriteHandle → Str → Result<unit>
+```
+
+Writes `str` followed by a newline to an open `WriteHandle`.
+
+#### `writeByte(handle, byte)`
+
+```
+writeByte : WriteHandle → Byte → Result<unit>
+```
+
+Writes a single byte to an open `WriteHandle`.
+
+#### `writeBytes(handle, bytes)`
+
+```
+writeBytes : WriteHandle → List<Byte> → Result<unit>
+```
+
+Writes a list of raw bytes to an open `WriteHandle`.
+
+### Buffer I/O
+
+The `file` namespace re-exports the buffer API (see Appendix C §C.8) and adds `readBuffer` for bulk reads.
+
+#### `readBuffer(handle, buf, n)`
+
+```
+readBuffer : ReadHandle → Buffer → Int → Result<Int>
+```
+
+Reads up to `n` bytes from `handle` into `buf`. Returns `Ok { bytesRead }` (which may be less than `n` at end-of-file) or `Err`.
+
+#### `writeBuffer(handle, buf)`
+
+```
+writeBuffer : WriteHandle → Buffer → Result<unit>
+```
+
+Writes the entire contents of `buf` to `handle`.
+
+---
+
+## D.3 `json` — JSON serialisation
+
+```pfun
+import * from "json";
+```
+
+### `jsonSerialize(value)`
+
+```
+jsonSerialize : α → Option<Str>
+```
+
+Serialises a Pfun value to a pretty-printed JSON string. Returns `Some { json }` on success or `None` if the value contains types that cannot be represented in JSON (functions, handles, lazy sequences). Integers are serialised as JSON numbers; records become JSON objects; lists become JSON arrays.
+
+### `jsonDeserialize(str)`
+
+```
+jsonDeserialize : Str → Option<α>
+```
+
+Parses a JSON string into a Pfun value. Returns `Some { value }` on success or `None` if the string is not valid JSON. JSON numbers become `Float`; JSON integers that fit in a safe integer range also become `Float`. JSON arrays become lists; JSON objects become plain records.
+
+---
+
+## D.4 `math` — Mathematical functions
+
+```pfun
+import * from "math";
+```
+
+All functions accept both `Int` and `Float` arguments (integers are promoted to `Float` internally). Functions that can produce `NaN` or `Infinity` throw a `FloatDomain` error rather than silently propagating a bad value, with the exception of the constants `nan` and `inf` which exist specifically to test against.
+
+### Constants
+
+| Name | Value |
+|------|-------|
+| `pi()` | π ≈ 3.14159265358979 |
+| `e()` | Euler's number ≈ 2.71828182845905 |
+| `tau()` | 2π ≈ 6.28318530717959 |
+| `inf()` | Positive infinity (IEEE 754) |
+| `nan()` | Not-a-number (IEEE 754) |
+
+Constants are zero-argument functions: `pi()`, not `pi`.
+
+### Basic
+
+| Signature | Description |
+|-----------|-------------|
+| `abs(n)` | Absolute value. Returns `Int` for `Int` input, `Float` for `Float`. |
+| `sign(n)` | −1, 0, or 1 (preserving input type). |
+| `min(a, b)` | Smaller of two values. |
+| `max(a, b)` | Larger of two values. |
+| `clamp(lo, hi, x)` | Constrain `x` to `[lo, hi]`. |
+
+### Powers and logarithms
+
+| Signature | Description |
+|-----------|-------------|
+| `sqrt(n)` | Square root. Throws on negative input. |
+| `cbrt(n)` | Cube root. |
+| `pow(base, exp)` | `base` raised to `exp`. |
+| `exp(n)` | eⁿ |
+| `log(n)` | Natural logarithm. Throws on non-positive input. |
+| `log2(n)` | Base-2 logarithm. |
+| `log10(n)` | Base-10 logarithm. |
+| `hypot(a, b)` | √(a² + b²) — Euclidean norm. |
+| `fmod(x, y)` | Floating-point remainder. Throws if `y` is 0. |
+| `lerp(a, b, t)` | Linear interpolation: a + t·(b − a). |
+
+### Trigonometry
+
+| Signature | Description |
+|-----------|-------------|
+| `sin(n)` | Sine (radians). |
+| `cos(n)` | Cosine (radians). |
+| `tan(n)` | Tangent (radians). |
+| `asin(n)` | Arcsine → [−π/2, π/2]. Throws if |n| > 1. |
+| `acos(n)` | Arccosine → [0, π]. Throws if |n| > 1. |
+| `atan(n)` | Arctangent → (−π/2, π/2). |
+| `atan2(y, x)` | Four-quadrant arctangent of y/x. |
+
+### Hyperbolic
+
+| Signature | Description |
+|-----------|-------------|
+| `sinh(n)` | Hyperbolic sine. |
+| `cosh(n)` | Hyperbolic cosine. |
+| `tanh(n)` | Hyperbolic tangent. |
+
+### Formatting
+
+#### `formatFixed(n, decimals)`
+
+```
+formatFixed : Float | Int → Int → Str
+```
+
+Formats `n` to exactly `decimals` decimal places (0–100) using round-half-away-from-zero. Returns a `Str`. Throws on `NaN` or `Infinity` input, or if `decimals` is out of range.
+
+```pfun
+formatFixed(3.14159, 2)   -- "3.14"
+formatFixed(1000.0, 2)    -- "1000.00"
+formatFixed(42, 3)        -- "42.000"
+formatFixed(0.1 + 0.2, 2) -- "0.30"
+```
+
+---
+
+## D.5 `async` — Asynchronous control flow
+
+```pfun
+import * from "async";
+```
+
+### `sleep(ms)`
+
+```
+sleep : Int → Promise<unit>
+```
+
+Suspends the current task for at least `ms` milliseconds. Must be called with `await` inside an `async proc`.
+
+```pfun
+async proc example() {
+  println("before");
+  eval await sleep(1000);
+  println("after one second");
+}
+```
+
+### `asyncAll(procs)`
+
+```
+asyncAll : List<async proc() → α> → Promise<List<α>>
+```
+
+Runs a list of zero-argument async procs concurrently and waits for all of them to complete. Returns a list of results in the same order as the input. If any proc throws, the error propagates. Must be `await`-ed.
+
+### `asyncRace(procs)`
+
+```
+asyncRace : List<async proc() → α> → Promise<α>
+```
+
+Runs a list of zero-argument async procs concurrently and returns the result of whichever finishes first. The other procs continue running but their results are discarded. Must be `await`-ed.
+
+---
+
+## D.6 `http` — HTTP client and server
+
+```pfun
+import * from "http";
+```
+
+### Types
+
+#### `HttpResult`
+
+```
+type HttpResult<α> = { | Ok : value | Err : message }
+```
+
+All HTTP functions return `Promise<HttpResult<…>>`. `Ok { value }` carries a response record; `Err { message }` carries a human-readable network or connection error.
+
+The response record (the `value` field of `Ok`) has these fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `status` | `Int` | HTTP status code (e.g. `200`, `404`) |
+| `headers` | `Dict<Str, Str>` | Response headers, lower-cased keys |
+| `body` | `Str` or `List<Byte>` | Decoded body string (for `httpGet`, `httpRequest`) or raw bytes (for `httpGetBytes`, `httpRequestBytes`) |
+
+### Client functions
+
+All client functions are async procs and must be `await`-ed.
+
+#### `httpGet(url)`
+
+```
+httpGet : Str → Promise<HttpResult<{ status, headers, body : Str }>>
+```
+
+Performs an HTTP GET. The response body is decoded as UTF-8.
+
+#### `httpGetBytes(url)`
+
+```
+httpGetBytes : Str → Promise<HttpResult<{ status, headers, body : List<Byte> }>>
+```
+
+Same as `httpGet` but the body is returned as raw bytes — use for binary content (images, archives, etc.) where UTF-8 decoding would corrupt the data.
+
+#### `httpRequest(method, url, headers, body)`
+
+```
+httpRequest : Str → Str → Dict<Str,Str> → Str
+           → Promise<HttpResult<{ status, headers, body : Str }>>
+```
+
+General HTTP client. `method` is `"GET"`, `"POST"`, `"PUT"`, `"PATCH"`, `"DELETE"`, etc. Pass `listToDict([])` for no custom headers. Pass `""` for no body (required for GET and HEAD). The response body is decoded as UTF-8.
+
+#### `httpRequestBytes(method, url, headers, body)`
+
+```
+httpRequestBytes : Str → Str → Dict<Str,Str> → Str
+                → Promise<HttpResult<{ status, headers, body : List<Byte> }>>
+```
+
+Identical to `httpRequest` but the response body is returned as raw bytes.
+
+#### `fetchWithTimeout(url, ms)`
+
+```
+fetchWithTimeout : Str → Int
+                → Promise<HttpResult<{ status, headers, body : Str }>>
+```
+
+GET with an abort-on-timeout. If no response arrives within `ms` milliseconds the in-flight connection is cancelled and `Err { "timeout after Nms" }` is returned.
+
+#### `urlEncode(s)`
+
+```
+urlEncode : Str → Str
+```
+
+Percent-encodes a string for use as a URL query parameter value (wraps `encodeURIComponent`). This is a **pure** function and may be called from both `function` and `proc` contexts.
+
+### Server
+
+#### `httpListen(port, handler)`
+
+```
+httpListen : Int → async proc(req, res) → unit
+```
+
+Starts an HTTP server on `port`. `handler` is called for each incoming request with a request record `req` and a response object `res`. Returns immediately; the server runs until the process exits.
+
+**Request record fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `method` | `Str` | HTTP method: `"GET"`, `"POST"`, etc. |
+| `path` | `Str` | URL path component (e.g. `"/api/users"`) |
+| `headers` | `Dict<Str, Str>` | Request headers, lower-cased keys |
+| `body` | `Str` | Request body decoded as UTF-8 |
+| `bodyBytes` | `List<Byte>` | Request body as raw bytes |
+
+**Response methods** (called on `res`):
+
+| Call | Description |
+|------|-------------|
+| `res.text(status, body)` | Send a `text/plain` response |
+| `res.json(status, value)` | Serialise `value` to JSON and send as `application/json` |
+| `res.bytes(status, contentType, bytes)` | Send raw bytes with an explicit content-type |
+
+---
+
+## D.7 `timer` — One-shot timers
+
+```pfun
+import * from "timer";
+```
+
+### `setTimer(ms, action)`
+
+```
+setTimer : Int → proc() → Int
+```
+
+Schedules `action()` to run once after `ms` milliseconds. `action` must be a proc with no arguments. Returns a timer ID (`Int`) that can be passed to `clearTimer`. The action runs as a spawned task, so it may use `await`. The timer keeps the process alive until it fires or is cleared.
+
+```pfun
+proc sayHello() { println("hello from timer"); }
+let id = setTimer(500, sayHello);
+```
+
+### `clearTimer(id)`
+
+```
+clearTimer : Int → unit
+```
+
+Cancels a pending timer before it fires. Safe to call after the timer has already fired (no-op) and safe to call twice (idempotent).
+
+---
+
+## D.8 `foreign` — JavaScript FFI
+
+```pfun
+import * from "foreign";
+```
+
+The `foreign` module is the bridge between Pfun and raw JavaScript. It provides effect operations for crossing the boundary (all proc-only) and a set of composable decoders for safely converting JS values to Pfun types (all pure).
+
+### Types
+
+#### `ForeignResult`
+
+```
+type ForeignResult<α> = { | FOk : value | FErr : kind message }
+```
+
+Every effect operation returns a `ForeignResult`. `FOk { value }` carries the result; `FErr { kind, message }` carries an error. `kind` is one of:
+
+| Kind | Meaning |
+|------|---------|
+| `"js_exception"` | The JS side threw an exception |
+| `"marshal_error"` | Type mismatch during value conversion |
+| `"type_error"` | Wrong argument type passed to an FFI op |
+
+### Effect operations (proc-only)
+
+All operations below are proc-only. They check `inPureContext` and throw a purity error if called from a `function`.
+
+#### `foreignRequire(path)`
+
+```
+foreignRequire : Str → ForeignResult<Foreign>
+```
+
+Loads a Node.js module by its require path (e.g. `"fs"`, `"zlib"`, `"./mymodule"`). Returns a `Foreign` handle to the module's exports object.
+
+#### `foreignGlobal(name)`
+
+```
+foreignGlobal : Str → ForeignResult<Foreign>
+```
+
+Reads a JavaScript global by name (e.g. `"Buffer"`, `"Math"`, `"Intl"`, `"Function"`). Returns a `Foreign` handle or `FErr` if the global does not exist.
+
+#### `foreignGet(handle, prop)`
+
+```
+foreignGet : Foreign → Str → ForeignResult<α>
+```
+
+Reads a property from a JS object handle. The result is materialized if possible (numbers, strings, booleans, arrays, plain objects become Pfun values); otherwise it remains a `Foreign` handle.
+
+#### `foreignSet(handle, prop, value)`
+
+```
+foreignSet : Foreign → Str → α → ForeignResult<unit>
+```
+
+Writes a value to a property of a JS object handle.
+
+#### `foreignDelete(handle, prop)`
+
+```
+foreignDelete : Foreign → Str → ForeignResult<unit>
+```
+
+Deletes a property from a JS object handle.
+
+#### `foreignCall(handle, method, args)`
+
+```
+foreignCall : Foreign → Str → List<α> → ForeignResult<β>
+```
+
+Calls a method on a JS object handle: `handle.method(...args)`. All elements of `args` must be the same Pfun type (heterogeneous lists are a type error — curry across multiple calls if needed).
+
+#### `foreignInvoke(fn, args)`
+
+```
+foreignInvoke : Foreign → List<α> → ForeignResult<β>
+```
+
+Calls a JS function handle directly: `fn(...args)`. Same type homogeneity constraint as `foreignCall`.
+
+#### `foreignNew(ctor, args)`
+
+```
+foreignNew : Foreign → List<α> → ForeignResult<β>
+```
+
+Invokes a JS constructor: `new ctor(...args)`. Same type homogeneity constraint as `foreignCall`.
+
+#### `foreignTypeof(handle)`
+
+```
+foreignTypeof : Foreign → ForeignResult<Str>
+```
+
+Returns the JavaScript `typeof` value of a handle as a string (`"number"`, `"string"`, `"object"`, `"function"`, etc.).
+
+#### `foreignAwait(handle)`
+
+```
+foreignAwait : Foreign → Promise<ForeignResult<α>>
+```
+
+Awaits a JS `Promise` handle. Must be used with `await` inside an `async proc`:
+
+```pfun
+match await foreignAwait(promiseHandle) with
+| FErr e -> println("failed: " + e.message)
+| FOk v  -> println("resolved");
+```
+
+#### `foreignCallback(proc, argsDecoder)`
+
+```
+foreignCallback : proc(List<α>) → Decoder<α> → Foreign
+```
+
+Wraps a Pfun proc as a plain JS callback function. When the returned JS function is called, its arguments are decoded with `argsDecoder` and the proc is invoked as a spawned task. Useful for registering event listeners and Node.js callbacks.
+
+### Decoders (pure)
+
+Decoders are composable values that describe how to convert a materialized Pfun value (or a `Foreign` handle) into a typed Pfun value. They are pure and may be used in `function` context.
+
+#### `foreignApply(handle, decoder)`
+
+```
+foreignApply : Foreign → Decoder<α> → ForeignResult<α>
+```
+
+Applies a decoder to a `Foreign` handle. This is the primary way to extract a typed Pfun value from an FFI call result.
+
+#### Primitive decoders
+
+| Decoder | Input type | Output type |
+|---------|------------|-------------|
+| `dForeign` | any | `Foreign` handle (identity, never fails) |
+| `dUnit` | any | `unit` (ignores the value, always succeeds) |
+| `dBool` | JS boolean | `Bool` |
+| `dInt` | JS number (integer) or bigint | `Int` |
+| `dFloat` | JS number | `Float` |
+| `dStr` | JS string | `Str` |
+
+#### Composite decoders
+
+#### `dList(elemDecoder)`
+
+```
+dList : Decoder<α> → Decoder<List<α>>
+```
+
+Decodes a JS array, applying `elemDecoder` to each element.
+
+#### `dOption(decoder)`
+
+```
+dOption : Decoder<α> → Decoder<Option<α>>
+```
+
+Returns `None` for `null` or `undefined`; applies `decoder` and wraps in `Some` otherwise.
+
+#### `dDict(valueDecoder)`
+
+```
+dDict : Decoder<α> → Decoder<Dict<Str, α>>
+```
+
+Decodes a plain JS object into a `Dict`, applying `valueDecoder` to each value.
+
+#### `dField(key, decoder)`
+
+```
+dField : Str → Decoder<α> → Decoder<α>
+```
+
+Reads a single named property from a JS object and decodes it.
+
+#### `dMap(fn, decoder)`
+
+```
+dMap : (α → β) → Decoder<α> → Decoder<β>
+```
+
+Transforms a successfully decoded value with `fn`.
+
+#### `dAndThen(fn, decoder)`
+
+```
+dAndThen : (α → Decoder<β>) → Decoder<α> → Decoder<β>
+```
+
+Chains decoders: decodes with `decoder`, then passes the result to `fn` to obtain a second decoder and runs that too.
+
+#### `dOneOf(decoders)`
+
+```
+dOneOf : List<Decoder<α>> → Decoder<α>
+```
+
+Tries each decoder in order and returns the first success. Fails if all decoders fail.
+
+---
+
+## D.9 `db/postgresql` — PostgreSQL
+
+```pfun
+import * from "db/postgresql";
+```
+
+### D.9.1 `db/mariadb` — MariaDB / MySQL
+
+```pfun
+import * from "db/mariadb";
+```
+
+Both namespaces expose the same three functions and the same types. The only difference is the driver and the connection string format.
+
+### Types
+
+#### `DbResult<α>`
+
+```
+type DbResult<α> = { | Ok : value | Err : message }
+```
+
+Wraps every database operation. `Ok { value }` carries the success payload; `Err { message }` carries a human-readable error.
+
+#### `DbValue`
+
+```
+type DbValue = {
+  | DbInt   : value   -- Int
+  | DbFloat : value   -- Float
+  | DbText  : value   -- Str
+  | DbBool  : value   -- Bool
+  | DbBytes : value   -- List<Byte>  (binary/BYTEA/BLOB columns)
+  | DbNull            -- SQL NULL
+}
+```
+
+Each cell in a query result set is a `DbValue`. Match on the variant to extract the typed Pfun value.
+
+#### `QueryResult`
+
+```
+type QueryResult = {
+  rows     : List<List<DbValue>>,
+  rowCount : Int,
+}
+```
+
+The payload of a successful `dbQuery`. `rows` is a list of rows; each row is a list of `DbValue` cells in the order the columns appear in the query. `rowCount` is the number of rows affected (for `INSERT`/`UPDATE`/`DELETE`) or returned (for `SELECT`).
+
+#### `Connection`
+
+An opaque handle to an open database connection. Obtained from `dbConnect`; passed to `dbQuery` and `dbClose`. Has no user-visible fields.
+
+### Functions
+
+All database functions are async procs and must be `await`-ed.
+
+#### `dbConnect(connectionString)`
+
+```
+dbConnect : Str → Promise<DbResult<Connection>>
+```
+
+Opens a connection to the database.
+
+**PostgreSQL** connection string format: `"postgres://user:password@host:port/database"`.  
+**MariaDB/MySQL** connection string format: `"mysql://user:password@host:port/database"`.
+
+Returns `Ok { connection }` or `Err { message }`.
+
+#### `dbQuery(conn, sql, params)`
+
+```
+dbQuery : Connection → Str → List<DbValue> → Promise<DbResult<QueryResult>>
+```
+
+Executes a parameterised SQL query. `params` is a list of `DbValue` values bound to `$1`, `$2`, … placeholders (PostgreSQL) or `?` placeholders (MariaDB). Returns `Ok { QueryResult }` or `Err { message }`.
+
+```pfun
+let result = await dbQuery(conn, "SELECT id, name FROM users WHERE id = $1",
+                           [DbInt { 42 }]);
+match result with
+| Err e -> println("query failed: " + e.message)
+| Ok  r -> {
+    let row = head(r.value.rows);
+    match head(row) with
+    | DbInt v -> println("id: " + __str__(v.value))
+    | _ -> ();
+  };
+```
+
+#### `dbClose(conn)`
+
+```
+dbClose : Connection → Promise<DbResult<unit>>
+```
+
+Closes the database connection and releases the underlying driver client. Returns `Ok { 0 }` or `Err`.
+
+---
+
+## D.10 Summary: what each import provides
+
+| Import | Types added | Functions added |
+|--------|-------------|-----------------|
+| `"io"` | *(none)* | `print`, `println`, `flushStdout`, `readChar`, `readln`, `scriptArgs`, `getEnv`, `envVars` |
+| `"file"` | `FileHandle` (`ReadHandle`, `WriteHandle`), `FileMode` (`Read`, `Write`, `Append`), `Result` (`Ok`, `Err`), `ReadResult` (`Ok`, `Eof`, `Err`), `DirEntry`, `WatchEvent` | `fileExists`, `fileSize`, `isDir`, `touchFile`, `removeFile`, `renameFile`, `mkdirP`, `readFile`, `writeFile`, `listDir`, `watchDir`, `fileOpen`, `fileClose`, `readChar`, `readLine`, `readByte`, `readBytes`, `writeChar`, `writeLine`, `writeByte`, `writeBytes`, `readBuffer`, `writeBuffer` |
+| `"json"` | *(none)* | `jsonSerialize`, `jsonDeserialize` |
+| `"math"` | *(none)* | `pi`, `e`, `tau`, `inf`, `nan`, `abs`, `sign`, `min`, `max`, `clamp`, `lerp`, `sqrt`, `cbrt`, `exp`, `log`, `log2`, `log10`, `pow`, `hypot`, `fmod`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`, `sinh`, `cosh`, `tanh`, `formatFixed` |
+| `"async"` | *(none)* | `sleep`, `asyncAll`, `asyncRace` |
+| `"http"` | `HttpResult` (`Ok`, `Err`) | `httpGet`, `httpGetBytes`, `httpRequest`, `httpRequestBytes`, `fetchWithTimeout`, `urlEncode`, `httpListen` |
+| `"timer"` | *(none)* | `setTimer`, `clearTimer` |
+| `"foreign"` | `ForeignResult` (`FOk`, `FErr`) | `foreignRequire`, `foreignGlobal`, `foreignGet`, `foreignSet`, `foreignDelete`, `foreignCall`, `foreignInvoke`, `foreignNew`, `foreignTypeof`, `foreignAwait`, `foreignCallback`, `foreignApply`, `dForeign`, `dUnit`, `dBool`, `dInt`, `dFloat`, `dStr`, `dList`, `dOption`, `dDict`, `dField`, `dMap`, `dAndThen`, `dOneOf` |
+| `"db/postgresql"` | `DbResult` (`Ok`, `Err`), `DbValue` (`DbInt`, `DbFloat`, `DbText`, `DbBool`, `DbBytes`, `DbNull`), `QueryResult`, `Connection` | `dbConnect`, `dbQuery`, `dbClose` |
+| `"db/mariadb"` | *(same as db/postgresql)* | *(same as db/postgresql)* |
+
+*End of Appendix D.*
+
+---
+
+# Appendix E — Pfun library reference (`lib/` and testing)
+
+This appendix documents the pure-Pfun libraries that ship with the runtime. They are imported by file path rather than a short module name:
+
+```pfun
+import * from "$PFUN_HOME/lib/stringlib.pf";
+import * from "$PFUN_HOME/lib/datelib.pf";
+// etc.
+```
+
+The testing framework (`testing.pf`, `assertions.pf`, `runner.pf`) lives at the repo root and is imported by relative path:
+
+```pfun
+import * from "./testing";
+import * from "./assertions";
+import * from "./runner";
+```
+
+All functions are **pure** (`function`) unless stated otherwise. Procs are marked **[proc]** or **[async proc]**.
+
+---
+
+## E.1 `stringlib.pf` — String utilities
+
+```pfun
+import * from "$PFUN_HOME/lib/stringlib.pf";
+```
+
+All functions are pure. Predicates (`matchFn`, `pred`) have type `Str → Bool` and are applied to single-character strings, as produced by `split(s, "")`.
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `isWhitespace` | `Str → Bool` | `true` if the character is a space, tab, or newline. |
+| `trim` | `Str → Str` | Strip leading and trailing whitespace. |
+| `trimLeft` | `Str → Str` | Strip leading whitespace only. |
+| `trimRight` | `Str → Str` | Strip trailing whitespace only. |
+| `startsWith` | `Str → Str → Bool` | `true` if `s` begins with `prefix`. |
+| `endsWith` | `Str → Str → Bool` | `true` if `s` ends with `suffix`. |
+| `contains` | `Str → Str → Bool` | `true` if `sub` appears anywhere in `s`. |
+| `replace` | `Str → Str → Str → Str` | Replace the **first** occurrence of `s1` with `s2`. Returns `s` unchanged if `s1` is absent. |
+| `replaceAll` | `Str → Str → Str → Str` | Replace **every** occurrence of `s1` with `s2`. |
+| `strMatch` | `Str → (Str→Bool) → Bool` | `true` if any character in `s` satisfies `matchFn`. Named `strMatch` to avoid collision with the `match` keyword. |
+| `replaceMatch` | `Str → (Str→Bool) → (Str→Str) → Str` | Replace every character satisfying `matchFn` by applying `replaceFn` to it. |
+| `takeWhile` | `Str → (Str→Bool) → Str` | The longest leading substring whose characters all satisfy `pred`. |
+| `dropWhile` | `Str → (Str→Bool) → Str` | Strip the longest leading substring whose characters satisfy `pred`. |
+| `strRepeat` | `Str → Int → Str` | Concatenate `s` with itself `n` times. Named `strRepeat` to avoid collision with the built-in `repeat` lazy-sequence function. |
+| `padLeft` | `Str → Int → Str → Str` | Pad `s` on the left with `fill` characters until it is at least `n` characters wide. |
+| `padRight` | `Str → Int → Str → Str` | Pad `s` on the right with `fill` characters. |
+| `indexOf` | `Str → Str → Option<Int>` | `Some { index }` of the first occurrence of `sub` in `s`, or `None`. |
+
+---
+
+## E.2 `datelib.pf` — Date and time
+
+```pfun
+import * from "$PFUN_HOME/lib/datelib.pf";
+```
+
+Requires `import * from "foreign"` to be visible (pulled in automatically by datelib itself — callers do not need to repeat it). Most functions return `ForeignResult` (from `foreign`) or `DateResult` (defined below); match on the result to extract the value.
+
+### Types
+
+```
+type Date = { handle }
+```
+Opaque wrapper around a JavaScript `Date` object. The `handle` field is a `Foreign` and should not be used directly.
+
+```
+type DateResult = { | DateOk : date | DateErr : message }
+```
+The primary result type for operations that can fail (invalid date strings, FFI errors). `DateOk { d }` carries a `Date`; `DateErr { msg }` carries an error string.
+
+```
+type Weekday = { | Sunday | Monday | Tuesday | Wednesday
+               | Thursday | Friday | Saturday }
+```
+
+```
+type Month = { | January | February | March | April
+             | May | June | July | August
+             | September | October | November | December }
+```
+
+```
+type DateTime = { year, month, day, hour, minute, second, millisecond, weekday }
+```
+A broken-down local date and time. `month` is a `Month` variant; `weekday` is a `Weekday` variant. Used for display and construction.
+
+### Constructors [proc]
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `now()` | `DateResult` | Current local date and time. |
+| `fromIso(str)` | `DateResult` | Parse an ISO 8601 string, e.g. `"2024-03-15T14:30:00Z"`. Returns `DateErr` for invalid strings. |
+| `fromParts(year, month, day)` | `DateResult` | Local midnight on the given date. `month` is 1-indexed (1 = January). |
+| `fromPartsTime(year, month, day, hour, minute, second, ms)` | `DateResult` | Full local datetime. `month` is 1-indexed. |
+| `fromTimestamp(ms)` | `DateResult` | Construct from a Unix timestamp in milliseconds (`Float`). |
+| `timestampNow()` | `ForeignResult<Float>` | Current Unix timestamp in milliseconds, without constructing a `Date`. |
+
+### Local accessors [proc]
+
+All return `ForeignResult<Int>` unless noted. Month values are 1-indexed (1 = January). Weekday values use the typed variants.
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `year(d)` | `ForeignResult<Int>` | Four-digit year. |
+| `monthInt(d)` | `ForeignResult<Int>` | Month as integer 1–12. |
+| `month(d)` | `ForeignResult<Month>` | Month as a `Month` variant. |
+| `day(d)` | `ForeignResult<Int>` | Day of month 1–31. |
+| `weekdayInt(d)` | `ForeignResult<Int>` | Day of week 0 (Sunday) – 6 (Saturday). |
+| `weekday(d)` | `ForeignResult<Weekday>` | Day of week as a `Weekday` variant. |
+| `hour(d)` | `ForeignResult<Int>` | Hour 0–23. |
+| `minute(d)` | `ForeignResult<Int>` | Minute 0–59. |
+| `second(d)` | `ForeignResult<Int>` | Second 0–59. |
+| `millisecond(d)` | `ForeignResult<Int>` | Millisecond 0–999. |
+| `timezoneOffset(d)` | `ForeignResult<Int>` | Local offset from UTC in minutes (negative east of UTC). |
+| `timestamp(d)` | `ForeignResult<Float>` | Unix timestamp in milliseconds. |
+| `toDateTime(d)` | `DateResult<DateTime>` | Decompose into a `DateTime` record in local time. |
+
+### UTC accessors [proc]
+
+Parallel to the local accessors above, reading UTC values instead: `utcYear`, `utcMonthInt`, `utcMonth`, `utcDay`, `utcWeekdayInt`, `utcWeekday`, `utcHour`, `utcMinute`, `utcSecond`, `utcMillisecond`. Same signatures — each takes a `Date` and returns `ForeignResult<Int>` (or `ForeignResult<Month>` / `ForeignResult<Weekday>` for the typed variants).
+
+### Formatting [proc]
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `toIso(d)` | `ForeignResult<Str>` | ISO 8601 in UTC: `"2024-03-15T14:30:45.123Z"`. |
+| `toUtcString(d)` | `ForeignResult<Str>` | RFC 7231 HTTP date: `"Fri, 15 Mar 2024 14:30:45 GMT"`. |
+| `toDateString(d)` | `ForeignResult<Str>` | Human-readable date only: `"Fri Mar 15 2024"`. |
+| `toTimeString(d)` | `ForeignResult<Str>` | Local time with timezone: `"14:30:45 GMT+0000 (…)"`. |
+| `toLocaleString(d)` | `ForeignResult<Str>` | Locale-sensitive full datetime (system locale). |
+| `format(d)` | `ForeignResult<Str>` | `"YYYY-MM-DD HH:MM:SS"` in local time. |
+| `formatDate(d)` | `ForeignResult<Str>` | `"YYYY-MM-DD"` only. |
+| `formatTime(d)` | `ForeignResult<Str>` | `"HH:MM:SS"` only. |
+
+### Arithmetic [proc]
+
+All return `DateResult`. Offsets may be negative.
+
+| Function | Description |
+|----------|-------------|
+| `addMilliseconds(d, n)` | Add `n` milliseconds (`Float`). |
+| `addSeconds(d, n)` | Add `n` seconds. |
+| `addMinutes(d, n)` | Add `n` minutes. |
+| `addHours(d, n)` | Add `n` hours. |
+| `addDays(d, n)` | Add `n` days. |
+| `addMonths(d, n)` | Add `n` calendar months. Calendar-aware: handles varying month lengths and leap years. |
+| `addYears(d, n)` | Add `n` calendar years. Calendar-aware. |
+
+### Difference [proc]
+
+All take two `Date` values `(a, b)` and return `ForeignResult<Float>` representing `a − b`.
+
+`diffMilliseconds`, `diffSeconds`, `diffMinutes`, `diffHours`, `diffDays`.
+
+### Comparison [proc]
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `dateBefore(a, b)` | `ForeignResult<Bool>` | `true` if `a` is earlier than `b`. |
+| `dateAfter(a, b)` | `ForeignResult<Bool>` | `true` if `a` is later than `b`. |
+| `dateEqual(a, b)` | `ForeignResult<Bool>` | `true` if `a` and `b` represent the same instant. |
+| `dateMin(a, b)` | `DateResult` | The earlier of the two dates. |
+| `dateMax(a, b)` | `DateResult` | The later of the two dates. |
+| `isSameDay(a, b)` | `Bool` | `true` if both fall on the same local calendar day. Returns `false` on FFI error. |
+| `isSameMonth(a, b)` | `Bool` | `true` if both fall in the same local calendar month and year. |
+| `isSameYear(a, b)` | `Bool` | `true` if both fall in the same local calendar year. |
+
+### Calendar queries [proc]
+
+All return `DateResult`.
+
+| Function | Description |
+|----------|-------------|
+| `startOfDay(d)` | Local midnight on the same calendar day. |
+| `endOfDay(d)` | `23:59:59.999` local time on the same calendar day. |
+| `startOfMonth(d)` | 1st of the month at local midnight. |
+| `endOfMonth(d)` | Last day of the month at `23:59:59.999`. |
+| `startOfYear(d)` | January 1 at local midnight. |
+| `endOfYear(d)` | December 31 at `23:59:59.999`. |
+
+### Pure helpers
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `monthToInt(m)` | `Month → Int` | 0-indexed month number (0 = January). |
+| `monthName(m)` | `Month → Str` | Full English name: `"January"` … `"December"`. |
+| `monthShort(m)` | `Month → Str` | Three-letter abbreviation: `"Jan"` … `"Dec"`. |
+| `weekdayName(w)` | `Weekday → Str` | Full English name: `"Sunday"` … `"Saturday"`. |
+| `weekdayShort(w)` | `Weekday → Str` | Three-letter abbreviation: `"Sun"` … `"Sat"`. |
+| `isWeekend(w)` | `Weekday → Bool` | `true` for `Saturday` or `Sunday`. |
+| `isWeekdayVariant(w)` | `Weekday → Bool` | `true` for Monday–Friday. |
+| `isLeapYear(year)` | `Int → Bool` | Standard Gregorian leap-year test. |
+| `daysInMonth(month, year)` | `Month → Int → Int` | Number of days in the month, accounting for leap years. |
+
+---
+
+## E.3 `random.pf` — Randomness
+
+```pfun
+import * from "$PFUN_HOME/lib/random.pf";
+```
+
+All functions are **[proc]** — they have side effects and cannot be called from pure `function` contexts. All use `crypto.randomBytes` via FFI for cryptographically strong randomness.
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `randomFloat()` | `Float` | Uniform random `Float` in `[0, 1)`. |
+| `randomInt(min, max)` | `Int` | Uniform random `Int` in `[min, max]` (both bounds inclusive). |
+| `randomBool()` | `Bool` | `true` or `false` with equal probability. |
+| `randomElement(list)` | `Option<α>` | A uniformly random element from `list`, or `None` if the list is empty. |
+| `randomShuffle(list)` | `List<α>` | A new list containing all elements of `list` in a uniformly random order (Fisher-Yates). |
+| `randomBytes(n)` | `List<Byte>` | `n` cryptographically random bytes. |
+| `randomUUID()` | `Str` | A random UUID v4 string in the standard `"xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx"` format. |
+
+---
+
+## E.4 `locale.pf` — Locale-sensitive number formatting
+
+```pfun
+import * from "$PFUN_HOME/lib/locale.pf";
+```
+
+All functions are **[proc]** (FFI access). They use the system locale as detected by the JavaScript runtime. Return type `ForeignResult<Str>` — match on `FOk`/`FErr` from `import * from "foreign"`.
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `formatLocalNumber(n)` | `Float → ForeignResult<Str>` | Format a number using the locale's decimal and grouping conventions. |
+| `formatLocalCurrency(n)` | `Float → ForeignResult<Str>` | Format as a monetary value using the locale's default currency. |
+| `formatLocalCurrencyWith(n, code)` | `Float → Str → ForeignResult<Str>` | Format as a monetary value in a specific ISO 4217 currency code (e.g. `"USD"`, `"EUR"`). Returns `FErr` for unknown currency codes. |
+
+---
+
+## E.5 `compress.pf` — Gzip compression
+
+```pfun
+import * from "$PFUN_HOME/lib/compress.pf";
+import * from "foreign";  -- for FOk / FErr
+```
+
+Uses Node.js's built-in `zlib` module. All functions return `ForeignResult`.
+
+| Function | Kind | Signature | Description |
+|----------|------|-----------|-------------|
+| `gzip(bytes)` | proc | `List<Byte> → ForeignResult<List<Byte>>` | Compress a byte list with gzip. |
+| `gunzip(bytes)` | proc | `List<Byte> → ForeignResult<List<Byte>>` | Decompress a gzip-compressed byte list. |
+| `gzipFile(src, dst)` | async proc | `Str → Str → ForeignResult<unit>` | Compress the file at `src` and write the result to `dst`. |
+| `gunzipFile(src, dst)` | async proc | `Str → Str → ForeignResult<unit>` | Decompress the gzip file at `src` and write to `dst`. |
+
+---
+
+## E.6 `crypto.pf` — Password hashing and AES-GCM encryption
+
+```pfun
+import * from "$PFUN_HOME/lib/crypto.pf";
+import * from "foreign";  -- for FOk / FErr
+```
+
+Uses Node.js's built-in `crypto` module. All functions are **[proc]**.
+
+### Password hashing
+
+#### `hashPassword(pw)`
+
+```
+hashPassword : Str → Str
+```
+
+Derives a password hash for storage using scrypt (RFC 7914) with parameters N=16384, r=8, p=1, a 16-byte random salt, and a 64-byte derived key. Returns a self-describing storage string:
+
+```
+"scrypt:<N>:<r>:<p>:<salt_base64url>:<hash_base64url>"
+```
+
+Every call produces a different string (random salt). The embedded parameters allow future parameter upgrades without breaking stored hashes.
+
+#### `verifyPassword(pw, stored)`
+
+```
+verifyPassword : Str → Str → Bool
+```
+
+Re-derives the key from `pw` using the salt and parameters embedded in `stored` and compares with `crypto.timingSafeEqual` to prevent timing attacks. Returns `false` (not an error) for malformed stored strings. Never throws.
+
+### AES-GCM encryption
+
+#### `aesGcmEncrypt(keyBytes, plaintext, aad)`
+
+```
+aesGcmEncrypt : List<Byte> → List<Byte> → List<Byte>
+             → ForeignResult<List<Byte>>
+```
+
+Encrypt `plaintext` with AES-GCM. `keyBytes` must be 16, 24, or 32 bytes (AES-128, AES-192, or AES-256). `aad` (additional authenticated data) is authenticated but not encrypted — pass `[]` for none. A fresh 12-byte random IV is generated per call.
+
+Returns `FOk { box }` where `box` is `IV(12) ++ authTag(16) ++ ciphertext`. The box is self-contained; the key must be kept secret separately.
+
+#### `aesGcmDecrypt(keyBytes, box, aad)`
+
+```
+aesGcmDecrypt : List<Byte> → List<Byte> → List<Byte>
+             → ForeignResult<List<Byte>>
+```
+
+Decrypt and authenticate a box produced by `aesGcmEncrypt`. Returns `FOk { plaintext }` or `FErr` if authentication fails (wrong key, tampered box, mismatched AAD, or truncated box). The error message is intentionally vague to avoid leaking oracle information.
+
+---
+
+## E.7 `toml.pf` — TOML parsing and emission
+
+```pfun
+import * from "$PFUN_HOME/lib/toml.pf";
+import * from "foreign";  -- for FOk / FErr
+```
+
+### Types
+
+```
+type SettingValue = {
+  | SStr   : value          -- Str
+  | SInt   : value          -- Int
+  | SFloat : value          -- Float
+  | SBool  : value          -- Bool
+  | SList  : items          -- List<SettingValue>  (inline arrays)
+}
+
+type Setting = { key, value }
+  -- key : Str,  value : SettingValue
+
+type SettingGroup = { name, settings }
+  -- name : Str,  settings : List<Setting>
+```
+
+All three types are exported and visible to importers.
+
+### `tomlParse(text)`
+
+```
+tomlParse : Str → ForeignResult<List<SettingGroup>>
+```
+
+Parse a TOML string. Top-level keys (before the first section header) go into a group with `name = ""`. Returns `FOk { groups }` or `FErr { kind, message }` on syntax errors.
+
+**Supported subset:** section headers `[name]`, quoted strings (with `\"` `\\` `\n` escapes), integers, floats, booleans, inline arrays `[…]`, line comments `#`, and blank lines. Multi-line strings, dotted keys, inline tables, and dates are not supported.
+
+### `tomlEmit(groups)`
+
+```
+tomlEmit : List<SettingGroup> → Str
+```
+
+Serialise a list of `SettingGroup` values back to TOML text. Groups with `name = ""` are emitted without a section header. Never fails.
+
+---
+
+## E.8 `htmllib.pf` — Semantic HTML document model
+
+```pfun
+import * from "$PFUN_HOME/lib/htmllib.pf";
+```
+
+Provides a typed document model for constructing and rendering HTML. Pure throughout.
+
+### Types
+
+#### `Attrs`
+
+```
+type Attrs = { id, classes, style }
+  -- id : Option<Str>,  classes : List<Str>,  style : Option<Str>
+```
+
+HTML attribute bundle. The constant `noAttrs` provides an empty bundle: `Attrs { None, [], None }`.
+
+#### `Inline`
+
+```
+type Inline = {
+  | Text         : value          -- plain text (HTML-escaped on render)
+  | Emph         : content        -- <em>
+  | Strong       : content        -- <strong>
+  | InlineCode   : value          -- <code>
+  | Link         : href, content  -- <a href="…">
+  | HtmlLineBreak                 -- <br>
+}
+```
+
+#### `Choice`
+
+```
+type Choice = { value, label }   -- both Str; used by RadioGroup and Dropdown
+```
+
+#### `Field`
+
+```
+type Field = {
+  | TextField     : name, label, value
+  | EmailField    : name, label, value
+  | PasswordField : name, label
+  | NumberField   : name, label, value
+  | TextArea      : name, label, value
+  | Checkbox      : name, label, checked    -- checked : Bool
+  | RadioGroup    : name, label, choices, selected
+  | Dropdown      : name, label, choices, selected
+  | SubmitButton  : text
+  | ResetButton   : text
+  | HiddenField   : name, value
+}
+```
+
+#### `Block`
+
+```
+type Block = {
+  | Para        : content
+  | BulletList  : items           -- items : List<List<Block>>
+  | OrderedList : items
+  | BlockQuote  : content
+  | CodeBlock   : language, value
+  | ThematicBreak
+  | Section     : heading, content
+  | Article     : heading, content
+  | Aside       : content
+  | Nav         : content
+  | Form        : action, method, fields   -- fields : List<Field>
+  | RawHtml     : value
+  | Attributed  : node, attrs              -- any Block + Attrs
+}
+```
+
+#### `Document`
+
+```
+type Document = { title, body }
+  -- title : Str,  body : List<Block>
+```
+
+### Constructor functions
+
+**Inline constructors:** `text(s)`, `emph(content)`, `strong(content)`, `code(value)`, `link(href, content)`.
+
+**Field constructors:** `choice(value, label)`, `textField(name, label, value)`, `emailField(name, label, value)`, `passwordField(name, label)`, `numberField(name, label, value)`, `textArea(name, label, value)`, `checkbox(name, label, checked)`, `radioGroup(name, label, choices, selected)`, `dropdown(name, label, choices, selected)`, `submitButton(text)`, `resetButton(text)`, `hiddenField(name, value)`, `form(action, method, fields)`.
+
+**Attribute helpers:** `withId(id, node)`, `withClass(classes, node)`, `withStyle(style, node)` — return an `Attributed` block wrapping `node` with the given attribute.
+
+### Rendering functions
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `renderInline(node)` | `Inline → Str` | Render one inline node to HTML. |
+| `renderInlines(nodes)` | `List<Inline> → Str` | Render a list of inline nodes. |
+| `renderBlock(node, depth)` | `Block → Int → Str` | Render one block to HTML. `depth` controls heading level for nested `Section`/`Article`. |
+| `renderBlocks(nodes, depth)` | `List<Block> → Int → Str` | Render a list of blocks. |
+| `renderDocument(doc)` | `Document → Str` | Render a full document to an HTML fragment (no `<html>` wrapper). |
+| `renderField(field)` | `Field → Str` | Render a single form field including its `<label>`. |
+| `renderFields(fields)` | `List<Field> → Str` | Render a list of form fields. |
+
+### Escaping functions
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `escapeHtml(s)` | `Str → Str` | Escape `&`, `<`, `>` for safe embedding in HTML text content. |
+| `escapeAttr(s)` | `Str → Str` | Escape for use inside an HTML attribute value (also escapes `'`). |
+
+---
+
+## E.9 `htmlparse.pf` — HTML parser
+
+```pfun
+import * from "$PFUN_HOME/lib/htmlparse.pf";
+```
+
+Parses raw HTML strings into a typed tree. Pure throughout.
+
+### Types
+
+#### `HtmlNode`
+
+```
+type HtmlNode = {
+  | Element : tag, attrs, children
+      -- tag : Str
+      -- attrs : List<Pair<Str, Str>>  (attribute name → value)
+      -- children : List<HtmlNode>
+  | HtmlText : value               -- plain text between tags
+  | Comment  : value               -- <!-- … -->
+  | Doctype  : value               -- <!DOCTYPE …>
+}
+```
+
+#### `ParseResult`
+
+```
+type ParseResult = {
+  | ParseOk  : nodes    -- nodes : List<HtmlNode>
+  | ParseErr : message  -- message : Str
+}
+```
+
+### Functions
+
+#### `parseHtml(text)`
+
+```
+parseHtml : Str → ParseResult
+```
+
+Parse an HTML string in lenient mode. Recovers from common errors: missing closing tags, mismatched tags (closed as best-effort), and unrecognised content. Returns `ParseOk { nodes }` with a list of top-level `HtmlNode` values, or `ParseErr { message }` for unrecoverable errors.
+
+#### `parseStrictHtml(text)`
+
+```
+parseStrictHtml : Str → ParseResult
+```
+
+Same as `parseHtml` but treats structural errors as fatal and returns `ParseErr`. Use when the input is expected to be well-formed.
+
+#### `getAttr(attrs, name)`
+
+```
+getAttr : List<Pair<Str,Str>> → Str → Option<Str>
+```
+
+Look up an attribute value by name in an `Element`'s attribute list. Returns `Some { value }` or `None`.
+
+#### `hasAttr(attrs, name)`
+
+```
+hasAttr : List<Pair<Str,Str>> → Str → Bool
+```
+
+`true` if the named attribute is present, regardless of its value.
+
+#### `toSemanticHtmlContent(nodes)`
+
+```
+toSemanticHtmlContent : List<HtmlNode> → List<Block>
+```
+
+Convert a list of `HtmlNode` values into `Block` values from `htmllib`. Recognises `<p>`, `<ul>`, `<ol>`, `<blockquote>`, `<pre>`, `<hr>`, `<section>`, `<article>`, `<aside>`, `<nav>`, `<h1>`–`<h6>`, `<em>`, `<strong>`, `<code>`, `<a>`, `<br>`, and `<form>`. Unknown tags are preserved as `RawHtml`.
+
+#### `renderHtmlNode(node)` / `renderHtmlNodes(nodes)`
+
+```
+renderHtmlNode  : HtmlNode → Str
+renderHtmlNodes : List<HtmlNode> → Str
+```
+
+Serialise one or more `HtmlNode` values back to an HTML string.
+
+#### `renderHtmlNodeDoc(title, node)` / `renderHtmlNodesDoc(title, nodes)`
+
+```
+renderHtmlNodeDoc  : Str → HtmlNode       → Str
+renderHtmlNodesDoc : Str → List<HtmlNode> → Str
+```
+
+Like `renderHtmlNode` / `renderHtmlNodes`, but wrap the output in a complete HTML document shell when the input is not already a full document.
+
+A node list is considered a full document if it contains a top-level `Doctype` node or a top-level `Element` with `tag == "html"`. In that case the output is passed through unchanged and `title` is ignored.
+
+Otherwise the rendered HTML is wrapped in:
+
+```html
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>…</title>
+</head>
+<body>
+…
+</body>
+</html>
+```
+
+`title` is run through `escapeHtml` so `<`, `>`, and `&` are safe. The single-node variant (`renderHtmlNodeDoc`) applies the same full-document check to the one node: a `Doctype` node or an `<html>` element passes through; any other node type is wrapped.
+
+---
+
+## E.10 `viewlib.pf` — TEA view layer
+
+```pfun
+import * from "$PFUN_HOME/lib/viewlib.pf";
+import * from "$PFUN_HOME/lib/htmllib.pf";  -- for Attrs, noAttrs, Choice, Block, etc.
+```
+
+Provides the view type and rendering for the browser-side Elm Architecture (TEA). Used in conjunction with `tea.pf`. Pure throughout.
+
+### Types
+
+#### `View`
+
+```
+type View = {
+  | VText       : value
+  | VEl         : tag, attrs, children
+  | VButton     : label, attrs, onClick       -- onClick : Msg
+  | VTextInput  : name, value, placeholder, onInput
+                                              -- onInput : fn Str → Msg
+  | VCheckbox   : name, checked, label, onToggle
+                                              -- onToggle : fn Bool → Msg
+  | VSelect     : name, choices, selected, onChange
+                                              -- choices : List<Choice>
+                                              -- onChange : fn Str → Msg
+  | VContent    : block                       -- embed a Block from htmllib
+  | VColorInput : name, value, onInput
+  | VRangeInput : name, value, min, max, step, onInput
+}
+```
+
+`Msg` is the application's own message type (a union defined by the caller). `attrs` is `Attrs` from `htmllib`.
+
+### Constructors
+
+| Function | Description |
+|----------|-------------|
+| `vtext(value)` | Plain text node. |
+| `vbutton(label, onClick)` | Button with no extra attributes. |
+| `vbuttonClass(label, classes, onClick)` | Button with CSS class list. |
+| `vdiv(children)` | `<div>` with no attributes. |
+| `vspan(children)` | `<span>` with no attributes. |
+| `vp(children)` | `<p>` with no attributes. |
+| `vh(level, label)` | Heading `<h1>`–`<h6>`. `level` is `Int` 1–6. |
+| `vdivClass(classes, children)` | `<div>` with a CSS class list. |
+| `vdivId(id, children)` | `<div>` with an id attribute. |
+| `vspanId(id, children)` | `<span>` with an id attribute. |
+| `vinput(name, value, placeholder, onInput)` | Text input. |
+| `vcheckbox(name, checked, label, onToggle)` | Checkbox. |
+| `vselect(name, choices, selected, onChange)` | Dropdown select. |
+| `vcontent(block)` | Embed a `Block` from `htmllib` inside a view tree. |
+| `vcolor(name, value, onInput)` | Colour picker `<input type="color">`. |
+| `vrange(name, value, min, max, step, onInput)` | Range slider `<input type="range">`. |
+
+### Rendering
+
+#### `renderView(view, prefix)`
+
+```
+renderView : View → Str → Str
+```
+
+Render one `View` node to an HTML string. `prefix` is a namespace string prepended to all `data-pfun-*` event-binding attributes so that multiple TEA components on the same page don't collide.
+
+#### `renderViews(views, prefix)`
+
+```
+renderViews : List<View> → Str → Str
+```
+
+Render a list of `View` nodes, concatenating the results.
+
+#### `renderViewChoice(c, selected)`
+
+```
+renderViewChoice : Choice → Str → Str
+```
+
+Render one `<option>` element inside a `VSelect`. `selected` is the currently selected value string.
+
+### Helper
+
+#### `boolStr(cond, s)`
+
+```
+boolStr : Bool → Str → Str
+```
+
+Returns `s` if `cond` is `true`, `""` otherwise. Convenience for conditionally emitting HTML attribute strings.
+
+
+---
+
+## E.11 `tea.pf` — The Elm Architecture runtime
+
+```pfun
+import * from "./tea";
+import * from "./viewlib";  -- required; tea.pf imports it internally
+import * from "io";         -- required; tea.pf imports it internally
+```
+
+Implements the browser-side Elm Architecture (TEA) event loop. In TEA, the application is described by three pure functions — `init`, `view`, and `update` — and `run` owns all mutation and I/O. `tea.pf` coordinates the render/event/update cycle and executes any side-effect commands returned by `update`.
+
+### How it works
+
+1. `run(init, viewFn, updateFn)` renders the initial view and executes any startup command.
+2. When the user interacts with a button, input, checkbox, or select, the registered handler calls `updateFn(msg, model)` to get `{ model, cmd }`.
+3. `render` re-renders the view tree, replaces the DOM output, and re-attaches all handlers.
+4. `executeCmd` runs any `Cmd` effect (currently: sending a JSON POST and dispatching the response as a new `Msg`).
+
+### Types
+
+#### `Cmd`
+
+```
+type Cmd = {
+  | CmdNone
+  | Send : msg, onReply, url
+      -- msg     : any value — serialised as JSON and POSTed to url
+      -- onReply : fn response → Msg — called with the server's response
+      -- url     : Str
+}
+```
+
+The closed union of effects `update` may request. `CmdNone` means no effect. `Send` causes a JSON POST to `url`; the response is passed to `onReply` to produce the next `Msg`, which is then dispatched through the update loop.
+
+#### `Handler`
+
+```
+type Handler = { key, handler }
+  -- key     : Str — encodes element type and label/name (e.g. "click_Save")
+  -- handler : fn value → Msg
+```
+
+Internal record produced by `collectHandlers`. Not typically constructed directly by application code.
+
+### Functions
+
+#### `cmdNone()`
+
+```
+cmdNone : unit → Cmd
+```
+
+Returns `CmdNone`. Convenience alias for use in `update` return expressions:
+
+```pfun
+function update(msg, model) {
+  match msg with
+  | Increment -> { model = { model | count = model.count + 1 }, cmd = cmdNone() };
+}
+```
+
+#### `collectHandlers(view)`
+
+```
+collectHandlers : View → List<Handler>
+```
+
+Walk a `View` tree and collect one `Handler` record per interactive element (`VButton`, `VTextInput`, `VCheckbox`, `VSelect`, `VColorInput`, `VRangeInput`). Used internally by `render`; exposed for testing or custom runtime implementations.
+
+### Procs
+
+#### `run(init, viewFn, updateFn)` [proc]
+
+```
+run : { model, cmd } → (Model → View) → (Msg → Model → { model, cmd }) → unit
+```
+
+The application entry point. `init` is a record with two fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `model` | `Model` | The initial model value. |
+| `cmd` | `Cmd` | A command to execute on startup (`CmdNone` for none). |
+
+`viewFn` and `updateFn` must be pure `function`s. `run` is a proc and must be called at top level.
+
+```pfun
+run(init(), view, update);
+```
+
+#### `render(model, viewFn, updateFn)` [proc]
+
+```
+render : Model → (Model → View) → (Msg → Model → { model, cmd }) → unit
+```
+
+Render `viewFn(model)` to HTML, replace the page's output area, and attach all DOM event handlers. Called automatically by `run` and after each `update`; exposed for advanced use.
+
+#### `executeCmd(cmd, model, viewFn, updateFn)` [async proc]
+
+```
+executeCmd : Cmd → Model → (Model → View) → (Msg → Model → { model, cmd }) → unit
+```
+
+Execute one `Cmd`. For `CmdNone`, does nothing. For `Send`, POSTs `msg` as JSON to `url`, calls `onReply` on the response, and re-enters the update/render loop. Called automatically after each `render`; exposed for advanced use.
+
+#### `attachAll(handlers, updateFn, model, viewFn, keyCounts)` [proc]
+
+```
+attachAll : List<Handler> → ... → unit
+```
+
+Wire each `Handler` to its DOM element via the runtime's `attachDomHandler` primitive, tracking occurrence counts so multiple elements with the same key are each wired to the correct DOM node. Called internally by `render`.
+
+### Minimal application template
+
+```pfun
+import * from "io";
+import * from "./viewlib";
+import * from "./tea";
+
+type Model = { count }
+type Msg   = { | Increment | Decrement }
+
+function init() {
+  { model = Model { 0 }, cmd = cmdNone() };
+}
+
+function view(model) {
+  vdiv([
+    vh(1, "Counter"),
+    vp([vtext(__str__(model.count))]),
+    vbutton("Increment", Increment),
+    vbutton("Decrement", Decrement),
+  ]);
+}
+
+function update(msg, model) {
+  match msg with
+  | Increment -> { model = Model { model.count + 1 }, cmd = cmdNone() }
+  | Decrement -> { model = Model { model.count - 1 }, cmd = cmdNone() };
+}
+
+run(init(), view, update);
+```
+
+---
+
+## E.12 `testing.pf` — Test model
+
+```pfun
+import * from "./testing";
+```
+
+Defines the data model for tests. Import path is relative to the test file.
+
+### Types
+
+```
+type Fixture = { before, after }
+  -- before : proc(),  after : proc()
+
+type Test = { name, fixture, body }
+  -- name : Str,  fixture : Fixture,  body : proc() → TestResult
+
+type Suite = { name, tests }
+  -- name : Str,  tests : List<Test>
+```
+
+### Values and functions
+
+| Name | Kind | Description |
+|------|------|-------------|
+| `noFixture` | `Fixture` | A fixture whose `before` and `after` procs do nothing. |
+| `fixture(before, after)` | function | Construct a `Fixture` from two no-argument procs. |
+| `test(name, body)` | function | Construct a `Test` with `noFixture`. `body` is a `proc() → TestResult`. |
+| `testUsing(name, fixture, body)` | function | Construct a `Test` with a specific `Fixture`. |
+| `suite(name, tests)` | function | Construct a `Suite` from a name and a list of `Test` values. |
+| `emptySuite(name)` | function | Construct a `Suite` with no tests, for use with the pipe/`addTest` pattern. |
+| `addTest(t, s)` | function | Append a `Test` to a `Suite`. Designed for the pipe operator: `emptySuite("…") \|> addTest(t1) \|> addTest(t2)`. |
+| `withFixture(test, fixture)` | function | Return a copy of `test` with a different `Fixture` attached. |
+
+---
+
+## E.13 `assertions.pf` — Assertion primitives
+
+```pfun
+import * from "./assertions";
+```
+
+Assertion functions return `Check` values. Collect them with `assertions([…])` to produce a `TestResult` for the test runner.
+
+### Types
+
+```
+type Failure = { message, expected, actual }
+  -- all fields are Str (values are stringified at assertion time)
+
+type Check = { | Pass | Fail : failure }
+  -- failure : Failure
+
+type TestResult = { failures }
+  -- failures : List<Check>  (contains only the Fail variants)
+```
+
+### Assertion functions
+
+All are pure `function`s. All return `Check` — `Pass` on success, `Fail { Failure { … } }` on failure.
+
+| Function | Signature | Passes when… |
+|----------|-----------|-------------|
+| `assertEqual(expected, actual)` | `α → α → Check` | `expected == actual` |
+| `assertNotEqual(expected, actual)` | `α → α → Check` | `expected != actual` |
+| `assertTrue(value)` | `Bool → Check` | `value` is `true` |
+| `assertFalse(value)` | `Bool → Check` | `value` is `false` |
+| `assertSome(value)` | `Option<α> → Check` | `value` is `Some _` |
+| `assertNone(value)` | `Option<α> → Check` | `value` is `None` |
+| `check(condition, message)` | `Bool → Str → Check` | `condition` is `true` |
+| `fail(message)` | `Str → Check` | Never (always `Fail`) |
+
+### Aggregation
+
+#### `assertions(list)`
+
+```
+assertions : List<Check> → TestResult
+```
+
+Filter the list to only failing `Check` values and wrap in a `TestResult`. This is what a test body proc must return:
+
+```pfun
+proc myTest() {
+  assertions([
+    assertEqual(1 + 1, 2),
+    assertTrue(length([1,2,3]) == 3),
+    check(someCondition, "expected condition to hold"),
+  ]);
+}
+```
+
+---
+
+## E.14 `runner.pf` — Test runner
+
+```pfun
+import * from "./runner";
+```
+
+Executes suites, prints a Jest-style summary, and re-exports the `Stats` type. Also re-imports `testing.pf` and `assertions.pf` internally, so a test file that imports `runner.pf` does not need to import those separately (though re-importing is harmless).
+
+### Types
+
+```
+type Stats = { suitePass, suiteFail, testPass, testFail }
+  -- all fields : Int
+```
+
+### Functions and procs
+
+| Name | Kind | Description |
+|------|------|-------------|
+| `runSuites(suites)` | proc | Execute a list of `Suite` values sequentially. Runs `before`/`after` fixtures around each test. Continues after failures. Prints a summary to stdout with pass/fail counts and `PASS` or `FAIL` at the end. |
+
+Typical usage in a test file:
+
+```pfun
+import * from "io";
+import * from "./testing";
+import * from "./assertions";
+import * from "./runner";
+
+let suite1 = suite("Arithmetic", [
+  test("addition", proc() {
+    assertions([assertEqual(1 + 1, 2)]);
+  }),
+]);
+
+runSuites([suite1]);
+```
+
+*End of Appendix E.*

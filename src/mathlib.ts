@@ -151,4 +151,27 @@ export const mathlibFunctions: RegistryFunction[] = [
   mathFn1('sinh', Math.sinh),
   mathFn1('cosh', Math.cosh),
   mathFn1('tanh', Math.tanh),
+
+  // ── Formatting ─────────────────────────────────────────────────────────────
+
+  // formatFixed(n, x) — format the number n to exactly x decimal places.
+  // n may be Int or Float.  x must be an Int in 0–100.
+  // Returns a Str, e.g. formatFixed(3.14159, 2) = "3.14".
+  // Throws FloatDomain if n is NaN or Infinity.
+  // Throws a RangeError if x is negative or greater than 100.
+  { name: 'formatFixed', arity: 2, fn: (args, interp) => {
+    const n = interp.force(args[0]);
+    const x = interp.force(args[1]);
+    if (typeof n !== 'number' && typeof n !== 'bigint')
+      throw new Error("formatFixed() requires a numeric first argument.");
+    if (typeof x !== 'bigint')
+      throw new Error("formatFixed() requires an integer second argument (number of decimal places).");
+    const decimals = Number(x);
+    if (decimals < 0 || decimals > 100)
+      throw new Error(`formatFixed() decimal places must be 0–100, got ${decimals}.`);
+    const num = typeof n === 'bigint' ? Number(n) : n;
+    if (isNaN(num))      throw new Error("Float domain error: formatFixed() called with NaN.");
+    if (!isFinite(num))  throw new Error("Float domain error: formatFixed() called with Infinity.");
+    return num.toFixed(decimals);
+  }},
 ];

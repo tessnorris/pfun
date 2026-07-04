@@ -2526,7 +2526,66 @@ proc cryptoExamples() {
       | FErr _ -> println("wrong aad: FErr");
     };
 }
+
+// ============================================================================
+/*
+  34. TOML
+  Import: import * from "$PFUN_HOME/lib/toml.pf";
+  Also:   import * from "foreign"; — to match on FOk / FErr
+
+  Types:
+    SettingValue  =  SStr { value }  |  SInt { value }  |  SFloat { value }
+                  |  SBool { value } |  SList { items : List<SettingValue> }
+    Setting       =  { key : Str, value : SettingValue }
+    SettingGroup  =  { name : Str, settings : List<Setting> }
+
+  tomlParse(text)     FOk { List<SettingGroup> }  |  FErr
+  tomlEmit(groups)    Str — never fails
+*/
+
+import * from "$PFUN_HOME/lib/toml.pf";
+
+proc tomlExamples() {
+  println("--- 34. TOML ---");
+
+  let doc = "title = \"My App\"\nversion = 3\n\n[server]\nhost = \"localhost\"\nport = 8080\ndebug = true\n\n[database]\nhost = \"db.local\"\ntags = [\"primary\", \"replica\"]\n";
+
+  match tomlParse(doc) with
+  | FErr e -> println("parse error: " + e.message)
+  | FOk gs -> {
+      let groups = gs.value;
+      println("groups: " + __str__(length(groups)));
+
+      let g0 = head(groups);
+      println("top-level settings: " + __str__(length(g0.settings)));
+      match head(g0.settings).value with
+      | SStr v -> println("title: " + v.value)
+      | _ -> println("title not str");
+      match nth(g0.settings, 1).value with
+      | SInt v -> println("version: " + __str__(v.value))
+      | _ -> println("version not int");
+
+      let g1 = nth(groups, 1);
+      println("section: " + g1.name);
+      match nth(g1.settings, 1).value with
+      | SInt v -> println("port: " + __str__(v.value))
+      | _ -> println("port not int");
+      match nth(g1.settings, 2).value with
+      | SBool v -> println("debug: " + __str__(v.value))
+      | _ -> println("debug not bool");
+
+      let g2 = nth(groups, 2);
+      match nth(g2.settings, 1).value with
+      | SList v -> println("tags count: " + __str__(length(v.items)))
+      | _ -> println("tags not list");
+
+      let emitted = tomlEmit(groups);
+      println("emit contains [server]: " + __str__(contains(emitted, "[server]")));
+      println("emit contains port: " + __str__(contains(emitted, "port = 8080")));
+    };
+}
 timerExamples();
 compressExamples();
 cryptoExamples();
+tomlExamples();
 httpExamples();

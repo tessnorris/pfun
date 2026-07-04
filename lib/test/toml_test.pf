@@ -1,0 +1,324 @@
+// toml_test.pf — tests for toml.pf
+// Run with: PFUN_HOME=/path/to/pfun pfun lib/test/toml_test.pf
+
+import * from "io";
+import * from "foreign";
+import * from "$PFUN_HOME/lib/toml.pf";
+import * from "$PFUN_HOME/lib/stringlib.pf";
+
+proc pass(label) { println("PASS " + label); }
+proc fail(label, msg) { println("FAIL " + label + ": " + msg); }
+proc expectBool(got, expected, label) {
+  if got == expected then pass(label)
+  else fail(label, "got " + __str__(got));
+}
+proc expectStr(got, expected, label) {
+  if got == expected then pass(label)
+  else fail(label, "got " + __str__(got) + " expected " + __str__(expected));
+}
+proc expectInt(got, expected, label) {
+  if got == expected then pass(label)
+  else fail(label, "got " + __str__(got) + " expected " + __str__(expected));
+}
+
+// ─── tomlParse: basic section and scalar values ───────────────────────────────
+
+proc testParseBasic() {
+  println("--- parse: basic scalars ---");
+  let doc = "title = \"My App\"\ncount = 42\nratio = 3.14\nflag = true\n";
+  match tomlParse(doc) with
+  | FErr e -> fail("parse basic", e.message)
+  | FOk gs -> {
+      let groups = gs.value;
+      expectInt(length(groups), 1, "one group (top-level only)");
+      let g0 = head(groups);
+      expectStr(g0.name, "", "group name is empty string");
+      expectInt(length(g0.settings), 4, "four settings");
+
+      // title: SStr
+      let s0 = head(g0.settings);
+      expectStr(s0.key, "title", "title key");
+      match s0.value with
+      | SStr v -> expectStr(v.value, "My App", "title value")
+      | _ -> fail("title", "not SStr");
+
+      // count: SInt
+      let s1 = nth(g0.settings, 1);
+      expectStr(s1.key, "count", "count key");
+      match s1.value with
+      | SInt v -> expectInt(v.value, 42, "count value")
+      | _ -> fail("count", "not SInt");
+
+      // ratio: SFloat
+      let s2 = nth(g0.settings, 2);
+      match s2.value with
+      | SFloat v -> expectBool(v.value > toFloat(3) && v.value < toFloat(4), true, "ratio in range")
+      | _ -> fail("ratio", "not SFloat");
+
+      // flag: SBool
+      let s3 = nth(g0.settings, 3);
+      match s3.value with
+      | SBool v -> expectBool(v.value, true, "flag true")
+      | _ -> fail("flag", "not SBool");
+    };
+}
+
+// ─── tomlParse: sections ──────────────────────────────────────────────────────
+
+proc testParseSections() {
+  println("--- parse: sections ---");
+  let doc = "global = 1\n\n[alpha]\na = 2\n\n[beta]\nb = 3\n";
+  match tomlParse(doc) with
+  | FErr e -> fail("parse sections", e.message)
+  | FOk gs -> {
+      let groups = gs.value;
+      expectInt(length(groups), 3, "three groups");
+      expectStr(head(groups).name, "", "g0 name empty");
+      expectStr(nth(groups, 1).name, "alpha", "g1 name alpha");
+      expectStr(nth(groups, 2).name, "beta", "g2 name beta");
+      expectInt(length(head(groups).settings), 1, "g0 has 1 setting");
+      expectInt(length(nth(groups, 1).settings), 1, "g1 has 1 setting");
+      expectInt(length(nth(groups, 2).settings), 1, "g2 has 1 setting");
+    };
+}
+
+// ─── tomlParse: arrays ────────────────────────────────────────────────────────
+
+proc testParseArrays() {
+  println("--- parse: arrays ---");
+  let doc = "strs = [\"a\", \"b\", \"c\"]\nints = [1, 2, 3]\nflts = [1.0, 2.5, 3.14]\n";
+  match tomlParse(doc) with
+  | FErr e -> fail("parse arrays", e.message)
+  | FOk gs -> {
+      let sets = head(gs.value).settings;
+
+      // string array
+      let s0 = head(sets);
+      match s0.value with
+      | SList v -> {
+          expectInt(length(v.items), 3, "strs array length");
+          match head(v.items) with
+          | SStr s -> expectStr(s.value, "a", "strs[0]")
+          | _ -> fail("strs[0]", "not SStr");
+        }
+      | _ -> fail("strs", "not SList");
+
+      // int array
+      let s1 = nth(sets, 1);
+      match s1.value with
+      | SList v -> {
+          expectInt(length(v.items), 3, "ints array length");
+          match head(v.items) with
+          | SInt s -> expectInt(s.value, 1, "ints[0]")
+          | _ -> fail("ints[0]", "not SInt");
+        }
+      | _ -> fail("ints", "not SList");
+
+      // float array
+      let s2 = nth(sets, 2);
+      match s2.value with
+      | SList v -> {
+          expectInt(length(v.items), 3, "flts array length");
+          match head(v.items) with
+          | SFloat s -> expectBool(s.value > toFloat(0) && s.value < toFloat(2), true, "flts[0] ≈ 1.0")
+          | _ -> fail("flts[0]", "not SFloat");
+        }
+      | _ -> fail("flts", "not SList");
+    };
+}
+
+// ─── tomlParse: empty array ───────────────────────────────────────────────────
+
+proc testParseEmptyArray() {
+  println("--- parse: empty array ---");
+  match tomlParse("empty = []\n") with
+  | FErr e -> fail("empty array parse", e.message)
+  | FOk gs -> {
+      match head(head(gs.value).settings).value with
+      | SList v -> expectInt(length(v.items), 0, "empty SList")
+      | _ -> fail("empty array", "not SList");
+    };
+}
+
+// ─── tomlParse: comments and blank lines ─────────────────────────────────────
+
+proc testParseComments() {
+  println("--- parse: comments + blanks ---");
+  let doc = "# top comment\n\n# another\nkey = \"val\"  # inline\n\n";
+  match tomlParse(doc) with
+  | FErr e -> fail("comments", e.message)
+  | FOk gs -> {
+      let sets = head(gs.value).settings;
+      expectInt(length(sets), 1, "one setting despite comments");
+      match head(sets).value with
+      | SStr v -> expectStr(v.value, "val", "value despite inline comment")
+      | _ -> fail("val", "not SStr");
+    };
+}
+
+// ─── tomlParse: string escapes ────────────────────────────────────────────────
+
+proc testParseStringEscapes() {
+  println("--- parse: string escapes ---");
+  let doc = "q = \"say \\\"hi\\\"\"\nbs = \"a\\\\b\"\nnl = \"line1\\nline2\"\n";
+  match tomlParse(doc) with
+  | FErr e -> fail("escapes", e.message)
+  | FOk gs -> {
+      let sets = head(gs.value).settings;
+      match head(sets).value with
+      | SStr v -> expectStr(v.value, "say \"hi\"", "escaped quotes")
+      | _ -> fail("q", "not SStr");
+      match nth(sets, 1).value with
+      | SStr v -> expectStr(v.value, "a\\b", "escaped backslash")
+      | _ -> fail("bs", "not SStr");
+      match nth(sets, 2).value with
+      | SStr v -> expectBool(length(v.value) > 10, true, "newline escape present")
+      | _ -> fail("nl", "not SStr");
+    };
+}
+
+// ─── tomlParse: negative numbers ─────────────────────────────────────────────
+
+proc testParseNegativeNumbers() {
+  println("--- parse: negative numbers ---");
+  match tomlParse("ni = -42\nnf = -3.14\n") with
+  | FErr e -> fail("negative", e.message)
+  | FOk gs -> {
+      let sets = head(gs.value).settings;
+      match head(sets).value with
+      | SInt v -> expectInt(v.value, -42, "negative int")
+      | _ -> fail("ni", "not SInt");
+      match nth(sets, 1).value with
+      | SFloat v -> expectBool(v.value < toFloat(0) - toFloat(3) && v.value > toFloat(0) - toFloat(4), true, "negative float")
+      | _ -> fail("nf", "not SFloat");
+    };
+}
+
+// ─── tomlParse: empty document ────────────────────────────────────────────────
+
+proc testParseEmpty() {
+  println("--- parse: empty doc ---");
+  match tomlParse("") with
+  | FErr e -> fail("empty doc", e.message)
+  | FOk gs -> expectInt(length(gs.value), 1, "empty doc: one empty group");
+}
+
+// ─── tomlParse: spacing around = ─────────────────────────────────────────────
+
+proc testParseSpacing() {
+  println("--- parse: spacing ---");
+  match tomlParse("key  =  \"value\"\n") with
+  | FErr e -> fail("spacing", e.message)
+  | FOk gs -> {
+      match head(head(gs.value).settings).value with
+      | SStr v -> expectStr(v.value, "value", "extra spaces around =")
+      | _ -> fail("spacing val", "not SStr");
+    };
+}
+
+// ─── tomlEmit: round-trip ────────────────────────────────────────────────────
+
+proc testEmitRoundTrip() {
+  println("--- emit: round-trip ---");
+  let doc = "[server]\nhost = \"localhost\"\nport = 8080\ndebug = false\n";
+  match tomlParse(doc) with
+  | FErr e -> fail("rt parse", e.message)
+  | FOk gs -> {
+      let emitted = tomlEmit(gs.value);
+      expectBool(length(emitted) > 0, true, "emitted non-empty");
+      expectBool(contains(emitted, "[server]"), true, "section header in emitted");
+      expectBool(contains(emitted, "host = \"localhost\""), true, "host in emitted");
+      expectBool(contains(emitted, "port = 8080"), true, "port in emitted");
+      expectBool(contains(emitted, "debug = false"), true, "debug in emitted");
+      match tomlParse(emitted) with
+      | FErr e -> fail("rt reparse", e.message)
+      | FOk gs2 -> {
+          expectBool(length(gs2.value) > 0, true, "reparse has groups");
+        };
+    };
+}
+
+// ─── tomlEmit: all value types ────────────────────────────────────────────────
+
+proc testEmitValueTypes() {
+  println("--- emit: value types ---");
+  let settings = [
+    Setting { "s", SStr { "hello world" } },
+    Setting { "i", SInt { 42 } },
+    Setting { "f", SFloat { 3.14 } },
+    Setting { "b", SBool { true } },
+    Setting { "l", SList { [SStr { "a" }, SStr { "b" }] + [] } }
+  ];
+  let groups = [SettingGroup { "", settings }];
+  let emitted = tomlEmit(groups);
+  expectBool(contains(emitted, "\"hello world\""), true, "emit SStr quoted");
+  expectBool(contains(emitted, "42"), true, "emit SInt");
+  expectBool(contains(emitted, "3.14"), true, "emit SFloat");
+  expectBool(contains(emitted, "true"), true, "emit SBool true");
+  expectBool(contains(emitted, "[\"a\", \"b\"]"), true, "emit SList");
+}
+
+// ─── tomlEmit: section header ────────────────────────────────────────────────
+
+proc testEmitSectionHeader() {
+  println("--- emit: section header ---");
+  let groups = [
+    SettingGroup { "", [Setting { "x", SInt { 1 } }] },
+    SettingGroup { "db", [Setting { "host", SStr { "localhost" } }] }
+  ];
+  let emitted = tomlEmit(groups);
+  expectBool(contains(emitted, "[db]"), true, "emit section header");
+  expectBool(contains(emitted, "host = \"localhost\""), true, "emit setting under section");
+}
+
+// ─── tomlEmit: string escaping ───────────────────────────────────────────────
+
+proc testEmitStringEscaping() {
+  println("--- emit: string escaping ---");
+  let settings = [Setting { "k", SStr { "say \"hi\" and \\go" } }];
+  let groups = [SettingGroup { "", settings }];
+  let emitted = tomlEmit(groups);
+  expectBool(contains(emitted, "\\\"hi\\\""), true, "emit escaped quotes");
+  expectBool(contains(emitted, "\\\\go"), true, "emit escaped backslash");
+}
+
+// ─── tomlEmit: empty group ────────────────────────────────────────────────────
+
+proc testEmitEmptyGroup() {
+  println("--- emit: empty group ---");
+  let groups = [SettingGroup { "empty", [] }];
+  let emitted = tomlEmit(groups);
+  expectBool(contains(emitted, "[empty]"), true, "empty group has header");
+}
+
+// ─── tomlEmit: float always has decimal point ────────────────────────────────
+
+proc testEmitFloatFormat() {
+  println("--- emit: float format ---");
+  let settings = [Setting { "v", SFloat { 1.0 } }];
+  let emitted = tomlEmit([SettingGroup { "", settings }]);
+  expectBool(contains(emitted, "."), true, "float has decimal point");
+}
+
+// ─── Run all ─────────────────────────────────────────────────────────────────
+
+proc main() {
+  testParseBasic();
+  testParseSections();
+  testParseArrays();
+  testParseEmptyArray();
+  testParseComments();
+  testParseStringEscapes();
+  testParseNegativeNumbers();
+  testParseEmpty();
+  testParseSpacing();
+  testEmitRoundTrip();
+  testEmitValueTypes();
+  testEmitSectionHeader();
+  testEmitStringEscaping();
+  testEmitEmptyGroup();
+  testEmitFloatFormat();
+  println("Done.");
+}
+
+main();

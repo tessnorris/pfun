@@ -458,6 +458,17 @@ box length: 41
 plaintext length: 13
 first byte: 72
 wrong aad: FErr
+--- 34. TOML ---
+groups: 3
+top-level settings: 2
+title: My App
+version: 3
+section: server
+port: 8080
+debug: true
+tags count: 2
+emit contains [server]: true
+emit contains port: true
 --- 30. HTTP Client (Extended) ---
 hello%20world
 a%3D1%26b%3D2
