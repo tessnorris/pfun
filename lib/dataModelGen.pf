@@ -423,10 +423,18 @@ export function autoTimestampOnUpdate(col) {
   isTimestampCol(col) && hasDefault(col);
 }
 
-export function omitFromInsert(col) {
-  isSerialCol(col) || hasDefault(col);
+export function autoTimestampOnInsert(col) {
+  isTimestampCol(col) && hasDefault(col);
 }
 
+// PK membership test (mirrors the check already inlined at pkFieldName).
+export function isPkColumn(col, pkCols) {
+  length(filter(fn c => c == col.name, pkCols)) > 0;
+}
+
+export function omitFromInsert(col, pkCols) {
+  isSerialCol(col) || isPkColumn(col, pkCols) || autoTimestampOnInsert(col);
+}
 export function genDbParam(col, colExpr) {
   match col.pgType with
   | PgText        -> "DbText { " + colExpr + " }"
@@ -519,7 +527,8 @@ export function genRowToModel(table, lookupTables) {
 }
 
 export function genInsertParams(table, lookupTables) {
-  let insertCols = filter(fn col => !omitFromInsert(col), table.columns);
+  let pkCols = pkColumns(table);
+  let insertCols = filter(fn col => !omitFromInsert(col, pkCols), table.columns);
   map(fn col => {
     let fkOpt = fkForColumn(col.name, table.constraints);
     let fieldName = columnFieldName(col, table, lookupTables);
@@ -601,10 +610,10 @@ export function returningClause(pkCols) {
 }
 
 export function genInsertSql(table, schema) {
-  let insertCols   = filter(fn col => !omitFromInsert(col), table.columns);
+  let pkCols       = pkColumns(table);
+  let insertCols   = filter(fn col => !omitFromInsert(col, pkCols), table.columns);
   let colNames     = join(map(fn col => col.name, insertCols), ", ");
   let placeholders = genPlaceholders(toInt(length(insertCols)), 1);
-  let pkCols = pkColumns(table);
   "INSERT INTO " + schema + "." + table.name +
   " (" + colNames + ") VALUES (" + placeholders + ")" + returningClause(pkCols);
 }
@@ -689,7 +698,7 @@ export function genCrud(table, schema, lookupTables) {
   let pkCols    = pkColumns(table);
   if length(pkCols) == 0 then "" else {
     let pkCol          = head(pkCols);
-    let insertCols     = filter(fn col => !omitFromInsert(col), table.columns);
+    let insertCols     = filter(fn col => !omitFromInsert(col, pkCols), table.columns);
     let insertSql      = genInsertSql(table, schema);
     let insertParamList = join(genInsertParams(table, lookupTables), ",\n      ");
     let updateSql      = genUpdateSql(table, schema);

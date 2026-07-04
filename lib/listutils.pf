@@ -1,0 +1,284 @@
+// listutils.pf
+// List utilities for Pfun.
+//
+// Import with: import * from "$PFUN_HOME/lib/listutils";
+//
+// These are the common list helpers that are NOT in the prelude. They live in
+// their own module (rather than the global prelude) so the names stay opt-in and
+// don't collide with local bindings like `min`, `max`, `sort`, or `count`.
+//
+// ─── API ──────────────────────────────────────────────────────────────────────
+//
+//   Folds & aggregates
+//     sum(list)                    Int/Float — sum of elements (0 on empty)
+//     product(list)                Int/Float — product of elements (1 on empty)
+//     count(pred, list)            Int — how many elements satisfy pred
+//     minBy(cmp, list)             Option — smallest by cmp, None on empty
+//     maxBy(cmp, list)             Option — largest by cmp, None on empty
+//     minimum(list)                Option — smallest by <, None on empty
+//     maximum(list)                Option — largest by >, None on empty
+//
+//   Predicates (short-circuiting; safe on lazy lists via take() first)
+//     any(pred, list)              Bool — does any element satisfy pred?
+//     all(pred, list)              Bool — do all elements satisfy pred?
+//     elem(x, list)                Bool — is x an element of list? (==)
+//     notElem(x, list)             Bool — negation of elem
+//
+//   Association lists
+//     lookup(key, pairs)           Option — value of first Pair whose key == key
+//
+//   Combining
+//     concat(lists)                list — flatten a list of lists ONE level
+//     flatMap(f, list)            list — map then concat one level
+//     zip(a, b)                    List<Pair> — pair up, truncating to shorter
+//     zipWith(f, a, b)            list — combine pairwise, truncating to shorter
+//     unzip(pairs)                 Pair { first, second } — two lists from Pairs
+//     enumerate(list)              List<Pair> — Pair { key=index, value=elem }
+//
+//   Ordering
+//     sortBy(cmp, list)            list — stable sort; cmp(a,b) -> Int (<0,0,>0)
+//     sort(list)                   list — stable sort of scalars via < / >
+//     sortDesc(list)               list — descending scalar sort
+//
+// ─── Design notes ────────────────────────────────────────────────────────────
+//
+// * min/max/lookup return Option because there is no junk value to return on an
+//   empty list (consistent with the no-junk-values principle). Unwrap with a
+//   match on Some/None.
+// * any/all/elem are hand-written recursions, NOT reduce wrappers, so they
+//   short-circuit. reduce always walks the whole list and throws on infinite
+//   lists; these stop at the first decisive element. On an infinite lazy list,
+//   take() a finite prefix first.
+// * concat/flatMap flatten exactly ONE level. Arbitrary-depth flatten is
+//   deliberately omitted: it needs a runtime "is this a list?" test, which the
+//   language intentionally does not provide (untyped nesting isn't idiomatic —
+//   model heterogeneous trees as a union instead).
+// * sortBy is the primitive; cmp returns an Int (negative if a<b, 0 if equal,
+//   positive if a>b). sort/sortDesc are conveniences for scalar element types
+//   (Int, Float, String) that the built-in < / > already order. The sort is a
+//   stable bottom-up merge sort: equal elements keep their original order.
+// * All functions are pure. Signatures are arranged so partial application is
+//   natural (e.g. any(isEven), count(isEven), sortBy(byField)).
+
+// ─── Folds & aggregates ───────────────────────────────────────────────────────
+
+// sum(list) — total of all elements. Empty list sums to 0.
+// Seed is 0 (Int). For a Float list this still works because + promotes; if you
+// need a Float zero for an empty Float list, add 0.0 at the call site.
+export function sum(list) {
+  reduce(fn a, x => a + x, 0, list);
+}
+
+// product(list) — product of all elements. Empty list is 1.
+export function product(list) {
+  reduce(fn a, x => a * x, 1, list);
+}
+
+// count(pred, list) — number of elements satisfying pred.
+export function count(pred, list) {
+  length(filter(pred, list));
+}
+
+// minBy(cmp, list) — the smallest element under cmp, or None if empty.
+// cmp(a, b) -> Int: negative when a < b.
+export function minBy(cmp, list) {
+  if length(list) == 0 then None
+  else Some { minByAcc(cmp, tail(list), head(list)) };
+}
+
+function minByAcc(cmp, rest, best) {
+  if length(rest) == 0 then best
+  else {
+    let x = head(rest);
+    if cmp(x, best) < 0 then minByAcc(cmp, tail(rest), x)
+    else minByAcc(cmp, tail(rest), best);
+  }
+}
+
+// maxBy(cmp, list) — the largest element under cmp, or None if empty.
+export function maxBy(cmp, list) {
+  if length(list) == 0 then None
+  else Some { maxByAcc(cmp, tail(list), head(list)) };
+}
+
+function maxByAcc(cmp, rest, best) {
+  if length(rest) == 0 then best
+  else {
+    let x = head(rest);
+    if cmp(x, best) > 0 then maxByAcc(cmp, tail(rest), x)
+    else maxByAcc(cmp, tail(rest), best);
+  }
+}
+
+// minimum(list) — smallest scalar element (Int/Float/String), or None if empty.
+export function minimum(list) {
+  minBy(compareScalar, list);
+}
+
+// maximum(list) — largest scalar element, or None if empty.
+export function maximum(list) {
+  maxBy(compareScalar, list);
+}
+
+// ─── Short-circuiting predicates ──────────────────────────────────────────────
+
+// any(pred, list) — true if pred holds for at least one element. Stops early.
+export function any(pred, list) {
+  if length(list) == 0 then false
+  else if pred(head(list)) then true
+  else any(pred, tail(list));
+}
+
+// all(pred, list) — true if pred holds for every element. Stops early on first
+// failure. Vacuously true for the empty list.
+export function all(pred, list) {
+  if length(list) == 0 then true
+  else if pred(head(list)) then all(pred, tail(list))
+  else false;
+}
+
+// elem(x, list) — true if x equals some element of list. Stops early.
+export function elem(x, list) {
+  any(fn e => e == x, list);
+}
+
+// notElem(x, list) — true if x is not an element of list.
+export function notElem(x, list) {
+  !elem(x, list);
+}
+
+// ─── Association lists ────────────────────────────────────────────────────────
+
+// lookup(key, pairs) — value of the first Pair whose .key equals key, or None.
+// pairs : List<Pair>. Use dicts (has/keys/values) for large or keyed data; this
+// is for ordered or duplicate-key association lists.
+export function lookup(key, pairs) {
+  if length(pairs) == 0 then None
+  else {
+    let p = head(pairs);
+    if p.key == key then Some { p.value }
+    else lookup(key, tail(pairs));
+  }
+}
+
+// ─── Combining ────────────────────────────────────────────────────────────────
+
+// concat(lists) — flatten a list of lists by one level.
+// concat([[1,2],[3],[4,5]]) == [1,2,3,4,5]
+export function concat(lists) {
+  reduce(fn acc, xs => acc + xs, [], lists);
+}
+
+// flatMap(f, list) — map fn over list (fn returns a list) then flatten once.
+export function flatMap(f, list) {
+  concat(map(f, list));
+}
+
+// zipWith(f, a, b) — combine elements pairwise with fn, stopping at the shorter
+// list. zipWith(fn x, y => x + y, [1,2,3], [10,20]) == [11,22]
+export function zipWith(f, a, b) {
+  reverse(zipWithAcc(f, a, b, []));
+}
+
+function zipWithAcc(f, a, b, acc) {
+  if length(a) == 0 || length(b) == 0 then acc
+  else zipWithAcc(f, tail(a), tail(b), cons(f(head(a), head(b)), acc));
+}
+
+// zip(a, b) — pair up elements as Pair { key=fromA, value=fromB }, truncating to
+// the shorter list.
+export function zip(a, b) {
+  zipWith(fn x, y => Pair { x, y }, a, b);
+}
+
+// unzip(pairs) — split a List<Pair> into Pair { first=keys, second=values }.
+export function unzip(pairs) {
+  Pair {
+    map(fn p => p.key, pairs),
+    map(fn p => p.value, pairs)
+  };
+}
+
+// enumerate(list) — pair each element with its 0-based index as
+// Pair { key=index, value=elem }.
+export function enumerate(list) {
+  reverse(enumAcc(list, 0, []));
+}
+
+function enumAcc(list, i, acc) {
+  if length(list) == 0 then acc
+  else enumAcc(tail(list), i + 1, cons(Pair { i, head(list) }, acc));
+}
+
+// ─── Ordering ─────────────────────────────────────────────────────────────────
+
+// compareScalar(a, b) — default comparator for Int / Float / String, using the
+// built-in relational operators. Returns -1, 0, or 1. Both < and > are used so
+// this works uniformly for the scalar types the language already orders.
+// String comparison is lexicographic (by code unit): "apple" < "banana", and
+// uppercase sorts before lowercase ("Z" < "a"). Don't mix element types in one
+// list — the ordering is only meaningful within a single scalar type.
+export function compareScalar(a, b) {
+  if a < b then -1
+  else if a > b then 1
+  else 0;
+}
+
+// sortBy(cmp, list) — stable sort using cmp(a,b) -> Int. Bottom-up merge sort:
+// split into singletons, then repeatedly merge adjacent runs. Stability comes
+// from merge preferring the left run when cmp == 0.
+export function sortBy(cmp, list) {
+  if length(list) <= 1 then list
+  else mergeAll(cmp, map(fn x => [x], list));
+}
+
+// mergeAll(cmp, runs) — repeatedly merge a list of sorted runs pairwise until a
+// single run remains.
+function mergeAll(cmp, runs) {
+  if length(runs) <= 1 then head(runs)
+  else mergeAll(cmp, mergePass(cmp, runs));
+}
+
+// mergePass(cmp, runs) — one pass merging runs two at a time.
+function mergePass(cmp, runs) {
+  if length(runs) == 0 then []
+  else if length(runs) == 1 then runs
+  else {
+    let merged = merge(cmp, head(runs), head(tail(runs)));
+    cons(merged, mergePass(cmp, tail(tail(runs))));
+  }
+}
+
+// merge(cmp, a, b) — merge two sorted runs into one. Left-biased on ties (stable).
+export function merge(cmp, a, b) {
+  reverse(mergeAcc(cmp, a, b, []));
+}
+
+function mergeAcc(cmp, a, b, acc) {
+  if length(a) == 0 then reverseOnto(b, acc)
+  else if length(b) == 0 then reverseOnto(a, acc)
+  else {
+    let x = head(a);
+    let y = head(b);
+    // <= 0 keeps left element first on ties, preserving input order (stable).
+    if cmp(x, y) <= 0 then mergeAcc(cmp, tail(a), b, cons(x, acc))
+    else mergeAcc(cmp, a, tail(b), cons(y, acc));
+  }
+}
+
+// reverseOnto(xs, acc) — prepend xs (in order) onto acc reversed; helper that
+// lets mergeAcc flush a remaining run while keeping the single final reverse.
+function reverseOnto(xs, acc) {
+  if length(xs) == 0 then acc
+  else reverseOnto(tail(xs), cons(head(xs), acc));
+}
+
+// sort(list) — stable ascending sort of scalar elements (Int/Float/String).
+export function sort(list) {
+  sortBy(compareScalar, list);
+}
+
+// sortDesc(list) — stable descending sort of scalar elements.
+export function sortDesc(list) {
+  sortBy(fn a, b => compareScalar(b, a), list);
+}

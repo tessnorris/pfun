@@ -4813,31 +4813,66 @@ Otherwise the rendered HTML is wrapped in:
 ## E.10 `viewlib.pf` — TEA view layer
 
 ```pfun
-import * from "$PFUN_HOME/lib/viewlib.pf";
-import * from "$PFUN_HOME/lib/htmllib.pf";  -- for Attrs, noAttrs, Choice, Block, etc.
+import * from "$PFUN_HOME/lib/viewlib";
+import * from "$PFUN_HOME/lib/htmllib";  -- for Attrs, noAttrs, Choice, Block, etc.
 ```
 
 Provides the view type and rendering for the browser-side Elm Architecture (TEA). Used in conjunction with `tea.pf`. Pure throughout.
 
 ### Types
 
+#### `OptionButtonState`
+
+```
+type OptionButtonState = {
+  | OptionAvailable               -- enabled, not selected
+  | OptionSelected                -- currently selected
+  | OptionDisabled                -- greyed out, not clickable
+  | OptionLocked : reason         -- disabled with a tooltip reason string
+}
+```
+
+State for individual items in a `VChoiceButtonGroup`.
+
 #### `View`
 
 ```
 type View = {
-  | VText       : value
-  | VEl         : tag, attrs, children
-  | VButton     : label, attrs, onClick       -- onClick : Msg
+  -- Primitive nodes
+  | VText       : value                        -- plain text
+  | VEl         : tag, attrs, children         -- arbitrary HTML element
+
+  -- Buttons
+  | VButton     : label, attrs, onClick        -- onClick : Msg
+
+  -- Form controls
   | VTextInput  : name, value, placeholder, onInput
-                                              -- onInput : fn Str → Msg
+                                               -- onInput : fn Str → Msg
   | VCheckbox   : name, checked, label, onToggle
-                                              -- onToggle : fn Bool → Msg
+                                               -- onToggle : fn Bool → Msg
   | VSelect     : name, choices, selected, onChange
-                                              -- choices : List<Choice>
-                                              -- onChange : fn Str → Msg
-  | VContent    : block                       -- embed a Block from htmllib
+                                               -- choices : List<Choice>
+                                               -- onChange : fn Str → Msg
   | VColorInput : name, value, onInput
   | VRangeInput : name, value, min, max, step, onInput
+  | VFileInput  : name, label, accept, onRead  -- accept : List<Str> of MIME types
+                                               -- onRead : fn Str → Msg (file content)
+  | VDownloadButton : label, filename, contents, mimeType, onDownload
+
+  -- Structured content
+  | VContent    : block                        -- embed a Block from htmllib
+  | VCard       : title, children             -- themed card panel
+  | VField      : label, value                -- label/value display pair
+  | VFieldBlock : title, fields               -- labelled group of VField rows
+  | VDefinition : term, description           -- <dt>/<dd> pair
+  | VDefinitionList : title, definitions      -- labelled definition list
+
+  -- Option / choice groups (themed button sets)
+  | VOptionButton      : value, label, icon
+  | VOptionButtonGroup : name, options, selected, onSelect
+  | VToggleButtonGroup : name, options, selected, onToggle
+  | VChoiceButton      : value, label, icon, state  -- state : OptionButtonState
+  | VChoiceButtonGroup : name, options, onSelect
 }
 ```
 
@@ -4845,11 +4880,11 @@ type View = {
 
 ### Constructors
 
+#### Primitive and layout
+
 | Function | Description |
 |----------|-------------|
 | `vtext(value)` | Plain text node. |
-| `vbutton(label, onClick)` | Button with no extra attributes. |
-| `vbuttonClass(label, classes, onClick)` | Button with CSS class list. |
 | `vdiv(children)` | `<div>` with no attributes. |
 | `vspan(children)` | `<span>` with no attributes. |
 | `vp(children)` | `<p>` with no attributes. |
@@ -4857,12 +4892,57 @@ type View = {
 | `vdivClass(classes, children)` | `<div>` with a CSS class list. |
 | `vdivId(id, children)` | `<div>` with an id attribute. |
 | `vspanId(id, children)` | `<span>` with an id attribute. |
-| `vinput(name, value, placeholder, onInput)` | Text input. |
-| `vcheckbox(name, checked, label, onToggle)` | Checkbox. |
-| `vselect(name, choices, selected, onChange)` | Dropdown select. |
 | `vcontent(block)` | Embed a `Block` from `htmllib` inside a view tree. |
+
+#### Themed layout (use with `theme.pf`)
+
+These emit the `pf-*` CSS class names that `theme.pf`'s `renderThemeStyleTag` defines.
+
+| Function | CSS class | Description |
+|----------|-----------|-------------|
+| `vpage(children)` | `pf-page` | Full-page container. |
+| `vpanel(children)` | `pf-panel` | Bordered surface panel. |
+| `vtoolbar(children)` | `pf-toolbar` | Flex toolbar. |
+| `vsidebar(children)` | `pf-sidebar` | Aside sidebar. |
+| `vcontentPanel(children)` | `pf-content-panel` | Raised content area. |
+| `vcard(title, children)` | `pf-card` | Titled card. `title` is a plain `Str`. |
+| `vfield(label, value)` | `pf-field` | Single label/value row. |
+| `vfieldBlock(title, fields)` | `pf-panel` | Labelled group of `vfield` rows. |
+| `vdefinition(term, description)` | — | One `<dt>`/`<dd>` pair. |
+| `vdefinitionList(title, definitions)` | `pf-definition-list` | Labelled definition list. |
+
+#### Buttons
+
+| Function | CSS class | Description |
+|----------|-----------|-------------|
+| `vbutton(label, onClick)` | `pf-button` | Default button. |
+| `vprimaryButton(label, onClick)` | `pf-button-primary` | Accent-coloured primary action. |
+| `vdangerButton(label, onClick)` | `pf-button-danger` | Destructive action (red). |
+| `vbuttonClass(label, classes, onClick)` | `pf-button` + extras | Button with additional CSS classes appended. |
+| `vtab(label, selected, onClick)` | `pf-tab` / `pf-tab-selected` | Tab button; `selected : Bool`. |
+| `vtabList(tabs)` | `pf-tab-list` | Wraps a list of `vtab` nodes in a tab bar. |
+
+#### Form controls
+
+| Function | Description |
+|----------|-------------|
+| `vinput(name, value, placeholder, onInput)` | Text input. Emits `pf-input`. |
+| `vcheckbox(name, checked, label, onToggle)` | Checkbox. Emits `pf-checkbox`. |
+| `vselect(name, choices, selected, onChange)` | Dropdown. `choices : List<Choice>`. Emits `pf-select`. |
 | `vcolor(name, value, onInput)` | Colour picker `<input type="color">`. |
 | `vrange(name, value, min, max, step, onInput)` | Range slider `<input type="range">`. |
+| `vfile(name, label, accept, onRead)` | File picker. `accept` is a `List<Str>` of MIME types. |
+| `vdownload(label, filename, contents, mimeType, onDownload)` | Download button; `contents` is a `Str`. |
+
+#### Option / choice button groups
+
+| Function | Description |
+|----------|-------------|
+| `voption(value, label, icon)` | Single option item (use inside a group). |
+| `voptionButtonGroup(name, options, selected, onSelect)` | Single-select button group; `options : List<VOptionButton>`. |
+| `vtoggleButtonGroup(name, options, selected, onToggle)` | Multi-select toggle group. |
+| `vchoice(value, label, icon, state)` | Single choice item with `OptionButtonState`. |
+| `vchoiceGroup(name, options, onSelect)` | Choice button group; `options : List<VChoiceButton>`. |
 
 ### Rendering
 
@@ -4872,7 +4952,7 @@ type View = {
 renderView : View → Str → Str
 ```
 
-Render one `View` node to an HTML string. `prefix` is a namespace string prepended to all `data-pfun-*` event-binding attributes so that multiple TEA components on the same page don't collide.
+Render one `View` node to an HTML string. `prefix` is a namespace string prepended to all `data-pfun-*` event-binding attributes so that multiple TEA components on the same page don't collide. Pass `""` for a single-component app.
 
 #### `renderViews(views, prefix)`
 
@@ -4899,6 +4979,14 @@ boolStr : Bool → Str → Str
 ```
 
 Returns `s` if `cond` is `true`, `""` otherwise. Convenience for conditionally emitting HTML attribute strings.
+
+#### `optionChoiceClickable(option)`
+
+```
+optionChoiceClickable : VChoiceButton → Bool
+```
+
+Returns `true` if the option's state is `OptionAvailable` or `OptionSelected` (i.e. it should respond to clicks).
 
 
 ---
@@ -4969,7 +5057,7 @@ function update(msg, model) {
 collectHandlers : View → List<Handler>
 ```
 
-Walk a `View` tree and collect one `Handler` record per interactive element (`VButton`, `VTextInput`, `VCheckbox`, `VSelect`, `VColorInput`, `VRangeInput`). Used internally by `render`; exposed for testing or custom runtime implementations.
+Walk a `View` tree and collect one `Handler` record per interactive element. Handled variants: `VButton`, `VTextInput`, `VCheckbox`, `VSelect`, `VColorInput`, `VRangeInput`, `VFileInput`, `VDownloadButton`, `VOptionButtonGroup`, `VToggleButtonGroup`, `VChoiceButtonGroup`. Recurses into `VEl` and `VCard` children. Used internally by `render`; exposed for testing or custom runtime implementations.
 
 ### Procs
 
@@ -4979,14 +5067,14 @@ Walk a `View` tree and collect one `Handler` record per interactive element (`VB
 run : { model, cmd } → (Model → View) → (Msg → Model → { model, cmd }) → unit
 ```
 
-The application entry point. `init` is a record with two fields:
+The application entry point. `init` is any record with `model` and `cmd` fields (typically a named type like `UpdateResult`):
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `model` | `Model` | The initial model value. |
 | `cmd` | `Cmd` | A command to execute on startup (`CmdNone` for none). |
 
-`viewFn` and `updateFn` must be pure `function`s. `run` is a proc and must be called at top level.
+`viewFn` and `updateFn` must be pure `function`s. `run` is a proc and must be called at top level. It does **not** apply a theme automatically — inject a theme stylesheet via `vcontent(RawHtml { renderThemeStyleTag(darkTheme) })` in your `view` function (see E.12).
 
 ```pfun
 run(init(), view, update);
@@ -4998,7 +5086,7 @@ run(init(), view, update);
 render : Model → (Model → View) → (Msg → Model → { model, cmd }) → unit
 ```
 
-Render `viewFn(model)` to HTML, replace the page's output area, and attach all DOM event handlers. Called automatically by `run` and after each `update`; exposed for advanced use.
+Render `viewFn(model)` to HTML, replace the page's output area, and attach all DOM event handlers. Called automatically by `run` and after each update; exposed for advanced use.
 
 #### `executeCmd(cmd, model, viewFn, updateFn)` [async proc]
 
@@ -5018,31 +5106,39 @@ Wire each `Handler` to its DOM element via the runtime's `attachDomHandler` prim
 
 ### Minimal application template
 
+The idiomatic pattern is to define a named `UpdateResult` type for the `{ model, cmd }` pair so both `init` and `update` have an explicit return type, and to use `vprimaryButton`/`vdangerButton` rather than bare `vbutton` for actions that have clear intent.
+
 ```pfun
 import * from "io";
-import * from "./viewlib";
-import * from "./tea";
+import * from "$PFUN_HOME/lib/viewlib";
+import * from "$PFUN_HOME/lib/tea";
+import * from "$PFUN_HOME/lib/theme";    -- optional: for themed styling
 
 type Model = { count }
 type Msg   = { | Increment | Decrement }
+type UpdateResult = { model, cmd }
+
+function noCmd(m)        { UpdateResult { m, cmdNone() }; }
+function withCmd(m, cmd) { UpdateResult { m, cmd }; }
 
 function init() {
-  { model = Model { 0 }, cmd = cmdNone() };
+  UpdateResult { Model { 0 }, cmdNone() };
 }
 
 function view(model) {
-  vdiv([
+  vpage([
+    vcontent(RawHtml { renderThemeStyleTag(lightTheme) }),
     vh(1, "Counter"),
     vp([vtext(__str__(model.count))]),
-    vbutton("Increment", Increment),
+    vprimaryButton("Increment", Increment),
     vbutton("Decrement", Decrement),
   ]);
 }
 
 function update(msg, model) {
   match msg with
-  | Increment -> { model = Model { model.count + 1 }, cmd = cmdNone() }
-  | Decrement -> { model = Model { model.count - 1 }, cmd = cmdNone() };
+  | Increment -> noCmd(Model { model.count + 1 })
+  | Decrement -> noCmd(Model { model.count - 1 });
 }
 
 run(init(), view, update);
@@ -5050,7 +5146,412 @@ run(init(), view, update);
 
 ---
 
-## E.12 `testing.pf` — Test model
+## E.12 `theme.pf` — Typed theme system
+
+```pfun
+import * from "$PFUN_HOME/lib/theme";
+```
+
+Defines a fully-typed semantic theme data model and renders it to CSS. A `Theme` is ordinary Pfun data — records of colours, typography, spacing, and component styles. Applications edit these records; `theme.pf` is the only place that turns them into CSS strings.
+
+### Design
+
+Themes use `--pf-*` CSS custom properties injected via a `<style>` block into the page. This namespace is separate from any other design system so they do not interfere. Components in `viewlib.pf` emit `pf-*` class names (e.g. `pf-button`, `pf-card`) that the theme stylesheet defines.
+
+### Types
+
+#### `ColorScale`
+
+```
+type ColorScale = {
+  canvas, surface, surfaceRaised, overlay,
+  text, textMuted, textSubtle,
+  accent, accentHover, accentText,
+  success, warning, danger, dangerHover,
+  border, borderStrong, focus,
+  disabledSurface, disabledText
+}
+```
+
+All fields are CSS colour strings (hex, `rgb(...)`, etc.).
+
+#### `TypographyScale`
+
+```
+type TypographyScale = {
+  bodyFont, headingFont, monoFont,
+  baseSize, smallSize, largeSize,
+  weightNormal, weightMedium, weightBold,
+  lineHeight
+}
+```
+
+All fields are CSS value strings.
+
+#### `SpacingScale`
+
+```
+type SpacingScale = { xs, sm, md, lg, xl, xxl }
+```
+
+CSS length strings (e.g. `"0.5rem"`), mapped to `--pf-space-*`.
+
+#### `RadiusScale`
+
+```
+type RadiusScale = { sm, md, lg, pill }
+```
+
+Border-radius strings, mapped to `--pf-radius-*`.
+
+#### `ShadowScale`
+
+```
+type ShadowScale = { card, popover, focus }
+```
+
+`box-shadow` strings, mapped to `--pf-shadow-*`.
+
+#### `ComponentTheme`
+
+```
+type ComponentTheme = {
+  className, display, foreground, background,
+  borderColor, borderWidth, radius,
+  padding, margin, fontFamily, fontSize, fontWeight,
+  shadow, extra
+}
+```
+
+Describes one component's CSS rule. `className` is the selector (without the `.`); `extra` is a raw CSS string for any properties not covered by the named fields.
+
+#### `Theme`
+
+```
+type Theme = {
+  name, mode,
+  colors,      -- ColorScale
+  typography,  -- TypographyScale
+  spacing,     -- SpacingScale
+  radius,      -- RadiusScale
+  shadow,      -- ShadowScale
+  -- component themes:
+  page, panel, card, toolbar, sidebar, contentPanel,
+  field, fieldLabel, fieldValue,
+  button, primaryButton, dangerButton, disabledButton,
+  input, select, checkbox,
+  optionGroup, optionButton, optionSelected, optionDisabled,
+  tabList, tab, tabSelected,
+  definitionList, definitionTerm, definitionDescription,
+  code, link
+}
+```
+
+### Functions
+
+#### `component(className, display, foreground, background, borderColor, borderWidth, radius, padding, margin, fontFamily, fontSize, fontWeight, shadow, extra)`
+
+```
+component : Str × ... → ComponentTheme
+```
+
+Constructor for `ComponentTheme`. Pass `""` for any field you want to omit from the generated CSS rule.
+
+#### `renderThemeCss(theme)`
+
+```
+renderThemeCss : Theme → Str
+```
+
+Render the full theme to a CSS string: `:root` custom properties, base reset rules, and one class rule per component.
+
+#### `renderThemeStyleTag(theme)`
+
+```
+renderThemeStyleTag : Theme → Str
+```
+
+Wrap `renderThemeCss` in a `<style>` tag. Inject this into your view:
+
+```pfun
+vcontent(RawHtml { renderThemeStyleTag(darkTheme) })
+```
+
+### Built-in colour palettes and themes
+
+| Name | Description |
+|------|-------------|
+| `lightColors` | `ColorScale` — light palette (slate whites, blue accent) |
+| `darkColors` | `ColorScale` — dark palette (slate navys, blue accent) |
+| `lightTheme` | `Theme` — full light theme built from `lightColors` |
+| `darkTheme` | `Theme` — full dark theme built from `darkColors` |
+
+### Usage pattern
+
+```pfun
+import * from "$PFUN_HOME/lib/viewlib";
+import * from "$PFUN_HOME/lib/theme";
+import * from "$PFUN_HOME/lib/tea";
+
+function view(model) {
+  vpage([
+    vcontent(RawHtml { renderThemeStyleTag(darkTheme) }),
+    vh(1, "My App"),
+    -- ... rest of view
+  ]);
+}
+```
+
+The `renderThemeStyleTag` call goes at the top of the outermost view node so it renders before any content. `theme.pf` exports `lightTheme` and `darkTheme` ready to use; for a custom theme, start from `lightColors`/`darkColors` and override individual fields, or build a new `ColorScale` from scratch and pass it to the internal `themeFromColors` helper (which constructs the full component set from a colour scale and base typography/spacing/radius/shadow defaults).
+
+### CSS custom properties reference
+
+All properties are defined on `:root` and may be used in any app-level `<style>`:
+
+```css
+/* Colours */
+--pf-color-canvas          --pf-color-surface         --pf-color-surface-raised
+--pf-color-text            --pf-color-text-muted       --pf-color-text-subtle
+--pf-color-accent          --pf-color-accent-hover     --pf-color-accent-text
+--pf-color-success         --pf-color-warning
+--pf-color-danger          --pf-color-danger-hover
+--pf-color-border          --pf-color-border-strong    --pf-color-focus
+
+/* Typography */
+--pf-font-body             --pf-font-heading           --pf-font-mono
+--pf-font-size-base        --pf-font-size-small        --pf-font-size-large
+--pf-font-weight-normal    --pf-font-weight-medium     --pf-font-weight-bold
+--pf-line-height
+
+/* Spacing */
+--pf-space-xs  --pf-space-sm  --pf-space-md
+--pf-space-lg  --pf-space-xl  --pf-space-xxl
+
+/* Radius */
+--pf-radius-sm  --pf-radius-md  --pf-radius-lg  --pf-radius-pill
+
+/* Shadows */
+--pf-shadow-card  --pf-shadow-popover  --pf-shadow-focus
+```
+
+---
+
+## E.13 `listutils.pf` — List utilities
+
+```pfun
+import * from "$PFUN_HOME/lib/listutils";
+```
+
+Common list helpers that are absent from the prelude. Kept as an explicit import (rather than a prelude addition) so names like `min`, `max`, `sort`, and `count` stay opt-in and don't shadow local bindings.
+
+### Folds and aggregates
+
+#### `sum(list)`
+
+```
+sum : List<Number> → Number
+```
+
+Sum of all elements. Returns `0` for an empty list. Seed is `Int 0`; for a list of `Float` the result will still be numeric but if an empty-Float-list must return `0.0` add `0.0` at the call site.
+
+#### `product(list)`
+
+```
+product : List<Number> → Number
+```
+
+Product of all elements. Returns `1` for an empty list.
+
+#### `count(pred, list)`
+
+```
+count : (α → Bool) → List<α> → Int
+```
+
+Number of elements satisfying `pred`. Equivalent to `length(filter(pred, list))`.
+
+#### `minBy(cmp, list)`
+
+```
+minBy : (α → α → Int) → List<α> → Option<α>
+```
+
+The smallest element under the comparator `cmp`, or `None` if the list is empty. `cmp(a, b)` must return a negative `Int` when `a < b`, `0` when equal, positive when `a > b`.
+
+#### `maxBy(cmp, list)`
+
+```
+maxBy : (α → α → Int) → List<α> → Option<α>
+```
+
+The largest element under `cmp`, or `None` if empty.
+
+#### `minimum(list)`
+
+```
+minimum : List<scalar> → Option<scalar>
+```
+
+Smallest scalar element (Int, Float, or String) using `compareScalar`. Returns `None` for an empty list.
+
+#### `maximum(list)`
+
+```
+maximum : List<scalar> → Option<scalar>
+```
+
+Largest scalar element, or `None` for an empty list.
+
+### Short-circuiting predicates
+
+These are hand-written recursions, **not** `reduce` wrappers. They stop at the first decisive element and are safe to use on a finite prefix of a lazy list (take a slice first with `take`).
+
+#### `any(pred, list)`
+
+```
+any : (α → Bool) → List<α> → Bool
+```
+
+`true` if at least one element satisfies `pred`. `false` for an empty list.
+
+#### `all(pred, list)`
+
+```
+all : (α → Bool) → List<α> → Bool
+```
+
+`true` if every element satisfies `pred`. Vacuously `true` for an empty list.
+
+#### `elem(x, list)`
+
+```
+elem : α → List<α> → Bool
+```
+
+`true` if `x` equals some element of `list` (using `==`). Stops at the first match.
+
+#### `notElem(x, list)`
+
+```
+notElem : α → List<α> → Bool
+```
+
+Negation of `elem`.
+
+### Association lists
+
+#### `lookup(key, pairs)`
+
+```
+lookup : α → List<Pair> → Option
+```
+
+Value of the first `Pair` whose `.key` equals `key`, or `None`. For large or keyed data prefer a `dict`; `lookup` is for ordered or duplicate-key association lists.
+
+### Combining
+
+#### `concat(lists)`
+
+```
+concat : List<List<α>> → List<α>
+```
+
+Flatten a list of lists by exactly one level. `concat([[1,2],[3],[4,5]])` → `[1,2,3,4,5]`. Arbitrary-depth flatten is deliberately absent (it requires a runtime type test the language does not provide; use a typed union for heterogeneous tree structures instead).
+
+#### `flatMap(f, list)`
+
+```
+flatMap : (α → List<β>) → List<α> → List<β>
+```
+
+Map `fn` over `list` (where `fn` returns a list) then flatten one level. Equivalent to `concat(map(fn, list))`.
+
+#### `zip(a, b)`
+
+```
+zip : List<α> → List<β> → List<Pair>
+```
+
+Pair up elements as `Pair { key=fromA, value=fromB }`, truncating to the shorter list.
+
+#### `zipWith(f, a, b)`
+
+```
+zipWith : (α → β → γ) → List<α> → List<β> → List<γ>
+```
+
+Combine elements pairwise with `fn`, truncating to the shorter list.
+
+#### `unzip(pairs)`
+
+```
+unzip : List<Pair> → Pair
+```
+
+Split a `List<Pair>` into `Pair { key=keys, value=values }` — two lists from one.
+
+#### `enumerate(list)`
+
+```
+enumerate : List<α> → List<Pair>
+```
+
+Pair each element with its 0-based index as `Pair { key=index, value=elem }`.
+
+### Ordering
+
+#### `compareScalar(a, b)`
+
+```
+compareScalar : scalar → scalar → Int
+```
+
+Default comparator for `Int`, `Float`, and `String`. Returns `-1` when `a < b`, `0` when equal, `1` when `a > b`. String comparison is lexicographic (code-unit order): `"Z" < "a"`. Do not mix element types in one list.
+
+#### `sortBy(cmp, list)`
+
+```
+sortBy : (α → α → Int) → List<α> → List<α>
+```
+
+Stable sort using comparator `cmp`. The implementation is a bottom-up merge sort: equal elements keep their original relative order. `cmp(a, b)` must return a negative `Int` when `a` should come before `b`.
+
+```pfun
+// sort records by age ascending, then name alphabetically on ties:
+let byCmp = fn a, b => {
+  let byAge = compareScalar(a.age, b.age);
+  if byAge != 0 then byAge else compareScalar(a.name, b.name);
+};
+let sorted = sortBy(byCmp, people);
+```
+
+#### `sort(list)`
+
+```
+sort : List<scalar> → List<scalar>
+```
+
+Stable ascending sort of scalar elements (`Int`, `Float`, `String`) using `compareScalar`.
+
+#### `sortDesc(list)`
+
+```
+sortDesc : List<scalar> → List<scalar>
+```
+
+Stable descending sort of scalar elements.
+
+#### `merge(cmp, a, b)`
+
+```
+merge : (α → α → Int) → List<α> → List<α> → List<α>
+```
+
+Merge two already-sorted lists into one sorted list. Exposed as a building block for merge-based algorithms (e.g. merge step of an external sort).
+
+---
+
+## E.14 `testing.pf` — Test model
 
 ```pfun
 import * from "./testing";
@@ -5086,7 +5587,7 @@ type Suite = { name, tests }
 
 ---
 
-## E.13 `assertions.pf` — Assertion primitives
+## E.15 `assertions.pf` — Assertion primitives
 
 ```pfun
 import * from "./assertions";
@@ -5144,7 +5645,7 @@ proc myTest() {
 
 ---
 
-## E.14 `runner.pf` — Test runner
+## E.16 `runner.pf` — Test runner
 
 ```pfun
 import * from "./runner";

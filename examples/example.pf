@@ -2588,4 +2588,132 @@ timerExamples();
 compressExamples();
 cryptoExamples();
 tomlExamples();
+
+// ============================================================================
+/*
+  35. LIST UTILITIES
+  listutils.pf provides common list helpers absent from the prelude:
+  sum, product, count, minBy/maxBy, minimum/maximum, any, all, elem/notElem,
+  lookup, concat, flatMap, zip/zipWith, unzip, enumerate, compareScalar,
+  sortBy, sort/sortDesc, merge.
+
+  All outputs are deterministic (no random values). Where results are lists or
+  Options the code extracts a concrete scalar to print.
+*/
+
+import * as Lu from "$PFUN_HOME/lib/listutils.pf";
+
+println("--- 35. List Utilities ---");
+
+// ── sum / product / count ─────────────────────────────────────────────────────
+println("sum empty: " + __str__(Lu.sum([])));
+println("sum [1..5]: " + __str__(Lu.sum([1, 2, 3, 4, 5])));
+println("product empty: " + __str__(Lu.product([])));
+println("product [1..4]: " + __str__(Lu.product([1, 2, 3, 4])));
+println("count positives: " + __str__(Lu.count(fn x => x > 0, [-1, 2, -3, 4, 5])));
+println("count none: " + __str__(Lu.count(fn x => x > 100, [1, 2, 3])));
+
+// ── minimum / maximum ─────────────────────────────────────────────────────────
+match Lu.minimum([]) with
+| None   -> println("minimum empty: None")
+| Some _ -> println("UNEXPECTED");
+match Lu.maximum([]) with
+| None   -> println("maximum empty: None")
+| Some _ -> println("UNEXPECTED");
+match Lu.minimum([5, 3, 8, 1, 9]) with
+| None   -> println("UNEXPECTED")
+| Some v -> println("minimum ints: " + __str__(v.value));
+match Lu.maximum([5, 3, 8, 1, 9]) with
+| None   -> println("UNEXPECTED")
+| Some v -> println("maximum ints: " + __str__(v.value));
+match Lu.minimum(["banana", "apple", "cherry"]) with
+| None   -> println("UNEXPECTED")
+| Some v -> println("minimum strings: " + v.value);
+match Lu.maximum(["banana", "apple", "cherry"]) with
+| None   -> println("UNEXPECTED")
+| Some v -> println("maximum strings: " + v.value);
+
+// ── any / all ────────────────────────────────────────────────────────────────
+println("any empty: " + __str__(Lu.any(fn x => x > 0, [])));
+println("all empty: " + __str__(Lu.all(fn x => x > 0, [])));
+println("any pos in [-1,0,1]: " + __str__(Lu.any(fn x => x > 0, [-1, 0, 1])));
+println("any pos in [-1,-2]: " + __str__(Lu.any(fn x => x > 0, [-1, -2])));
+println("all pos in [1,2,3]: " + __str__(Lu.all(fn x => x > 0, [1, 2, 3])));
+println("all pos in [1,-1,3]: " + __str__(Lu.all(fn x => x > 0, [1, -1, 3])));
+
+// ── elem / notElem ────────────────────────────────────────────────────────────
+println("elem 3 found: " + __str__(Lu.elem(3, [1, 2, 3, 4])));
+println("elem 5 absent: " + __str__(Lu.elem(5, [1, 2, 3, 4])));
+println("notElem 5: " + __str__(Lu.notElem(5, [1, 2, 3])));
+println("notElem 2: " + __str__(Lu.notElem(2, [1, 2, 3])));
+
+// ── lookup ────────────────────────────────────────────────────────────────────
+match Lu.lookup("z", [Pair { "a", 1 }, Pair { "b", 2 }]) with
+| None   -> println("lookup absent: None")
+| Some _ -> println("UNEXPECTED");
+match Lu.lookup("b", [Pair { "a", 1 }, Pair { "b", 2 }]) with
+| None   -> println("UNEXPECTED")
+| Some v -> println("lookup b: " + __str__(v.value));
+match Lu.lookup("a", [Pair { "a", 1 }, Pair { "a", 99 }]) with
+| None   -> println("UNEXPECTED")
+| Some v -> println("lookup first wins: " + __str__(v.value));
+
+// ── concat / flatMap ─────────────────────────────────────────────────────────
+let cat = Lu.concat([[1, 2], [3], [4, 5]]);
+println("concat length: " + __str__(length(cat)));
+println("concat first: " + __str__(head(cat)));
+println("concat last: " + __str__(head(reverse(cat))));
+let fm = Lu.flatMap(fn x => [x, x * 10], [1, 2, 3]);
+println("flatMap length: " + __str__(length(fm)));
+println("flatMap first: " + __str__(head(fm)));
+
+// ── zip / zipWith ─────────────────────────────────────────────────────────────
+let zipped = Lu.zip([1, 2, 3], ["a", "b", "c"]);
+println("zip length: " + __str__(length(zipped)));
+println("zip first key: " + __str__(head(zipped).key));
+println("zip first val: " + head(zipped).value);
+let zshort = Lu.zip([1, 2, 3], ["x", "y"]);
+println("zip truncated length: " + __str__(length(zshort)));
+let zw = Lu.zipWith(fn a, b => a + b, [1, 2, 3], [10, 20, 30]);
+println("zipWith sum: " + __str__(Lu.sum(zw)));
+
+// ── unzip ─────────────────────────────────────────────────────────────────────
+let uz = Lu.unzip([Pair { 1, "a" }, Pair { 2, "b" }, Pair { 3, "c" }]);
+println("unzip keys: " + __str__(uz.key));
+println("unzip values: " + __str__(uz.value));
+
+// ── enumerate ────────────────────────────────────────────────────────────────
+let en = Lu.enumerate(["p", "q", "r"]);
+println("enumerate length: " + __str__(length(en)));
+println("enumerate first index: " + __str__(head(en).key));
+println("enumerate first value: " + head(en).value);
+println("enumerate last index: " + __str__(head(reverse(en)).key));
+
+// ── sort / sortDesc ──────────────────────────────────────────────────────────
+let s = Lu.sort([3, 1, 4, 1, 5, 9, 2, 6]);
+println("sort first: " + __str__(head(s)));
+println("sort last: " + __str__(head(reverse(s))));
+println("sort length: " + __str__(length(s)));
+let sd = Lu.sortDesc([3, 1, 4, 1, 5]);
+println("sortDesc first: " + __str__(head(sd)));
+println("sortDesc last: " + __str__(head(reverse(sd))));
+let ss = Lu.sort(["banana", "apple", "cherry", "date"]);
+println("sort strings first: " + head(ss));
+println("sort strings last: " + head(reverse(ss)));
+
+// ── sortBy ───────────────────────────────────────────────────────────────────
+// Sort Pair records by value (Int); ties in key (Str) preserve input order.
+let pairs = [Pair { "bob", 30 }, Pair { "alice", 25 }, Pair { "carol", 25 }, Pair { "dave", 30 }];
+let byVal = fn a, b => Lu.compareScalar(a.value, b.value);
+let sp = Lu.sortBy(byVal, pairs);
+println("sortBy first key: " + head(sp).key);
+println("sortBy second key: " + head(tail(sp)).key);
+println("sortBy third key: " + head(tail(tail(sp))).key);
+
+// ── merge ────────────────────────────────────────────────────────────────────
+let mergedList = Lu.merge(Lu.compareScalar, [1, 3, 5], [2, 4, 6]);
+println("merge length: " + __str__(length(mergedList)));
+println("merge first: " + __str__(head(mergedList)));
+println("merge last: " + __str__(head(reverse(mergedList))));
+
 httpExamples();

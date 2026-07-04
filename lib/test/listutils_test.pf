@@ -1,0 +1,320 @@
+// listutils_test.pf — tests for listutils.pf
+//
+// Covers every exported function. The test style matches stringlib_test.pf:
+// inline pass/fail helpers, one proc per function group, called from main().
+//
+// Run with: pfun $PFUN_HOME/lib/listutils_test.pf
+
+import * from "io";
+import * from "$PFUN_HOME/lib/listutils";
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+proc pass(label) { println("PASS " + label); }
+
+proc fail(label, msg) { println("FAIL " + label + ": " + msg); }
+
+proc expectInt(got, expected, label) {
+  if got == expected then pass(label)
+  else fail(label, "got " + __str__(got) + " expected " + __str__(expected));
+}
+
+proc expectBool(got, expected, label) {
+  if got == expected then pass(label)
+  else fail(label, "got " + __str__(got) + " expected " + __str__(expected));
+}
+
+proc expectStr(got, expected, label) {
+  if got == expected then pass(label)
+  else fail(label, "got \"" + got + "\" expected \"" + expected + "\"");
+}
+
+proc expectList(got, expected, label) {
+  if got == expected then pass(label)
+  else fail(label, "got " + __str__(got) + " expected " + __str__(expected));
+}
+
+// Option helpers: Option has no prelude equality so we check shape.
+proc expectSomeInt(opt, expected, label) {
+  match opt with
+  | None   -> fail(label, "got None, expected Some { " + __str__(expected) + " }")
+  | Some v -> expectInt(v.value, expected, label);
+}
+
+proc expectSomeStr(opt, expected, label) {
+  match opt with
+  | None   -> fail(label, "got None, expected Some { \"" + expected + "\" }")
+  | Some v -> expectStr(v.value, expected, label);
+}
+
+proc expectNone(opt, label) {
+  match opt with
+  | None   -> pass(label)
+  | Some _ -> fail(label, "got Some, expected None");
+}
+
+// ─── sum ─────────────────────────────────────────────────────────────────────
+
+proc testSum() {
+  expectInt(sum([]), 0, "sum empty");
+  expectInt(sum([5]), 5, "sum single");
+  expectInt(sum([1, 2, 3, 4, 5]), 15, "sum [1..5]");
+  expectInt(sum([0, 0, 0]), 0, "sum zeros");
+  expectInt(sum([-3, 3]), 0, "sum cancels");
+}
+
+// ─── product ─────────────────────────────────────────────────────────────────
+
+proc testProduct() {
+  expectInt(product([]), 1, "product empty");
+  expectInt(product([7]), 7, "product single");
+  expectInt(product([1, 2, 3, 4]), 24, "product [1..4]");
+  expectInt(product([5, 0, 9]), 0, "product with zero");
+  expectInt(product([2, 3, 4]), 24, "product 2*3*4");
+}
+
+// ─── count ───────────────────────────────────────────────────────────────────
+
+proc testCount() {
+  expectInt(count(fn x => x > 0, []), 0, "count empty");
+  expectInt(count(fn x => x > 0, [1, -1, 2, -2, 3]), 3, "count positives");
+  expectInt(count(fn x => x == 0, [0, 0, 1]), 2, "count zeros");
+  expectInt(count(fn x => x > 10, [1, 2, 3]), 0, "count none match");
+  expectInt(count(fn x => x > 0, [1, 2, 3]), 3, "count all match");
+}
+
+// ─── minBy / maxBy ───────────────────────────────────────────────────────────
+
+proc testMinByMaxBy() {
+  expectNone(minBy(compareScalar, []), "minBy empty");
+  expectNone(maxBy(compareScalar, []), "maxBy empty");
+  expectSomeInt(minBy(compareScalar, [5]), 5, "minBy single");
+  expectSomeInt(maxBy(compareScalar, [5]), 5, "maxBy single");
+  expectSomeInt(minBy(compareScalar, [3, 1, 4, 1, 5, 9, 2, 6]), 1, "minBy basic");
+  expectSomeInt(maxBy(compareScalar, [3, 1, 4, 1, 5, 9, 2, 6]), 9, "maxBy basic");
+  // all equal
+  expectSomeInt(minBy(compareScalar, [7, 7, 7]), 7, "minBy all-equal");
+  expectSomeInt(maxBy(compareScalar, [7, 7, 7]), 7, "maxBy all-equal");
+  // reversed order — should still pick correct
+  expectSomeInt(minBy(compareScalar, [9, 8, 7, 6]), 6, "minBy descending input");
+  expectSomeInt(maxBy(compareScalar, [1, 2, 3, 4]), 4, "maxBy ascending input");
+}
+
+// ─── minimum / maximum ───────────────────────────────────────────────────────
+
+proc testMinimumMaximum() {
+  expectNone(minimum([]), "minimum empty");
+  expectNone(maximum([]), "maximum empty");
+  expectSomeInt(minimum([42]), 42, "minimum single");
+  expectSomeInt(maximum([42]), 42, "maximum single");
+  expectSomeInt(minimum([5, 3, 8, 1, 9]), 1, "minimum ints");
+  expectSomeInt(maximum([5, 3, 8, 1, 9]), 9, "maximum ints");
+  expectSomeStr(minimum(["banana", "apple", "cherry"]), "apple", "minimum strings");
+  expectSomeStr(maximum(["banana", "apple", "cherry"]), "cherry", "maximum strings");
+}
+
+// ─── any / all ───────────────────────────────────────────────────────────────
+
+proc testAnyAll() {
+  expectBool(any(fn x => x > 0, []), false, "any empty");
+  expectBool(all(fn x => x > 0, []), true, "all empty (vacuous)");
+  expectBool(any(fn x => x > 0, [1, 2, 3]), true, "any all match");
+  expectBool(any(fn x => x > 0, [-1, -2, -3]), false, "any none match");
+  expectBool(any(fn x => x > 0, [-1, 0, 1]), true, "any one matches");
+  expectBool(all(fn x => x > 0, [1, 2, 3]), true, "all match");
+  expectBool(all(fn x => x > 0, [-1, 2, 3]), false, "all first fails");
+  expectBool(all(fn x => x > 0, [1, 2, -3]), false, "all last fails");
+}
+
+// ─── elem / notElem ──────────────────────────────────────────────────────────
+
+proc testElemNotElem() {
+  expectBool(elem(3, []), false, "elem empty");
+  expectBool(elem(3, [1, 2, 3, 4]), true, "elem found");
+  expectBool(elem(5, [1, 2, 3, 4]), false, "elem not found");
+  expectBool(elem(1, [1, 2, 3]), true, "elem first");
+  expectBool(elem(3, [1, 2, 3]), true, "elem last");
+  expectBool(notElem(5, [1, 2, 3]), true, "notElem absent");
+  expectBool(notElem(2, [1, 2, 3]), false, "notElem present");
+  expectBool(elem("b", ["a", "b", "c"]), true, "elem string");
+  expectBool(elem("z", ["a", "b", "c"]), false, "elem string absent");
+}
+
+// ─── lookup ──────────────────────────────────────────────────────────────────
+
+proc testLookup() {
+  expectNone(lookup("x", []), "lookup empty");
+  expectNone(lookup("z", [Pair { "a", 1 }, Pair { "b", 2 }]), "lookup absent");
+  expectSomeInt(lookup("a", [Pair { "a", 1 }, Pair { "b", 2 }]), 1, "lookup first");
+  expectSomeInt(lookup("b", [Pair { "a", 1 }, Pair { "b", 2 }]), 2, "lookup second");
+  // first match wins on duplicates
+  expectSomeInt(lookup("a", [Pair { "a", 1 }, Pair { "a", 99 }]), 1, "lookup first-match wins");
+}
+
+// ─── concat ──────────────────────────────────────────────────────────────────
+
+proc testConcat() {
+  expectList(concat([]), [], "concat empty");
+  expectList(concat([[], [], []]), [], "concat all-empty");
+  expectList(concat([[1, 2], [3], [4, 5]]), [1, 2, 3, 4, 5], "concat basic");
+  expectList(concat([[1], [2], [3]]), [1, 2, 3], "concat singletons");
+  expectList(concat([[1, 2, 3]]), [1, 2, 3], "concat single list");
+}
+
+// ─── flatMap ─────────────────────────────────────────────────────────────────
+
+proc testFlatMap() {
+  expectList(flatMap(fn x => [x, x], []), [], "flatMap empty");
+  expectList(flatMap(fn x => [x, x], [1, 2, 3]), [1, 1, 2, 2, 3, 3], "flatMap double");
+  expectList(flatMap(fn x => [], [1, 2, 3]), [], "flatMap all-empty");
+  expectList(flatMap(fn x => [x * 2], [1, 2, 3]), [2, 4, 6], "flatMap map-like");
+}
+
+// ─── zip / zipWith ───────────────────────────────────────────────────────────
+
+proc testZipZipWith() {
+  expectList(zip([], []), [], "zip both empty");
+  expectList(zip([1, 2, 3], []), [], "zip right empty");
+  expectList(zip([], [1, 2, 3]), [], "zip left empty");
+  // check Pair contents via map-and-check rather than direct == on records
+  let z = zip([1, 2, 3], ["a", "b", "c"]);
+  expectInt(length(z), 3, "zip equal length count");
+  // truncation
+  let zShort = zip([1, 2, 3], ["a", "b"]);
+  expectInt(length(zShort), 2, "zip truncates to shorter");
+  let zShort2 = zip([1], ["a", "b", "c"]);
+  expectInt(length(zShort2), 1, "zip truncates left-short");
+  // zipWith
+  expectList(zipWith(fn a, b => a + b, [1, 2, 3], [10, 20, 30]), [11, 22, 33], "zipWith equal");
+  expectList(zipWith(fn a, b => a + b, [1, 2, 3], [10, 20]), [11, 22], "zipWith truncates");
+  expectList(zipWith(fn a, b => a + b, [], [10, 20]), [], "zipWith empty-left");
+}
+
+// ─── unzip ───────────────────────────────────────────────────────────────────
+
+proc testUnzip() {
+  let empty = unzip([]);
+  expectList(empty.key, [], "unzip empty keys");
+  expectList(empty.value, [], "unzip empty values");
+  let p = unzip([Pair { 1, "a" }, Pair { 2, "b" }, Pair { 3, "c" }]);
+  expectList(p.key, [1, 2, 3], "unzip keys");
+  expectList(p.value, ["a", "b", "c"], "unzip values");
+}
+
+// ─── enumerate ───────────────────────────────────────────────────────────────
+
+proc testEnumerate() {
+  let e0 = enumerate([]);
+  expectInt(length(e0), 0, "enumerate empty length");
+  let e3 = enumerate(["x", "y", "z"]);
+  expectInt(length(e3), 3, "enumerate length");
+  // first pair: key=0
+  let first = head(e3);
+  expectInt(first.key, 0, "enumerate first index");
+  expectStr(first.value, "x", "enumerate first value");
+  // last pair: key=2
+  let last = head(tail(tail(e3)));
+  expectInt(last.key, 2, "enumerate last index");
+  expectStr(last.value, "z", "enumerate last value");
+}
+
+// ─── compareScalar ───────────────────────────────────────────────────────────
+
+proc testCompareScalar() {
+  expectInt(compareScalar(1, 2), -1, "compareScalar int less");
+  expectInt(compareScalar(2, 2), 0,  "compareScalar int equal");
+  expectInt(compareScalar(3, 2), 1,  "compareScalar int greater");
+  expectInt(compareScalar("apple", "banana"), -1, "compareScalar str less");
+  expectInt(compareScalar("same", "same"), 0,     "compareScalar str equal");
+  expectInt(compareScalar("zebra", "ant"),  1,    "compareScalar str greater");
+}
+
+// ─── sort / sortDesc ─────────────────────────────────────────────────────────
+
+proc testSort() {
+  expectList(sort([]), [], "sort empty");
+  expectList(sort([5]), [5], "sort single");
+  expectList(sort([2, 1]), [1, 2], "sort two");
+  expectList(sort([3, 1, 4, 1, 5, 9, 2, 6]), [1, 1, 2, 3, 4, 5, 6, 9], "sort with duplicates");
+  expectList(sort([5, 4, 3, 2, 1]), [1, 2, 3, 4, 5], "sort already-reversed");
+  expectList(sort([1, 2, 3, 4, 5]), [1, 2, 3, 4, 5], "sort already-sorted");
+  expectList(sort(["banana", "apple", "cherry"]), ["apple", "banana", "cherry"], "sort strings");
+  expectList(sortDesc([3, 1, 4, 1, 5]), [5, 4, 3, 1, 1], "sortDesc");
+}
+
+// ─── sortBy — stability ───────────────────────────────────────────────────────
+
+// Build test records as lists [age, name] (no record type needed).
+// Sort by age; on ties the original name order must be preserved.
+proc testSortByStability() {
+  // [age, name] pairs encoded as two-element lists for easy construction
+  let alice  = [25, "alice"];
+  let bob    = [30, "bob"];
+  let carol  = [25, "carol"];  // same age as alice; must stay after alice
+  let dave   = [30, "dave"];   // same age as bob; must stay after bob
+  let people = [alice, bob, carol, dave];
+  let byAge  = fn a, b => compareScalar(nth(a, 0), nth(b, 0));
+  let sorted = sortBy(byAge, people);
+  expectInt(length(sorted), 4, "sortBy stability: length");
+  expectStr(nth(nth(sorted, 0), 1), "alice", "sortBy stability: pos0 = alice");
+  expectStr(nth(nth(sorted, 1), 1), "carol", "sortBy stability: pos1 = carol (ties keep order)");
+  expectStr(nth(nth(sorted, 2), 1), "bob",   "sortBy stability: pos2 = bob");
+  expectStr(nth(nth(sorted, 3), 1), "dave",  "sortBy stability: pos3 = dave");
+}
+
+// ─── merge ───────────────────────────────────────────────────────────────────
+
+proc testMerge() {
+  expectList(merge(compareScalar, [], []), [], "merge both empty");
+  expectList(merge(compareScalar, [1, 3, 5], []), [1, 3, 5], "merge right empty");
+  expectList(merge(compareScalar, [], [2, 4, 6]), [2, 4, 6], "merge left empty");
+  expectList(merge(compareScalar, [1, 3, 5], [2, 4, 6]), [1, 2, 3, 4, 5, 6], "merge interleaved");
+  expectList(merge(compareScalar, [1, 2, 7, 8], [3]), [1, 2, 3, 7, 8], "merge flush right");
+  expectList(merge(compareScalar, [5], [1, 2, 3]), [1, 2, 3, 5], "merge flush left");
+  // ties: left element must come first (stability)
+  let result = merge(compareScalar, [2, 4], [2, 4]);
+  expectInt(length(result), 4, "merge ties: length");
+  expectInt(nth(result, 0), 2, "merge ties: first");
+}
+
+// ─── Run all ─────────────────────────────────────────────────────────────────
+
+proc main() {
+  println("--- sum ---");
+  testSum();
+  println("--- product ---");
+  testProduct();
+  println("--- count ---");
+  testCount();
+  println("--- minBy / maxBy ---");
+  testMinByMaxBy();
+  println("--- minimum / maximum ---");
+  testMinimumMaximum();
+  println("--- any / all ---");
+  testAnyAll();
+  println("--- elem / notElem ---");
+  testElemNotElem();
+  println("--- lookup ---");
+  testLookup();
+  println("--- concat ---");
+  testConcat();
+  println("--- flatMap ---");
+  testFlatMap();
+  println("--- zip / zipWith ---");
+  testZipZipWith();
+  println("--- unzip ---");
+  testUnzip();
+  println("--- enumerate ---");
+  testEnumerate();
+  println("--- compareScalar ---");
+  testCompareScalar();
+  println("--- sort / sortDesc ---");
+  testSort();
+  println("--- sortBy stability ---");
+  testSortByStability();
+  println("--- merge ---");
+  testMerge();
+  println("Done.");
+}
+
+main();
