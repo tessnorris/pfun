@@ -1,282 +1,253 @@
-/*
-  htmllib.pf — Semantic HTML content ADT for Pfun.
+/* htmllib.pf — Semantic HTML content ADT for Pfun.
 
-  Two separate unions enforce the block/inline distinction at the type level:
-  a Para may only contain Inline nodes, a BulletList only Block nodes.
-  Rendering computes heading levels from nesting depth so a broken hierarchy
-  (h1 jumping to h4) is structurally impossible.
-
-  Forms
-  -----
-  A Form is a Block containing a list of Field values.  Each input *type* is a
-  distinct Field variant rather than a string `type=` attribute, so an
-  "email input with a checked attribute" is unrepresentable.  Every labeled
-  control bundles its <label> text, making the label/control association
-  structural rather than a convention the author must remember.
-
-  Attrs / Attributed
-  ------------------
-  Any Block node can be wrapped with Attributed { node, attrs } to attach
-  HTML attributes without modifying every variant.  noAttrs covers the common
-  case; withId / withClass / withStyle are convenience constructors.
+This module owns static semantic HTML rendering. It does not own visual design:
+visual design is typed data in theme.pf, and CSS is rendered there.
 */
+
+import * from "./theme";
 
 // ── Attrs ─────────────────────────────────────────────────────────────────────
 
 export type Attrs = { id, classes, style }
-  // id : Option<Str>, classes : List<Str>, style : Option<Str>
 
 export let noAttrs = Attrs { None, [], None };
 
 export function withId(id, node) {
-  Attributed { node, Attrs { Some { id }, [], None } };
-}
-export function withClass(classes, node) {
-  Attributed { node, Attrs { None, classes, None } };
-}
-export function withStyle(style, node) {
-  Attributed { node, Attrs { None, [], Some { style } } };
+    Attributed { node, Attrs { Some { id }, [], None } }
 }
 
-// ── Inline (phrasing) content ─────────────────────────────────────────────────
+export function withClass(classes, node) {
+    Attributed { node, Attrs { None, classes, None } }
+}
+
+export function withStyle(style, node) {
+    Attributed { node, Attrs { None, [], Some { style } } }
+}
+
+// ── Inline content ────────────────────────────────────────────────────────────
 
 export type Inline = {
-  | Text         : value           // plain text (HTML-escaped)
-  | Emph         : content         // <em>
-  | Strong       : content         // <strong>
-  | InlineCode   : value           // <code>
-  | Link         : href, content   // <a href=...>
-  | HtmlLineBreak                  // <br>
+    | Text : value
+    | Emph : content
+    | Strong : content
+    | InlineCode : value
+    | Link : href, content
+    | HtmlLineBreak
 }
 
 // ── Form fields ───────────────────────────────────────────────────────────────
-// Each variant is a distinct input *kind*, not a string type attribute.
-// name doubles as both the `name` and `id` attribute, so the bundled <label>
-// can target the control via `for`.
 
-export type Choice = { value, label }   // an <option> / radio choice; both String
+export type Choice = { value, label }
 
 export type Field = {
-  | TextField     : name, label, value          // <input type="text">
-  | EmailField    : name, label, value          // <input type="email">
-  | PasswordField : name, label                  // <input type="password"> (no value echoed)
-  | NumberField   : name, label, value           // <input type="number"> (value : String)
-  | TextArea      : name, label, value           // <textarea>
-  | Checkbox      : name, label, checked          // <input type="checkbox"> (checked : Bool)
-  | RadioGroup    : name, label, choices, selected  // choices : List<Choice>, selected : String
-  | Dropdown      : name, label, choices, selected  // <select>
-  | SubmitButton  : text                          // <button type="submit">
-  | ResetButton   : text                          // <button type="reset">
-  | HiddenField   : name, value                   // <input type="hidden">
+    | TextField : name, label, value
+    | EmailField : name, label, value
+    | PasswordField : name, label
+    | NumberField : name, label, value
+    | TextArea : name, label, value
+    | Checkbox : name, label, checked
+    | RadioGroup : name, label, choices, selected
+    | Dropdown : name, label, choices, selected
+    | SubmitButton : text
+    | ResetButton : text
+    | HiddenField : name, value
 }
 
-// ── Block (flow) content ──────────────────────────────────────────────────────
+// ── Block content ─────────────────────────────────────────────────────────────
 
 export type Block = {
-  | Para        : content          // <p>
-  | BulletList  : items            // <ul>  — items : List<List<Block>>
-  | OrderedList : items            // <ol>
-  | BlockQuote  : content          // <blockquote>
-  | CodeBlock   : language, value  // <pre><code>
-  | ThematicBreak                  // <hr>
-  | Section     : heading, content // <section> + computed heading level
-  | Article     : heading, content // <article> + computed heading level
-  | Aside       : content          // <aside>
-  | Nav         : content          // <nav>
-  | Form        : action, method, fields  // <form> — fields : List<Field>
-  | RawHtml     : value            // escape hatch
-  | Attributed  : node, attrs      // any Block + Attrs
+    | Para : content
+    | BulletList : items
+    | OrderedList : items
+    | BlockQuote : content
+    | CodeBlock : language, value
+    | ThematicBreak
+    | Section : heading, content
+    | Article : heading, content
+    | Aside : content
+    | Nav : content
+    | Form : action, method, fields
+    | RawHtml : value
+    | Attributed : node, attrs
 }
-
-// ── Document ──────────────────────────────────────────────────────────────────
 
 export type Document = { title, body }
 
-// ── Inline constructors ───────────────────────────────────────────────────────
+// ── Constructors ──────────────────────────────────────────────────────────────
 
-export function text(s)             { Text { s }; }
-export function emph(content)       { Emph { content }; }
-export function strong(content)     { Strong { content }; }
-export function code(value)         { InlineCode { value }; }
+export function text(s) { Text { s }; }
+export function emph(content) { Emph { content }; }
+export function strong(content) { Strong { content }; }
+export function code(value) { InlineCode { value }; }
 export function link(href, content) { Link { href, content }; }
 
-// ── Field constructors ──────────────────────────────────────────────────────────
-
-export function choice(value, label)        { Choice { value, label }; }
-export function textField(name, label, value)  { TextField { name, label, value }; }
+export function choice(value, label) { Choice { value, label }; }
+export function textField(name, label, value) { TextField { name, label, value }; }
 export function emailField(name, label, value) { EmailField { name, label, value }; }
-export function passwordField(name, label)     { PasswordField { name, label }; }
-export function numberField(name, label, value){ NumberField { name, label, value }; }
-export function textArea(name, label, value)   { TextArea { name, label, value }; }
+export function passwordField(name, label) { PasswordField { name, label }; }
+export function numberField(name, label, value) { NumberField { name, label, value }; }
+export function textArea(name, label, value) { TextArea { name, label, value }; }
 export function checkbox(name, label, checked) { Checkbox { name, label, checked }; }
 export function radioGroup(name, label, choices, selected) { RadioGroup { name, label, choices, selected }; }
-export function dropdown(name, label, choices, selected)   { Dropdown { name, label, choices, selected }; }
+export function dropdown(name, label, choices, selected) { Dropdown { name, label, choices, selected }; }
 export function submitButton(text) { SubmitButton { text }; }
-export function resetButton(text)  { ResetButton { text }; }
+export function resetButton(text) { ResetButton { text }; }
 export function hiddenField(name, value) { HiddenField { name, value }; }
 export function form(action, method, fields) { Form { action, method, fields }; }
 
 // ── HTML escaping ─────────────────────────────────────────────────────────────
 
 export function escapeHtml(s) {
-  let s1 = join(split(s,  "&"),  "&amp;");
-  let s2 = join(split(s1, "<"),  "&lt;");
-  let s3 = join(split(s2, ">"),  "&gt;");
-  join(split(s3, "\""), "&quot;");
+    let s1 = join(split(s, "&"), "&amp;");
+    let s2 = join(split(s1, "<"), "&lt;");
+    let s3 = join(split(s2, ">"), "&gt;");
+    join(split(s3, "\""), "&quot;")
 }
 
 export function escapeAttr(s) {
-  let s1 = escapeHtml(s);
-  join(split(s1, "'"), "&#39;");
+    let s1 = escapeHtml(s);
+    join(split(s1, "'"), "&#39;")
+}
+
+export function boolAttr(cond, attr) {
+    if cond then {
+        attr
+    } else {
+        ""
+    }
+}
+
+function classesAttr(classes) {
+    if length(classes) == 0 then {
+        ""
+    } else {
+        " class=\"" + escapeAttr(join(classes, " ")) + "\""
+    }
+}
+
+export function renderAttrs(attrs) {
+    let idPart = match attrs.id with
+        | Some s -> " id=\"" + escapeAttr(s.value) + "\""
+        | None -> "";
+    let stylePart = match attrs.style with
+        | Some s -> " style=\"" + escapeAttr(s.value) + "\""
+        | None -> "";
+    idPart + classesAttr(attrs.classes) + stylePart
 }
 
 // ── Small render helpers ──────────────────────────────────────────────────────
 
-export function boolAttr(cond, attr) {
-  if cond then attr else "";
-}
-
 export function labelFor(name, label) {
-  "<label for=\"" + escapeAttr(name) + "\">" + escapeHtml(label) + "</label>\n";
+    "<label class=\"pf-field-label\" for=\"" + escapeAttr(name) + "\">" + escapeHtml(label) + "</label>\n"
 }
 
 export function inputControl(itype, name, value) {
-  "<input type=\"" + itype + "\" id=\"" + escapeAttr(name) +
-  "\" name=\"" + escapeAttr(name) + "\" value=\"" + escapeAttr(value) + "\">\n";
+    "<input class=\"pf-input\" type=\"" + itype + "\" id=\"" + escapeAttr(name) + "\" name=\"" + escapeAttr(name) + "\" value=\"" + escapeAttr(value) + "\">\n"
 }
 
 export function renderChoice(selected, c) {
-  "<option value=\"" + escapeAttr(c.value) + "\"" +
-  boolAttr(c.value == selected, " selected") + ">" +
-  escapeHtml(c.label) + "</option>\n";
+    "<option value=\"" + escapeAttr(c.value) + "\"" + boolAttr(c.value == selected, " selected") + ">" + escapeHtml(c.label) + "</option>\n"
 }
 
 export function renderRadio(name, selected, c) {
-  let rid = name + "_" + c.value;
-  "<input type=\"radio\" id=\"" + escapeAttr(rid) + "\" name=\"" + escapeAttr(name) +
-  "\" value=\"" + escapeAttr(c.value) + "\"" + boolAttr(c.value == selected, " checked") + ">" +
-  "<label for=\"" + escapeAttr(rid) + "\">" + escapeHtml(c.label) + "</label>\n";
+    let rid = name + "_" + c.value;
+    "<label class=\"pf-checkbox\" for=\"" + escapeAttr(rid) + "\">" +
+    "<input type=\"radio\" id=\"" + escapeAttr(rid) + "\" name=\"" + escapeAttr(name) + "\" value=\"" + escapeAttr(c.value) + "\"" + boolAttr(c.value == selected, " checked") + ">" +
+    escapeHtml(c.label) + "</label>\n"
 }
 
-// ── Field rendering ─────────────────────────────────────────────────────────────
+// ── Field rendering ──────────────────────────────────────────────────────────
 
 export function renderField(field) {
-  match field with
-  | TextField f     -> labelFor(f.name, f.label) + inputControl("text", f.name, f.value)
-  | EmailField f    -> labelFor(f.name, f.label) + inputControl("email", f.name, f.value)
-  | NumberField f   -> labelFor(f.name, f.label) + inputControl("number", f.name, f.value)
-  | PasswordField f -> labelFor(f.name, f.label) +
-      "<input type=\"password\" id=\"" + escapeAttr(f.name) + "\" name=\"" + escapeAttr(f.name) + "\">\n"
-  | TextArea f      -> labelFor(f.name, f.label) +
-      "<textarea id=\"" + escapeAttr(f.name) + "\" name=\"" + escapeAttr(f.name) + "\">" +
-      escapeHtml(f.value) + "</textarea>\n"
-  | Checkbox f      ->
-      "<input type=\"checkbox\" id=\"" + escapeAttr(f.name) + "\" name=\"" + escapeAttr(f.name) + "\"" +
-      boolAttr(f.checked, " checked") + ">" +
-      "<label for=\"" + escapeAttr(f.name) + "\">" + escapeHtml(f.label) + "</label>\n"
-  | RadioGroup f    ->
-      "<fieldset>\n<legend>" + escapeHtml(f.label) + "</legend>\n" +
-      join(map(fn c => renderRadio(f.name, f.selected, c), f.choices), "") +
-      "</fieldset>\n"
-  | Dropdown f      -> labelFor(f.name, f.label) +
-      "<select id=\"" + escapeAttr(f.name) + "\" name=\"" + escapeAttr(f.name) + "\">\n" +
-      join(map(fn c => renderChoice(f.selected, c), f.choices), "") +
-      "</select>\n"
-  | SubmitButton f  -> "<button type=\"submit\">" + escapeHtml(f.text) + "</button>\n"
-  | ResetButton f   -> "<button type=\"reset\">" + escapeHtml(f.text) + "</button>\n"
-  | HiddenField f   ->
-      "<input type=\"hidden\" name=\"" + escapeAttr(f.name) + "\" value=\"" + escapeAttr(f.value) + "\">\n";
+    match field with
+        | TextField f -> "<div class=\"pf-field\">" + labelFor(f.name, f.label) + inputControl("text", f.name, f.value) + "</div>\n"
+        | EmailField f -> "<div class=\"pf-field\">" + labelFor(f.name, f.label) + inputControl("email", f.name, f.value) + "</div>\n"
+        | NumberField f -> "<div class=\"pf-field\">" + labelFor(f.name, f.label) + inputControl("number", f.name, f.value) + "</div>\n"
+        | PasswordField f -> "<div class=\"pf-field\">" + labelFor(f.name, f.label) + "<input class=\"pf-input\" type=\"password\" id=\"" + escapeAttr(f.name) + "\" name=\"" + escapeAttr(f.name) + "\"></div>\n"
+        | TextArea f -> "<div class=\"pf-field\">" + labelFor(f.name, f.label) + "<textarea class=\"pf-input\" id=\"" + escapeAttr(f.name) + "\" name=\"" + escapeAttr(f.name) + "\">" + escapeHtml(f.value) + "</textarea></div>\n"
+        | Checkbox f -> "<label class=\"pf-checkbox\" for=\"" + escapeAttr(f.name) + "\"><input type=\"checkbox\" id=\"" + escapeAttr(f.name) + "\" name=\"" + escapeAttr(f.name) + "\"" + boolAttr(f.checked, " checked") + ">" + escapeHtml(f.label) + "</label>\n"
+        | RadioGroup f -> "<fieldset class=\"pf-field\"><legend class=\"pf-field-label\">" + escapeHtml(f.label) + "</legend>\n" + join(map(fn c => renderRadio(f.name, f.selected, c), f.choices), "") + "</fieldset>\n"
+        | Dropdown f -> "<div class=\"pf-field\">" + labelFor(f.name, f.label) + "<select class=\"pf-select\" id=\"" + escapeAttr(f.name) + "\" name=\"" + escapeAttr(f.name) + "\">\n" + join(map(fn c => renderChoice(f.selected, c), f.choices), "") + "</select></div>\n"
+        | SubmitButton f -> "<button class=\"pf-button-primary\" type=\"submit\">" + escapeHtml(f.text) + "</button>\n"
+        | ResetButton f -> "<button class=\"pf-button\" type=\"reset\">" + escapeHtml(f.text) + "</button>\n"
+        | HiddenField f -> "<input type=\"hidden\" name=\"" + escapeAttr(f.name) + "\" value=\"" + escapeAttr(f.value) + "\">\n"
 }
 
 export function renderFields(fields) {
-  join(map(renderField, fields), "");
+    join(map(renderField, fields), "")
 }
 
-// ── Renderer ──────────────────────────────────────────────────────────────────
+// ── Renderer ─────────────────────────────────────────────────────────────────
 
 export function renderInlines(nodes) {
-  join(map(renderInline, nodes), "");
+    join(map(renderInline, nodes), "")
 }
 
 export function renderInline(node) {
-  match node with
-  | Text t        -> escapeHtml(t.value)
-  | Emph e        -> "<em>" + renderInlines(e.content) + "</em>"
-  | Strong s      -> "<strong>" + renderInlines(s.content) + "</strong>"
-  | InlineCode c  -> "<code>" + escapeHtml(c.value) + "</code>"
-  | Link l        -> "<a href=\"" + escapeAttr(l.href) + "\">" + renderInlines(l.content) + "</a>"
-  | HtmlLineBreak -> "<br>";
-}
-
-export function renderClassAttr(classes) {
-  if length(classes) == 0 then "" else " class=\"" + join(classes, " ") + "\"";
-}
-
-export function renderAttrs(attrs) {
-  let idPart = match attrs.id with
-    | Some s -> " id=\"" + escapeAttr(s.value) + "\""
-    | None   -> "";
-  let stylePart = match attrs.style with
-    | Some s -> " style=\"" + escapeAttr(s.value) + "\""
-    | None   -> "";
-  idPart + renderClassAttr(attrs.classes) + stylePart;
+    match node with
+        | Text t -> escapeHtml(t.value)
+        | Emph e -> "<em>" + renderInlines(e.content) + "</em>"
+        | Strong s -> "<strong>" + renderInlines(s.content) + "</strong>"
+        | InlineCode c -> "<code class=\"pf-code\">" + escapeHtml(c.value) + "</code>"
+        | Link l -> "<a class=\"pf-link\" href=\"" + escapeAttr(l.href) + "\">" + renderInlines(l.content) + "</a>"
+        | HtmlLineBreak -> "<br>"
 }
 
 export function renderBlocks(nodes, depth) {
-  join(map(fn b => renderBlock(b, depth), nodes), "");
+    join(map(fn b => renderBlock(b, depth), nodes), "")
 }
 
 export function renderBlockWithAttrs(node, attrs, depth) {
-  let a = renderAttrs(attrs);
-  match node with
-  | Para p          -> "<p" + a + ">" + renderInlines(p.content) + "</p>\n"
-  | BulletList ul   -> "<ul" + a + ">\n" + join(map(fn item => "<li>" + renderBlocks(item, depth) + "</li>\n", ul.items), "") + "</ul>\n"
-  | OrderedList ol  -> "<ol" + a + ">\n" + join(map(fn item => "<li>" + renderBlocks(item, depth) + "</li>\n", ol.items), "") + "</ol>\n"
-  | BlockQuote bq   -> "<blockquote" + a + ">\n" + renderBlocks(bq.content, depth) + "</blockquote>\n"
-  | CodeBlock cb    -> "<pre" + a + "><code class=\"language-" + escapeAttr(cb.language) + "\">" + escapeHtml(cb.value) + "</code></pre>\n"
-  | ThematicBreak   -> "<hr" + a + ">\n"
-  | Section s       -> {
-      let level = __str__(depth + 1);
-      let heading = "<h" + level + ">" + renderInlines(s.heading) + "</h" + level + ">\n";
-      "<section" + a + ">\n" + heading + renderBlocks(s.content, depth + 1) + "</section>\n";
-    }
-  | Article art     -> {
-      let level = __str__(depth + 1);
-      let heading = "<h" + level + ">" + renderInlines(art.heading) + "</h" + level + ">\n";
-      "<article" + a + ">\n" + heading + renderBlocks(art.content, depth + 1) + "</article>\n";
-    }
-  | Aside aside     -> "<aside" + a + ">\n" + renderBlocks(aside.content, depth) + "</aside>\n"
-  | Nav n           -> "<nav" + a + ">\n" + renderBlocks(n.content, depth) + "</nav>\n"
-  | Form fm         -> "<form" + a + " action=\"" + escapeAttr(fm.action) + "\" method=\"" + escapeAttr(fm.method) + "\">\n" + renderFields(fm.fields) + "</form>\n"
-  | RawHtml r       -> r.value
-  | Attributed inner -> renderBlockWithAttrs(inner.node, inner.attrs, depth);
+    let a = renderAttrs(attrs);
+    match node with
+        | Para p -> "<p" + a + ">" + renderInlines(p.content) + "</p>\n"
+        | BulletList ul -> "<ul" + a + ">\n" + join(map(fn item => "<li>" + renderBlocks(item, depth) + "</li>\n", ul.items), "") + "</ul>\n"
+        | OrderedList ol -> "<ol" + a + ">\n" + join(map(fn item => "<li>" + renderBlocks(item, depth) + "</li>\n", ol.items), "") + "</ol>\n"
+        | BlockQuote bq -> "<blockquote" + a + ">\n" + renderBlocks(bq.content, depth) + "</blockquote>\n"
+        | CodeBlock cb -> "<pre" + a + "><code class=\"pf-code language-" + escapeAttr(cb.language) + "\">" + escapeHtml(cb.value) + "</code></pre>\n"
+        | ThematicBreak -> "<hr" + a + ">\n"
+        | Section s -> {
+            let level = __str__(depth + 1);
+            "<section" + a + ">\n<h" + level + ">" + renderInlines(s.heading) + "</h" + level + ">\n" + renderBlocks(s.content, depth + 1) + "</section>\n"
+        }
+        | Article art -> {
+            let level = __str__(depth + 1);
+            "<article" + a + ">\n<h" + level + ">" + renderInlines(art.heading) + "</h" + level + ">\n" + renderBlocks(art.content, depth + 1) + "</article>\n"
+        }
+        | Aside aside -> "<aside" + a + ">\n" + renderBlocks(aside.content, depth) + "</aside>\n"
+        | Nav n -> "<nav" + a + ">\n" + renderBlocks(n.content, depth) + "</nav>\n"
+        | Form fm -> "<form" + a + " action=\"" + escapeAttr(fm.action) + "\" method=\"" + escapeAttr(fm.method) + "\">\n" + renderFields(fm.fields) + "</form>\n"
+        | RawHtml r -> r.value
+        | Attributed inner -> renderBlockWithAttrs(inner.node, inner.attrs, depth)
 }
 
 export function renderBlock(node, depth) {
-  match node with
-  | Attributed a    -> renderBlockWithAttrs(a.node, a.attrs, depth)
-  | Para p          -> "<p>" + renderInlines(p.content) + "</p>\n"
-  | BulletList ul   -> "<ul>\n" + join(map(fn item => "<li>" + renderBlocks(item, depth) + "</li>\n", ul.items), "") + "</ul>\n"
-  | OrderedList ol  -> "<ol>\n" + join(map(fn item => "<li>" + renderBlocks(item, depth) + "</li>\n", ol.items), "") + "</ol>\n"
-  | BlockQuote bq   -> "<blockquote>\n" + renderBlocks(bq.content, depth) + "</blockquote>\n"
-  | CodeBlock cb    -> "<pre><code class=\"language-" + escapeAttr(cb.language) + "\">" + escapeHtml(cb.value) + "</code></pre>\n"
-  | ThematicBreak   -> "<hr>\n"
-  | Section s       -> {
-      let level = __str__(depth + 1);
-      let heading = "<h" + level + ">" + renderInlines(s.heading) + "</h" + level + ">\n";
-      "<section>\n" + heading + renderBlocks(s.content, depth + 1) + "</section>\n";
-    }
-  | Article art     -> {
-      let level = __str__(depth + 1);
-      let heading = "<h" + level + ">" + renderInlines(art.heading) + "</h" + level + ">\n";
-      "<article>\n" + heading + renderBlocks(art.content, depth + 1) + "</article>\n";
-    }
-  | Aside aside     -> "<aside>\n" + renderBlocks(aside.content, depth) + "</aside>\n"
-  | Nav n           -> "<nav>\n" + renderBlocks(n.content, depth) + "</nav>\n"
-  | Form fm         -> "<form action=\"" + escapeAttr(fm.action) + "\" method=\"" + escapeAttr(fm.method) + "\">\n" + renderFields(fm.fields) + "</form>\n"
-  | RawHtml r       -> r.value;
+    match node with
+        | Attributed a -> renderBlockWithAttrs(a.node, a.attrs, depth)
+        | Para p -> "<p>" + renderInlines(p.content) + "</p>\n"
+        | BulletList ul -> "<ul>\n" + join(map(fn item => "<li>" + renderBlocks(item, depth) + "</li>\n", ul.items), "") + "</ul>\n"
+        | OrderedList ol -> "<ol>\n" + join(map(fn item => "<li>" + renderBlocks(item, depth) + "</li>\n", ol.items), "") + "</ol>\n"
+        | BlockQuote bq -> "<blockquote>\n" + renderBlocks(bq.content, depth) + "</blockquote>\n"
+        | CodeBlock cb -> "<pre><code class=\"pf-code language-" + escapeAttr(cb.language) + "\">" + escapeHtml(cb.value) + "</code></pre>\n"
+        | ThematicBreak -> "<hr>\n"
+        | Section s -> {
+            let level = __str__(depth + 1);
+            "<section>\n<h" + level + ">" + renderInlines(s.heading) + "</h" + level + ">\n" + renderBlocks(s.content, depth + 1) + "</section>\n"
+        }
+        | Article art -> {
+            let level = __str__(depth + 1);
+            "<article>\n<h" + level + ">" + renderInlines(art.heading) + "</h" + level + ">\n" + renderBlocks(art.content, depth + 1) + "</article>\n"
+        }
+        | Aside aside -> "<aside>\n" + renderBlocks(aside.content, depth) + "</aside>\n"
+        | Nav n -> "<nav>\n" + renderBlocks(n.content, depth) + "</nav>\n"
+        | Form fm -> "<form action=\"" + escapeAttr(fm.action) + "\" method=\"" + escapeAttr(fm.method) + "\">\n" + renderFields(fm.fields) + "</form>\n"
+        | RawHtml r -> r.value
 }
 
 export function renderDocument(doc) {
-  renderBlocks(doc.body, 0);
+    renderBlocks(doc.body, 0)
+}
+
+export function renderDocumentWithTheme(doc, activeTheme) {
+    "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"UTF-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n<title>" + escapeHtml(doc.title) + "</title>\n" + renderThemeStyleTag(activeTheme) + "</head>\n<body class=\"pf-page\">\n" + renderDocument(doc) + "</body>\n</html>\n"
 }

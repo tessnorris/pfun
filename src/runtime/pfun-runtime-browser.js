@@ -784,20 +784,6 @@ function $clearOutput() {
   }
 }
 
-// $setThemeStyles(css) — inject or replace the Pfun theme stylesheet in <head>.
-// Lives in <head> under id="pfun-theme" so it survives $clearOutput (which
-// only clears #pfun-output) and repeated calls replace rather than stack.
-function $setThemeStyles(css) {
-  const text = typeof css === 'string' ? css : $stringify(css);
-  let el = document.getElementById('pfun-theme');
-  if (!el) {
-    el = document.createElement('style');
-    el.id = 'pfun-theme';
-    (document.head || document.documentElement).appendChild(el);
-  }
-  el.textContent = text;
-  return true;
-}
 
 // Save/restore focus around a full DOM replacement so that text inputs
 // don't lose focus on every keystroke.
@@ -871,7 +857,7 @@ window.__pfunRuntime = {
   PfunChar, PfunByte, PfunArray, PfunDict, PfunBuffer,
   $curry, $memoize,
   $char, $byte, $record, $registerType, $schema,
-  $stringify, $println, $print, $flushStdout, $mountHtml, $clearOutput, $setThemeStyles, $saveFocus, $restoreFocus, $attachDomHandler, $httpPost, $truthy,
+  $stringify, $println, $print, $flushStdout, $mountHtml, $clearOutput, $saveFocus, $restoreFocus, $attachDomHandler, $httpPost, $truthy,
   $readln, $readChar, $scriptArgs, $getEnv, $envVars,
   $ck,
   $add, $sub, $mul, $div, $mod, $neg,

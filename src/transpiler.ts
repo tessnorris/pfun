@@ -488,7 +488,6 @@ const STDLIB_MAP: Record<string, string> = {
   flushStdout:   '$flushStdout',
   mountHtml:        '$mountHtml',
   clearOutput:      '$clearOutput',
-  setThemeStyles:   '$setThemeStyles',
   attachDomHandler: '$attachDomHandler',
   httpPost:         '$httpPost',
 
@@ -747,7 +746,7 @@ function emitStmt(s: Stmt): Node[] {
           'abs','sign','min','max','clamp','lerp',
           'sqrt','cbrt','exp','log','log2','log10','pow','hypot','fmod',
           'sin','cos','tan','asin','acos','atan','atan2',
-          'sinh','cosh','tanh',
+          'sinh','cosh','tanh', 'formatFixed',
         ]},
         'json': { file: _bpaths['json'] ?? 'pfun-json', names: ['jsonSerialize','jsonDeserialize'] },
         'file': { file: _bpaths['file'] ?? 'pfun-file', names: [
@@ -759,9 +758,21 @@ function emitStmt(s: Stmt): Node[] {
           'Read','Write','Append',
         ]},
         'async': { file: _bpaths['async'] ?? 'pfun-async', names: ['sleep','asyncAll','asyncRace'] },
-        'http':  { file: _bpaths['http']  ?? 'pfun-http',  names: ['httpGet','httpGetBytes','httpListen'] },
+        'http': { file: _bpaths['http'] ?? 'pfun-http', names: [
+          'httpGet','httpGetBytes','httpListen',
+          'httpRequest','httpRequestBytes','fetchWithTimeout','urlEncode',
+        ]},
         'db/postgresql': { file: _bpaths['db/postgresql'] ?? 'pfun-db-postgresql', names: ['dbConnect','dbQuery','dbClose','DbNull'] },
         'db/mariadb':    { file: _bpaths['db/mariadb']    ?? 'pfun-db-mariadb',    names: ['dbConnect','dbQuery','dbClose','DbNull'] },
+        'foreign': { file: _bpaths['foreign'] ?? 'pfun-foreign', names: [
+          'FOk','FErr',
+          'foreignRequire','foreignGlobal','foreignGet','foreignSet',
+          'foreignCall','foreignInvoke','foreignNew','foreignDelete',
+          'foreignTypeof','foreignAwait','foreignCallback','foreignApply',
+          'dForeign','dUnit','dBool','dInt','dFloat','dStr',
+          'dList','dOption','dDict','dField','dMap','dAndThen','dOneOf',
+        ]},
+        'timer': { file: _bpaths['timer'] ?? 'pfun-timer', names: ['setTimer','clearTimer'] },
       };
 
       const builtin = BUILTIN_MODULES[imp.path];
@@ -1008,7 +1019,7 @@ export function transpileToEstree(stmts: Stmt[], options: TranspileOptions = {})
             'PfunChar','PfunByte','PfunArray','PfunDict','PfunBuffer',
             '$curry','$memoize',
             '$char','$byte','$record','$registerType',
-            '$stringify','$println','$print','$flushStdout','$mountHtml','$clearOutput','$setThemeStyles','$attachDomHandler','$httpPost','$truthy',
+            '$stringify','$println','$print','$flushStdout','$mountHtml','$clearOutput','$attachDomHandler','$httpPost','$truthy',
             '$readln','$readChar','$scriptArgs','$getEnv','$envVars',
             '$ck',
             '$add','$sub','$mul','$div','$mod','$neg',

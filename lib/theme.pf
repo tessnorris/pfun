@@ -1,0 +1,420 @@
+/* theme.pf — Typed semantic theme data for Pfun HTML/view rendering.
+
+A Theme is ordinary Pfun data. Applications and theme editors should edit these
+records, not CSS strings. This module is the only standard-library place that
+turns theme values into CSS.
+*/
+
+export type ColorScale = {
+    canvas,
+    surface,
+    surfaceRaised,
+    overlay,
+    text,
+    textMuted,
+    textSubtle,
+    accent,
+    accentHover,
+    accentText,
+    success,
+    warning,
+    danger,
+    dangerHover,
+    border,
+    borderStrong,
+    focus,
+    disabledSurface,
+    disabledText
+}
+
+export type TypographyScale = {
+    bodyFont,
+    headingFont,
+    monoFont,
+    baseSize,
+    smallSize,
+    largeSize,
+    weightNormal,
+    weightMedium,
+    weightBold,
+    lineHeight
+}
+
+export type SpacingScale = {
+    xs,
+    sm,
+    md,
+    lg,
+    xl,
+    xxl
+}
+
+export type RadiusScale = {
+    sm,
+    md,
+    lg,
+    pill
+}
+
+export type ShadowScale = {
+    card,
+    popover,
+    focus
+}
+
+export type ComponentTheme = {
+    className,
+    display,
+    foreground,
+    background,
+    borderColor,
+    borderWidth,
+    radius,
+    padding,
+    margin,
+    fontFamily,
+    fontSize,
+    fontWeight,
+    shadow,
+    extra
+}
+
+export type Theme = {
+    name,
+    mode,
+    colors,
+    typography,
+    spacing,
+    radius,
+    shadow,
+    page,
+    panel,
+    card,
+    toolbar,
+    sidebar,
+    contentPanel,
+    field,
+    fieldLabel,
+    fieldValue,
+    button,
+    primaryButton,
+    dangerButton,
+    disabledButton,
+    input,
+    select,
+    checkbox,
+    optionGroup,
+    optionButton,
+    optionSelected,
+    optionDisabled,
+    tabList,
+    tab,
+    tabSelected,
+    definitionList,
+    definitionTerm,
+    definitionDescription,
+    code,
+    link
+}
+
+export function component(
+    className,
+    display,
+    foreground,
+    background,
+    borderColor,
+    borderWidth,
+    radius,
+    padding,
+    margin,
+    fontFamily,
+    fontSize,
+    fontWeight,
+    shadow,
+    extra
+) {
+    ComponentTheme {
+        className,
+        display,
+        foreground,
+        background,
+        borderColor,
+        borderWidth,
+        radius,
+        padding,
+        margin,
+        fontFamily,
+        fontSize,
+        fontWeight,
+        shadow,
+        extra
+    }
+}
+
+function prop(name, value) {
+    if value == "" then {
+        ""
+    } else {
+        "  " + name + ": " + value + ";\n"
+    }
+}
+
+function selectorRule(selector, declarations) {
+    selector + " {\n" + declarations + "}\n"
+}
+
+
+function borderStyle(c) {
+    if c.borderWidth == "" then {
+        ""
+    } else {
+        "solid"
+    }
+}
+
+function renderComponent(c) {
+    selectorRule(
+        "." + c.className,
+        prop("display", c.display) +
+        prop("color", c.foreground) +
+        prop("background", c.background) +
+        prop("border-color", c.borderColor) +
+        prop("border-width", c.borderWidth) +
+        prop("border-style", borderStyle(c)) +
+        prop("border-radius", c.radius) +
+        prop("padding", c.padding) +
+        prop("margin", c.margin) +
+        prop("font-family", c.fontFamily) +
+        prop("font-size", c.fontSize) +
+        prop("font-weight", c.fontWeight) +
+        prop("box-shadow", c.shadow) +
+        c.extra
+    )
+}
+
+function renderRootVars(theme) {
+    let c = theme.colors;
+    let t = theme.typography;
+    let s = theme.spacing;
+    let r = theme.radius;
+    let sh = theme.shadow;
+    selectorRule(
+        ":root",
+        prop("--pf-color-canvas", c.canvas) +
+        prop("--pf-color-surface", c.surface) +
+        prop("--pf-color-surface-raised", c.surfaceRaised) +
+        prop("--pf-color-overlay", c.overlay) +
+        prop("--pf-color-text", c.text) +
+        prop("--pf-color-text-muted", c.textMuted) +
+        prop("--pf-color-text-subtle", c.textSubtle) +
+        prop("--pf-color-accent", c.accent) +
+        prop("--pf-color-accent-hover", c.accentHover) +
+        prop("--pf-color-accent-text", c.accentText) +
+        prop("--pf-color-success", c.success) +
+        prop("--pf-color-warning", c.warning) +
+        prop("--pf-color-danger", c.danger) +
+        prop("--pf-color-danger-hover", c.dangerHover) +
+        prop("--pf-color-border", c.border) +
+        prop("--pf-color-border-strong", c.borderStrong) +
+        prop("--pf-color-focus", c.focus) +
+        prop("--pf-color-disabled-surface", c.disabledSurface) +
+        prop("--pf-color-disabled-text", c.disabledText) +
+        prop("--pf-font-body", t.bodyFont) +
+        prop("--pf-font-heading", t.headingFont) +
+        prop("--pf-font-mono", t.monoFont) +
+        prop("--pf-font-size-base", t.baseSize) +
+        prop("--pf-font-size-small", t.smallSize) +
+        prop("--pf-font-size-large", t.largeSize) +
+        prop("--pf-font-weight-normal", t.weightNormal) +
+        prop("--pf-font-weight-medium", t.weightMedium) +
+        prop("--pf-font-weight-bold", t.weightBold) +
+        prop("--pf-line-height", t.lineHeight) +
+        prop("--pf-space-xs", s.xs) +
+        prop("--pf-space-sm", s.sm) +
+        prop("--pf-space-md", s.md) +
+        prop("--pf-space-lg", s.lg) +
+        prop("--pf-space-xl", s.xl) +
+        prop("--pf-space-xxl", s.xxl) +
+        prop("--pf-radius-sm", r.sm) +
+        prop("--pf-radius-md", r.md) +
+        prop("--pf-radius-lg", r.lg) +
+        prop("--pf-radius-pill", r.pill) +
+        prop("--pf-shadow-card", sh.card) +
+        prop("--pf-shadow-popover", sh.popover) +
+        prop("--pf-shadow-focus", sh.focus)
+    )
+}
+
+function renderBaseCss(theme) {
+    "* { box-sizing: border-box; }\n" +
+    "body { margin: 0; background: var(--pf-color-canvas); color: var(--pf-color-text); font-family: var(--pf-font-body); font-size: var(--pf-font-size-base); line-height: var(--pf-line-height); }\n" +
+    "button, input, textarea, select { font: inherit; }\n" +
+    ".pf-hidden { display: none; }\n" +
+    ".pf-muted { color: var(--pf-color-text-muted); }\n" +
+    ".pf-subtle { color: var(--pf-color-text-subtle); }\n" +
+    ".pf-button:hover { background: var(--pf-color-surface-raised); }\n" +
+    ".pf-button-primary:hover { background: var(--pf-color-accent-hover); }\n" +
+    ".pf-button-danger:hover { background: var(--pf-color-danger-hover); }\n" +
+    ".pf-button:focus, .pf-input:focus, .pf-select:focus, .pf-tab:focus, .pf-choice-button:focus, .pf-option-button:focus { outline: none; box-shadow: var(--pf-shadow-focus); }\n" +
+    ".pf-button:disabled, .pf-choice-button:disabled, .pf-option-button:disabled { cursor: not-allowed; opacity: 0.65; }\n" +
+    ".pf-field-label, .pf-definition-term { letter-spacing: 0.02em; text-transform: uppercase; }\n"
+}
+
+export function renderThemeCss(theme) {
+    renderRootVars(theme) +
+    renderBaseCss(theme) +
+    renderComponent(theme.page) +
+    renderComponent(theme.panel) +
+    renderComponent(theme.card) +
+    renderComponent(theme.toolbar) +
+    renderComponent(theme.sidebar) +
+    renderComponent(theme.contentPanel) +
+    renderComponent(theme.field) +
+    renderComponent(theme.fieldLabel) +
+    renderComponent(theme.fieldValue) +
+    renderComponent(theme.button) +
+    renderComponent(theme.primaryButton) +
+    renderComponent(theme.dangerButton) +
+    renderComponent(theme.disabledButton) +
+    renderComponent(theme.input) +
+    renderComponent(theme.select) +
+    renderComponent(theme.checkbox) +
+    renderComponent(theme.optionGroup) +
+    renderComponent(theme.optionButton) +
+    renderComponent(theme.optionSelected) +
+    renderComponent(theme.optionDisabled) +
+    renderComponent(theme.tabList) +
+    renderComponent(theme.tab) +
+    renderComponent(theme.tabSelected) +
+    renderComponent(theme.definitionList) +
+    renderComponent(theme.definitionTerm) +
+    renderComponent(theme.definitionDescription) +
+    renderComponent(theme.code) +
+    renderComponent(theme.link)
+}
+
+export function renderThemeStyleTag(theme) {
+    "<style>\n" + renderThemeCss(theme) + "</style>\n"
+}
+
+function baseTypography() {
+    TypographyScale {
+        "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+        "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+        "'Cascadia Code', 'Fira Code', 'Consolas', monospace",
+        "14px",
+        "12px",
+        "18px",
+        "400",
+        "600",
+        "700",
+        "1.5"
+    }
+}
+
+function baseSpacing() {
+    SpacingScale { "0.25rem", "0.5rem", "0.75rem", "1rem", "1.5rem", "2rem" }
+}
+
+function baseRadius() {
+    RadiusScale { "0.375rem", "0.625rem", "0.875rem", "999px" }
+}
+
+function baseShadow() {
+    ShadowScale {
+        "0 8px 24px rgba(15, 23, 42, 0.12)",
+        "0 16px 48px rgba(15, 23, 42, 0.18)",
+        "0 0 0 3px color-mix(in srgb, var(--pf-color-focus) 32%, transparent)"
+    }
+}
+
+function themeFromColors(name, mode, colors) {
+    let typography = baseTypography();
+    let spacing = baseSpacing();
+    let radius = baseRadius();
+    let shadow = baseShadow();
+    Theme {
+        name,
+        mode,
+        colors,
+        typography,
+        spacing,
+        radius,
+        shadow,
+        component("pf-page", "block", "var(--pf-color-text)", "var(--pf-color-canvas)", "", "", "", "var(--pf-space-lg)", "0", "var(--pf-font-body)", "var(--pf-font-size-base)", "var(--pf-font-weight-normal)", "", "min-height: 100vh;\n"),
+        component("pf-panel", "block", "var(--pf-color-text)", "var(--pf-color-surface)", "var(--pf-color-border)", "1px", "var(--pf-radius-lg)", "var(--pf-space-lg)", "0", "", "", "", "", ""),
+        component("pf-card", "block", "var(--pf-color-text)", "var(--pf-color-surface)", "var(--pf-color-border)", "1px", "var(--pf-radius-lg)", "var(--pf-space-lg)", "0 0 var(--pf-space-lg) 0", "", "", "", "var(--pf-shadow-card)", ""),
+        component("pf-toolbar", "flex", "var(--pf-color-text)", "var(--pf-color-surface)", "var(--pf-color-border)", "1px", "var(--pf-radius-lg)", "var(--pf-space-md)", "0", "", "", "", "", "align-items: center; gap: var(--pf-space-sm);\n"),
+        component("pf-sidebar", "block", "var(--pf-color-text)", "var(--pf-color-surface)", "var(--pf-color-border)", "1px", "var(--pf-radius-lg)", "var(--pf-space-md)", "0", "", "", "", "", ""),
+        component("pf-content-panel", "block", "var(--pf-color-text)", "var(--pf-color-surface-raised)", "var(--pf-color-border)", "1px", "var(--pf-radius-lg)", "var(--pf-space-lg)", "0", "", "", "", "", ""),
+        component("pf-field", "grid", "var(--pf-color-text)", "transparent", "", "", "", "var(--pf-space-xs) 0", "0", "", "", "", "", "gap: var(--pf-space-xs);\n"),
+        component("pf-field-label", "block", "var(--pf-color-text-muted)", "transparent", "", "", "", "0", "0", "", "var(--pf-font-size-small)", "var(--pf-font-weight-bold)", "", ""),
+        component("pf-field-value", "block", "var(--pf-color-text)", "transparent", "", "", "", "0", "0", "", "", "var(--pf-font-weight-medium)", "", ""),
+        component("pf-button", "inline-flex", "var(--pf-color-text)", "var(--pf-color-surface)", "var(--pf-color-border-strong)", "1px", "var(--pf-radius-md)", "var(--pf-space-sm) var(--pf-space-md)", "0", "", "", "var(--pf-font-weight-medium)", "", "align-items: center; justify-content: center; gap: var(--pf-space-xs); cursor: pointer;\n"),
+        component("pf-button-primary", "inline-flex", "var(--pf-color-accent-text)", "var(--pf-color-accent)", "var(--pf-color-accent)", "1px", "var(--pf-radius-md)", "var(--pf-space-sm) var(--pf-space-md)", "0", "", "", "var(--pf-font-weight-bold)", "", "align-items: center; justify-content: center; gap: var(--pf-space-xs); cursor: pointer;\n"),
+        component("pf-button-danger", "inline-flex", "white", "var(--pf-color-danger)", "var(--pf-color-danger)", "1px", "var(--pf-radius-md)", "var(--pf-space-sm) var(--pf-space-md)", "0", "", "", "var(--pf-font-weight-bold)", "", "align-items: center; justify-content: center; gap: var(--pf-space-xs); cursor: pointer;\n"),
+        component("pf-button-disabled", "inline-flex", "var(--pf-color-disabled-text)", "var(--pf-color-disabled-surface)", "var(--pf-color-border)", "1px", "var(--pf-radius-md)", "var(--pf-space-sm) var(--pf-space-md)", "0", "", "", "var(--pf-font-weight-medium)", "", "cursor: not-allowed;\n"),
+        component("pf-input", "block", "var(--pf-color-text)", "var(--pf-color-surface)", "var(--pf-color-border-strong)", "1px", "var(--pf-radius-md)", "var(--pf-space-sm) var(--pf-space-md)", "0", "", "", "", "", "width: 100%;\n"),
+        component("pf-select", "block", "var(--pf-color-text)", "var(--pf-color-surface)", "var(--pf-color-border-strong)", "1px", "var(--pf-radius-md)", "var(--pf-space-sm) var(--pf-space-md)", "0", "", "", "", "", "width: 100%;\n"),
+        component("pf-checkbox", "inline-flex", "var(--pf-color-text)", "transparent", "", "", "", "var(--pf-space-xs) 0", "0", "", "", "", "", "align-items: center; gap: var(--pf-space-sm);\n"),
+        component("pf-option-group", "flex", "var(--pf-color-text)", "transparent", "", "", "", "0", "0", "", "", "", "", "gap: var(--pf-space-sm); flex-wrap: wrap;\n"),
+        component("pf-option-button", "inline-flex", "var(--pf-color-text)", "var(--pf-color-surface)", "var(--pf-color-border)", "1px", "var(--pf-radius-md)", "var(--pf-space-sm) var(--pf-space-md)", "0", "", "", "var(--pf-font-weight-medium)", "", "align-items: center; gap: var(--pf-space-xs); cursor: pointer;\n"),
+        component("pf-option-selected", "inline-flex", "var(--pf-color-accent-text)", "var(--pf-color-accent)", "var(--pf-color-accent)", "1px", "var(--pf-radius-md)", "var(--pf-space-sm) var(--pf-space-md)", "0", "", "", "var(--pf-font-weight-bold)", "", "align-items: center; gap: var(--pf-space-xs);\n"),
+        component("pf-option-disabled", "inline-flex", "var(--pf-color-disabled-text)", "var(--pf-color-disabled-surface)", "var(--pf-color-border)", "1px", "var(--pf-radius-md)", "var(--pf-space-sm) var(--pf-space-md)", "0", "", "", "var(--pf-font-weight-medium)", "", "align-items: center; gap: var(--pf-space-xs); cursor: not-allowed;\n"),
+        component("pf-tab-list", "flex", "var(--pf-color-text)", "transparent", "", "", "", "0", "0 0 var(--pf-space-md) 0", "", "", "", "", "gap: var(--pf-space-sm); border-bottom: 1px solid var(--pf-color-border);\n"),
+        component("pf-tab", "inline-flex", "var(--pf-color-text-muted)", "transparent", "transparent", "1px", "var(--pf-radius-md) var(--pf-radius-md) 0 0", "var(--pf-space-sm) var(--pf-space-md)", "0", "", "", "var(--pf-font-weight-medium)", "", "cursor: pointer;\n"),
+        component("pf-tab-selected", "inline-flex", "var(--pf-color-text)", "var(--pf-color-surface)", "var(--pf-color-border)", "1px", "var(--pf-radius-md) var(--pf-radius-md) 0 0", "var(--pf-space-sm) var(--pf-space-md)", "0", "", "", "var(--pf-font-weight-bold)", "", "border-bottom-color: var(--pf-color-surface);\n"),
+        component("pf-definition-list", "grid", "var(--pf-color-text)", "transparent", "", "", "", "0", "0", "", "", "", "", "gap: var(--pf-space-sm);\n"),
+        component("pf-definition-term", "block", "var(--pf-color-text-muted)", "transparent", "", "", "", "0", "0", "", "var(--pf-font-size-small)", "var(--pf-font-weight-bold)", "", ""),
+        component("pf-definition-description", "block", "var(--pf-color-text)", "transparent", "", "", "", "0", "0 0 var(--pf-space-sm) 0", "", "", "", "", ""),
+        component("pf-code", "inline", "var(--pf-color-text)", "var(--pf-color-surface-raised)", "var(--pf-color-border)", "1px", "var(--pf-radius-sm)", "0.1rem 0.35rem", "0", "var(--pf-font-mono)", "var(--pf-font-size-small)", "", "", ""),
+        component("pf-link", "inline", "var(--pf-color-accent)", "transparent", "", "", "", "0", "0", "", "", "", "", "text-decoration: underline;\n")
+    }
+}
+
+export let lightColors = ColorScale {
+    "#f8fafc",
+    "#ffffff",
+    "#f1f5f9",
+    "#e2e8f0",
+    "#0f172a",
+    "#475569",
+    "#64748b",
+    "#2563eb",
+    "#1d4ed8",
+    "#ffffff",
+    "#16a34a",
+    "#d97706",
+    "#dc2626",
+    "#b91c1c",
+    "#e2e8f0",
+    "#cbd5e1",
+    "#60a5fa",
+    "#f1f5f9",
+    "#94a3b8"
+};
+
+export let darkColors = ColorScale {
+    "#0f172a",
+    "#111827",
+    "#1f2937",
+    "#334155",
+    "#e5e7eb",
+    "#cbd5e1",
+    "#94a3b8",
+    "#60a5fa",
+    "#3b82f6",
+    "#0f172a",
+    "#22c55e",
+    "#f59e0b",
+    "#ef4444",
+    "#dc2626",
+    "#334155",
+    "#475569",
+    "#93c5fd",
+    "#1e293b",
+    "#64748b"
+};
+
+export let lightTheme = themeFromColors("Light", "light", lightColors);
+export let darkTheme = themeFromColors("Dark", "dark", darkColors);
