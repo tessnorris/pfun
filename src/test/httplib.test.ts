@@ -97,6 +97,34 @@ function findFreePort(): Promise<number> {
 
 describe('httplib (phase 6)', () => {
 
+  // ─── Additional test helpers for new client functions ─────────────────────
+
+  /** Start a plain Node http server on a random free port. Returns the server directly. */
+  async function startServer(handler: http.RequestListener): Promise<http.Server> {
+    return new Promise(resolve => {
+      const server = http.createServer(handler);
+      server.listen(0, '127.0.0.1', () => resolve(server));
+    });
+  }
+
+  /** Return http://127.0.0.1:<port> for a server. */
+  function serverUrl(server: http.Server): string {
+    const { port } = server.address() as AddressInfo;
+    return `http://127.0.0.1:${port}`;
+  }
+
+  /** Run a synchronous Pfun program (no async needed). */
+  function runSyncProgram(source: string) {
+    const interp = makeInterpreter();
+    const ast = new Parser(new Lexer(source).lex()).parse();
+    const logs: string[] = [];
+    const orig = console.log;
+    console.log = (...a: any[]) => logs.push(a.map(String).join(' '));
+    try { interp.interpret(ast, source); }
+    finally { console.log = orig; }
+    return { logs };
+  }
+
   describe('httpGet against a real server', () => {
     it('returns Ok with status, headers, and body for a successful response', async () => {
       const { server, port } = await startNodeServer((req, res) => {
@@ -486,6 +514,387 @@ describe('httplib (phase 6)', () => {
       const pC = fetch(`http://127.0.0.1:${port}/c`).then(r => r.text()).then(b => order.push(b));
       await Promise.all([pA, pB, pC]);
       expect(order).toEqual(['c', 'b', 'a']);
+    });
+  });
+
+  // ─── httpRequest ────────────────────────────────────────────────────────────
+
+  describe('httpRequest', () => {
+    it('GET: returns Ok with status, headers, and body', async () => {
+      const server = await startServer((req, res) => {
+        res.writeHead(200, { 'Content-Type': 'text/plain', 'X-Custom': 'hello' });
+        res.end('got it');
+      });
+      try {
+        const result = await runAsyncProgram(`
+          async proc main() {
+            match await httpRequest("GET", "${serverUrl(server)}/", listToDict([]), "") with
+            | Err e -> println("err:" + e.message)
+            | Ok  r -> {
+                println(__str__(r.value.status));
+                println(r.value.body);
+              };
+          }
+          main();
+        `);
+        expect(result.logs).toEqual(['200', 'got it']);
+      } finally { server.close(); }
+    });
+
+    it('POST: sends method, custom headers, and body', async () => {
+      const server = await startServer((req, res) => {
+        const chunks: Buffer[] = [];
+        req.on('data', c => chunks.push(c));
+        req.on('end', () => {
+          const body = Buffer.concat(chunks).toString();
+          res.writeHead(201, { 'Content-Type': 'text/plain' });
+          res.end(`${req.method}:${req.headers['x-token'] ?? 'none'}:${body}`);
+        });
+      });
+      try {
+        const result = await runAsyncProgram(`
+          async proc main() {
+            var headers = listToDict([Pair { "x-token", "secret" }]);
+            match await httpRequest("POST", "${serverUrl(server)}/data", headers, "payload") with
+            | Err e -> println("err:" + e.message)
+            | Ok  r -> println(r.value.body);
+          }
+          main();
+        `);
+        expect(result.logs).toEqual(['POST:secret:payload']);
+      } finally { server.close(); }
+    });
+
+    it('PUT updates a resource', async () => {
+      const server = await startServer((req, res) => {
+        res.writeHead(200, { 'Content-Type': 'text/plain' });
+        res.end(req.method ?? '');
+      });
+      try {
+        const result = await runAsyncProgram(`
+          async proc main() {
+            match await httpRequest("PUT", "${serverUrl(server)}/", listToDict([]), "data") with
+            | Err e -> println("err:" + e.message)
+            | Ok  r -> println(r.value.body);
+          }
+          main();
+        `);
+        expect(result.logs).toEqual(['PUT']);
+      } finally { server.close(); }
+    });
+
+    it('returns response headers in the Ok value', async () => {
+      const server = await startServer((_req, res) => {
+        res.writeHead(200, { 'X-My-Header': 'my-value', 'Content-Type': 'text/plain' });
+        res.end('ok');
+      });
+      try {
+        const result = await runAsyncProgram(`
+          async proc main() {
+            match await httpRequest("GET", "${serverUrl(server)}/", listToDict([]), "") with
+            | Err e -> println("err:" + e.message)
+            | Ok  r -> {
+                if has(r.value.headers, "x-my-header")
+                then println(r.value.headers["x-my-header"])
+                else println("missing");
+              };
+          }
+          main();
+        `);
+        expect(result.logs).toEqual(['my-value']);
+      } finally { server.close(); }
+    });
+
+    it('returns Err for connection refused', async () => {
+      const result = await runAsyncProgram(`
+        async proc main() {
+          match await httpRequest("GET", "http://localhost:1", listToDict([]), "") with
+          | Err _ -> println("err")
+          | Ok  _ -> println("ok");
+        }
+        main();
+      `);
+      expect(result.logs).toEqual(['err']);
+    });
+
+    it('rejects non-string method', async () => {
+      await expect(async () => runAsyncProgram(`
+        async proc main() { eval await httpRequest(42, "http://x", listToDict([]), ""); }
+        main();
+      `)).rejects.toThrow('string method');
+    });
+
+    it('rejects non-string URL', async () => {
+      await expect(async () => runAsyncProgram(`
+        async proc main() { eval await httpRequest("GET", 42, listToDict([]), ""); }
+        main();
+      `)).rejects.toThrow('string URL');
+    });
+
+    it('rejects non-string body', async () => {
+      await expect(async () => runAsyncProgram(`
+        async proc main() { eval await httpRequest("GET", "http://x", listToDict([]), 42); }
+        main();
+      `)).rejects.toThrow('string body');
+    });
+
+    it('throws in pure functions', async () => {
+      await expect(runAsyncProgram(`
+        function bad() { return httpRequest("GET", "http://x", listToDict([]), ""); }
+        bad();
+      `)).rejects.toThrow('side effects are not allowed in pure functions');
+    });
+  });
+
+  // ─── httpRequestBytes ────────────────────────────────────────────────────────
+
+  describe('httpRequestBytes', () => {
+    it('returns the response body as List<Byte>', async () => {
+      const payload = Buffer.from([0x01, 0x02, 0x03, 0xff]);
+      const server = await startServer((_req, res) => {
+        res.writeHead(200, { 'Content-Type': 'application/octet-stream' });
+        res.end(payload);
+      });
+      try {
+        const result = await runAsyncProgram(`
+          async proc main() {
+            match await httpRequestBytes("GET", "${serverUrl(server)}/", listToDict([]), "") with
+            | Err e -> println("err:" + e.message)
+            | Ok  r -> {
+                println(__str__(length(r.value.body)));
+                println(__str__(toInt(head(r.value.body))));
+              };
+          }
+          main();
+        `);
+        expect(result.logs).toEqual(['4', '1']);
+      } finally { server.close(); }
+    });
+
+    it('POST with body and binary response', async () => {
+      const server = await startServer((req, res) => {
+        const chunks: Buffer[] = [];
+        req.on('data', c => chunks.push(c));
+        req.on('end', () => {
+          const received = Buffer.concat(chunks);
+          res.writeHead(200, { 'Content-Type': 'application/octet-stream' });
+          res.end(received); // echo back the body as bytes
+        });
+      });
+      try {
+        const result = await runAsyncProgram(`
+          async proc main() {
+            match await httpRequestBytes("POST", "${serverUrl(server)}/", listToDict([]), "hi") with
+            | Err e -> println("err:" + e.message)
+            | Ok  r -> println(__str__(length(r.value.body)));
+          }
+          main();
+        `);
+        expect(result.logs).toEqual(['2']); // "hi" = 2 bytes
+      } finally { server.close(); }
+    });
+
+    it('preserves bytes that would corrupt under UTF-8 decode', async () => {
+      const rawBytes = Buffer.from([0x80, 0x81, 0xff]);
+      const server = await startServer((_req, res) => {
+        res.writeHead(200, { 'Content-Type': 'application/octet-stream' });
+        res.end(rawBytes);
+      });
+      try {
+        const result = await runAsyncProgram(`
+          async proc main() {
+            match await httpRequestBytes("GET", "${serverUrl(server)}/", listToDict([]), "") with
+            | Err e -> println("err:" + e.message)
+            | Ok  r -> {
+                println(__str__(length(r.value.body)));
+                println(__str__(toInt(nth(r.value.body, 2))));
+              };
+          }
+          main();
+        `);
+        expect(result.logs).toEqual(['3', '255']);
+      } finally { server.close(); }
+    });
+
+    it('returns Err for connection refused', async () => {
+      const result = await runAsyncProgram(`
+        async proc main() {
+          match await httpRequestBytes("GET", "http://localhost:1", listToDict([]), "") with
+          | Err _ -> println("err")
+          | Ok  _ -> println("ok");
+        }
+        main();
+      `);
+      expect(result.logs).toEqual(['err']);
+    });
+
+    it('throws in pure functions', async () => {
+      await expect(runAsyncProgram(`
+        function bad() { return httpRequestBytes("GET", "http://x", listToDict([]), ""); }
+        bad();
+      `)).rejects.toThrow('side effects are not allowed in pure functions');
+    });
+  });
+
+  // ─── fetchWithTimeout ────────────────────────────────────────────────────────
+
+  describe('fetchWithTimeout', () => {
+    it('returns Ok for a fast response', async () => {
+      const server = await startServer((_req, res) => {
+        res.writeHead(200, { 'Content-Type': 'text/plain' });
+        res.end('fast');
+      });
+      try {
+        const result = await runAsyncProgram(`
+          async proc main() {
+            match await fetchWithTimeout("${serverUrl(server)}/", 5000) with
+            | Err e -> println("err:" + e.message)
+            | Ok  r -> println(r.value.body);
+          }
+          main();
+        `);
+        expect(result.logs).toEqual(['fast']);
+      } finally { server.close(); }
+    });
+
+    it('returns Err with timeout message when server is too slow', async () => {
+      // Server that delays longer than the timeout
+      const server = await startServer((_req, res) => {
+        setTimeout(() => { res.writeHead(200); res.end('slow'); }, 500);
+      });
+      try {
+        const result = await runAsyncProgram(`
+          async proc main() {
+            match await fetchWithTimeout("${serverUrl(server)}/", 50) with
+            | Err e -> println(e.message)
+            | Ok  r -> println("ok:" + r.value.body);
+          }
+          main();
+        `);
+        expect(result.logs[0]).toMatch(/timeout after 50ms/);
+      } finally { server.close(); }
+    });
+
+    it('returns Err for connection refused', async () => {
+      const result = await runAsyncProgram(`
+        async proc main() {
+          match await fetchWithTimeout("http://localhost:1", 1000) with
+          | Err _ -> println("err")
+          | Ok  _ -> println("ok");
+        }
+        main();
+      `);
+      expect(result.logs).toEqual(['err']);
+    });
+
+    it('includes status and headers in the Ok value', async () => {
+      const server = await startServer((_req, res) => {
+        res.writeHead(202, { 'Content-Type': 'text/plain', 'X-Foo': 'bar' });
+        res.end('accepted');
+      });
+      try {
+        const result = await runAsyncProgram(`
+          async proc main() {
+            match await fetchWithTimeout("${serverUrl(server)}/", 5000) with
+            | Err e -> println("err:" + e.message)
+            | Ok  r -> {
+                println(__str__(r.value.status));
+                println(r.value.body);
+              };
+          }
+          main();
+        `);
+        expect(result.logs).toEqual(['202', 'accepted']);
+      } finally { server.close(); }
+    });
+
+    it('rejects non-string URL', async () => {
+      await expect(async () => runAsyncProgram(`
+        async proc main() { eval await fetchWithTimeout(42, 1000); }
+        main();
+      `)).rejects.toThrow('string URL');
+    });
+
+    it('rejects non-integer timeout', async () => {
+      await expect(async () => runAsyncProgram(`
+        async proc main() { eval await fetchWithTimeout("http://x", 1.5); }
+        main();
+      `)).rejects.toThrow('integer timeout');
+    });
+
+    it('throws in pure functions', async () => {
+      await expect(runAsyncProgram(`
+        function bad() { return fetchWithTimeout("http://x", 1000); }
+        bad();
+      `)).rejects.toThrow('side effects are not allowed in pure functions');
+    });
+  });
+
+  // ─── urlEncode ──────────────────────────────────────────────────────────────
+
+  describe('urlEncode', () => {
+    it('encodes spaces as %20', () => {
+      const result = runSyncProgram(`
+        proc main() { println(urlEncode("hello world")); }
+        main();
+      `);
+      expect(result.logs).toEqual(['hello%20world']);
+    });
+
+    it('encodes special query characters', () => {
+      const result = runSyncProgram(`
+        proc main() { println(urlEncode("a=1&b=2")); }
+        main();
+      `);
+      expect(result.logs).toEqual(['a%3D1%26b%3D2']);
+    });
+
+    it('leaves unreserved characters unchanged', () => {
+      const result = runSyncProgram(`
+        proc main() { println(urlEncode("hello-world_123")); }
+        main();
+      `);
+      expect(result.logs).toEqual(['hello-world_123']);
+    });
+
+    it('encodes an empty string to empty string', () => {
+      const result = runSyncProgram(`
+        proc main() { println(urlEncode("")); }
+        main();
+      `);
+      expect(result.logs).toEqual(['']);
+    });
+
+    it('encodes unicode characters', () => {
+      const result = runSyncProgram(`
+        proc main() { println(urlEncode("caf\u00e9")); }
+        main();
+      `);
+      expect(result.logs).toEqual(['caf%C3%A9']);
+    });
+
+    it('encodes slashes and colons', () => {
+      const result = runSyncProgram(`
+        proc main() { println(urlEncode("https://example.com/path")); }
+        main();
+      `);
+      expect(result.logs).toEqual(['https%3A%2F%2Fexample.com%2Fpath']);
+    });
+
+    it('can be used from a pure function', () => {
+      const result = runSyncProgram(`
+        function encode(s) { urlEncode(s); }
+        proc main() { println(encode("a b")); }
+        main();
+      `);
+      expect(result.logs).toEqual(['a%20b']);
+    });
+
+    it('rejects non-string input', () => {
+      expect(() => runSyncProgram(`
+        proc main() { eval urlEncode(42); }
+        main();
+      `)).toThrow('string');
     });
   });
 });

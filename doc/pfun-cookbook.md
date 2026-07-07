@@ -331,16 +331,18 @@ subtleties from the corpus are worth fixing in your mind before reading on:
   `dbschema_gen.pf` relies on this, calling `head(c)` on each element. Both styles appear; this
   chapter uses each where it reads most clearly.
 
-Several recipes share these small helpers (the `replaceAll` trick is lifted straight from
-`viewlib.pf`'s `escapeHtml`):
+All recipes in this chapter import `stringlib.pf`, which provides `trim`, `trimLeft`,
+`trimRight`, `startsWith`, `endsWith`, `replace`, `replaceAll`, `contains`, `strRepeat`,
+`padLeft`, `padRight`, `indexOf`, and several others. See §E.1 for the full reference.
 
 ```pfun
-// Replace every occurrence of `from` with `to` — the corpus idiom from viewlib.escapeHtml.
-function replaceAll(s, from, to) { join(split(s, from), to); }
+import * from "$PFUN_HOME/lib/stringlib";
+```
 
-// Does `s` contain `sub`?  (findSlice returns an Option of the start index.)
-function hasSub(s, sub) { match findSlice(s, sub) with | Some _ -> true | None -> false; }
+Several recipes share these small helpers, which are not in `stringlib` and are defined
+locally:
 
+```pfun
 // Whitespace test (extended from tiny-lisp.pf's isSpace).
 function isSpace(c) { c == ' ' || c == '\n' || c == '\t' || c == '\r'; }
 
@@ -350,6 +352,12 @@ function isUpperS(cs) { let k = charCode(cs); k >= 65 && k <= 90; }
 function isLowerS(cs) { let k = charCode(cs); k >= 97 && k <= 122; }
 function isAlnumS(cs) { isLowerS(cs) || isUpperS(cs) || (charCode(cs) >= 48 && charCode(cs) <= 57); }
 ```
+
+> **Note on `replaceAll` and `contains`:** the chapter intro originally defined inline
+> helpers `replaceAll` and `hasSub`. Both now come from `stringlib`:
+> `replaceAll(s, from, to)` replaces every occurrence of `from` with `to`;
+> `contains(s, sub)` returns `true` if `sub` appears anywhere in `s`. Using the library
+> versions avoids name collisions if you later import `stringlib` into the same module.
 
 ---
 
@@ -373,11 +381,12 @@ println(normalizeWs("   hello   \t world\n\n  again  "));  // "hello world again
 ```
 
 **How it works.** The first step normalizes every whitespace character to a plain space using
-the `replaceAll` idiom (`join(split(s, from), to)`). Splitting the result on `" "` produces
-empty strings wherever two delimiters were adjacent and at each end; `filter`-ing those out
-simultaneously collapses internal runs *and* trims the edges. `join(…, " ")` reassembles the
-words with single spaces. The whole pipeline is built from prelude functions (`split`, `filter`,
-`join`) and is referentially transparent.
+`replaceAll` from `stringlib`. Splitting the result on `" "` produces empty strings wherever
+two delimiters were adjacent and at each end; `filter`-ing those out simultaneously collapses
+internal runs *and* trims the edges. `join(…, " ")` reassembles the words with single spaces.
+The whole pipeline is built from `stringlib` and prelude functions and is referentially
+transparent. Note that `stringlib` also exports `trim`, `trimLeft`, and `trimRight` if you only
+need edge whitespace removed without internal collapsing.
 
 ---
 
@@ -429,12 +438,14 @@ Pfun accumulator pattern (seen in `tokenize`/`parseList`).
 
 Code generators, ORMs, and API layers constantly translate between identifier styles — a
 database column `customer_id` becomes a field `customerId`, a CSS class `customer-id`, or a type
-`CustomerId`. `dbschema_gen.pf` already ships `toPascal`, `toCamel`, `capitalise`, `toUpper`, and
-`toLower` for the snake-to-camel direction; we reuse them and add a style-agnostic splitter so we
-can go *between* any of the three conventions.
+`CustomerId`. The same character-case helpers (`toUpper`, `toLower`, `capitalise`, `toCamel`,
+`toPascal`) appear in `dbschema_gen.pf` for its own use, but they are not exported as a library.
+The recipe defines them locally alongside a style-agnostic word splitter, so we can go *between*
+any of the three conventions.
 
 ```pfun
-// --- reused verbatim from dbschema_gen.pf ---
+// Self-contained character-case helpers (same logic as dbschema_gen.pf's internal copies,
+// not importable from a library — define them locally in any module that needs them).
 function toUpper(c) { let code = asc(head(c)); if code >= 97 && code <= 122 then __str__(chr(code - 32)) else c; }
 function toLower(c) { let code = asc(head(c)); if code >= 65 && code <= 90 then __str__(chr(code + 32)) else c; }
 function capitalise(s) {
@@ -577,15 +588,15 @@ through a Unicode-normalization foreign wrapper, but the everyday case needs no 
 Files authored on Windows use `\r\n` (CRLF) line endings while Unix tools expect `\n` (LF);
 mixing them causes spurious diffs and broken parsing. You frequently need to detect which
 convention a blob uses and normalize in either direction. The `replaceAll` idiom handles the
-conversions, and `hasSub` handles detection — both pure.
+conversions, and `contains` (from `stringlib`) handles detection — both pure.
 
 ```pfun
 function toLf(s)   { replaceAll(s, "\r\n", "\n"); }
 function toCrlf(s) { replaceAll(toLf(s), "\n", "\r\n"); }   // normalize first so we never double up
 
 function detectEnding(s) {
-  if hasSub(s, "\r\n") then "CRLF"
-  else if hasSub(s, "\n") then "LF"
+  if contains(s, "\r\n") then "CRLF"
+  else if contains(s, "\n") then "LF"
   else "none";
 }
 
@@ -594,11 +605,11 @@ println(length(toLf("a\r\nb")));   // 3   (the \r is gone)
 println(length(toCrlf("a\nb")));   // 4
 ```
 
-**How it works.** `toLf` simply deletes the carriage returns by replacing `\r\n` with `\n`.
+**How it works.** `toLf` deletes carriage returns by replacing `\r\n` with `\n`.
 `toCrlf` is written defensively: it first folds everything to LF, *then* expands to CRLF, so a
-string that already contains CRLF will not become `\r\r\n`. `detectEnding` checks for `\r\n`
-before bare `\n` because every CRLF contains an LF. These are the kind of normalizations you run
-on file contents right after reading them (Chapter 5) and right before writing them out.
+string that already contains CRLF will not become `\r\r\n`. `detectEnding` uses `contains`
+from `stringlib` and checks for `\r\n` before bare `\n` because every CRLF contains an LF.
+Both `replaceAll` and `contains` come from `stringlib` (imported at the top of the chapter).
 
 ---
 
@@ -611,12 +622,12 @@ This is a pure function, and keeping it pure means it is safe to call from anywh
 inside log formatting (Chapter 8).
 
 ```pfun
-function repeatStr(ch, k) { if k <= 0 then "" else ch + repeatStr(ch, k - 1); }
+// strRepeat(s, n) is provided by stringlib — no need to define it locally.
 
 function maskAllButLast4(s) {
   let n = length(s);
   if n <= 4 then s
-  else repeatStr("*", n - 4) + slice(n - 4, 4, s);
+  else strRepeat("*", n - 4) + slice(n - 4, 4, s);
 }
 
 println(maskAllButLast4("4111111111111234"));  // "************1234"
@@ -624,10 +635,10 @@ println(maskAllButLast4("99"));                // "99"  (too short to mask)
 ```
 
 **How it works.** `slice(n - 4, 4, s)` extracts the last four characters (start index `n-4`,
-length `4`), and `repeatStr` builds a mask of the appropriate width for everything before them.
-Strings of four or fewer characters are returned unchanged, since masking them would hide
-everything. To preserve formatting such as `**** **** **** 1234`, mask first and then reinsert
-separators with the grouping helper from Recipe 12.
+length `4`), and `strRepeat("*", n - 4)` from `stringlib` builds a mask of the appropriate
+width. Strings of four or fewer characters are returned unchanged. To preserve formatting such as
+`**** **** **** 1234`, mask first and then reinsert separators with the grouping helper from
+Recipe 12.
 
 ---
 
@@ -728,10 +739,18 @@ recursive scaffolding.
 
 Pfun has three numeric kinds in the corpus: arbitrary-precision **Int** (`factorial(30, 1)` and
 `square(1000000000000)` compute exact results in `golden.pf`), **Float** (`2.0`, `sqrt(2.0)`), and
-**Byte** (`0xFFb`). The `math` module supplies `sqrt`, `pow`, `abs`, `round`, and `lerp`; `toInt`,
-`toFloat`, `toByte`, and `toChar` convert between kinds. `mathutils.pf` is a reusable library that
-already provides `clamp`, `safeDivide`, `add`, `subtract`, and `multiply`, and we call it directly
-below.
+**Byte** (`0xFFb`). The `math` module supplies `sqrt`, `pow`, `abs`, `lerp`, `clamp`, `sign`,
+`min`, `max`, `cbrt`, `exp`, `log`, `log2`, `log10`, `hypot`, `fmod`, `formatFixed`, the
+trigonometric functions, and the constants `pi`, `e`, `tau`, `inf`, `nan`. Note that `round`,
+`floor`, and `ceil` are **prelude builtins** (always in scope, no import needed), not part of the
+`math` module. `toInt`, `toFloat`, `toByte`, and `toChar` convert between numeric kinds.
+
+`mathutils.pf` is a small reusable library that exports `clamp(value, lo, hi)`,
+`safeDivide(a, b)` (returning `Option`), `add`, `subtract`, `multiply`, `fact`, and `countdown`.
+`random.pf` exports `randomInt(min, max)` (inclusive both ends, CSPRNG), `randomFloat()`,
+`randomBytes`, `randomUUID`, and more (see §E.3). `locale.pf` exports
+`formatLocalNumber(n)`, `formatLocalCurrency(n)`, and `formatLocalCurrencyWith(n, currencyCode)`
+for locale-sensitive display (see §E.4).
 
 > **A note on `/`.** The corpus shows `10 / 4` and `7b / 2b` but never prints the result, and
 > `tiny-lisp.pf` treats `/` as integer arithmetic (`LInt { a.n / b.n }`). Whether integer `/`
@@ -750,13 +769,14 @@ value is to format it as a string with a fixed precision; to keep computing with
 power of ten, round to an integer, and scale back.
 
 ```pfun
-import * from "math";
+import * from "math";   // for pow and formatFixed
 
-// Display form: exact decimal string, no drift. numberToFixed wraps Number.toFixed (Appendix A).
-// numberToFixed : (Float x, Int decimals) -> String
-function money(x) { numberToFixed(x, 2); }
+// Display form: exact decimal string, no drift.
+// formatFixed(x, decimals) is in the math module — no FFI needed.
+function money(x) { formatFixed(x, 2); }
 
 // Numeric form: round to n decimals via integer scaling.
+// round is a prelude builtin (always in scope); pow comes from math.
 function roundTo(x, n) {
   let p = pow(10.0, toFloat(n));
   toFloat(round(x * p)) / p;
@@ -766,14 +786,14 @@ println(money(2.675));        // "2.68"   (string, drift-free for display)
 println(roundTo(2.675, 2));   // 2.68     (Float; see note)
 ```
 
-**How it works.** `numberToFixed` defers to JavaScript's `Number.prototype.toFixed`, which
-produces a correctly rounded decimal **string** — the right choice whenever the number is about
-to be shown to a human, written to a file, or sent as JSON. `roundTo` multiplies by `10^n`,
-rounds to the nearest integer with `math.round` (eliminating the fractional noise), and divides
-back; the final division reintroduces float representation, so prefer the string form for
-anything user-facing and keep `roundTo` for intermediate arithmetic where a small epsilon is
-acceptable. Keeping both in pure functions means they compose freely and never surprise a caller
-with hidden state.
+**How it works.** `formatFixed(x, decimals)` from the `math` module formats a float as a
+correctly rounded decimal **string** — the right choice whenever the number is about to be shown
+to a human, written to a file, or sent as JSON. `roundTo` multiplies by `10^n`, rounds to the
+nearest integer with the prelude's `round` (eliminating the fractional noise), and divides back;
+the final division reintroduces float representation, so prefer the string form for anything
+user-facing and keep `roundTo` for intermediate arithmetic where a small epsilon is acceptable.
+Keeping both in pure functions means they compose freely and never surprise a caller with hidden
+state.
 
 ---
 
@@ -785,6 +805,8 @@ no dependencies, or a locale-aware foreign wrapper around JavaScript's `Intl.Num
 pure version below is self-contained and reuses the string helpers from Chapter 1.
 
 ```pfun
+import * from "math";   // for formatFixed
+
 // group an integer string into 3-digit clusters from the right
 function groupThousands(digits) {
   let n = length(digits);
@@ -793,7 +815,7 @@ function groupThousands(digits) {
 }
 
 function formatCurrencyPure(symbol, amount) {
-  let fixed = numberToFixed(amount, 2);        // "1234567.50"  (Appendix A)
+  let fixed = formatFixed(amount, 2);          // "1234567.50"  (math module)
   let dot   = match findSlice(fixed, ".") with | Some p -> p.value | None -> length(fixed);
   let whole = slice(0, dot, fixed);
   let frac  = slice(dot, length(fixed) - dot, fixed);  // includes the "."
@@ -803,17 +825,19 @@ function formatCurrencyPure(symbol, amount) {
 println(groupThousands("1234567"));               // "1,234,567"
 println(formatCurrencyPure("$", 1234567.5));      // "$1,234,567.50"
 
-// Locale-aware alternative (Appendix A): formatCurrency wraps Intl.NumberFormat.
-// println(formatCurrency(1234567.5, "USD", "en-US"));   // "$1,234,567.50"
+// Locale-aware alternative: locale.pf exports formatLocalCurrency(n) and
+// formatLocalCurrencyWith(n, currencyCode) using the system locale.
+// import * from "$PFUN_HOME/lib/locale";
+// println(formatLocalCurrencyWith(1234567.5, "USD"));   // locale-dependent
 ```
 
 **How it works.** `groupThousands` peels three digits off the right end and recurses on the rest,
 inserting a comma between, until three or fewer digits remain. `formatCurrencyPure` first renders
-a drift-free two-decimal string with `numberToFixed`, then uses `findSlice` (which returns the
+a drift-free two-decimal string with `formatFixed` (from the `math` module), then uses `findSlice` (which returns the
 `Some { value: index }` of the decimal point) to split the whole and fractional parts, groups only
 the whole part, and prepends the symbol. When you need locale-correct grouping, decimal marks, and
-symbol placement for many locales, reach for the `formatCurrency` wrapper instead of reimplementing
-every locale's rules.
+symbol placement, use `formatLocalCurrencyWith(n, currencyCode)` from `locale.pf` (§E.4) rather
+than reimplementing locale rules by hand.
 
 ---
 
@@ -826,52 +850,54 @@ form, which lets you bake in the bounds and reuse the result as a one-argument f
 
 ```pfun
 import { clamp as mathClamp } from "./mathutils";
-// mathutils.clamp(value, lo, hi) = value < lo ? lo : (value > hi ? hi : value)
+// mathutils.clamp(value, lo, hi) = value < lo ? lo : (value > hi ? hi : x)
+// Note: the math module also exports clamp with the same signature.
 
 println(mathClamp(15, 0, 10));   // 10
 println(mathClamp(-3, 0, 10));   // 0
 println(mathClamp(7, 0, 10));    // 7
 
-// The example.pf variant takes bounds first, enabling partial application:
-function clamp(lo, hi, x) { return x < lo ? lo : (x > hi ? hi : x); }
-let clamp0to100 = clamp(0)(100);   // a reusable [0,100] clamp
-println(clamp0to100(150));         // 100
-println(clamp0to100(-5));          // 0
+// Bounds-first argument order, enabling partial application:
+function clampBounds(lo, hi, x) { x < lo ? lo : (x > hi ? hi : x); }
+let clamp0to100 = clampBounds(0)(100);   // a reusable [0,100] clamp
+println(clamp0to100(150));               // 100
+println(clamp0to100(-5));                // 0
 ```
 
 **How it works.** Clamping is two nested ternaries: below `lo` snaps up to `lo`, above `hi` snaps
 down to `hi`, otherwise the value passes through. `mathutils` puts the value first
-(`clamp(value, lo, hi)`), which reads naturally at the call site; `example.pf` puts the bounds
-first (`clamp(lo, hi, x)`) specifically so that `clamp(0)(100)` produces a specialized
-`clamp0to100`. Both are correct — choose the argument order by whether you call ad hoc or want to
-pre-configure a reusable clamp. Pfun's automatic partial application makes the second style free.
+(`clamp(value, lo, hi)`), which reads naturally at the call site; `clampBounds` puts the bounds
+first specifically so that `clampBounds(0)(100)` produces a specialized `clamp0to100`. Both are
+correct — choose the argument order by whether you call ad hoc or want to pre-configure a reusable
+clamp. Pfun's automatic partial application makes the second style free. Note that `return` is not
+a Pfun keyword — functions return the value of their last expression implicitly.
 
 ---
 
 ### 14. Generate a random integer in a range (inclusive)
 
 Tests, sampling, and simple games need a uniform random integer between `lo` and `hi` *inclusive*.
-The corpus has no random primitive, so we call `randomFloat` (Appendix A), which wraps
-JavaScript's `Math.random` to return a Float in `[0, 1)`, and map it onto the integer range. For
-anything security-sensitive (tokens, passwords) use the cryptographic generator in Chapter 10
-instead.
+`random.pf` provides `randomInt(min, max)` directly — it uses a cryptographically secure RNG and
+is inclusive on both ends. For anything security-sensitive (tokens, passwords) use `randomBytes`
+or `randomUUID` from the same module (Chapter 10).
 
 ```pfun
-// randomFloat : () -> Float   in [0, 1)        (Appendix A, wraps Math.random)
-function randomInt(lo, hi) {
-  lo + toInt(randomFloat() * toFloat(hi - lo + 1));
-}
+import * from "$PFUN_HOME/lib/random";
 
 println(randomInt(1, 6));     // a die roll: 1..6 inclusive
 println(randomInt(0, 0));     // always 0
+
+// randomFloat() is also available when you need a Float in [0, 1)
+let f = randomFloat();
+println(f >= 0.0);            // true
 ```
 
-**How it works.** There are `hi - lo + 1` integers in the inclusive range. Multiplying a
-`[0, 1)` float by that count gives a value in `[0, count)`; `toInt` truncates it to one of
-`0 … count-1`, and adding `lo` shifts it into `[lo, hi]`. `randomFloat` is the *only* effectful
-part — it reads the global RNG — so it lives in the foreign wrapper while `randomInt` stays a
-thin, deterministic-shaped mapping. Because `randomInt` itself just does arithmetic, you can unit
-test the mapping by stubbing `randomFloat`.
+**How it works.** `randomInt(min, max)` in `random.pf` calls an internal CSPRNG helper
+(`cryptoRandomInt(min, max + 1)`) so that both endpoints are included in the range. This is
+stronger than `Math.random`-based approaches: the entropy comes from the platform's secure random
+source rather than a predictable PRNG, so the same function is safe for non-security sampling
+*and* usable as a building block for security-sensitive code. `randomFloat()` from the same module
+gives a Float in `[0, 1)` when you need it, also backed by the CSPRNG.
 
 ---
 
@@ -882,8 +908,7 @@ calculation must guard against a zero total (no division by zero) and round the 
 readability. Keeping it pure makes it trivial to drop into any view or log line.
 
 ```pfun
-import * from "math";
-
+// round is a prelude builtin — no import needed.
 function percentLabel(part, total) {
   if total == 0 then __str__(part) + " of 0 (n/a)"
   else {
@@ -899,10 +924,10 @@ println(percentLabel(5, 0));     // "5 of 0 (n/a)"
 
 **How it works.** Both operands are promoted with `toFloat` before dividing so the ratio is a
 genuine fraction regardless of how integer `/` behaves (see the chapter note), then multiplied by
-100 and rounded to a whole percent with `math.round`. The zero-total branch returns a sensible
-`"n/a"` instead of crashing or producing `NaN`. `__str__` renders each number for concatenation;
-using it explicitly (rather than relying on `+` coercion) matches the corpus style seen in
-`counter.pf` and the database demos.
+100 and rounded to a whole percent with the prelude's `round`. The zero-total branch returns a
+sensible `"n/a"` instead of crashing or producing `NaN`. `__str__` renders each number for
+concatenation; using it explicitly (rather than relying on `+` coercion) matches the corpus style
+seen in `counter.pf` and the database demos.
 
 ---
 
@@ -3782,7 +3807,7 @@ handle the alphabet; this recipe handles the padding.
 // base64Encode : (String) -> String        base64Decode : (String) -> Response<String>   (Appendix A, via Buffer)
 function padBase64(s) {                                   // re-add '=' so length is a multiple of 4
   let r = length(s) % 4;
-  if r == 0 then s else s + repeatStr("=", 4 - r);        // repeatStr from Chapter 1
+  if r == 0 then s else s + strRepeat("=", 4 - r);        // strRepeat from stringlib
 }
 function base64UrlDecode(s) {
   base64Decode(padBase64(replaceAll(replaceAll(s, "-", "+"), "_", "/")));

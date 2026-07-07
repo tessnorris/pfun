@@ -71,6 +71,8 @@ const runExpectError = (source: string): PfunError => {
     interpreter.interpret(ast, source);
   } catch (e) {
     if (e instanceof PfunError) return e;
+    // Cross-module instanceof check can fail in Jest; check by duck-typing
+    if (e && typeof (e as any).pfunMessage === 'string') return e as any;
     throw new Error(`Expected PfunError but got ${(e as any)?.constructor?.name}: ${e}`);
   }
   throw new Error('Expected an error to be thrown but none was');
@@ -482,6 +484,97 @@ describe('FloatDomain error formatting', () => {
 
   it('error includes what was produced (Infinity)', () => {
     const err = runExpectError('import * from "math"; log(0.0);');
+    expect(err.pfunMessage).toContain('Infinity');
+  });
+});
+
+describe('formatFixed', () => {
+  it('rounds a float to the given decimal places', () => {
+    const { logs } = run('import * from "math"; println(formatFixed(3.14159, 2))');
+    expect(logs[0]).toBe('3.14');
+  });
+
+  it('zero decimal places returns an integer string', () => {
+    const { logs } = run('import * from "math"; println(formatFixed(3.7, 0))');
+    expect(logs[0]).toBe('4');
+  });
+
+  it('pads with trailing zeros when needed', () => {
+    const { logs: logs1 } = run('import * from "math"; println(formatFixed(1.0, 3))');
+    expect(logs1[0]).toBe('1.000');
+    const { logs: logs2 } = run('import * from "math"; println(formatFixed(42, 2))');
+    expect(logs2[0]).toBe('42.00');
+  });
+
+  it('accepts Int (BigInt) as first argument', () => {
+    const { logs: logs1 } = run('import * from "math"; println(formatFixed(42, 3))');
+    expect(logs1[0]).toBe('42.000');
+    const { logs: logs2 } = run('import * from "math"; println(formatFixed(-7, 1))');
+    expect(logs2[0]).toBe('-7.0');
+  });
+
+  it('handles negative numbers', () => {
+    const { logs: logs1 } = run('import * from "math"; println(formatFixed(-3.5, 1))');
+    expect(logs1[0]).toBe('-3.5');
+    const { logs: logs2 } = run('import * from "math"; println(formatFixed(-0.001, 2))');
+    expect(logs2[0]).toBe('-0.00');
+  });
+
+  it('handles zero', () => {
+    const { logs: logs1 } = run('import * from "math"; println(formatFixed(0.0, 2))');
+    expect(logs1[0]).toBe('0.00');
+    const { logs: logs2 } = run('import * from "math"; println(formatFixed(0, 0))');
+    expect(logs2[0]).toBe('0');
+  });
+
+  it('corrects floating-point representation (0.1+0.2)', () => {
+    // toFixed rounds correctly, hiding the 0.30000...4 representation
+    const { logs } = run('import * from "math"; println(formatFixed(0.1 + 0.2, 2))');
+    expect(logs[0]).toBe('0.30');
+  });
+
+  it('handles five decimal places', () => {
+    const { logs } = run('import * from "math"; println(formatFixed(3.14159, 5))');
+    expect(logs[0]).toBe('3.14159');
+  });
+
+  it('handles large numbers', () => {
+    const { logs } = run('import * from "math"; println(formatFixed(1000000.5, 2))');
+    expect(logs[0]).toBe('1000000.50');
+  });
+
+  it('zero decimal places on a whole number', () => {
+    const { logs } = run('import * from "math"; println(formatFixed(100, 0))');
+    expect(logs[0]).toBe('100');
+  });
+
+  it('throws on non-numeric first argument', () => {
+    const err = runExpectError('import * from "math"; formatFixed("x", 2)');
+    expect(err.pfunMessage).toContain('numeric first argument');
+  });
+
+  it('throws on non-integer second argument', () => {
+    const err = runExpectError('import * from "math"; formatFixed(3.14, 2.5)');
+    expect(err.pfunMessage).toContain('integer second argument');
+  });
+
+  it('throws on negative decimal places', () => {
+    const err = runExpectError('import * from "math"; formatFixed(3.14, -1)');
+    expect(err.pfunMessage).toContain('0–100');
+  });
+
+  it('throws on decimal places > 100', () => {
+    const err = runExpectError('import * from "math"; formatFixed(3.14, 101)');
+    expect(err.pfunMessage).toContain('0–100');
+  });
+
+  it('throws on NaN input', () => {
+    const err = runExpectError('import * from "math"; formatFixed(nan(), 2)');
+    expect(err.pfunMessage).toContain('NaN');
+  });
+
+  it('throws on Infinity input', () => {
+    const err = runExpectError('import * from "math"; formatFixed(inf(), 2)');
     expect(err.pfunMessage).toContain('Infinity');
   });
 });

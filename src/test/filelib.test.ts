@@ -818,4 +818,495 @@ describe('File Library Tests', () => {
       `)).toThrow("side effects not allowed in pure functions");
     });
   });
+
+  // ─── listDir ─────────────────────────────────────────────────────────────────
+
+  describe('listDir', () => {
+    it('returns Ok { List<DirEntry> } for an existing directory', () => {
+      const dir = nodePath.join(os.tmpdir(), `pfun-listdir-${Date.now()}`);
+      nodeFs.mkdirSync(dir);
+      nodeFs.writeFileSync(nodePath.join(dir, 'a.txt'), 'a');
+      nodeFs.writeFileSync(nodePath.join(dir, 'b.txt'), 'b');
+      try {
+        const { logs } = run(`
+          proc p() {
+            match listDir("${dir}") with
+            | Err e  -> println("err:" + e.message)
+            | Ok  ok -> println("count:" + __str__(length(ok.value)));
+          }
+          p();
+        `);
+        expect(logs).toEqual(['count:2']);
+      } finally {
+        nodeFs.rmSync(dir, { recursive: true });
+      }
+    });
+
+    it('DirEntry has name and isDir fields', () => {
+      const dir = nodePath.join(os.tmpdir(), `pfun-listdir-fields-${Date.now()}`);
+      nodeFs.mkdirSync(dir);
+      nodeFs.writeFileSync(nodePath.join(dir, 'file.txt'), '');
+      nodeFs.mkdirSync(nodePath.join(dir, 'subdir'));
+      try {
+        const { logs } = run(`
+          proc p() {
+            match listDir("${dir}") with
+            | Err e  -> println("err:" + e.message)
+            | Ok  ok -> {
+                let entries = ok.value;
+                let fileEntries = filter(fn e => !e.isDir, entries);
+                let dirEntries  = filter(fn e => e.isDir,  entries);
+                let fe = head(fileEntries);
+                let de = head(dirEntries);
+                println(fe.name);
+                println(__str__(fe.isDir));
+                println(de.name);
+                println(__str__(de.isDir));
+              };
+          }
+          p();
+        `);
+        expect(logs).toEqual(['file.txt', 'false', 'subdir', 'true']);
+      } finally {
+        nodeFs.rmSync(dir, { recursive: true });
+      }
+    });
+
+    it('returns Err for a non-existent path', () => {
+      const { logs } = run(`
+        proc p() {
+          match listDir("/no/such/directory/pfun-test") with
+          | Err _ -> println("err")
+          | Ok  _ -> println("ok");
+        }
+        p();
+      `);
+      expect(logs).toEqual(['err']);
+    });
+
+    it('returns Err for a file path (not a directory)', () => {
+      withTempFile('content', path => {
+        const { logs } = run(`
+          proc p() {
+            match listDir("${path}") with
+            | Err _ -> println("err")
+            | Ok  _ -> println("ok");
+          }
+          p();
+        `);
+        expect(logs).toEqual(['err']);
+      });
+    });
+
+    it('returns Ok with empty list for an empty directory', () => {
+      const dir = nodePath.join(os.tmpdir(), `pfun-listdir-empty-${Date.now()}`);
+      nodeFs.mkdirSync(dir);
+      try {
+        const { logs } = run(`
+          proc p() {
+            match listDir("${dir}") with
+            | Err e  -> println("err:" + e.message)
+            | Ok  ok -> println("count:" + __str__(length(ok.value)));
+          }
+          p();
+        `);
+        expect(logs).toEqual(['count:0']);
+      } finally {
+        nodeFs.rmdirSync(dir);
+      }
+    });
+
+    it('throws in pure functions', () => {
+      expect(() => run(`
+        function bad() { return listDir("."); }
+        bad();
+      `)).toThrow('side effects not allowed in pure functions');
+    });
+  });
+
+  // ─── isDir ───────────────────────────────────────────────────────────────────
+
+  describe('isDir', () => {
+    it('returns true for an existing directory', () => {
+      const dir = nodePath.join(os.tmpdir(), `pfun-isdir-${Date.now()}`);
+      nodeFs.mkdirSync(dir);
+      try {
+        const { logs } = run(`
+          proc p() { println(__str__(isDir("${dir}"))); }
+          p();
+        `);
+        expect(logs).toEqual(['true']);
+      } finally {
+        nodeFs.rmdirSync(dir);
+      }
+    });
+
+    it('returns false for an existing file', () => {
+      withTempFile('content', path => {
+        const { logs } = run(`
+          proc p() { println(__str__(isDir("${path}"))); }
+          p();
+        `);
+        expect(logs).toEqual(['false']);
+      });
+    });
+
+    it('returns false for a non-existent path', () => {
+      const { logs } = run(`
+        proc p() { println(__str__(isDir("/no/such/path/pfun-test-xyz"))); }
+        p();
+      `);
+      expect(logs).toEqual(['false']);
+    });
+
+    it('os.tmpdir() is a directory', () => {
+      const { logs } = run(`
+        proc p() { println(__str__(isDir("${os.tmpdir().replace(/\\/g, '/')}"))); }
+        p();
+      `);
+      expect(logs).toEqual(['true']);
+    });
+
+    it('throws in pure functions', () => {
+      expect(() => run(`
+        function bad() { return isDir("."); }
+        bad();
+      `)).toThrow('side effects not allowed in pure functions');
+    });
+  });
+
+  // ─── fileSize ────────────────────────────────────────────────────────────────
+
+  describe('fileSize', () => {
+    it('returns Ok { Int } with correct byte count', () => {
+      withTempFile('hello', path => {
+        const { logs } = run(`
+          proc p() {
+            match fileSize("${path}") with
+            | Err e -> println("err:" + e.message)
+            | Ok  o -> println(__str__(o.value));
+          }
+          p();
+        `);
+        expect(logs).toEqual(['5']);   // "hello" = 5 bytes
+      });
+    });
+
+    it('returns Ok { 0 } for an empty file', () => {
+      withTempFile('', path => {
+        const { logs } = run(`
+          proc p() {
+            match fileSize("${path}") with
+            | Err e -> println("err:" + e.message)
+            | Ok  o -> println(__str__(o.value));
+          }
+          p();
+        `);
+        expect(logs).toEqual(['0']);
+      });
+    });
+
+    it('size increases after writing more content', () => {
+      const path = tempPath();
+      nodeFs.writeFileSync(path, 'ab', 'utf8');
+      try {
+        const { logs } = run(`
+          proc p() {
+            match fileSize("${path}") with
+            | Err e -> println("err:" + e.message)
+            | Ok  o -> println(__str__(o.value));
+          }
+          p();
+        `);
+        expect(logs).toEqual(['2']);
+      } finally {
+        try { nodeFs.unlinkSync(path); } catch {}
+      }
+    });
+
+    it('returns Err for a non-existent path', () => {
+      const { logs } = run(`
+        proc p() {
+          match fileSize("/no/such/file/pfun-test-xyz.txt") with
+          | Err _ -> println("err")
+          | Ok  _ -> println("ok");
+        }
+        p();
+      `);
+      expect(logs).toEqual(['err']);
+    });
+
+    it('multi-byte UTF-8 content: size reflects bytes not chars', () => {
+      const path = tempPath();
+      // "é" is 2 bytes in UTF-8
+      nodeFs.writeFileSync(path, '\u00e9', 'utf8');
+      try {
+        const { logs } = run(`
+          proc p() {
+            match fileSize("${path}") with
+            | Err e -> println("err")
+            | Ok  o -> println(__str__(o.value));
+          }
+          p();
+        `);
+        expect(logs).toEqual(['2']);
+      } finally {
+        try { nodeFs.unlinkSync(path); } catch {}
+      }
+    });
+
+    it('throws in pure functions', () => {
+      expect(() => run(`
+        function bad() { return fileSize("x.txt"); }
+        bad();
+      `)).toThrow('side effects not allowed in pure functions');
+    });
+  });
+
+  // ─── renameFile ──────────────────────────────────────────────────────────────
+
+  describe('renameFile', () => {
+    it('renames an existing file and returns Ok { 0 }', () => {
+      const src = tempPath();
+      const dst = tempPath();
+      nodeFs.writeFileSync(src, 'content', 'utf8');
+      try {
+        const { logs } = run(`
+          proc p() {
+            match renameFile("${src}", "${dst}") with
+            | Err e -> println("err:" + e.message)
+            | Ok  o -> println(__str__(o.value));
+          }
+          p();
+        `);
+        expect(logs).toEqual(['0']);
+        expect(nodeFs.existsSync(dst)).toBe(true);
+        expect(nodeFs.existsSync(src)).toBe(false);
+        expect(nodeFs.readFileSync(dst, 'utf8')).toBe('content');
+      } finally {
+        try { nodeFs.unlinkSync(src); } catch {}
+        try { nodeFs.unlinkSync(dst); } catch {}
+      }
+    });
+
+    it('source no longer exists after rename', () => {
+      const src = tempPath();
+      const dst = tempPath();
+      nodeFs.writeFileSync(src, 'data', 'utf8');
+      try {
+        run(`
+          proc p() { eval renameFile("${src}", "${dst}"); }
+          p();
+        `);
+        expect(nodeFs.existsSync(src)).toBe(false);
+        expect(nodeFs.existsSync(dst)).toBe(true);
+      } finally {
+        try { nodeFs.unlinkSync(src); } catch {}
+        try { nodeFs.unlinkSync(dst); } catch {}
+      }
+    });
+
+    it('overwrites destination if it exists (POSIX rename semantics)', () => {
+      const src = tempPath();
+      const dst = tempPath();
+      nodeFs.writeFileSync(src, 'new', 'utf8');
+      nodeFs.writeFileSync(dst, 'old', 'utf8');
+      try {
+        run(`
+          proc p() { eval renameFile("${src}", "${dst}"); }
+          p();
+        `);
+        expect(nodeFs.readFileSync(dst, 'utf8')).toBe('new');
+      } finally {
+        try { nodeFs.unlinkSync(src); } catch {}
+        try { nodeFs.unlinkSync(dst); } catch {}
+      }
+    });
+
+    it('can also rename directories', () => {
+      const srcDir = nodePath.join(os.tmpdir(), `pfun-rename-src-${Date.now()}`);
+      const dstDir = nodePath.join(os.tmpdir(), `pfun-rename-dst-${Date.now()}`);
+      nodeFs.mkdirSync(srcDir);
+      try {
+        const { logs } = run(`
+          proc p() {
+            match renameFile("${srcDir}", "${dstDir}") with
+            | Err e -> println("err:" + e.message)
+            | Ok  _ -> println("ok");
+          }
+          p();
+        `);
+        expect(logs).toEqual(['ok']);
+        expect(nodeFs.existsSync(dstDir)).toBe(true);
+        expect(nodeFs.existsSync(srcDir)).toBe(false);
+      } finally {
+        try { nodeFs.rmdirSync(srcDir); } catch {}
+        try { nodeFs.rmdirSync(dstDir); } catch {}
+      }
+    });
+
+    it('returns Err for a non-existent source', () => {
+      const { logs } = run(`
+        proc p() {
+          match renameFile("/no/such/file/pfun-test.txt", "/tmp/pfun-dst.txt") with
+          | Err _ -> println("err")
+          | Ok  _ -> println("ok");
+        }
+        p();
+      `);
+      expect(logs).toEqual(['err']);
+    });
+
+    it('rejects non-string source path', () => {
+      expect(() => run(`
+        proc p() { eval renameFile(42, "dst.txt"); }
+        p();
+      `)).toThrow('source path must be a string');
+    });
+
+    it('rejects non-string destination path', () => {
+      expect(() => run(`
+        proc p() { eval renameFile("src.txt", 42); }
+        p();
+      `)).toThrow('destination path must be a string');
+    });
+
+    it('throws in pure functions', () => {
+      expect(() => run(`
+        function bad() { return renameFile("a.txt", "b.txt"); }
+        bad();
+      `)).toThrow('side effects not allowed in pure functions');
+    });
+  });
+
+  // ─── watchDir ────────────────────────────────────────────────────────────────
+
+  describe('watchDir', () => {
+    it('returns Ok { 0 } immediately for a watchable directory', async () => {
+      const dir = nodePath.join(os.tmpdir(), `pfun-watch-${Date.now()}`);
+      nodeFs.mkdirSync(dir);
+      try {
+        const { logs } = run(`
+          proc handler(evt) { println("event"); }
+          proc p() {
+            match watchDir("${dir}", handler) with
+            | Err e -> println("err:" + e.message)
+            | Ok  o -> println(__str__(o.value));
+          }
+          p();
+        `);
+        expect(logs).toEqual(['0']);
+      } finally {
+        nodeFs.rmdirSync(dir);
+      }
+    });
+
+    it('returns Err for a non-existent path', () => {
+      const { logs } = run(`
+        proc handler(evt) { println("event"); }
+        proc p() {
+          match watchDir("/no/such/dir/pfun-test-xyz", handler) with
+          | Err _ -> println("err")
+          | Ok  _ -> println("ok");
+        }
+        p();
+      `);
+      expect(logs).toEqual(['err']);
+    });
+
+    it('calls the handler with a WatchEvent when a file is created', async () => {
+      const dir = nodePath.join(os.tmpdir(), `pfun-watch-evt-${Date.now()}`);
+      nodeFs.mkdirSync(dir);
+      const newFile = nodePath.join(dir, 'newfile.txt');
+      const received: string[] = [];
+
+      // We need an async run to let the watcher fire
+      const src = `
+        proc handler(evt) {
+          println("type:" + evt.eventType);
+        }
+        proc p() { eval watchDir("${dir}", handler); }
+        p();
+      `;
+      const ast = new (require('../parser').Parser)(
+        new (require('../lexer').Lexer)(src).lex()
+      ).parse();
+      const interpreter = new (require('../interpreter').Interpreter)();
+      interpreter.registerLibrary(stdlibFunctions, stdlibTypes);
+      interpreter.registerLibrary(iolibFunctions, []);
+      interpreter.registerLibrary(filelibFunctions, filelibTypes);
+      const logs: string[] = [];
+      const origLog = console.log;
+      console.log = (...a: any[]) => { logs.push(a.map(String).join(' ')); };
+      try {
+        await interpreter.interpretAsync(ast);
+        // Trigger a filesystem event
+        await new Promise(res => setTimeout(res, 50));
+        nodeFs.writeFileSync(newFile, 'hi');
+        // Wait for the watcher callback and handler task to run
+        await new Promise(res => setTimeout(res, 200));
+      } finally {
+        console.log = origLog;
+        for (const r of interpreter._resources) { try { r.close(); } catch {} }
+        try { nodeFs.unlinkSync(newFile); } catch {}
+        try { nodeFs.rmdirSync(dir); } catch {}
+      }
+      // The handler should have been invoked with eventType "rename" or "change"
+      expect(logs.some(l => l.startsWith('type:'))).toBe(true);
+    });
+
+    it('WatchEvent has eventType and filename fields', async () => {
+      const dir = nodePath.join(os.tmpdir(), `pfun-watch-fields-${Date.now()}`);
+      nodeFs.mkdirSync(dir);
+      const newFile = nodePath.join(dir, 'field-test.txt');
+
+      const src = `
+        proc handler(evt) {
+          println("et:" + evt.eventType);
+          println("fn:" + evt.filename);
+        }
+        proc p() { eval watchDir("${dir}", handler); }
+        p();
+      `;
+      const ast = new (require('../parser').Parser)(
+        new (require('../lexer').Lexer)(src).lex()
+      ).parse();
+      const interpreter = new (require('../interpreter').Interpreter)();
+      interpreter.registerLibrary(stdlibFunctions, stdlibTypes);
+      interpreter.registerLibrary(iolibFunctions, []);
+      interpreter.registerLibrary(filelibFunctions, filelibTypes);
+      const logs: string[] = [];
+      const origLog = console.log;
+      console.log = (...a: any[]) => { logs.push(a.map(String).join(' ')); };
+      try {
+        await interpreter.interpretAsync(ast);
+        await new Promise(res => setTimeout(res, 50));
+        nodeFs.writeFileSync(newFile, 'x');
+        await new Promise(res => setTimeout(res, 200));
+      } finally {
+        console.log = origLog;
+        for (const r of interpreter._resources) { try { r.close(); } catch {} }
+        try { nodeFs.unlinkSync(newFile); } catch {}
+        try { nodeFs.rmdirSync(dir); } catch {}
+      }
+      const etLine = logs.find(l => l.startsWith('et:'));
+      expect(etLine).toBeDefined();
+      expect(['et:rename', 'et:change']).toContain(etLine);
+    });
+
+    it('rejects a non-procedure handler', () => {
+      const dir = os.tmpdir();
+      expect(() => run(`
+        proc p() { eval watchDir("${dir}", 42); }
+        p();
+      `)).toThrow('handler must be a procedure');
+    });
+
+    it('throws in pure functions', () => {
+      expect(() => run(`
+        function bad() { return watchDir(".", fn e => 0); }
+        bad();
+      `)).toThrow('side effects not allowed in pure functions');
+    });
+  });
 });
