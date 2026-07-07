@@ -1,0 +1,4 @@
+type Indexed = { index, generic value };
+let i1 = Indexed { index = 1, value = "hello" };
+let i2 = Indexed { index = 2, value = 42 };
+let xs = [i1, i2];

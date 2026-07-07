@@ -370,6 +370,12 @@ function $neq(l, r) { return !$eq(l, r); }
 function _numCmp(l, r) {
   const lF = typeof l === 'number', rF = typeof r === 'number';
   if (lF || rF) return [(lF ? l : Number(l)), (rF ? r : Number(r))];
+  if (l instanceof PfunChar || r instanceof PfunChar) {
+    return [(l instanceof PfunChar ? l.value : l), (r instanceof PfunChar ? r.value : r)];
+  }
+  if (l instanceof PfunByte || r instanceof PfunByte) {
+    return [(l instanceof PfunByte ? l.value : l), (r instanceof PfunByte ? r.value : r)];
+  }
   return [l, r];
 }
 function $lt(l, r)  { const [a, b] = _numCmp(l, r); return a <  b; }

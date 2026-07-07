@@ -164,6 +164,9 @@ function emitBinaryOp(op: string, lt: PfunType | undefined, rt: PfunType | undef
     if (bothConcrete && lk === 'Float' && rk === 'Float') return binary(jsOp, lNode, rNode);
     if (bothConcrete && lk === 'Float' && rk === 'Int')   return binary(jsOp, lNode, call(id('Number'), [rNode]));
     if (bothConcrete && lk === 'Int'   && rk === 'Float') return binary(jsOp, call(id('Number'), [lNode]), rNode);
+    // Str/Str orders lexicographically under native JS `<` (matching the
+    // runtime's _numCmp fall-through for strings).
+    if (bothConcrete && lk === 'Str'   && rk === 'Str')   return binary(jsOp, lNode, rNode);
     return rtCall(CMP[op]!, [lNode, rNode]);
   }
 
@@ -492,6 +495,10 @@ const STDLIB_MAP: Record<string, string> = {
   httpPost:         '$httpPost',
 
   // Interactive I/O (synchronous stdin — works in compiled CLI programs)
+  // Canonical scan* names plus deprecated readln/readChar aliases (V1 only);
+  // both lower to the same $-runtime functions.
+  scanln:        '$readln',
+  scanChar:      '$readChar',
   readln:        '$readln',
   readChar:      '$readChar',
 
@@ -746,7 +753,7 @@ function emitStmt(s: Stmt): Node[] {
           'abs','sign','min','max','clamp','lerp',
           'sqrt','cbrt','exp','log','log2','log10','pow','hypot','fmod',
           'sin','cos','tan','asin','acos','atan','atan2',
-          'sinh','cosh','tanh', 'formatFixed',
+          'sinh','cosh','tanh',
         ]},
         'json': { file: _bpaths['json'] ?? 'pfun-json', names: ['jsonSerialize','jsonDeserialize'] },
         'file': { file: _bpaths['file'] ?? 'pfun-file', names: [
@@ -758,21 +765,9 @@ function emitStmt(s: Stmt): Node[] {
           'Read','Write','Append',
         ]},
         'async': { file: _bpaths['async'] ?? 'pfun-async', names: ['sleep','asyncAll','asyncRace'] },
-        'http': { file: _bpaths['http'] ?? 'pfun-http', names: [
-          'httpGet','httpGetBytes','httpListen',
-          'httpRequest','httpRequestBytes','fetchWithTimeout','urlEncode',
-        ]},
+        'http':  { file: _bpaths['http']  ?? 'pfun-http',  names: ['httpGet','httpGetBytes','httpListen'] },
         'db/postgresql': { file: _bpaths['db/postgresql'] ?? 'pfun-db-postgresql', names: ['dbConnect','dbQuery','dbClose','DbNull'] },
         'db/mariadb':    { file: _bpaths['db/mariadb']    ?? 'pfun-db-mariadb',    names: ['dbConnect','dbQuery','dbClose','DbNull'] },
-        'foreign': { file: _bpaths['foreign'] ?? 'pfun-foreign', names: [
-          'FOk','FErr',
-          'foreignRequire','foreignGlobal','foreignGet','foreignSet',
-          'foreignCall','foreignInvoke','foreignNew','foreignDelete',
-          'foreignTypeof','foreignAwait','foreignCallback','foreignApply',
-          'dForeign','dUnit','dBool','dInt','dFloat','dStr',
-          'dList','dOption','dDict','dField','dMap','dAndThen','dOneOf',
-        ]},
-        'timer': { file: _bpaths['timer'] ?? 'pfun-timer', names: ['setTimer','clearTimer'] },
       };
 
       const builtin = BUILTIN_MODULES[imp.path];

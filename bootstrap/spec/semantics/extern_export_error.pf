@@ -1,0 +1,1 @@
+export extern function nativeThing(x: Str) -> Any

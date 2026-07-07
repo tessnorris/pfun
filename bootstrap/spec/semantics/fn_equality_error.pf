@@ -1,0 +1,3 @@
+function f(x) { x }
+function g(x) { x }
+let b = f == g;

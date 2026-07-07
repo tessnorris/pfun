@@ -340,7 +340,7 @@ proc replLoop() {
   proc loop() {
     print("lisp> ");
     flushStdout();
-    var line = match readln() with
+    var line = match scanln() with
       | Some s -> s.value
       | None   -> "exit";
     if line == "exit" || line == "quit" then {

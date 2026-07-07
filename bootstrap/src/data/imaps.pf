@@ -1,0 +1,246 @@
+export type IMapS = {
+	| MLeaf
+	| MNode: k, v, left, right, height
+}
+
+export function imsEmpty() {
+	MLeaf
+}
+
+function imsMax(a, b) {
+	if a > b then a else b
+}
+
+function imsHeight(m) {
+	match m with
+	| MLeaf -> 0
+	| MNode n -> n.height
+}
+
+function imsNode(k, v, left, right) {
+	MNode {
+		k = k,
+		v = v,
+		left = left,
+		right = right,
+		height = 1 + imsMax(imsHeight(left), imsHeight(right))
+	}
+}
+
+function imsBalanceFactor(m) {
+	match m with
+	| MLeaf -> 0
+	| MNode n -> imsHeight(n.left) - imsHeight(n.right)
+}
+
+function imsRotateRight(m) {
+	match m with
+	| MLeaf -> MLeaf
+	| MNode y -> {
+		match y.left with
+		| MLeaf -> m
+		| MNode x -> {
+			let beta = x.right;
+			let newRight = imsNode(y.k, y.v, beta, y.right);
+			imsNode(x.k, x.v, x.left, newRight)
+		}
+	}
+}
+
+function imsRotateLeft(m) {
+	match m with
+	| MLeaf -> MLeaf
+	| MNode x -> {
+		match x.right with
+		| MLeaf -> m
+		| MNode y -> {
+			let beta = y.left;
+			let newLeft = imsNode(x.k, x.v, x.left, beta);
+			imsNode(y.k, y.v, newLeft, y.right)
+		}
+	}
+}
+
+function imsBalance(m) {
+	match m with
+	| MLeaf -> MLeaf
+	| MNode n -> {
+		let balancedNode = imsNode(n.k, n.v, n.left, n.right);
+		let bf = imsBalanceFactor(balancedNode);
+
+		if bf > 1 then {
+			match n.left with
+			| MLeaf -> balancedNode
+			| MNode leftNode -> {
+				if imsHeight(leftNode.left) >= imsHeight(leftNode.right) then {
+					imsRotateRight(balancedNode)
+				}
+				else {
+					let newLeft = imsRotateLeft(n.left);
+					let rebuilt = imsNode(n.k, n.v, newLeft, n.right);
+					imsRotateRight(rebuilt)
+				}
+			}
+		}
+		else if bf < -1 then {
+			match n.right with
+			| MLeaf -> balancedNode
+			| MNode rightNode -> {
+				if imsHeight(rightNode.right) >= imsHeight(rightNode.left) then {
+					imsRotateLeft(balancedNode)
+				}
+				else {
+					let newRight = imsRotateRight(n.right);
+					let rebuilt = imsNode(n.k, n.v, n.left, newRight);
+					imsRotateLeft(rebuilt)
+				}
+			}
+		}
+		else
+			balancedNode
+	}
+}
+
+export function imsGet(m, k) {
+  match m with
+  | MLeaf -> None
+  | MNode n -> {
+      if k == n.k then { Some n.v }
+      else if k < n.k then { imsGet(n.left, k) }
+      else { imsGet(n.right, k) }
+    }
+}
+
+export function imsPut(m, k, v) {
+	match m with
+	| MLeaf -> imsNode(k, v, MLeaf, MLeaf)
+	| MNode n -> {
+		if k == n.k then {
+			imsNode(k, v, n.left, n.right)
+		}
+		else if k < n.k then {
+			let newLeft = imsPut(n.left, k, v);
+			imsBalance(imsNode(n.k, n.v, newLeft, n.right))
+		}
+		else {
+			let newRight = imsPut(n.right, k, v);
+			imsBalance(imsNode(n.k, n.v, n.left, newRight))
+		}
+	}
+}
+
+export function imsHas(m, k) {
+	match imsGet(m, k) with
+	| None -> false
+	| Some _ -> true
+}
+
+function imsMinEntry(m) {
+	match m with
+	| MLeaf -> None
+	| MNode n -> {
+		match n.left with
+		| MLeaf -> Some (Pair { n.k, n.v })
+		| MNode _ -> imsMinEntry(n.left)
+	}
+}
+
+function imsRemoveMin(m) {
+	match m with
+	| MLeaf -> MLeaf
+	| MNode n -> {
+		match n.left with
+		| MLeaf -> n.right
+		| MNode _ -> {
+			let newLeft = imsRemoveMin(n.left);
+			imsBalance(imsNode(n.k, n.v, newLeft, n.right))
+		}
+	}
+}
+
+export function imsRemove(m, k) {
+	match m with
+	| MLeaf -> MLeaf
+	| MNode n -> {
+		if k < n.k then {
+			let newLeft = imsRemove(n.left, k);
+			imsBalance(imsNode(n.k, n.v, newLeft, n.right))
+		}
+		else if k > n.k then {
+			let newRight = imsRemove(n.right, k);
+			imsBalance(imsNode(n.k, n.v, n.left, newRight))
+		}
+		else {
+			match n.left with
+			| MLeaf -> n.right
+			| MNode _ -> {
+				match n.right with
+				| MLeaf -> n.left
+				| MNode _ -> {
+					let successor = imsMinEntry(n.right);
+
+					match successor with
+					| None -> n.left
+					| Some s -> {
+						let newRight = imsRemoveMin(n.right);
+						imsBalance(imsNode(s.key, s.value, n.left, newRight))
+					}
+				}
+			}
+		}
+	}
+}
+
+function imsKeysAcc(m, acc) {
+	match m with
+	| MLeaf -> acc
+	| MNode n -> {
+		let withRight = imsKeysAcc(n.right, acc);
+		let withNode = cons(n.k, withRight);
+		imsKeysAcc(n.left, withNode)
+	}
+}
+
+export function imsKeys(m) {
+	imsKeysAcc(m, [])
+}
+
+function imsEntriesAcc(m, acc) {
+	match m with
+	| MLeaf -> acc
+	| MNode n -> {
+		let withRight = imsEntriesAcc(n.right, acc);
+		let entry = Pair { n.k, n.v };
+		let withNode = cons(entry, withRight);
+		imsEntriesAcc(n.left, withNode)
+	}
+}
+
+export function imsEntries(m) {
+	imsEntriesAcc(m, [])
+}
+
+function imsPutEntry(acc, entry) {
+	imsPut(acc, entry.key, entry.value)
+}
+
+export function imsUnion(a, b) {
+	reduce(imsPutEntry, a, imsEntries(b))
+	}
+
+export function imsFromList(pairs) {
+  reduce(imsPutEntry, imsEmpty(), pairs);
+}
+
+export function imsMap(f, m) {
+	match m with
+	| MLeaf -> MLeaf
+	| MNode n -> {
+		let newLeft = imsMap(f, n.left);
+		let newRight = imsMap(f, n.right);
+		imsNode(n.k, f(n.v), newLeft, newRight)
+	}
+}
+
+// force type
+imsPut(imsEmpty(), "hello", v)

@@ -1,0 +1,6 @@
+type T = { | A: n | B };
+function h(t) {
+	match t with
+	| A a where a.n > 0 -> 1
+	| B _ -> 2
+}

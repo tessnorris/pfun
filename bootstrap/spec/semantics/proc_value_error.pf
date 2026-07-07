@@ -1,0 +1,2 @@
+proc ping() { println("hi"); }
+let p = ping;

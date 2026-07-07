@@ -1,11 +1,12 @@
 // src/iolib.ts
-// I/O library — print, println, readChar, readln, scriptArgs, getEnv, envVars.
+// I/O library — print, println, scanChar, scanln (readChar/readln deprecated
+// aliases), scriptArgs, getEnv, envVars.
 // Registered separately from the core stdlib so the I/O layer can be
 // swapped or suppressed (e.g. in test environments).
 
 import { RegistryFunction, PfunChar, StdinBuffer, PfunDict } from './interpreter';
 
-// Singleton stdin buffer — shared across readChar and readln
+// Singleton stdin buffer — shared across scanChar/scanln (and their readChar/readln aliases)
 const stdinBuffer = new StdinBuffer();
 
 /** Build a Pfun dict<string,string> from a plain JS Record<string,string>. */
@@ -45,6 +46,28 @@ export const iolibFunctions: RegistryFunction[] = [
 
   // ─── Input ────────────────────────────────────────────────────────────────
 
+  // Canonical names: scanChar / scanln read from stdin. The `read*` family is
+  // reserved for file/handle I/O (see the `file` library). `readChar`/`readln`
+  // remain as DEPRECATED aliases below for V1 backward compatibility; V2 knows
+  // only scanChar/scanln.
+  { name: 'scanChar', fn: (_args, interp) => {
+    if (interp.inPureContext) throw new Error("Functions cannot use 'scanChar': side effects are not allowed in pure functions.");
+    const c = stdinBuffer.readChar();
+    if (c === null) return { __type: 'None', __union: 'Option' };
+    return { __type: 'Some', __union: 'Option', value: new PfunChar(c) };
+  }},
+
+  { name: 'scanln', fn: (_args, interp) => {
+    if (interp.inPureContext) throw new Error("Functions cannot use 'scanln': side effects are not allowed in pure functions.");
+    const line = stdinBuffer.readLine();
+    if (line === null) return { __type: 'None', __union: 'Option' };
+    return { __type: 'Some', __union: 'Option', value: line };
+  }},
+
+  // ── DEPRECATED aliases (V1 only) ──────────────────────────────────────────
+  // `readChar`/`readln` are the old names for `scanChar`/`scanln`. Kept so
+  // existing V1 code keeps working; prefer the scan* names. Same behavior,
+  // same stdin buffer. Not present in V2.
   { name: 'readChar', fn: (_args, interp) => {
     if (interp.inPureContext) throw new Error("Functions cannot use 'readChar': side effects are not allowed in pure functions.");
     const c = stdinBuffer.readChar();

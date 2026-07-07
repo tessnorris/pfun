@@ -1,0 +1,3 @@
+type A = { value };
+type B = { value, extra };
+export function f(x) { x.value }

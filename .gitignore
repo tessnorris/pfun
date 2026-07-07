@@ -1,0 +1,37 @@
+# Dependencies
+node_modules/
+
+# Build/test output
+coverage/
+dist/
+output/
+
+# Generated/local files
+bytes.bin
+config.json
+hello.txt
+tree.json
+pfun-example-tmp.txt
+
+examples/bytes.bin
+examples/config.json
+examples/hello.txt
+examples/pfun-example-tmp.txt
+examples/tree.json
+
+# Local/generated directories
+files/
+examples/db/
+examples/other/
+
+# Old docs
+doc/old/
+
+# Package manager lockfile
+package-lock.json
+
+# Temporary archives
+pfun-semantic-theme-pfun-syntax-fix2.tar.gz
+
+# Editor backup files
+*~

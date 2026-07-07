@@ -9,6 +9,9 @@ module.exports = {
   println:    rt.$println,
   print:      rt.$println,
   flushStdout: () => {},  // stdout is unbuffered in Node; no-op
+  scanChar:   () => { throw new Error('scanChar: interactive I/O not supported in compiled output.'); },
+  scanln:     () => { throw new Error('scanln: interactive I/O not supported in compiled output.'); },
+  // Deprecated V1 aliases for scanChar/scanln:
   readChar:   () => { throw new Error('readChar: interactive I/O not supported in compiled output.'); },
   readln:     () => { throw new Error('readln: interactive I/O not supported in compiled output.'); },
   scriptArgs: () => process.argv.slice(2),

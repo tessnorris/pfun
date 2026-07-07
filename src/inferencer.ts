@@ -1192,8 +1192,12 @@ function cgenBinary(
     case 'GreaterToken':
     case 'LessEqualToken':
     case 'GreaterEqualToken':
+      // Operands must agree with each other; ordering is defined on the
+      // comparable scalar types (Int, Float, Str, Char, Byte). We no longer
+      // force _INT here — the runtime comparison helper (_numCmp) handles each
+      // scalar, mirroring V2's Comparable constraint. Non-scalar operands that
+      // don't agree still fail at unify() time.
       cs.push(constraint(lt, rt, pos));
-      cs.push(constraint(lt, _INT, pos)); // Pfun ordering is defined on Int
       return _BOOL;
 
     // Boolean operators
