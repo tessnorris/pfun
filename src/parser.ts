@@ -54,8 +54,23 @@ export class Parser {
     if (this.match('VarToken')) return this.parseVarStatement();
     if (this.match('TypeToken')) return this.parseTypeStatement(false);
     if (this.match('GenericToken')) {
-      this.consume('TypeToken', "Expected 'type' after 'generic'.");
-      return this.parseTypeStatement(true);
+      // Bootstrap dialect: `generic` may precede `type`, `function`, or `proc`.
+      // For function/proc the marker is accepted and dropped (V1 under-checks;
+      // V2 stage2 gives it meaning). `generic async proc` is accepted too.
+      if (this.match('TypeToken')) return this.parseTypeStatement(true);
+      if (this.match('FunctionToken')) return this.parseFunctionStatement(false);
+      if (this.match('AsyncToken')) {
+        this.consume('ProcToken', "Expected 'proc' after 'generic async'.");
+        return this.parseProcedureStatement(true);
+      }
+      if (this.match('ProcToken')) return this.parseProcedureStatement();
+      throw Object.assign(new Error("Expected 'type', 'function', or 'proc' after 'generic'."), { pos: this.peek().pos });
+    }
+    // Bootstrap dialect: `opaque` precedes a type declaration; identity is
+    // exported, constructors are not. V1 ignores opacity (accept + drop).
+    if (this.match('OpaqueToken')) {
+      this.consume('TypeToken', "Expected 'type' after 'opaque'.");
+      return this.parseTypeStatement(false);
     }
     if (this.match('ReturnToken')) return this.parseReturnStatement();
     if (this.match('EvalToken')) return this.parseEvalStatement();
@@ -179,6 +194,7 @@ export class Parser {
           // Fields are a comma-separated list of identifiers.
           // Stop when we hit another pipe, a closing brace, or EOF.
           do {
+            this.match('GenericToken'); // bootstrap: accept & drop generic field marker
             fields.push((this.consume('IdentToken', "Expected field name.") as any).value);
           } while (this.match('CommaToken') && !this.check('PipeToken') && !this.check('RBraceToken'));
         }
@@ -193,6 +209,7 @@ export class Parser {
     const fields: string[] = [];
     if (!this.check('RBraceToken')) {
       do {
+        this.match('GenericToken'); // bootstrap: accept & drop generic field marker
         fields.push((this.consume('IdentToken', "Expected field name.") as any).value);
       } while (this.match('CommaToken'));
     }
@@ -414,6 +431,18 @@ export class Parser {
         const expr = this.parseExpression();
         this.consume('RParenToken', "Expected ')' after expression.");
         return { type: 'GroupExpr', expression: expr, pos: exprPos };
+      }
+      case 'LazyToken': {
+        // Bootstrap dialect: parse `lazy [ ... ]` and construct strictly.
+        // (V1 has no lazy runtime; compiler sources are lint-forbidden from
+        // using `lazy`, so no strict/lazy divergence can occur.) Tag the node
+        // with `isLazy` so the bootstrap lint can see and reject it — the
+        // parser would otherwise erase the marker entirely.
+        const inner: any = this.parseExpression(Precedence.UNARY);
+        if (inner && (inner.type === 'ListExpr' || inner.type === 'ComprehensionExpr')) {
+          inner.isLazy = true;
+        }
+        return inner;
       }
       case 'LBracketToken': {
         // Empty list: []
@@ -791,7 +820,18 @@ export class Parser {
       return { type: 'IndexExpr', object: left, index, pos: infixPos };
     }
 
-    return { type: 'BinaryExpr', left, operator: token.type === 'PipeToken' ? 'BitOrToken' : token.type, right: this.parseExpression(precedence), pos: infixPos };
+    // Bootstrap dialect: '++' desugars to PlusToken so V1's existing string-concat
+    // runtime path handles it with byte-identical behavior. The lint enforces the
+    // V2 discipline ('++' string-only, '+' never string).
+    const opType = token.type === 'PipeToken' ? 'BitOrToken'
+                 : token.type === 'PlusPlusToken' ? 'PlusToken'
+                 : token.type;
+    const node: any = { type: 'BinaryExpr', left, operator: opType, right: this.parseExpression(precedence), pos: infixPos };
+    // Preserve provenance so the bootstrap lint can distinguish '++' (string concat,
+    // allowed) from '+' (numeric, forbidden on strings) after desugaring. Behaviorally
+    // inert: the interpreter and transpiler read `operator` only.
+    if (token.type === 'PlusPlusToken') node.srcOp = '++';
+    return node;
   }
 
   private parseCall(callee: Expr): Expr {
@@ -840,7 +880,7 @@ export class Parser {
         return Precedence.BITOR;
       }
       case 'BitOrToken':      return Precedence.BITOR;
-      case 'PlusToken': case 'MinusToken': return Precedence.TERM;
+      case 'PlusToken': case 'PlusPlusToken': case 'MinusToken': return Precedence.TERM;
       case 'StarToken': case 'SlashToken': case 'PercentToken': return Precedence.FACTOR;
       case 'LParenToken': case 'DotToken': case 'LBracketToken': return Precedence.CALL;
       default: return Precedence.NONE;

@@ -87,7 +87,7 @@ export type Expr =
   | { type: 'ByteExpr';   value: number;  pos?: SourcePos; inferredType?: PfunType }
   | { type: 'IdentExpr';  name: string;   pos?: SourcePos; inferredType?: PfunType }
   | { type: 'UnaryExpr';  operator: string; right: Expr; pos?: SourcePos; inferredType?: PfunType }
-  | { type: 'BinaryExpr'; left: Expr; operator: string; right: Expr; pos?: SourcePos; inferredType?: PfunType }
+  | { type: 'BinaryExpr'; left: Expr; operator: string; srcOp?: string; right: Expr; pos?: SourcePos; inferredType?: PfunType }
   | { type: 'GroupExpr';  expression: Expr; pos?: SourcePos; inferredType?: PfunType }
   | { type: 'AssignExpr'; name: string; value: Expr; pos?: SourcePos; inferredType?: PfunType }
   | { type: 'CallExpr';   callee: Expr; args: Expr[]; pos?: SourcePos; inferredType?: PfunType }
@@ -116,11 +116,11 @@ export type Expr =
        * Never set on ordinary list literals — only on the Pair [] / Name []
        * sugar form.
        */
-      recordTypeHint?: string; pos?: SourcePos; inferredType?: PfunType }
+      recordTypeHint?: string; isLazy?: boolean; pos?: SourcePos; inferredType?: PfunType }
   | { type: 'RecordExpr'; name: string; fields: { key: string | null; value: Expr }[]; pos?: SourcePos; inferredType?: PfunType }
   | { type: 'GetExpr';    object: Expr; name: string; pos?: SourcePos; inferredType?: PfunType }
   | { type: 'MatchExpr';  subject: Expr; arms: MatchArm[]; pos?: SourcePos; inferredType?: PfunType; missingVariants?: string[] }
-  | { type: 'ComprehensionExpr'; body: Expr; generators: { variable: string; source: Expr }[]; guard?: Expr; pos?: SourcePos; inferredType?: PfunType }
+  | { type: 'ComprehensionExpr'; body: Expr; generators: { variable: string; source: Expr }[]; guard?: Expr; isLazy?: boolean; pos?: SourcePos; inferredType?: PfunType }
   | { type: 'DictExpr';   entries: { key: Expr; value: Expr }[]; pos?: SourcePos; inferredType?: PfunType }
   | { type: 'ArrayExpr';  elements: Expr[]; pos?: SourcePos; inferredType?: PfunType }
   | { type: 'IndexExpr';  object: Expr; index: Expr; pos?: SourcePos; inferredType?: PfunType }

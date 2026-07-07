@@ -5,10 +5,39 @@ import * as path from 'path';
 import * as readline from 'readline';
 import { Lexer } from './lexer';
 import { Parser } from './parser';
+import { bootstrapLint } from './bootstrapLint';
 import { checkTypes } from './typechecker';
 import { checkProgram } from './wholeProgramCheck';
 import type { TypeImportTable, TypeImportResolver } from './inferencer';
 import { Interpreter, ModuleLoader } from './interpreter';
+
+// ── Bootstrap dialect state ────────────────────────────────────────────────
+// The compiler front end runs in one of two dialects. 'legacy' is ordinary V1
+// and is the default everywhere. 'bootstrap' accepts the V2 syntax superset in
+// the lexer/parser and runs the bootstrapLint rejecter after every parse, so
+// V1-extended can build V2 compiler sources. Set once from argv (see the
+// require.main block). All source→AST goes through parseSource/lexSource so the
+// dialect is applied uniformly at every call site.
+let COMPILER_DIALECT: 'legacy' | 'bootstrap' = 'legacy';
+
+function lexSource(source: string) {
+  return new Lexer(source, COMPILER_DIALECT).lex();
+}
+
+function parseSource(source: string): ReturnType<Parser['parse']> {
+  const ast = new Parser(lexSource(source)).parse();
+  if (COMPILER_DIALECT === 'bootstrap') {
+    const diags = bootstrapLint(ast);
+    if (diags.length > 0) {
+      const lines = diags.map(d => {
+        const at = d.pos ? ` (line ${d.pos.line}, col ${d.pos.col})` : '';
+        return `  bootstrap dialect: ${d.message}${at}`;
+      });
+      throw new Error('Bootstrap dialect violations:\n' + lines.join('\n'));
+    }
+  }
+  return ast;
+}
 import { stdlibFunctions, stdlibTypes } from './library';
 import { mutStructuresFunctions, mutStructuresTypes } from './mutStructures';
 import { iolibFunctions } from './iolib';
@@ -135,7 +164,7 @@ export async function runFile(filePath: string, scriptArgs: string[] = []) {
 function isIncomplete(source: string): boolean {
   let depth = 0;
   try {
-    const tokens = new Lexer(source).lex();
+    const tokens = lexSource(source);
     for (const tok of tokens) {
       switch (tok.type) {
         case 'LParenToken': case 'LBraceToken': case 'LBracketToken': depth++; break;
@@ -445,7 +474,7 @@ function evalEntryImmediately(interp: Interpreter, raw: string): void {
 
   let ast;
   try {
-    ast = new Parser(new Lexer(source).lex()).parse();
+    ast = parseSource(source);
     const typeErrors = checkTypes(ast, source);
     if (typeErrors.length > 0) throw typeErrors[0];
   } catch (e) {
@@ -556,7 +585,7 @@ function flushQueue(interp: Interpreter, queue: string[]): void {
 
     let ast;
     try {
-      ast = new Parser(new Lexer(source).lex()).parse();
+      ast = parseSource(source);
       const typeErrors = checkTypes(ast, source);
       if (typeErrors.length > 0) throw typeErrors[0];
     } catch (e) {
@@ -601,6 +630,11 @@ function flushQueue(interp: Interpreter, queue: string[]): void {
 // no-arguments branch would kill the importing process/test runner.
 if (require.main === module) {
   const args = process.argv.slice(2);
+
+  // Bootstrap dialect opt-in: `--dialect=bootstrap` (or `--bootstrap`).
+  if (args.includes('--dialect=bootstrap') || args.includes('--bootstrap')) {
+    COMPILER_DIALECT = 'bootstrap';
+  }
 
   // ── $PFUN_HOME expansion ──────────────────────────────────────────────────
   // Expand a leading $PFUN_HOME/ token in a user-module import path.
@@ -867,7 +901,7 @@ if (require.main === module) {
       const source = fs.readFileSync(absolutePath, 'utf-8');
       let stmts;
       try {
-        stmts = new Parser(new Lexer(source).lex()).parse();
+        stmts = parseSource(source);
       } catch (e) {
         const rawErr = e instanceof Error ? e : new Error(String(e));
         const pfunErr = rawErr instanceof PfunError
@@ -972,7 +1006,7 @@ if (require.main === module) {
       const source = fs.readFileSync(absPath, 'utf-8');
       let stmts;
       try {
-        stmts = new Parser(new Lexer(source).lex()).parse();
+        stmts = parseSource(source);
       } catch (e) {
         const rawErr = e instanceof Error ? e : new Error(String(e));
         const pfunErr = rawErr instanceof PfunError
@@ -1082,7 +1116,7 @@ if (require.main === module) {
     const entrySource = fs.readFileSync(entryPath, 'utf-8');
     let entryStmts;
     try {
-      entryStmts = new Parser(new Lexer(entrySource).lex()).parse();
+      entryStmts = parseSource(entrySource);
     } catch (e) {
       const rawErr = e instanceof Error ? e : new Error(String(e));
       const pfunErr = rawErr instanceof PfunError
@@ -1251,7 +1285,7 @@ main();
       const src   = fs.readFileSync(absPath, 'utf-8');
       let stmts;
       try {
-        stmts = new Parser(new Lexer(src).lex()).parse();
+        stmts = parseSource(src);
       } catch (e) {
         const rawErr = e instanceof Error ? e : new Error(String(e));
         const pfunErr = rawErr instanceof PfunError
@@ -1508,7 +1542,7 @@ ${bundledJs}
         const src   = fs.readFileSync(absPath, 'utf-8');
         let stmts;
         try {
-          stmts = new Parser(new Lexer(src).lex()).parse();
+          stmts = parseSource(src);
         } catch (e) {
           const rawErr = e instanceof Error ? e : new Error(String(e));
           const pfunErr = rawErr instanceof PfunError

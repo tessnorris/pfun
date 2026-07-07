@@ -13,13 +13,14 @@ export type SourcePos = { line: number; col: number; offset: number };
  */
 export type Token =
   | { type: 'IntToken'; value: bigint; pos?: SourcePos }
-  | { type: 'FloatToken'; value: number; pos?: SourcePos }
+  | { type: 'FloatToken'; value: number; raw?: string; pos?: SourcePos }
   | { type: 'BoolToken'; value: boolean; pos?: SourcePos }
   | { type: 'StrToken'; value: string; pos?: SourcePos }
   | { type: 'CharToken'; value: string; pos?: SourcePos }
   | { type: 'ByteToken'; value: number; pos?: SourcePos }
   | { type: 'IdentToken'; value: string; pos?: SourcePos }
-  | { type: 'PlusToken'; pos?: SourcePos } | { type: 'MinusToken'; pos?: SourcePos } | { type: 'StarToken'; pos?: SourcePos }
+  | { type: 'PlusToken'; pos?: SourcePos } | { type: 'PlusPlusToken'; pos?: SourcePos } | { type: 'MinusToken'; pos?: SourcePos } | { type: 'StarToken'; pos?: SourcePos }
+  | { type: 'LazyToken'; pos?: SourcePos } | { type: 'OpaqueToken'; pos?: SourcePos }
   | { type: 'SlashToken'; pos?: SourcePos } | { type: 'PercentToken'; pos?: SourcePos }
   | { type: 'AssignToken'; pos?: SourcePos }
   | { type: 'EqualToken'; pos?: SourcePos }
@@ -74,7 +75,8 @@ export class Lexer {
   private line: number = 1;
   private col: number = 1;
 
-  constructor(input: string) { this.input = input; }
+  private dialect: 'legacy' | 'bootstrap';
+  constructor(input: string, dialect: 'legacy' | 'bootstrap' = 'legacy') { this.input = input; this.dialect = dialect; }
 
   /** Returns the current source position (before advancing). */
   private currentPos(): SourcePos {
@@ -108,7 +110,7 @@ export class Lexer {
       // Handle single and multi-character operators
       this.advance();
       switch (char) {
-        case '+': tokens.push({ type: 'PlusToken', pos: tokPos }); break;
+        case '+': tokens.push(this.match('+') ? { type: 'PlusPlusToken', pos: tokPos } : { type: 'PlusToken', pos: tokPos }); break;
         case '*': tokens.push({ type: 'StarToken', pos: tokPos }); break;
         case '/': tokens.push({ type: 'SlashToken', pos: tokPos }); break;
         case '%': tokens.push({ type: 'PercentToken', pos: tokPos }); break;
@@ -233,13 +235,19 @@ export class Lexer {
         const ch = this.peek();
         // If this is b/B, peek at the character after it
         if (ch === 'b' || ch === 'B') {
-          const afterB = (this.pos + 1 < this.input.length) ? this.input[this.pos + 1] : '';
-          if (this.isHexDigit(afterB)) {
-            // b/B is a mid-number hex digit (e.g. 0xABCD), consume it normally
+          if (this.dialect === 'bootstrap') {
+            // Bootstrap dialect: b/B is always a hex digit; the only hex-byte
+            // form is the unambiguous '_b' suffix, so 0x1B is an Int.
             s += this.advance();
           } else {
-            // b/B is the byte suffix — stop scanning hex digits here
-            break;
+            const afterB = (this.pos + 1 < this.input.length) ? this.input[this.pos + 1] : '';
+            if (this.isHexDigit(afterB)) {
+              // b/B is a mid-number hex digit (e.g. 0xABCD), consume it normally
+              s += this.advance();
+            } else {
+              // b/B is the byte suffix — stop scanning hex digits here
+              break;
+            }
           }
         } else if (this.isHexDigit(ch)) {
           s += this.advance();
@@ -247,8 +255,20 @@ export class Lexer {
           break;
         }
       }
-      if (!this.isAtEnd() && (this.peek() === 'b' || this.peek() === 'B')) {
-        this.advance(); // consume 'b' suffix
+      // V2 dialect hex byte suffix '0xAB_b', checked before the legacy bare-b
+      // form. '_' is not a hex digit, so '0x1B' stays an Int (legacy path below).
+      if (!this.isAtEnd() && this.peek() === '_' &&
+          this.pos + 1 < this.input.length &&
+          (this.input[this.pos + 1] === 'b' || this.input[this.pos + 1] === 'B')) {
+        this.advance(); // consume '_'
+        this.advance(); // consume 'b'/'B'
+        const n = parseInt(s.slice(2), 16);
+        if (n < 0 || n > 255) throw new Error(`Byte literal out of range (0–255): ${s}_b`);
+        return { type: 'ByteToken', value: n };
+      }
+      if (this.dialect !== 'bootstrap' &&
+          !this.isAtEnd() && (this.peek() === 'b' || this.peek() === 'B')) {
+        this.advance(); // consume 'b' suffix (legacy dialect only)
         const n = parseInt(s.slice(2), 16); // skip '0x'/'0X'
         if (n < 0 || n > 255) throw new Error(`Byte literal out of range (0–255): ${s}b`);
         return { type: 'ByteToken', value: n };
@@ -280,7 +300,7 @@ export class Lexer {
       }
     }
 
-    if (isFloat) return { type: 'FloatToken', value: parseFloat(s) };
+    if (isFloat) return { type: 'FloatToken', value: parseFloat(s), raw: s };
 
     // Decimal byte literal: 255b
     if (!this.isAtEnd() && this.peek() === 'b') {
@@ -386,6 +406,8 @@ export class Lexer {
       case 'with':     return { type: 'WithToken' };
       case 'where':    return { type: 'WhereToken' };
       case 'generic':  return { type: 'GenericToken' };
+      case 'lazy':     return { type: 'LazyToken' };
+      case 'opaque':   return { type: 'OpaqueToken' };
       // ── Async/await (phase 1) ──────────────────────────────────────────────
       case 'async':    return { type: 'AsyncToken' };
       case 'await':    return { type: 'AwaitToken' };
