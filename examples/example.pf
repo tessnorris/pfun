@@ -2584,19 +2584,22 @@ proc tomlExamples() {
       println("emit contains port: " + __str__(contains(emitted, "port = 8080")));
     };
 }
-
+timerExamples();
+compressExamples();
+cryptoExamples();
+tomlExamples();
 
 // ============================================================================
 /*
- *  35. LIST UTILITIES
- *  listutils.pf provides common list helpers absent from the prelude:
- *  sum, product, count, minBy/maxBy, minimum/maximum, any, all, elem/notElem,
- *  lookup, concat, flatMap, zip/zipWith, unzip, enumerate, compareScalar,
- *  sortBy, sort/sortDesc, merge.
- *
- *  All outputs are deterministic (no random values). Where results are lists or
- *  Options the code extracts a concrete scalar to print.
- */
+  35. LIST UTILITIES
+  listutils.pf provides common list helpers absent from the prelude:
+  sum, product, count, minBy/maxBy, minimum/maximum, any, all, elem/notElem,
+  lookup, concat, flatMap, zip/zipWith, unzip, enumerate, compareScalar,
+  sortBy, sort/sortDesc, merge.
+
+  All outputs are deterministic (no random values). Where results are lists or
+  Options the code extracts a concrete scalar to print.
+*/
 
 import * as Lu from "$PFUN_HOME/lib/listutils.pf";
 
@@ -2713,8 +2716,4 @@ println("merge length: " + __str__(length(mergedList)));
 println("merge first: " + __str__(head(mergedList)));
 println("merge last: " + __str__(head(reverse(mergedList))));
 
-timerExamples();
-compressExamples();
-cryptoExamples();
-tomlExamples();
 httpExamples();
