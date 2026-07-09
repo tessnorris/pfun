@@ -114,6 +114,17 @@ export const iolibFunctions: RegistryFunction[] = [
   // All environment variables visible to the process, as a dict. Variables
   // with no value (which shouldn't normally occur) are omitted rather than
   // represented as nil, keeping the dict's value type a plain Str.
+  // exit(code) -> never returns; terminates the process with the given code.
+  // Effectful: only callable from procedure context. Used by test runners and
+  // CLI tools to signal success/failure via exit status.
+  { name: 'exit', arity: 1, fn: (args, interp) => {
+    if (interp.inPureContext) throw new Error("Functions cannot use 'exit': side effects are not allowed in pure functions.");
+    const code = typeof args[0] === 'bigint' ? Number(args[0]) : Number(args[0]);
+    const _c = Number.isFinite(code) ? code : 0;
+    process.exitCode = _c;
+    process.exit(_c);
+  }},
+
   { name: 'envVars', arity: 0, fn: (_args, interp) => {
     if (interp.inPureContext) throw new Error("Functions cannot use 'envVars': side effects are not allowed in pure functions.");
     return dictFromRecord(process.env);

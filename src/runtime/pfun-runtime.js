@@ -222,6 +222,14 @@ function $scriptArgs() {
   return process.argv.slice(2);
 }
 
+function $exit(code) {
+  // Terminate the process with the given exit code. Coerces bigint/number.
+  const n = typeof code === 'bigint' ? Number(code) : Number(code);
+  const _n = Number.isFinite(n) ? n : 0;
+  process.exitCode = _n;
+  process.exit(_n);
+}
+
 function $getEnv(name) {
   if (typeof name !== 'string') throw new Error('getEnv() requires a string argument.');
   const v = process.env[name];
@@ -1112,7 +1120,7 @@ module.exports = {
   $curry, $memoize,
   $char, $byte, $record, $registerType, $schema,
   $stringify, $println, $print, $flushStdout, $mountHtml, $clearOutput, $attachDomHandler, $httpPost, $truthy,
-  $readln, $readChar, $scriptArgs, $getEnv, $envVars,
+  $readln, $readChar, $scriptArgs, $getEnv, $envVars, $exit,
   $ck,
   $add, $sub, $mul, $div, $mod, $neg,
   $eq, $neq, $lt, $lte, $gt, $gte,

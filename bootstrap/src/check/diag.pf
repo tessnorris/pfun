@@ -1,0 +1,66 @@
+```pfun
+export type Severity = {
+  | ErrSev
+  | WarnSev
+}
+```
+
+export type DiagCode = {
+  | LexD
+  | ParseD
+  | NameD
+  | TypeD
+  | ExhaustD
+  | PurityD
+  | ImportD
+  | ArityD
+  | RuntimeD
+
+// `severity`: error/warning
+// `code`: diagnostic code
+// `message`: human-readable message
+// `path`: source path
+// `span`: source location
+// `notes`: extra advice lines
+export type Diag = {
+  severity,
+  code,
+  message,
+  path,
+  span,
+  notes
+}
+
+// Constructs an error diagnostic.
+export function err(code, message, path, span) {
+	Diag {ErrSev, code, message, path, span, "");
+}
+
+
+// Constructs a warning diagnostic.
+export function warn(code, message, path, span) {
+	Diag {WarnSev, code, message, path, span, "");
+}
+
+// Returns a copy of `diag` with an extra note.
+export function note(diag, s) {
+  Diag { diag.severity, diag.code, diag.message, diag.path, diag.span, s };
+}
+
+// Renders one diagnostic with file, line, column, message, and caret.
+//
+// `sourceOf` is a function from path to `Option<Str>` so rendering can lazily request source text.
+export function renderDiag(diag, sourceOf) {
+
+}
+
+
+// Sorts diagnostics by path and offset, then renders all.
+export function renderAll(diags, sourceOf) {
+	// order the list of diags
+	// PROBLEM: wtf do I do to get the actual ordering using sourceOf???
+  let im = imsFromList(map(fn diag => Pair {diag.path, diag }, diags));
+	let ordered = map(fn entry => entry.value, imsEntries(im));
+
+	map(fn d => renderDiag(d, sourceOf), ordered);
+}

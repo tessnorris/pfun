@@ -14,7 +14,7 @@ const createdInterpreters: Interpreter[] = [];
 
 function makeInterpreter(): Interpreter {
   // Use ModuleLoader so that `import * from "timer"` resolves correctly.
-  const { ModuleLoader } = require('./interpreter');
+  const { ModuleLoader } = require('../interpreter');
   const loader = new ModuleLoader('.');
   const interp = new Interpreter('.', loader);
   interp.registerLibrary(stdlibFunctions, stdlibTypes);

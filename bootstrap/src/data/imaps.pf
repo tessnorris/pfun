@@ -105,7 +105,7 @@ export function imsGet(m, k) {
   match m with
   | MLeaf -> None
   | MNode n -> {
-      if k == n.k then { Some n.v }
+      if k == n.k then { Some { n.v } }
       else if k < n.k then { imsGet(n.left, k) }
       else { imsGet(n.right, k) }
     }
@@ -242,5 +242,8 @@ export function imsMap(f, m) {
 	}
 }
 
-// force type
-imsPut(imsEmpty(), "hello", v)
+// Force the key type to Str without evaluating anything: binding a lambda
+// emits the inference constraint (key = Str) while the value type stays free
+// (pinned by each consumer's first use). A bare expression here would run at
+// module load and fail on the unbound variable.
+let imsKeyTypeWitness = fn v => imsPut(imsEmpty(), "hello", v);

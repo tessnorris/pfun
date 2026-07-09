@@ -35,3 +35,6 @@ pfun-semantic-theme-pfun-syntax-fix2.tar.gz
 
 # Editor backup files
 *~
+
+# temporary files
+tmp/

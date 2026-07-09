@@ -506,6 +506,7 @@ const STDLIB_MAP: Record<string, string> = {
   scriptArgs:    '$scriptArgs',
   getEnv:        '$getEnv',
   envVars:       '$envVars',
+  exit:          '$exit',
 
   // Core list ops
   length:        '$length',
@@ -1015,7 +1016,7 @@ export function transpileToEstree(stmts: Stmt[], options: TranspileOptions = {})
             '$curry','$memoize',
             '$char','$byte','$record','$registerType',
             '$stringify','$println','$print','$flushStdout','$mountHtml','$clearOutput','$attachDomHandler','$httpPost','$truthy',
-            '$readln','$readChar','$scriptArgs','$getEnv','$envVars',
+            '$readln','$readChar','$scriptArgs','$getEnv','$envVars','$exit',
             '$ck',
             '$add','$sub','$mul','$div','$mod','$neg',
             '$eq','$neq','$lt','$lte','$gt','$gte',

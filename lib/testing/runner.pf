@@ -150,4 +150,10 @@ proc printSummary(stats) {
 export proc runSuites(suites) {
   var stats = runSuitesRec(suites, emptyStats);
   printSummary(stats);
+  // Signal overall result via exit status so orchestrators (and CI) can detect
+  // failure without scraping stdout. Any test failure -> nonzero exit.
+  if stats.testFail == 0 then
+    exit(0)
+  else
+    exit(1);
 }
