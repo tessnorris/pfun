@@ -860,19 +860,69 @@ if (require.main === module) {
     const compiled   = new Set<string>();
     const outPaths   = new Map<string, string>();
 
-    function sourceToOutPath(sourcePath: string): string {
-      // If -o named a specific .js file, the entry goes there; all deps
-      // mirror into the same directory (outDir) using their base names.
-      if (entryOutPath) {
-        if (sourcePath === entryPath) return entryOutPath;
-        // Dependency: place next to the entry output, mirroring from the
-        // source file's position relative to the entry's source directory.
-        const rel = path.relative(path.dirname(entryPath), sourcePath);
-        return path.join(path.dirname(entryOutPath), rel.replace(/\.pf$/, '.js'));
+    function safeOutputRelativePath(root: string, sourcePath: string): string | null {
+      const rel = path.relative(root, sourcePath);
+
+      // An output-relative path must never escape its chosen root.
+      if (
+        rel.length === 0 ||
+        rel === '..' ||
+        rel.startsWith(`..${path.sep}`) ||
+        path.isAbsolute(rel)
+      ) {
+        return null;
       }
-      // Default: mirror source tree under outDir.
-      const rel = path.relative(cwd, sourcePath);
-      return path.join(outDir, rel.replace(/\.pf$/, '.js'));
+
+      return rel;
+    }
+
+    function sourceToOutPath(sourcePath: string): string {
+      // An explicit file output controls only the entry file's exact name.
+      if (entryOutPath && sourcePath === entryPath) {
+        return entryOutPath;
+      }
+
+      if (entryOutPath) {
+        // Keep modules beneath the entry source directory beside the entry
+        // output. examples/mathutils.pf therefore becomes output/mathutils.js.
+        const entryLocalRel = safeOutputRelativePath(
+          path.dirname(entryPath),
+          sourcePath,
+        );
+
+        if (entryLocalRel !== null) {
+          return path.join(outDir, entryLocalRel.replace(/\.pf$/, '.js'));
+        }
+      }
+
+      // Modules outside the entry directory mirror from the project root.
+      // lib/datelib.pf therefore becomes output/lib/datelib.js.
+      const cwdRel = safeOutputRelativePath(cwd, sourcePath);
+      if (cwdRel !== null) {
+        return path.join(outDir, cwdRel.replace(/\.pf$/, '.js'));
+      }
+
+      // A $PFUN_HOME dependency may live outside the current project.
+      const pfunHome = process.env.PFUN_HOME
+        ? path.resolve(process.env.PFUN_HOME)
+        : null;
+
+      if (pfunHome !== null) {
+        const homeRel = safeOutputRelativePath(pfunHome, sourcePath);
+        if (homeRel !== null) {
+          return path.join(outDir, homeRel.replace(/\.pf$/, '.js'));
+        }
+      }
+
+      // Last-resort containment for a dependency outside both roots.
+      const volumeRoot = path.parse(sourcePath).root;
+      const externalRel = path.relative(volumeRoot, sourcePath);
+
+      return path.join(
+        outDir,
+        '_external',
+        externalRel.replace(/\.pf$/, '.js'),
+      );
     }
 
     // Maps absolutePath → union declarations from that module's TypeStmt/UnionTypeStmt.
