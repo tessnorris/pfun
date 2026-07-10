@@ -1,51 +1,178 @@
-// syntax/token.pf — Phase 3 seed: source positions and spans.
+// syntax/token.pf — Phase 3: source positions, spans, and lexical tokens.
+//
+// Positions are 1-based for line/column and 0-based for source offset. Offsets
+// are UTF-16/code-unit offsets, matching the string indexing used by the
+// bootstrap lexer.
 
-// 1-based line and column; 0-based offset. (Arch doc: pick code-unit or byte
-// offset and use it everywhere — this compiler uses code units.)
 export type Pos = { line, col, offset }
 
 // End-exclusive source span.
 export type Span = { start, end }
 
-// Smart constructors: namespaced record construction (`T.Pos { .. }`) does
-// not parse, so cross-module callers build positions through these.
-export function mkPos(line, col, offset) { Pos { line, col, offset } }
-export function mkSpan(startPos, endPos) { Span { startPos, endPos } }
+// Smart constructors: namespaced record construction (`T.Pos { ... }`) does
+// not parse, so cross-module callers build positions through these helpers.
+export function mkPos(line, col, offset) {
+	Pos { line, col, offset }
+}
+
+export function mkSpan(startPos, endPos) {
+	Span { startPos, endPos }
+}
 
 // A zero-width span at a position (EOF errors, insertion points).
-export function pointSpan(p) { Span { p, p } }
+export function pointSpan(p) {
+	Span { p, p }
+}
 
 export type Tok = {
-  | TInt: n
-  | TFloat: text
-  | TBool: b
-  | TStr: s
-  | TRawStr: s
-  | TFmtStr: s
-  | TChar: c
-  | TByte: b
-  | TIdent: name
-  | TKw: word
-  | TOp: op
-  | TEof
-	}
+	| TokInt: n
+	| TokFloat: text
+	| TokBool: b
+	| TokStr: s
+	| TokRawStr: s
+	| TokFmtStr: s
+	| TokChar: c
+	| TokByte: b
+	| TokIdent: name
+	| TokKw: word
+	| TokOp: op
+	| TokEof
+}
 
-export type Token = {
-  tok,
-  span
-	}
+export type Token = { tok, span }
 
-// Returns true if `token.tok` is `TOp op`.
+export function mkToken(tok, span) {
+	Token { tok, span }
+}
+
+export function intTok(n, span) {
+	Token { TokInt { n }, span }
+}
+
+export function floatTok(text, span) {
+	Token { TokFloat { text }, span }
+}
+
+export function boolTok(b, span) {
+	Token { TokBool { b }, span }
+}
+
+export function strTok(s, span) {
+	Token { TokStr { s }, span }
+}
+
+export function rawStrTok(s, span) {
+	Token { TokRawStr { s }, span }
+}
+
+export function fmtStrTok(s, span) {
+	Token { TokFmtStr { s }, span }
+}
+
+export function charTok(c, span) {
+	Token { TokChar { c }, span }
+}
+
+export function byteTok(b, span) {
+	Token { TokByte { b }, span }
+}
+
+export function identTok(name, span) {
+	Token { TokIdent { name }, span }
+}
+
+export function kwTok(word, span) {
+	Token { TokKw { word }, span }
+}
+
+export function opTok(op, span) {
+	Token { TokOp { op }, span }
+}
+
+export function eofToken(pos) {
+	Token { TokEof, pointSpan(pos) }
+}
+
+// Returns true if `token.tok` is exactly `TokOp op`.
 export function isOp(token, op) {
-  match token.tok with
-  | TOp -> true
-	| _   -> false
+	match token.tok with
+	| TokOp t -> t.op == op
+	| _ -> false
 }
 
-// Returns true if `token.tok` is `TKw word`.
+// Returns true if `token.tok` is exactly `TokKw word`.
 export function isKw(token, word) {
-  match token.tok with
-  | TKw -> true
-	| _   -> false  
+	match token.tok with
+	| TokKw t -> t.word == word
+	| _ -> false
 }
 
+export function isIdent(token, name) {
+	match token.tok with
+	| TokIdent t -> t.name == name
+	| _ -> false
+}
+
+export function tokenStart(token) {
+	token.span.start
+}
+
+export function tokenEnd(token) {
+	token.span.end
+}
+
+export function tokenKind(token) {
+	match token.tok with
+	| TokInt _ -> "TokInt"
+	| TokFloat _ -> "TokFloat"
+	| TokBool _ -> "TokBool"
+	| TokStr _ -> "TokStr"
+	| TokRawStr _ -> "TokRawStr"
+	| TokFmtStr _ -> "TokFmtStr"
+	| TokChar _ -> "TokChar"
+	| TokByte _ -> "TokByte"
+	| TokIdent _ -> "TokIdent"
+	| TokKw _ -> "TokKw"
+	| TokOp _ -> "TokOp"
+	| TokEof -> "TokEof"
+}
+
+export function tokPayload(tok) {
+	match tok with
+	| TokInt t -> __str__(t.n)
+	| TokFloat t -> t.text
+	| TokBool t -> __str__(t.b)
+	| TokStr t -> t.s
+	| TokRawStr t -> t.s
+	| TokFmtStr t -> t.s
+	| TokChar t -> t.c
+	| TokByte t -> __str__(t.b)
+	| TokIdent t -> t.name
+	| TokKw t -> t.word
+	| TokOp t -> t.op
+	| TokEof -> ""
+}
+
+export function tokenPayload(token) {
+	tokPayload(token.tok)
+}
+
+export function tokToStr(tok) {
+	match tok with
+	| TokInt t -> "TokInt(" ++ __str__(t.n) ++ ")"
+	| TokFloat t -> "TokFloat(" ++ t.text ++ ")"
+	| TokBool t -> "TokBool(" ++ __str__(t.b) ++ ")"
+	| TokStr t -> "TokStr(\"" ++ t.s ++ "\")"
+	| TokRawStr t -> "TokRawStr(@\"" ++ t.s ++ "\")"
+	| TokFmtStr t -> "TokFmtStr($\"" ++ t.s ++ "\")"
+	| TokChar t -> "TokChar('" ++ t.c ++ "')"
+	| TokByte t -> "TokByte(" ++ __str__(t.b) ++ ")"
+	| TokIdent t -> "TokIdent(" ++ t.name ++ ")"
+	| TokKw t -> "TokKw(" ++ t.word ++ ")"
+	| TokOp t -> "TokOp(" ++ t.op ++ ")"
+	| TokEof -> "TokEof"
+}
+
+export function tokenToStr(token) {
+	tokToStr(token.tok) ++ "@" ++ __str__(token.span.start.line) ++ ":" ++ __str__(token.span.start.col)
+}

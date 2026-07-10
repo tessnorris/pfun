@@ -1,0 +1,1400 @@
+// syntax/parser.pf — Phase 4 Pratt parser for the bootstrap compiler.
+//
+// This is the first real V2-shape parser: it builds the syntax-only AST from
+// token.pf and reports structured ParseD diagnostics. It is intentionally
+// bootstrap-safe: no `nth`/`head`/`tail`, no string/list `+`, no proc values,
+// no assignment expressions, and braces around every `if` branch in this file.
+
+import * as A from "./ast";
+import * as T from "./token";
+import * as D from "../check/diag";
+import * as Compat from "../compat";
+
+// Parser cursor.
+type PSt = { path, toks, index, nextId, inMatchArms }
+
+// Threaded parser result. `node` is generic so one result shape can carry an
+// Expr, Stmt, TypeDecl, list, string, etc. without V1 monomorphizing them all
+// into one impossible payload type.
+type PResult = {
+	| POk: st, generic node
+	| PErr: diags
+}
+
+export type ParseResult = {
+	| ParseOk: module
+	| ParseErr: diags
+}
+
+type BlockOut = { stmts, span }
+
+generic function ok(st, node) {
+	POk { st, node }
+}
+
+function errAt(span, path, message) {
+	D.err(ParseD, message, path, span)
+}
+
+function failAt(st, span, message) {
+	PErr { [errAt(span, st.path, message)] }
+}
+
+function fallbackSpan() {
+	let p = T.mkPos(1, 1, 0);
+	T.pointSpan(p)
+}
+
+function withIndex(st, index) {
+	PSt { st.path, st.toks, index, st.nextId, st.inMatchArms }
+}
+
+function withNextId(st, nextId) {
+	PSt { st.path, st.toks, st.index, nextId, st.inMatchArms }
+}
+
+function withInMatchArms(st, inMatchArms) {
+	PSt { st.path, st.toks, st.index, st.nextId, inMatchArms }
+}
+
+function peekOpt(st) {
+	Compat.listAt(st.toks, st.index)
+}
+
+function prevTokenOpt(st) {
+	Compat.listAt(st.toks, st.index - 1)
+}
+
+function currentSpan(st) {
+	match peekOpt(st) with
+	| Some t -> t.value.span
+	| None -> {
+		match prevTokenOpt(st) with
+		| Some p -> T.pointSpan(p.value.span.end)
+		| None -> fallbackSpan()
+	}
+}
+
+function previousSpan(st) {
+	match prevTokenOpt(st) with
+	| Some p -> p.value.span
+	| None -> currentSpan(st)
+}
+
+function advance(st) {
+	withIndex(st, st.index + 1)
+}
+
+function atKind(st, kind) {
+	match peekOpt(st) with
+	| Some t -> T.tokenKind(t.value) == kind
+	| None -> false
+}
+
+function atPayload(st, payload) {
+	match peekOpt(st) with
+	| Some t -> T.tokenPayload(t.value) == payload
+	| None -> false
+}
+
+function atOp(st, op) {
+	match peekOpt(st) with
+	| Some t -> T.isOp(t.value, op)
+	| None -> false
+}
+
+function atEllipsis(st) {
+	atOp(st, ".") && atOp(advance(st), ".") && atOp(advance(advance(st)), ".")
+}
+
+function consumeEllipsis(st) {
+	advance(advance(advance(st)))
+}
+
+function atKw(st, word) {
+	match peekOpt(st) with
+	| Some t -> T.isKw(t.value, word)
+	| None -> false
+}
+
+function atIdent(st) {
+	atKind(st, "TokIdent")
+}
+
+function atIdentText(st, name) {
+	atKind(st, "TokIdent") && atPayload(st, name)
+}
+
+function atStringToken(st) {
+	atKind(st, "TokStr") || atKind(st, "TokRawStr")
+}
+
+function isEof(st) {
+	atKind(st, "TokEof")
+}
+
+function tokText(st) {
+	match peekOpt(st) with
+	| Some t -> T.tokenPayload(t.value)
+	| None -> ""
+}
+
+function eatOp(st, op) {
+	if atOp(st, op) then { advance(st) } else { st }
+}
+
+function failHere(st, message) {
+	failAt(st, currentSpan(st), message)
+}
+
+function expectOp(st, op, what) {
+	if atOp(st, op) then {
+		ok(advance(st), true)
+	} else {
+		failHere(st, "Expected '" ++ op ++ "' " ++ what ++ ".")
+	}
+}
+
+function expectKw(st, word, what) {
+	if atKw(st, word) then {
+		ok(advance(st), true)
+	} else {
+		failHere(st, "Expected '" ++ word ++ "' " ++ what ++ ".")
+	}
+}
+
+function expectIdent(st, what) {
+	if atIdent(st) && !atPayload(st, "_") then {
+		ok(advance(st), tokText(st))
+	} else {
+		failHere(st, "Expected identifier " ++ what ++ ".")
+	}
+}
+
+function expectParamName(st, what) {
+	if atIdent(st) then {
+		ok(advance(st), tokText(st))
+	} else {
+		failHere(st, "Expected parameter name " ++ what ++ ".")
+	}
+}
+
+function expectString(st, what) {
+	if atStringToken(st) then {
+		ok(advance(st), tokText(st))
+	} else {
+		failHere(st, "Expected string literal " ++ what ++ ".")
+	}
+}
+
+function freshId(st) {
+	Pair { withNextId(st, st.nextId + 1), st.nextId }
+}
+
+function spanFromStart(startSpan, endSpan) {
+	T.mkSpan(startSpan.start, endSpan.end)
+}
+
+function spanFromStartToPrev(startSpan, st) {
+	spanFromStart(startSpan, previousSpan(st))
+}
+
+
+function choose(cond, a, b) {
+	if cond then { a } else { b }
+}
+
+function digitValue(c) {
+	if c == "0" then { 0 }
+	else if c == "1" then { 1 }
+	else if c == "2" then { 2 }
+	else if c == "3" then { 3 }
+	else if c == "4" then { 4 }
+	else if c == "5" then { 5 }
+	else if c == "6" then { 6 }
+	else if c == "7" then { 7 }
+	else if c == "8" then { 8 }
+	else if c == "9" then { 9 }
+	else { 0 }
+}
+
+// tokenPayload for numeric tokens is the canonical decimal spelling from
+// token.pf, so decimal parsing is enough here.
+function decValAt(text, i, acc) {
+	if i >= length(text) then { acc }
+	else {
+		let c = slice(i, 1, text);
+		let d = digitValue(c);
+		decValAt(text, i + 1, acc * 10 + d)
+	}
+}
+
+function parseCanonicalInt(text) {
+	decValAt(text, 0, 0)
+}
+
+// ── public entry ────────────────────────────────────────────────────────────
+
+export function parseModule(path, tokens) {
+	let st = PSt { path, tokens, 0, 1, false };
+	match pModuleLoop(st, []) with
+	| PErr e -> ParseErr { e.diags }
+	| POk o -> ParseOk { A.mkModule(path, o.node, o.st.nextId) }
+}
+
+function pModuleLoop(st, acc) {
+	if isEof(st) then {
+		ok(st, reverse(acc))
+	} else if atOp(st, ";") then {
+		pModuleLoop(advance(st), acc)
+	} else {
+		match pStmt(st) with
+		| PErr e -> PErr { e.diags }
+		| POk s -> pModuleLoop(s.st, cons(s.node, acc))
+	}
+}
+
+// ── statements ──────────────────────────────────────────────────────────────
+
+function pStmt(st) {
+	if atKw(st, "let") then { pLet(st) }
+	else if atKw(st, "var") then { pVar(st) }
+	else if atKw(st, "return") then { pReturn(st) }
+	else if atKw(st, "if") then { pIfStmt(st) }
+	else if atKw(st, "while") then { pWhile(st) }
+	else if atKw(st, "import") then { pImport(st) }
+	else if atKw(st, "export") then { pExport(st) }
+	else if atKw(st, "type") then { pTypeStmt(st, false) }
+	else if atKw(st, "extern") then { pExternStmt(st) }
+	else if atKw(st, "generic") then { pGenericDecl(st) }
+	else if atKw(st, "memo") then { pMemoFunction(st, false) }
+	else if atKw(st, "function") then { pFunction(st, false, false) }
+	else if atKw(st, "async") then { pAsyncProc(st, false) }
+	else if atKw(st, "proc") then { pProc(st, false, false) }
+	else { pAssignOrExprStmt(st) }
+}
+
+function pLet(st) {
+	let start = currentSpan(st);
+	let st1 = advance(st);
+	match expectIdent(st1, "after let") with
+	| PErr e -> PErr { e.diags }
+	| POk n -> {
+		match expectOp(n.st, "=", "after let name") with
+		| PErr e -> PErr { e.diags }
+		| POk eq -> {
+			match pExpr(eq.st, 1) with
+			| PErr e -> PErr { e.diags }
+			| POk init -> {
+				match expectOp(init.st, ";", "after let initializer") with
+				| PErr e -> PErr { e.diags }
+				| POk semi -> {
+					let f = freshId(semi.st);
+					ok(f.key, A.sLet(f.value, n.node, init.node, spanFromStartToPrev(start, semi.st)))
+				}
+			}
+		}
+	}
+}
+
+function pVar(st) {
+	let start = currentSpan(st);
+	let st1 = advance(st);
+	match expectIdent(st1, "after var") with
+	| PErr e -> PErr { e.diags }
+	| POk n -> {
+		match expectOp(n.st, "=", "after var name") with
+		| PErr e -> PErr { e.diags }
+		| POk eq -> {
+			match pExpr(eq.st, 1) with
+			| PErr e -> PErr { e.diags }
+			| POk init -> {
+				match expectOp(init.st, ";", "after var initializer") with
+				| PErr e -> PErr { e.diags }
+				| POk semi -> {
+					let f = freshId(semi.st);
+					ok(f.key, A.sVar(f.value, n.node, init.node, spanFromStartToPrev(start, semi.st)))
+				}
+			}
+		}
+	}
+}
+
+function pReturn(st) {
+	let start = currentSpan(st);
+	let st1 = advance(st);
+	if atOp(st1, ";") then {
+		let st2 = advance(st1);
+		let f = freshId(st2);
+		ok(f.key, A.sReturn(f.value, None, spanFromStartToPrev(start, st2)))
+	} else if atOp(st1, "}") || isEof(st1) then {
+		let f = freshId(st1);
+		ok(f.key, A.sReturn(f.value, None, spanFromStartToPrev(start, st1)))
+	} else {
+		match pExpr(st1, 1) with
+		| PErr e -> PErr { e.diags }
+		| POk v -> {
+			let st2 = eatOp(v.st, ";");
+			let f = freshId(st2);
+			ok(f.key, A.sReturn(f.value, Some { v.node }, spanFromStartToPrev(start, st2)))
+		}
+	}
+}
+
+function pIfStmt(st) {
+	let start = currentSpan(st);
+	let st1 = advance(st);
+	match pExpr(st1, 1) with
+	| PErr e -> PErr { e.diags }
+	| POk cond -> {
+		match expectKw(cond.st, "then", "after if condition") with
+		| PErr e -> PErr { e.diags }
+		| POk thenKw -> {
+			match pBlock(thenKw.st) with
+			| PErr e -> PErr { e.diags }
+			| POk tb -> {
+				if atKw(tb.st, "else") then {
+					let elseStart = advance(tb.st);
+					if atKw(elseStart, "if") then {
+						match pIfStmt(elseStart) with
+						| PErr e -> PErr { e.diags }
+						| POk inner -> {
+							let f = freshId(inner.st);
+							ok(f.key, A.sIf(f.value, cond.node, tb.node.stmts, Some { [inner.node] }, spanFromStartToPrev(start, inner.st)))
+						}
+					} else {
+						match pBlock(elseStart) with
+						| PErr e -> PErr { e.diags }
+						| POk eb -> {
+							let f = freshId(eb.st);
+							ok(f.key, A.sIf(f.value, cond.node, tb.node.stmts, Some { eb.node.stmts }, spanFromStartToPrev(start, eb.st)))
+						}
+					}
+				} else {
+					let f = freshId(tb.st);
+					ok(f.key, A.sIf(f.value, cond.node, tb.node.stmts, None, spanFromStartToPrev(start, tb.st)))
+				}
+			}
+		}
+	}
+}
+
+function pWhile(st) {
+	let start = currentSpan(st);
+	let st1 = advance(st);
+	match expectOp(st1, "(", "after while") with
+	| PErr e -> PErr { e.diags }
+	| POk open -> {
+		match pExpr(open.st, 1) with
+		| PErr e -> PErr { e.diags }
+		| POk cond -> {
+			match expectOp(cond.st, ")", "after while condition") with
+			| PErr e -> PErr { e.diags }
+			| POk close -> {
+				match pBlock(close.st) with
+				| PErr e -> PErr { e.diags }
+				| POk body -> {
+					let f = freshId(body.st);
+					ok(f.key, A.sWhile(f.value, cond.node, body.node.stmts, spanFromStartToPrev(start, body.st)))
+				}
+			}
+		}
+	}
+}
+
+function pAssignOrExprStmt(st) {
+	let start = currentSpan(st);
+	match pExpr(st, 1) with
+	| PErr e -> PErr { e.diags }
+	| POk lhs -> {
+		if atOp(lhs.st, "=") then {
+			let afterEq = advance(lhs.st);
+			match pExpr(afterEq, 1) with
+			| PErr e -> PErr { e.diags }
+			| POk rhs -> {
+				match expectOp(rhs.st, ";", "after assignment") with
+				| PErr e -> PErr { e.diags }
+				| POk semi -> {
+					match A.assignVarName(lhs.node) with
+					| Some n -> {
+						let f = freshId(semi.st);
+						ok(f.key, A.sAssign(f.value, n.value, rhs.node, spanFromStartToPrev(start, semi.st)))
+					}
+					| None -> {
+						match A.assignIndexParts(lhs.node) with
+						| Some parts -> {
+							let f = freshId(semi.st);
+							ok(f.key, A.sIndexAssign(f.value, parts.value.key, parts.value.value, rhs.node, spanFromStartToPrev(start, semi.st)))
+						}
+						| None -> failAt(lhs.st, A.exprSpan(lhs.node), "Invalid assignment target.")
+						}
+					}
+				}
+		} else {
+			let st2 = eatOp(lhs.st, ";");
+			let f = freshId(st2);
+			ok(f.key, A.sExpr(f.value, lhs.node, spanFromStartToPrev(start, st2)))
+		}
+	}
+}
+
+// ── blocks ─────────────────────────────────────────────────────────────────
+
+function pBlock(st) {
+	let start = currentSpan(st);
+	match expectOp(st, "{", "to start block") with
+	| PErr e -> PErr { e.diags }
+	| POk open -> pBlockLoop(open.st, start, [])
+}
+
+function pBlockLoop(st, start, acc) {
+	if atOp(st, "}") then {
+		let st2 = advance(st);
+		ok(st2, BlockOut { reverse(acc), spanFromStartToPrev(start, st2) })
+	} else if isEof(st) then {
+		failHere(st, "Expected '}' to close block.")
+	} else if atOp(st, ";") then {
+		pBlockLoop(advance(st), start, acc)
+	} else {
+		match pStmt(st) with
+		| PErr e -> PErr { e.diags }
+		| POk s -> pBlockLoop(s.st, start, cons(s.node, acc))
+	}
+}
+
+// ── imports/exports/functions/types/externs ────────────────────────────────
+
+function pImport(st) {
+	let start = currentSpan(st);
+	let st1 = advance(st);
+	match pImportSpec(st1) with
+	| PErr e -> PErr { e.diags }
+	| POk spec -> {
+		match expectKw(spec.st, "from", "after import spec") with
+		| PErr e -> PErr { e.diags }
+		| POk fromKw -> {
+			match expectString(fromKw.st, "after from") with
+			| PErr e -> PErr { e.diags }
+			| POk path -> {
+				let st2 = eatOp(path.st, ";");
+				let f = freshId(st2);
+				ok(f.key, A.sImport(f.value, spec.node, path.node, spanFromStartToPrev(start, st2)))
+			}
+		}
+	}
+}
+
+function pImportSpec(st) {
+	if atOp(st, "{") then {
+		pImportNames(advance(st), [])
+	} else if atOp(st, "*") then {
+		let st1 = advance(st);
+		if atKw(st1, "as") then {
+			match expectIdent(advance(st1), "after import * as") with
+			| PErr e -> PErr { e.diags }
+			| POk alias -> ok(alias.st, A.iNamespace(alias.node))
+		} else {
+			ok(st1, A.iStar())
+		}
+	} else {
+		failHere(st, "Expected import spec.")
+	}
+}
+
+function pImportNames(st, acc) {
+	if atOp(st, "}") then {
+		ok(advance(st), A.iNames(reverse(acc)))
+	} else {
+		match expectIdent(st, "in import list") with
+		| PErr e -> PErr { e.diags }
+		| POk name -> {
+			if atKw(name.st, "as") then {
+				match expectIdent(advance(name.st), "after import alias") with
+				| PErr e -> PErr { e.diags }
+				| POk a -> pImportNameTail(a.st, name.node, Some { a.node }, acc)
+			} else {
+				pImportNameTail(name.st, name.node, None, acc)
+			}
+		}
+	}
+}
+
+function pImportNameTail(st, name, alias, acc) {
+	let entry = A.mkImportName(name, alias);
+	if atOp(st, ",") then { pImportNames(advance(st), cons(entry, acc)) }
+	else if atOp(st, "}") then { pImportNames(st, cons(entry, acc)) }
+	else { failHere(st, "Expected ',' or '}' in import list.") }
+}
+
+function pExport(st) {
+	let start = currentSpan(st);
+	let st1 = advance(st);
+	if atKw(st1, "extern") then {
+		failHere(st1, "Extern declarations are private and cannot be exported.")
+	} else if atKw(st1, "var") then {
+		failHere(st1, "Mutable var declarations cannot be exported.")
+	} else if atKw(st1, "opaque") then {
+		match pTypeStmt(advance(st1), true) with
+		| PErr e -> PErr { e.diags }
+		| POk inner -> {
+			let f = freshId(inner.st);
+			ok(f.key, A.sExport(f.value, inner.node, spanFromStartToPrev(start, inner.st)))
+		}
+	} else {
+		match pStmt(st1) with
+		| PErr e -> PErr { e.diags }
+		| POk inner -> {
+			let f = freshId(inner.st);
+			ok(f.key, A.sExport(f.value, inner.node, spanFromStartToPrev(start, inner.st)))
+		}
+	}
+}
+
+function pGenericDecl(st) {
+	let st1 = advance(st);
+	if atKw(st1, "memo") then { pMemoFunction(st1, true) }
+	else if atKw(st1, "function") then { pFunction(st1, true, false) }
+	else if atKw(st1, "async") then { pAsyncProc(st1, true) }
+	else if atKw(st1, "proc") then { pProc(st1, true, false) }
+	else { failHere(st1, "Expected function, memo function, async proc, or proc after generic.") }
+}
+
+function pMemoFunction(st, isGeneric) {
+	let st1 = advance(st);
+	if atKw(st1, "function") then { pFunction(st1, isGeneric, true) }
+	else { failHere(st1, "Expected function after memo.") }
+}
+
+function pAsyncProc(st, isGeneric) {
+	let st1 = advance(st);
+	if atKw(st1, "proc") then { pProc(st1, isGeneric, true) }
+	else { failHere(st1, "Expected proc after async.") }
+}
+
+function pFunction(st, isGeneric, isMemo) {
+	let start = currentSpan(st);
+	let st1 = advance(st);
+	match expectIdent(st1, "after function") with
+	| PErr e -> PErr { e.diags }
+	| POk name -> {
+		match pParenParams(name.st) with
+		| PErr e -> PErr { e.diags }
+		| POk ps -> {
+			match pBlock(ps.st) with
+			| PErr e -> PErr { e.diags }
+			| POk body -> {
+				let f = freshId(body.st);
+				ok(f.key, A.sFun(f.value, name.node, ps.node, body.node.stmts, A.pureFn(isMemo, isGeneric), spanFromStartToPrev(start, body.st)))
+			}
+		}
+	}
+}
+
+function pProc(st, isGeneric, isAsync) {
+	let start = currentSpan(st);
+	let st1 = advance(st);
+	match expectIdent(st1, "after proc") with
+	| PErr e -> PErr { e.diags }
+	| POk name -> {
+		match pParenParams(name.st) with
+		| PErr e -> PErr { e.diags }
+		| POk ps -> {
+			match pBlock(ps.st) with
+			| PErr e -> PErr { e.diags }
+			| POk body -> {
+				let f = freshId(body.st);
+				ok(f.key, A.sFun(f.value, name.node, ps.node, body.node.stmts, A.procFn(isAsync, isGeneric), spanFromStartToPrev(start, body.st)))
+			}
+		}
+	}
+}
+
+function pParenParams(st) {
+	match expectOp(st, "(", "before parameter list") with
+	| PErr e -> PErr { e.diags }
+	| POk open -> pParamList(open.st, [])
+}
+
+function pParamList(st, acc) {
+	if atOp(st, ")") then {
+		ok(advance(st), reverse(acc))
+	} else {
+		match expectParamName(st, "in parameter list") with
+		| PErr e -> PErr { e.diags }
+		| POk p -> {
+			if atOp(p.st, ",") then { pParamList(advance(p.st), cons(p.node, acc)) }
+			else if atOp(p.st, ")") then { pParamList(p.st, cons(p.node, acc)) }
+			else { failHere(p.st, "Expected ',' or ')' in parameter list.") }
+		}
+	}
+}
+
+function pTypeStmt(st, isOpaque) {
+	let start = currentSpan(st);
+	let st1 = advance(st);
+	match expectIdent(st1, "after type") with
+	| PErr e -> PErr { e.diags }
+	| POk name -> {
+		match expectOp(name.st, "=", "after type name") with
+		| PErr e -> PErr { e.diags }
+		| POk eq -> {
+			match expectOp(eq.st, "{", "to start type body") with
+			| PErr e -> PErr { e.diags }
+			| POk open -> {
+				if atOp(open.st, "|") then {
+					match pVariants(open.st, []) with
+					| PErr e -> PErr { e.diags }
+					| POk vs -> {
+						let st2 = eatOp(vs.st, ";");
+						let f = freshId(st2);
+						ok(f.key, A.sType(f.value, A.unionDecl(name.node, vs.node), isOpaque, spanFromStartToPrev(start, st2)))
+					}
+				} else {
+					match pRecordFields(open.st, []) with
+					| PErr e -> PErr { e.diags }
+					| POk fs -> {
+						let st2 = eatOp(fs.st, ";");
+						let f = freshId(st2);
+						ok(f.key, A.sType(f.value, A.recordDecl(name.node, fs.node), isOpaque, spanFromStartToPrev(start, st2)))
+					}
+				}
+			}
+		}
+	}
+}
+
+function pFieldDecl(st) {
+	let isGen = atKw(st, "generic");
+	let st1 = choose(isGen, advance(st), st);
+	match expectIdent(st1, "as field name") with
+	| PErr e -> PErr { e.diags }
+	| POk n -> ok(n.st, A.mkFieldDecl(n.node, isGen))
+}
+
+function pRecordFields(st, acc) {
+	if atOp(st, "}") then {
+		ok(advance(st), reverse(acc))
+	} else {
+		match pFieldDecl(st) with
+		| PErr e -> PErr { e.diags }
+		| POk f -> {
+			if atOp(f.st, ",") then { pRecordFields(advance(f.st), cons(f.node, acc)) }
+			else if atOp(f.st, "}") then { pRecordFields(f.st, cons(f.node, acc)) }
+			else { failHere(f.st, "Expected ',' or '}' after record field.") }
+		}
+	}
+}
+
+function pVariants(st, acc) {
+	if atOp(st, "}") then {
+		ok(advance(st), reverse(acc))
+	} else if atOp(st, "|") then {
+		let st1 = advance(st);
+		match expectIdent(st1, "as variant name") with
+		| PErr e -> PErr { e.diags }
+		| POk name -> {
+			if atOp(name.st, ":") then {
+				match pVariantFields(advance(name.st), []) with
+				| PErr e -> PErr { e.diags }
+				| POk fs -> pVariants(fs.st, cons(A.mkVariantDecl(name.node, fs.node), acc))
+			} else {
+				pVariants(name.st, cons(A.mkVariantDecl(name.node, []), acc))
+			}
+		}
+	} else {
+		failHere(st, "Expected variant arm or '}' in union declaration.")
+	}
+}
+
+function pVariantFields(st, acc) {
+	if atOp(st, "|") || atOp(st, "}") then {
+		ok(st, reverse(acc))
+	} else {
+		match pFieldDecl(st) with
+		| PErr e -> PErr { e.diags }
+		| POk f -> {
+			if atOp(f.st, ",") then { pVariantFields(advance(f.st), cons(f.node, acc)) }
+			else { pVariantFields(f.st, cons(f.node, acc)) }
+		}
+	}
+}
+
+function pExternStmt(st) {
+	let start = currentSpan(st);
+	let st1 = advance(st);
+	if atKw(st1, "function") then {
+		pExternAfterKind(advance(st1), start, A.externFunction())
+	} else if atKw(st1, "async") then {
+		let st2 = advance(st1);
+		if atKw(st2, "proc") then { pExternAfterKind(advance(st2), start, A.externProc(true)) }
+		else { failHere(st2, "Expected proc after extern async.") }
+	} else if atKw(st1, "proc") then {
+		pExternAfterKind(advance(st1), start, A.externProc(false))
+	} else {
+		failHere(st1, "Expected function or proc after extern.")
+	}
+}
+
+function pExternAfterKind(st, start, kind) {
+	match expectIdent(st, "after extern kind") with
+	| PErr e -> PErr { e.diags }
+	| POk name -> {
+		match pTypedParams(name.st) with
+		| PErr e -> PErr { e.diags }
+		| POk params -> {
+			match expectOp(params.st, "->", "after extern parameters") with
+			| PErr e -> PErr { e.diags }
+			| POk arrow -> {
+				match pTypeExpr(arrow.st) with
+				| PErr e -> PErr { e.diags }
+				| POk ret -> {
+					let st2 = eatOp(ret.st, ";");
+					let f = freshId(st2);
+					let decl = A.mkExternDecl(kind, name.node, params.node, ret.node, None);
+					ok(f.key, A.sExtern(f.value, decl, spanFromStartToPrev(start, st2)))
+				}
+			}
+		}
+	}
+}
+
+function pTypedParams(st) {
+	match expectOp(st, "(", "before extern parameter list") with
+	| PErr e -> PErr { e.diags }
+	| POk open -> pTypedParamList(open.st, [])
+}
+
+function pTypedParamList(st, acc) {
+	if atOp(st, ")") then {
+		ok(advance(st), reverse(acc))
+	} else {
+		match expectIdent(st, "in typed parameter list") with
+		| PErr e -> PErr { e.diags }
+		| POk name -> {
+			match expectOp(name.st, ":", "after typed parameter name") with
+			| PErr e -> PErr { e.diags }
+			| POk colon -> {
+				match pTypeExpr(colon.st) with
+				| PErr e -> PErr { e.diags }
+				| POk te -> {
+					let item = A.mkTypedParam(name.node, te.node);
+					if atOp(te.st, ",") then { pTypedParamList(advance(te.st), cons(item, acc)) }
+					else if atOp(te.st, ")") then { pTypedParamList(te.st, cons(item, acc)) }
+					else { failHere(te.st, "Expected ',' or ')' in typed parameter list.") }
+				}
+			}
+		}
+	}
+}
+
+function pTypeExpr(st) {
+	if atOp(st, "(") then {
+		pFunctionTypeExpr(st)
+	} else {
+		match expectIdent(st, "as type name") with
+		| PErr e -> PErr { e.diags }
+		| POk name -> {
+			if atOp(name.st, "<") then {
+				match pTypeArgs(advance(name.st), []) with
+				| PErr e -> PErr { e.diags }
+				| POk args -> ok(args.st, A.tyName(name.node, args.node))
+			} else {
+				ok(name.st, A.tyName(name.node, []))
+			}
+		}
+	}
+}
+
+function pTypeArgs(st, acc) {
+	if atOp(st, ">") then {
+		ok(advance(st), reverse(acc))
+	} else {
+		match pTypeExpr(st) with
+		| PErr e -> PErr { e.diags }
+		| POk te -> {
+			if atOp(te.st, ",") then { pTypeArgs(advance(te.st), cons(te.node, acc)) }
+			else if atOp(te.st, ">") then { pTypeArgs(te.st, cons(te.node, acc)) }
+			else { failHere(te.st, "Expected ',' or '>' in type argument list.") }
+		}
+	}
+}
+
+function pFunctionTypeExpr(st) {
+	match expectOp(st, "(", "to start function type") with
+	| PErr e -> PErr { e.diags }
+	| POk open -> {
+		match pTypeExprList(open.st, []) with
+		| PErr e -> PErr { e.diags }
+		| POk params -> {
+			match expectOp(params.st, "->", "after function type parameters") with
+			| PErr e -> PErr { e.diags }
+			| POk arrow -> {
+				match pTypeExpr(arrow.st) with
+				| PErr e -> PErr { e.diags }
+				| POk ret -> ok(ret.st, A.tyFun(params.node, ret.node))
+			}
+		}
+	}
+}
+
+function pTypeExprList(st, acc) {
+	if atOp(st, ")") then {
+		ok(advance(st), reverse(acc))
+	} else {
+		match pTypeExpr(st) with
+		| PErr e -> PErr { e.diags }
+		| POk te -> {
+			if atOp(te.st, ",") then { pTypeExprList(advance(te.st), cons(te.node, acc)) }
+			else if atOp(te.st, ")") then { pTypeExprList(te.st, cons(te.node, acc)) }
+			else { failHere(te.st, "Expected ',' or ')' in type expression list.") }
+		}
+	}
+}
+
+// ── expressions ────────────────────────────────────────────────────────────
+
+function pExpr(st, minPrec) {
+	match pPrefix(st) with
+	| PErr e -> PErr { e.diags }
+	| POk left -> pInfix(left.st, left.node, minPrec)
+}
+
+function pPrefix(st) {
+	let start = currentSpan(st);
+	let f = freshId(st);
+	let id = f.value;
+	let st0 = f.key;
+	if atKind(st, "TokInt") then {
+		ok(advance(st0), A.eInt(id, parseCanonicalInt(tokText(st)), start))
+	} else if atKind(st, "TokFloat") then {
+		ok(advance(st0), A.eFloat(id, tokText(st), start))
+	} else if atKind(st, "TokBool") then {
+		ok(advance(st0), A.eBool(id, tokText(st) == "true", start))
+	} else if atKind(st, "TokStr") then {
+		ok(advance(st0), A.eStr(id, tokText(st), start))
+	} else if atKind(st, "TokRawStr") then {
+		ok(advance(st0), A.eStr(id, tokText(st), start))
+	} else if atKind(st, "TokFmtStr") then {
+		// The lexer preserves the raw format-string body. Full interpolation
+		// parsing will split this into FmtLit/FmtExpr after parser↔lexer
+		// recursion is settled; for now the AST still preserves the token.
+		ok(advance(st0), A.eFmt(id, [A.fmtLit(tokText(st))], start))
+	} else if atKind(st, "TokChar") then {
+		ok(advance(st0), A.eChar(id, tokText(st), start))
+	} else if atKind(st, "TokByte") then {
+		ok(advance(st0), A.eByte(id, parseCanonicalInt(tokText(st)), start))
+	} else if atKind(st, "TokIdent") then {
+		pIdentOrRecord(st0, id, tokText(st), start)
+	} else if atOp(st, "(") then {
+		match pExpr(advance(st0), 1) with
+		| PErr e -> PErr { e.diags }
+		| POk inner -> {
+			match expectOp(inner.st, ")", "after parenthesized expression") with
+			| PErr e -> PErr { e.diags }
+			| POk close -> ok(close.st, inner.node)
+		}
+	} else if atOp(st, "[") then {
+		pListAfterOpen(advance(st0), id, A.strictListMode(), start)
+	} else if atOp(st, "{") then {
+		match pBlock(st0) with
+		| PErr e -> PErr { e.diags }
+		| POk b -> ok(b.st, A.eBlock(id, b.node.stmts, b.node.span))
+	} else if atKw(st, "lazy") then {
+		pLazyList(st0, id, start)
+	} else if atKw(st, "dict") then {
+		pDict(st0, id, start)
+	} else if atKw(st, "array") then {
+		pArray(st0, id, start)
+	} else if atKw(st, "fn") then {
+		pLambda(st0, id, start)
+	} else if atKw(st, "proc") then {
+		failHere(st, "Proc lambdas are not part of the bootstrap/V2 syntax.")
+	} else if atKw(st, "match") then {
+		pMatch(st0, id, start)
+	} else if atKw(st, "if") then {
+		pIfExpr(st0, id, start)
+	} else if atKw(st, "await") then {
+		match pExpr(advance(st0), 12) with
+		| PErr e -> PErr { e.diags }
+		| POk v -> ok(v.st, A.eAwait(id, v.node, spanFromStart(start, A.exprSpan(v.node))))
+	} else if atOp(st, "-") || atOp(st, "!") then {
+		let op = tokText(st);
+		match pExpr(advance(st0), 12) with
+		| PErr e -> PErr { e.diags }
+		| POk v -> ok(v.st, A.eUnary(id, op, v.node, spanFromStart(start, A.exprSpan(v.node))))
+	} else {
+		failHere(st, "Expected expression.")
+	}
+}
+
+function pIdentOrRecord(st0, id, name, start) {
+	let after = advance(st0);
+	if atOp(after, "{") then {
+		match pRecordFieldsExpr(advance(after), []) with
+		| PErr e -> PErr { e.diags }
+		| POk fields -> ok(fields.st, A.eRecord(id, name, fields.node, spanFromStartToPrev(start, fields.st)))
+	} else {
+		ok(after, A.eVar(id, name, start))
+	}
+}
+
+function pInfix(st, left, minPrec) {
+	if atOp(st, "(") then { pCallPostfix(st, left, minPrec) }
+	else if atOp(st, "[") then { pIndexPostfix(st, left, minPrec) }
+	else if atOp(st, ".") then { pFieldPostfix(st, left, minPrec) }
+	else if atOp(st, "?") && minPrec <= 2 then { pTernary(st, left, minPrec) }
+	else {
+		let op = tokText(st);
+		let prec = precedenceOf(st, op);
+		if prec <= 0 || prec < minPrec then { ok(st, left) }
+		else {
+			let st1 = advance(st);
+			match pExpr(st1, prec + 1) with
+			| PErr e -> PErr { e.diags }
+			| POk rhs -> {
+				let f = freshId(rhs.st);
+				let expr = A.eBinary(f.value, op, left, rhs.node, spanFromStart(A.exprSpan(left), A.exprSpan(rhs.node)));
+				pInfix(f.key, expr, minPrec)
+			}
+		}
+	}
+}
+
+function precedenceOf(st, op) {
+	if st.inMatchArms && op == "|" then { 0 }
+	else if op == "|>" then { 1 }
+	else if op == "||" then { 3 }
+	else if op == "&&" then { 4 }
+	else if op == "==" || op == "!=" then { 5 }
+	else if op == "<" || op == ">" || op == "<=" || op == ">=" then { 6 }
+	else if op == "|" then { 7 }
+	else if op == "&" then { 8 }
+	else if op == "<<" || op == ">>" then { 9 }
+	else if op == "+" || op == "-" || op == "++" then { 10 }
+	else if op == "*" || op == "/" || op == "%" then { 11 }
+	else { 0 }
+}
+
+function pCallPostfix(st, left, minPrec) {
+	let start = A.exprSpan(left);
+	match pExprList(advance(st), ")", []) with
+	| PErr e -> PErr { e.diags }
+	| POk args -> {
+		let f = freshId(args.st);
+		let expr = A.eCall(f.value, left, args.node, spanFromStartToPrev(start, args.st));
+		pInfix(f.key, expr, minPrec)
+	}
+}
+
+function pIndexPostfix(st, left, minPrec) {
+	let start = A.exprSpan(left);
+	match pExpr(advance(st), 1) with
+	| PErr e -> PErr { e.diags }
+	| POk ix -> {
+		match expectOp(ix.st, "]", "after index expression") with
+		| PErr e -> PErr { e.diags }
+		| POk close -> {
+			let f = freshId(close.st);
+			let expr = A.eIndex(f.value, left, ix.node, spanFromStartToPrev(start, close.st));
+			pInfix(f.key, expr, minPrec)
+		}
+	}
+}
+
+function pFieldPostfix(st, left, minPrec) {
+	let start = A.exprSpan(left);
+	match expectIdent(advance(st), "after '.'") with
+	| PErr e -> PErr { e.diags }
+	| POk name -> {
+		let f = freshId(name.st);
+		let expr = A.eField(f.value, left, name.node, spanFromStartToPrev(start, name.st));
+		pInfix(f.key, expr, minPrec)
+	}
+}
+
+function pTernary(st, left, minPrec) {
+	let start = A.exprSpan(left);
+	let st1 = advance(st);
+	match pExpr(st1, 1) with
+	| PErr e -> PErr { e.diags }
+	| POk thenE -> {
+		match expectOp(thenE.st, ":", "in ternary expression") with
+		| PErr e -> PErr { e.diags }
+		| POk colon -> {
+			match pExpr(colon.st, 2) with
+			| PErr e -> PErr { e.diags }
+			| POk elseE -> {
+				let f = freshId(elseE.st);
+				let expr = A.eIf(f.value, left, thenE.node, elseE.node, spanFromStart(start, A.exprSpan(elseE.node)));
+				pInfix(f.key, expr, minPrec)
+			}
+		}
+	}
+}
+
+function pExprList(st, closeOp, acc) {
+	if atOp(st, closeOp) then {
+		ok(advance(st), reverse(acc))
+	} else {
+		match pExpr(st, 1) with
+		| PErr e -> PErr { e.diags }
+		| POk item -> {
+			if atOp(item.st, ",") then { pExprList(advance(item.st), closeOp, cons(item.node, acc)) }
+			else if atOp(item.st, closeOp) then { pExprList(item.st, closeOp, cons(item.node, acc)) }
+			else { failHere(item.st, "Expected ',' or '" ++ closeOp ++ "' in expression list.") }
+		}
+	}
+}
+
+// ── expression forms ───────────────────────────────────────────────────────
+
+function pLazyList(st0, id, start) {
+	let st1 = advance(st0);
+	if atOp(st1, "[") then {
+		pListAfterOpen(advance(st1), id, A.lazyListMode(), start)
+	} else {
+		failHere(st1, "Expected '[' after lazy.")
+	}
+}
+
+function pListAfterOpen(st, id, mode, start) {
+	if atOp(st, "]") then {
+		let st2 = advance(st);
+		ok(st2, A.eList(id, [], mode, spanFromStartToPrev(start, st2)))
+	} else {
+		match pExpr(st, 1) with
+		| PErr e -> PErr { e.diags }
+		| POk first -> {
+			if atKw(first.st, "for") then {
+				match pCompGens(first.st, []) with
+				| PErr e -> PErr { e.diags }
+				| POk gens -> pCompAfterGens(gens.st, id, start, first.node, gens.node, mode)
+			} else {
+				pListElems(first.st, id, mode, start, [first.node])
+			}
+		}
+	}
+}
+
+function pCompAfterGens(st, id, start, body, gens, mode) {
+	if atKw(st, "where") then {
+		match pExpr(advance(st), 1) with
+		| PErr e -> PErr { e.diags }
+		| POk g -> pCompClose(g.st, id, start, body, gens, Some { g.node }, mode)
+	} else {
+		pCompClose(st, id, start, body, gens, None, mode)
+	}
+}
+
+function pCompClose(st, id, start, body, gens, guard, mode) {
+	match expectOp(st, "]", "after list comprehension") with
+	| PErr e -> PErr { e.diags }
+	| POk close -> ok(close.st, A.eComp(id, body, gens, guard, mode, spanFromStartToPrev(start, close.st)))
+}
+
+function pListElems(st, id, mode, start, acc) {
+	if atOp(st, "]") then {
+		let st2 = advance(st);
+		ok(st2, A.eList(id, reverse(acc), mode, spanFromStartToPrev(start, st2)))
+	} else if atOp(st, ",") then {
+		match pExpr(advance(st), 1) with
+		| PErr e -> PErr { e.diags }
+		| POk item -> pListElems(item.st, id, mode, start, cons(item.node, acc))
+	} else {
+		failHere(st, "Expected ',' or ']' in list literal.")
+	}
+}
+
+function pCompGens(st, acc) {
+	if atKw(st, "for") then {
+		let st1 = advance(st);
+		match expectIdent(st1, "after for") with
+		| PErr e -> PErr { e.diags }
+		| POk name -> {
+			match expectOp(name.st, "<-", "after comprehension binding") with
+			| PErr e -> PErr { e.diags }
+			| POk arrow -> {
+				match pExpr(arrow.st, 1) with
+				| PErr e -> PErr { e.diags }
+				| POk src -> pCompGens(src.st, cons(A.mkGenClause(name.node, src.node), acc))
+			}
+		}
+	} else {
+		ok(st, reverse(acc))
+	}
+}
+
+function pRecordFieldsExpr(st, acc) {
+	if atOp(st, "}") then {
+		ok(advance(st), reverse(acc))
+	} else {
+		if atIdent(st) && atOp(advance(st), "=") then {
+			let fname = tokText(st);
+			let valueStart = advance(advance(st));
+			match pExpr(valueStart, 1) with
+			| PErr e -> PErr { e.diags }
+			| POk v -> pRecordFieldTail(v.st, cons(A.mkField(Some { fname }, v.node), acc))
+		} else {
+			match pExpr(st, 1) with
+			| PErr e -> PErr { e.diags }
+			| POk v -> pRecordFieldTail(v.st, cons(A.mkField(None, v.node), acc))
+		}
+	}
+}
+
+function pRecordFieldTail(st, acc) {
+	if atOp(st, ",") then { pRecordFieldsExpr(advance(st), acc) }
+	else if atOp(st, "}") then { pRecordFieldsExpr(st, acc) }
+	else { failHere(st, "Expected ',' or '}' in record literal.") }
+}
+
+function pDict(st0, id, start) {
+	let st1 = advance(st0);
+	match expectOp(st1, "{", "after dict") with
+	| PErr e -> PErr { e.diags }
+	| POk open -> pDictEntries(open.st, id, start, [])
+}
+
+function pDictEntries(st, id, start, acc) {
+	if atOp(st, "}") then {
+		let st2 = advance(st);
+		ok(st2, A.eDict(id, reverse(acc), spanFromStartToPrev(start, st2)))
+	} else {
+		match pExpr(st, 1) with
+		| PErr e -> PErr { e.diags }
+		| POk key -> {
+			match expectOp(key.st, "->", "in dict entry") with
+			| PErr e -> PErr { e.diags }
+			| POk arrow -> {
+				match pExpr(arrow.st, 1) with
+				| PErr e -> PErr { e.diags }
+				| POk val -> {
+					let entry = A.mkDictEntry(key.node, val.node);
+					if atOp(val.st, ",") then { pDictEntries(advance(val.st), id, start, cons(entry, acc)) }
+					else if atOp(val.st, "}") then { pDictEntries(val.st, id, start, cons(entry, acc)) }
+					else { failHere(val.st, "Expected ',' or '}' in dict literal.") }
+				}
+			}
+		}
+	}
+}
+
+function pArray(st0, id, start) {
+	let st1 = advance(st0);
+	match expectOp(st1, "{", "after array") with
+	| PErr e -> PErr { e.diags }
+	| POk open -> {
+		match pExprList(open.st, "}", []) with
+		| PErr e -> PErr { e.diags }
+		| POk elems -> ok(elems.st, A.eArray(id, elems.node, spanFromStartToPrev(start, elems.st)))
+	}
+}
+
+function pLambda(st0, id, start) {
+	let st1 = advance(st0);
+	if atOp(st1, "(") then {
+		match pLambdaParenParams(advance(st1), []) with
+		| PErr e -> PErr { e.diags }
+		| POk ps -> {
+			match expectOp(ps.st, "=>", "after lambda parameter list") with
+			| PErr e -> PErr { e.diags }
+			| POk arrow -> pLambdaBody(arrow.st, id, start, ps.node)
+		}
+	} else {
+		match pLambdaBareParams(st1, []) with
+		| PErr e -> PErr { e.diags }
+		| POk ps -> pLambdaBody(ps.st, id, start, ps.node)
+	}
+}
+
+function pLambdaParenParams(st, acc) {
+	if atOp(st, ")") then {
+		ok(advance(st), reverse(acc))
+	} else {
+		match expectParamName(st, "in lambda parameter list") with
+		| PErr e -> PErr { e.diags }
+		| POk p -> {
+			if atOp(p.st, ",") then { pLambdaParenParams(advance(p.st), cons(p.node, acc)) }
+			else if atOp(p.st, ")") then { pLambdaParenParams(p.st, cons(p.node, acc)) }
+			else { failHere(p.st, "Expected ',' or ')' in lambda parameter list.") }
+		}
+	}
+}
+
+function pLambdaBareParams(st, acc) {
+	if atOp(st, "=>") then {
+		if length(acc) == 0 then { failHere(st, "Expected lambda parameter before '=>'.") }
+		else { ok(advance(st), reverse(acc)) }
+	} else {
+		match expectParamName(st, "in lambda parameter list") with
+		| PErr e -> PErr { e.diags }
+		| POk p -> {
+			if atOp(p.st, ",") then { pLambdaBareParams(advance(p.st), cons(p.node, acc)) }
+			else if atOp(p.st, "=>") then { pLambdaBareParams(p.st, cons(p.node, acc)) }
+			else { failHere(p.st, "Expected ',' or '=>' in lambda parameter list.") }
+		}
+	}
+}
+
+function pLambdaBody(st, id, start, params) {
+	if atOp(st, "{") then {
+		match pBlock(st) with
+		| PErr e -> PErr { e.diags }
+		| POk b -> {
+			let bf = freshId(b.st);
+			let blockExpr = A.eBlock(bf.value, b.node.stmts, b.node.span);
+			ok(bf.key, A.eLambda(id, params, blockExpr, spanFromStartToPrev(start, bf.key)))
+		}
+	} else {
+		match pExpr(st, 1) with
+		| PErr e -> PErr { e.diags }
+		| POk body -> ok(body.st, A.eLambda(id, params, body.node, spanFromStart(start, A.exprSpan(body.node))))
+	}
+}
+
+function pIfExpr(st0, id, start) {
+	let st1 = advance(st0);
+	match pExpr(st1, 1) with
+	| PErr e -> PErr { e.diags }
+	| POk cond -> {
+		match expectKw(cond.st, "then", "after if condition") with
+		| PErr e -> PErr { e.diags }
+		| POk thenKw -> {
+			match pBlock(thenKw.st) with
+			| PErr e -> PErr { e.diags }
+			| POk tb -> {
+				match expectKw(tb.st, "else", "after expression if then block") with
+				| PErr e -> PErr { e.diags }
+				| POk elseKw -> {
+					match pBlock(elseKw.st) with
+					| PErr e -> PErr { e.diags }
+					| POk eb -> {
+						let tf = freshId(eb.st);
+						let thenExpr = A.eBlock(tf.value, tb.node.stmts, tb.node.span);
+						let ef = freshId(tf.key);
+						let elseExpr = A.eBlock(ef.value, eb.node.stmts, eb.node.span);
+						ok(ef.key, A.eIf(id, cond.node, thenExpr, elseExpr, spanFromStartToPrev(start, ef.key)))
+					}
+				}
+			}
+		}
+	}
+}
+
+function pMatch(st0, id, start) {
+	let st1 = advance(st0);
+	match pExpr(st1, 1) with
+	| PErr e -> PErr { e.diags }
+	| POk subj -> {
+		match expectKw(subj.st, "with", "after match subject") with
+		| PErr e -> PErr { e.diags }
+		| POk withKw -> {
+			let armSt = withInMatchArms(withKw.st, true);
+			match pMatchArms(armSt, []) with
+			| PErr e -> PErr { e.diags }
+			| POk arms -> {
+				let outSt = withInMatchArms(arms.st, st0.inMatchArms);
+				ok(outSt, A.eMatch(id, subj.node, arms.node, spanFromStartToPrev(start, outSt)))
+			}
+		}
+	}
+}
+
+function pMatchArms(st, acc) {
+	if atOp(st, "|") then {
+		match pMatchArm(st) with
+		| PErr e -> PErr { e.diags }
+		| POk arm -> pMatchArms(arm.st, cons(arm.node, acc))
+	} else {
+		if length(acc) == 0 then { failHere(st, "Expected at least one match arm.") }
+		else { ok(st, reverse(acc)) }
+	}
+}
+
+function pMatchArm(st) {
+	let st1 = advance(st);
+	match pPattern(st1) with
+	| PErr e -> PErr { e.diags }
+	| POk pat -> pMatchArmAfterPattern(pat.st, pat.node)
+}
+
+function pMatchArmAfterPattern(st, pattern) {
+	if atKw(st, "where") then {
+		match pExpr(advance(st), 1) with
+		| PErr e -> PErr { e.diags }
+		| POk g -> pMatchArmAfterGuard(g.st, pattern, Some { g.node })
+	} else {
+		pMatchArmAfterGuard(st, pattern, None)
+	}
+}
+
+function pMatchArmAfterGuard(st, pattern, guard) {
+	match expectOp(st, "->", "after match pattern") with
+	| PErr e -> PErr { e.diags }
+	| POk arrow -> {
+		match pExpr(arrow.st, 1) with
+		| PErr e -> PErr { e.diags }
+		| POk body -> ok(body.st, A.mkMatchArm(pattern, guard, body.node))
+	}
+}
+
+function pPattern(st) {
+	if atIdentText(st, "_") then {
+		ok(advance(st), A.pWild())
+	} else if atOp(st, "[") then {
+		pListPattern(advance(st), [])
+	} else if atKind(st, "TokIdent") then {
+		let name = tokText(st);
+		let st1 = advance(st);
+		if atKind(st1, "TokIdent") then {
+			let b = tokText(st1);
+			if b == "_" then { ok(advance(st1), A.pVariant(name, None)) }
+			else { ok(advance(st1), A.pVariant(name, Some { b })) }
+		} else {
+			ok(st1, A.pVariant(name, None))
+		}
+	} else {
+		failHere(st, "Expected match pattern.")
+	}
+}
+
+function pPatElem(st) {
+	if atIdentText(st, "_") then { ok(advance(st), A.peWild()) }
+	else if atKind(st, "TokIdent") then { ok(advance(st), A.peBind(tokText(st))) }
+	else { failHere(st, "Expected list-pattern binder or '_'.") }
+}
+
+function pListPattern(st, acc) {
+	if atOp(st, "]") then {
+		ok(advance(st), A.pList(reverse(acc), None))
+	} else if atEllipsis(st) then {
+		failHere(st, "A list rest pattern must follow at least one explicit element.")
+	} else {
+		match pPatElem(st) with
+		| PErr e -> PErr { e.diags }
+		| POk elem -> pListPatternTail(elem.st, cons(elem.node, acc))
+	}
+}
+
+function pListPatternTail(st, acc) {
+	if atOp(st, "]") then {
+		ok(advance(st), A.pList(reverse(acc), None))
+	} else if atOp(st, ",") then {
+		let st1 = advance(st);
+		if atEllipsis(st1) then {
+			match pPatElem(consumeEllipsis(st1)) with
+			| PErr e -> PErr { e.diags }
+			| POk rest -> {
+				match expectOp(rest.st, "]", "after list rest pattern") with
+				| PErr e -> PErr { e.diags }
+				| POk close -> ok(close.st, A.pList(reverse(acc), Some { rest.node }))
+			}
+		} else {
+			match pPatElem(st1) with
+			| PErr e -> PErr { e.diags }
+			| POk elem -> pListPatternTail(elem.st, cons(elem.node, acc))
+		}
+	} else {
+		failHere(st, "Expected ',' or ']' in list pattern.")
+	}
+}

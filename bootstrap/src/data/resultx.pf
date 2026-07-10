@@ -1,0 +1,87 @@
+// data/resultx.pf — bootstrap-owned Result helpers.
+//
+// This module deliberately uses BOk/BErr instead of Ok/Err. V1 modules often
+// import Result-like variants from effect libraries, and sharing Ok/Err too
+// early makes bootstrap type debugging miserable.
+
+export type BResult = {
+	| BOk: generic value
+	| BErr: message
+}
+
+export function ok(value) {
+	BOk { value }
+}
+
+export function err(message) {
+	BErr { message }
+}
+
+export function isOk(r) {
+	match r with
+	| BOk _ -> true
+	| BErr _ -> false
+}
+
+export function isErr(r) {
+	match r with
+	| BOk _ -> false
+	| BErr _ -> true
+}
+
+export function mapResult(f, r) {
+	match r with
+	| BOk x -> BOk { f(x.value) }
+	| BErr e -> BErr { e.message }
+}
+
+export function mapErr(f, r) {
+	match r with
+	| BOk x -> BOk { x.value }
+	| BErr e -> BErr { f(e.message) }
+}
+
+export function andThenResult(r, f) {
+	match r with
+	| BOk x -> f(x.value)
+	| BErr e -> BErr { e.message }
+}
+
+export function withDefault(defaultValue, r) {
+	match r with
+	| BOk x -> x.value
+	| BErr _ -> defaultValue
+}
+
+export function toOption(r) {
+	match r with
+	| BOk x -> Some { x.value }
+	| BErr _ -> None
+}
+
+export function fromOption(message, opt) {
+	match opt with
+	| Some x -> BOk { x.value }
+	| None -> BErr { message }
+}
+
+export function combine(left, right) {
+	match left with
+	| BErr e -> BErr { e.message }
+	| BOk _ -> right
+}
+
+export function collect(results) {
+	let st = reduce(fn acc, r => {
+		match acc with
+		| BErr _ -> acc
+		| BOk xs -> {
+			match r with
+			| BErr e -> BErr { e.message }
+			| BOk x -> BOk { cons(x.value, xs.value) }
+		}
+	}, BOk { [] }, results);
+	match st with
+	| BErr e -> BErr { e.message }
+	| BOk xs -> BOk { reverse(xs.value) }
+}

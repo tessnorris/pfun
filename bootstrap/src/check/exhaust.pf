@@ -1,0 +1,564 @@
+// check/exhaust.pf — Phase 9 match exhaustiveness checker for bootstrap.
+//
+// This pass is intentionally conservative and data-oriented. It consumes the
+// syntax AST plus the node-type table produced by check/types.pf. If a match
+// subject has a known union type, every variant must have unguarded coverage. If
+// a subject has a list type, list patterns must cover every possible length. For
+// every other known type, an unguarded catch-all arm is required. Guarded arms do
+// not count toward coverage.
+
+import * as A from "../syntax/ast";
+import * as D from "./diag";
+import * as I from "./iface";
+import * as TY from "./types";
+import * as IMS from "../data/imaps";
+import * as IMI from "../data/imapi";
+import * as Compat from "../compat";
+
+// ── public result/model ───────────────────────────────────────────────────
+
+export type ExhaustResult = { diags }
+
+export type SubjectKind = {
+	| SubjectUnion: tname, variants
+	| SubjectList
+	| SubjectOther
+	| SubjectUnknown
+}
+
+// Internal state. `unions` maps union type name -> List<VariantDecl>.
+type ExSt = { path, unions, diags }
+
+type UnionCov = { seen, wildcard }
+
+type ListCov = { exact, restStart, wildcard }
+
+// ── constructors/helpers exported for tests ───────────────────────────────
+
+export function mkExhaustResult(diags) {
+	ExhaustResult { diags }
+}
+
+export function subjectUnion(tname, variants) {
+	SubjectUnion { tname, variants }
+}
+
+export function subjectList() { SubjectList }
+export function subjectOther() { SubjectOther }
+export function subjectUnknown() { SubjectUnknown }
+
+function mkState(path, unions, diags) {
+	ExSt { path, unions, diags }
+}
+
+function withUnions(st, unions) {
+	ExSt { st.path, unions, st.diags }
+}
+
+function withDiags(st, diags) {
+	ExSt { st.path, st.unions, diags }
+}
+
+function addDiag(st, span, message) {
+	withDiags(st, cons(D.err(ExhaustD, message, st.path, span), st.diags))
+}
+
+function unionCov(seen, wildcard) {
+	UnionCov { seen, wildcard }
+}
+
+function listCov(exact, restStart, wildcard) {
+	ListCov { exact, restStart, wildcard }
+}
+
+// ── tiny bootstrap-safe list/set helpers ──────────────────────────────────
+
+function appendList(a, b) {
+	reduce(fn acc, x => cons(x, acc), b, reverse(a))
+}
+
+function strContains(xs, s) {
+	match Compat.uncons(xs) with
+	| None -> false
+	| Some cell -> {
+		let p = cell.value;
+		if p.key == s then { true } else { strContains(p.value, s) }
+	}
+}
+
+function strAdd(xs, s) {
+	if strContains(xs, s) then { xs } else { cons(s, xs) }
+}
+
+function intContains(xs, n) {
+	match Compat.uncons(xs) with
+	| None -> false
+	| Some cell -> {
+		let p = cell.value;
+		if p.key == n then { true } else { intContains(p.value, n) }
+	}
+}
+
+function intAdd(xs, n) {
+	if intContains(xs, n) then { xs } else { cons(n, xs) }
+}
+
+function maybeMin(a, b) {
+	match a with
+	| None -> b
+	| Some av -> {
+		match b with
+		| None -> a
+		| Some bv -> {
+			if av.value <= bv.value then { a } else { b }
+		}
+	}
+}
+
+function variantNameList(variants) {
+	map(fn v => v.vname, variants)
+}
+
+function variantNameExists(variants, name) {
+	strContains(variantNameList(variants), name)
+}
+
+function missingVariantNames(variants, seen) {
+	missingVariantNamesLoop(variants, seen, [])
+}
+
+function missingVariantNamesLoop(variants, seen, acc) {
+	match Compat.uncons(variants) with
+	| None -> reverse(acc)
+	| Some cell -> {
+		let v = cell.value.key;
+		let rest = cell.value.value;
+		if strContains(seen, v.vname) then { missingVariantNamesLoop(rest, seen, acc) }
+		else { missingVariantNamesLoop(rest, seen, cons(v.vname, acc)) }
+	}
+}
+
+function quotedNames(names) {
+	join(map(fn n => "'" ++ n ++ "'", names), ", ")
+}
+
+// ── union collection from local AST and dependency interfaces ──────────────
+
+function addUnion(st, name, variants) {
+	withUnions(st, IMS.imsPut(st.unions, name, variants))
+}
+
+function addIfaceUnionEntries(st, entries) {
+	match Compat.uncons(entries) with
+	| None -> st
+	| Some cell -> {
+		let p = cell.value.key;
+		let st1 = addUnion(st, p.key, p.value);
+		addIfaceUnionEntries(st1, cell.value.value)
+	}
+}
+
+function addDepIface(st, iface) {
+	addIfaceUnionEntries(st, IMS.imsEntries(iface.unions))
+}
+
+function addDepIfaces(st, entries) {
+	match Compat.uncons(entries) with
+	| None -> st
+	| Some cell -> {
+		let p = cell.value.key;
+		addDepIfaces(addDepIface(st, p.value), cell.value.value)
+	}
+}
+
+function addTypeDeclUnions(st, decl) {
+	match decl with
+	| RecordDecl _ -> st
+	| UnionDecl u -> addUnion(st, u.tname, u.variants)
+}
+
+function addLocalUnionsFromStmt(st, stmt) {
+	match stmt with
+	| SType s -> addTypeDeclUnions(st, s.decl)
+	| SExport e -> addLocalUnionsFromStmt(st, e.inner)
+	| _ -> st
+}
+
+function addLocalUnions(st, stmts) {
+	match Compat.uncons(stmts) with
+	| None -> st
+	| Some cell -> addLocalUnions(addLocalUnionsFromStmt(st, cell.value.key), cell.value.value)
+}
+
+function initialState(ast, deps) {
+	let st0 = mkState(ast.path, IMS.imsEmpty(), []);
+	let st1 = addDepIfaces(st0, IMS.imsEntries(deps));
+	addLocalUnions(st1, ast.stmts)
+}
+
+// ── subject type classification ───────────────────────────────────────────
+
+function lookupNodeType(infer, id) {
+	IMI.imiGet(infer.types, id)
+}
+
+function lookupExprType(infer, expr) {
+	lookupNodeType(infer, A.exprId(expr))
+}
+
+function subjectKindFromType(st, typ) {
+	match typ with
+	| TNamed n -> {
+		match IMS.imsGet(st.unions, n.tname) with
+		| Some variants -> SubjectUnion { n.tname, variants.value }
+		| None -> SubjectOther
+	}
+	| TList _ -> SubjectList
+	| TUnknown -> SubjectUnknown
+	| TAny -> SubjectUnknown
+	| TVar _ -> SubjectUnknown
+	| _ -> SubjectOther
+}
+
+function subjectKindOf(st, infer, expr) {
+	match lookupExprType(infer, expr) with
+	| None -> SubjectUnknown
+	| Some t -> subjectKindFromType(st, t.value)
+}
+
+// ── match coverage: union subjects ────────────────────────────────────────
+
+function isGuarded(arm) {
+	match arm.guard with
+	| Some _ -> true
+	| None -> false
+}
+
+function unionArmCoverage(st, variants, cov, arm) {
+	if isGuarded(arm) then {
+		Pair { st, cov }
+	} else {
+		match arm.pattern with
+		| PWild -> Pair { st, unionCov(cov.seen, true) }
+		| PVariant p -> {
+			if variantNameExists(variants, p.vname) then {
+				Pair { st, unionCov(strAdd(cov.seen, p.vname), cov.wildcard) }
+			} else {
+				let st1 = addDiag(st, A.exprSpan(arm.body), "Pattern '" ++ p.vname ++ "' is not a variant of this union.");
+				Pair { st1, cov }
+			}
+		}
+		| PList _ -> {
+			let st1 = addDiag(st, A.exprSpan(arm.body), "List pattern cannot cover a union value.");
+			Pair { st1, cov }
+		}
+	}
+}
+
+function unionCoverageLoop(st, variants, arms, cov) {
+	match Compat.uncons(arms) with
+	| None -> Pair { st, cov }
+	| Some cell -> {
+		let out = unionArmCoverage(st, variants, cov, cell.value.key);
+		unionCoverageLoop(out.key, variants, cell.value.value, out.value)
+	}
+}
+
+function checkUnionCoverage(st, matchExpr, tname, variants, arms) {
+	let out = unionCoverageLoop(st, variants, arms, unionCov([], false));
+	let st1 = out.key;
+	let cov = out.value;
+	if cov.wildcard then { st1 }
+	else {
+		let missing = missingVariantNames(variants, cov.seen);
+		if length(missing) == 0 then { st1 }
+		else {
+			addDiag(st1, matchExpr.span, "Non-exhaustive match on '" ++ tname ++ "': missing unguarded arm(s) for " ++ quotedNames(missing) ++ ".")
+		}
+	}
+}
+
+// ── match coverage: list subjects ─────────────────────────────────────────
+
+function patternListMinLength(pattern) {
+	match pattern with
+	| PList p -> length(p.elems)
+	| _ -> 0
+}
+
+function listArmCoverage(st, cov, arm) {
+	if isGuarded(arm) then {
+		Pair { st, cov }
+	} else {
+		match arm.pattern with
+		| PWild -> Pair { st, listCov(cov.exact, cov.restStart, true) }
+		| PList p -> {
+			let n = length(p.elems);
+			match p.rest with
+			| Some _ -> Pair { st, listCov(cov.exact, maybeMin(cov.restStart, Some { n }), cov.wildcard) }
+			| None -> Pair { st, listCov(intAdd(cov.exact, n), cov.restStart, cov.wildcard) }
+		}
+		| PVariant p -> {
+			let st1 = addDiag(st, A.exprSpan(arm.body), "Variant pattern '" ++ p.vname ++ "' cannot cover a list value.");
+			Pair { st1, cov }
+		}
+	}
+}
+
+function listCoverageLoop(st, arms, cov) {
+	match Compat.uncons(arms) with
+	| None -> Pair { st, cov }
+	| Some cell -> {
+		let out = listArmCoverage(st, cov, cell.value.key);
+		listCoverageLoop(out.key, cell.value.value, out.value)
+	}
+}
+
+function coveredByRest(restStart, n) {
+	match restStart with
+	| None -> false
+	| Some r -> n >= r.value
+}
+
+function smallestMissingLengthFrom(n, exact, restStart) {
+	if coveredByRest(restStart, n) then { None }
+	else if intContains(exact, n) then { smallestMissingLengthFrom(n + 1, exact, restStart) }
+	else { Some { n } }
+}
+
+function checkListCoverage(st, matchExpr, arms) {
+	let out = listCoverageLoop(st, arms, listCov([], None, false));
+	let st1 = out.key;
+	let cov = out.value;
+	if cov.wildcard then { st1 }
+	else {
+		match smallestMissingLengthFrom(0, cov.exact, cov.restStart) with
+		| None -> st1
+		| Some n -> addDiag(st1, matchExpr.span, "Non-exhaustive match on list: missing unguarded coverage for length " ++ __str__(n.value) ++ ".")
+	}
+}
+
+// ── match coverage: non-union/non-list subjects ───────────────────────────
+
+function patternIsFallback(pattern) {
+	match pattern with
+	| PWild -> true
+	// The parser represents the old scalar/bare-binding arm shape as PVariant
+	// with no payload binder. For a non-union subject this is an unconditional
+	// binding pattern, so it covers the subject.
+	| PVariant p -> {
+		match p.bind with
+		| None -> true
+		| Some _ -> false
+	}
+	| PList _ -> false
+}
+
+function hasUnguardedFallback(arms) {
+	match Compat.uncons(arms) with
+	| None -> false
+	| Some cell -> {
+		let arm = cell.value.key;
+		if isGuarded(arm) then { hasUnguardedFallback(cell.value.value) }
+		else if patternIsFallback(arm.pattern) then { true }
+		else { hasUnguardedFallback(cell.value.value) }
+	}
+}
+
+function checkOtherCoverage(st, matchExpr, arms) {
+	if hasUnguardedFallback(arms) then { st }
+	else {
+		addDiag(st, matchExpr.span, "Non-exhaustive match: add an unguarded wildcard or binding arm.")
+	}
+}
+
+function checkUnknownCoverage(st, matchExpr, arms) {
+	// Unknown subjects happen when this pass runs before, or despite failure in,
+	// type inference. Keep the rule conservative but useful: a final unguarded
+	// fallback is enough; otherwise ask for one rather than guessing a union.
+	checkOtherCoverage(st, matchExpr, arms)
+}
+
+function checkMatchCoverage(st, infer, matchExpr) {
+	match subjectKindOf(st, infer, matchExpr.subject) with
+	| SubjectUnion s -> checkUnionCoverage(st, matchExpr, s.tname, s.variants, matchExpr.arms)
+	| SubjectList -> checkListCoverage(st, matchExpr, matchExpr.arms)
+	| SubjectOther -> checkOtherCoverage(st, matchExpr, matchExpr.arms)
+	| SubjectUnknown -> checkUnknownCoverage(st, matchExpr, matchExpr.arms)
+}
+
+// ── AST traversal ─────────────────────────────────────────────────────────
+
+function checkExprList(st, infer, exprs) {
+	match Compat.uncons(exprs) with
+	| None -> st
+	| Some cell -> checkExprList(checkExpr(st, infer, cell.value.key), infer, cell.value.value)
+}
+
+function checkFields(st, infer, fields) {
+	match Compat.uncons(fields) with
+	| None -> st
+	| Some cell -> {
+		let f = cell.value.key;
+		checkFields(checkExpr(st, infer, f.value), infer, cell.value.value)
+	}
+}
+
+function checkDictEntries(st, infer, entries) {
+	match Compat.uncons(entries) with
+	| None -> st
+	| Some cell -> {
+		let e = cell.value.key;
+		let st1 = checkExpr(st, infer, e.key);
+		let st2 = checkExpr(st1, infer, e.value);
+		checkDictEntries(st2, infer, cell.value.value)
+	}
+}
+
+function checkFmtParts(st, infer, parts) {
+	match Compat.uncons(parts) with
+	| None -> st
+	| Some cell -> {
+		let p = cell.value.key;
+		match p with
+		| FmtLit _ -> checkFmtParts(st, infer, cell.value.value)
+		| FmtExpr f -> checkFmtParts(checkExpr(st, infer, f.e), infer, cell.value.value)
+	}
+}
+
+function checkGenClauses(st, infer, gens) {
+	match Compat.uncons(gens) with
+	| None -> st
+	| Some cell -> {
+		let g = cell.value.key;
+		checkGenClauses(checkExpr(st, infer, g.source), infer, cell.value.value)
+	}
+}
+
+function checkArm(st, infer, arm) {
+	let st1 = match arm.guard with
+		| Some g -> checkExpr(st, infer, g.value)
+		| None -> st;
+	checkExpr(st1, infer, arm.body)
+}
+
+function checkArms(st, infer, arms) {
+	match Compat.uncons(arms) with
+	| None -> st
+	| Some cell -> checkArms(checkArm(st, infer, cell.value.key), infer, cell.value.value)
+}
+
+function checkExpr(st, infer, expr) {
+	match expr with
+	| EInt _ -> st
+	| EFloat _ -> st
+	| EBool _ -> st
+	| EStr _ -> st
+	| EChar _ -> st
+	| EByte _ -> st
+	| EVar _ -> st
+	| EUnary e -> checkExpr(st, infer, e.operand)
+	| EBinary e -> {
+		let st1 = checkExpr(st, infer, e.lhs);
+		checkExpr(st1, infer, e.rhs)
+	}
+	| EIf e -> {
+		let st1 = checkExpr(st, infer, e.cond);
+		let st2 = checkExpr(st1, infer, e.thenE);
+		checkExpr(st2, infer, e.elseE)
+	}
+	| ECall e -> {
+		let st1 = checkExpr(st, infer, e.callee);
+		checkExprList(st1, infer, e.args)
+	}
+	| ELambda e -> checkExpr(st, infer, e.body)
+	| EBlock e -> checkStmtList(st, infer, e.stmts)
+	| EList e -> checkExprList(st, infer, e.elems)
+	| EComp e -> {
+		let st1 = checkGenClauses(st, infer, e.gens);
+		let st2 = checkExpr(st1, infer, e.body);
+		match e.guard with
+		| Some g -> checkExpr(st2, infer, g.value)
+		| None -> st2
+	}
+	| ERecord e -> checkFields(st, infer, e.fields)
+	| EField e -> checkExpr(st, infer, e.object)
+	| EIndex e -> {
+		let st1 = checkExpr(st, infer, e.object);
+		checkExpr(st1, infer, e.index)
+	}
+	| EMatch e -> {
+		let st1 = checkExpr(st, infer, e.subject);
+		let st2 = checkArms(st1, infer, e.arms);
+		checkMatchCoverage(st2, infer, e)
+	}
+	| EDict e -> checkDictEntries(st, infer, e.entries)
+	| EArray e -> checkExprList(st, infer, e.elems)
+	| EAwait e -> checkExpr(st, infer, e.value)
+	| EFmt e -> checkFmtParts(st, infer, e.parts)
+}
+
+function checkMaybeExpr(st, infer, value) {
+	match value with
+	| None -> st
+	| Some v -> checkExpr(st, infer, v.value)
+}
+
+function checkStmt(st, infer, stmt) {
+	match stmt with
+	| SLet s -> checkExpr(st, infer, s.init)
+	| SVar s -> checkExpr(st, infer, s.init)
+	| SAssign s -> checkExpr(st, infer, s.value)
+	| SIndexAssign s -> {
+		let st1 = checkExpr(st, infer, s.object);
+		let st2 = checkExpr(st1, infer, s.index);
+		checkExpr(st2, infer, s.value)
+	}
+	| SFun s -> checkExpr(st, infer, s.body)
+	| SType _ -> st
+	| SExpr s -> checkExpr(st, infer, s.expr)
+	| SReturn s -> checkMaybeExpr(st, infer, s.value)
+	| SIf s -> {
+		let st1 = checkExpr(st, infer, s.cond);
+		let st2 = checkStmtList(st1, infer, s.thenS);
+		checkMaybeStmtList(st2, infer, s.elseS)
+	}
+	| SWhile s -> {
+		let st1 = checkExpr(st, infer, s.cond);
+		checkStmtList(st1, infer, s.body)
+	}
+	| SImport _ -> st
+	| SExport s -> checkStmt(st, infer, s.inner)
+	| SExtern _ -> st
+}
+
+function checkStmtList(st, infer, stmts) {
+	match Compat.uncons(stmts) with
+	| None -> st
+	| Some cell -> checkStmtList(checkStmt(st, infer, cell.value.key), infer, cell.value.value)
+}
+
+function checkMaybeStmtList(st, infer, stmts) {
+	match stmts with
+	| None -> st
+	| Some body -> checkStmtList(st, infer, body.value)
+}
+
+// ── public entry points ───────────────────────────────────────────────────
+
+export function checkModule(ast, infer, deps) {
+	let st0 = initialState(ast, deps);
+	let st1 = checkStmtList(st0, infer, ast.stmts);
+	mkExhaustResult(reverse(st1.diags))
+}
+
+export function checkExhaustiveness(ast, infer, deps) {
+	checkModule(ast, infer, deps)
+}
+
+// Useful for early parser/AST tests before type inference exists. It returns no
+// diagnostics because real exhaustiveness needs subject types.
+export function checkSyntaxOnly(ast, deps) {
+	let st0 = initialState(ast, deps);
+	mkExhaustResult(reverse(st0.diags))
+}

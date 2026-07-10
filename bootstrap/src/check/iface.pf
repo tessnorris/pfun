@@ -1,0 +1,230 @@
+// check/iface.pf — Phase 6 module interface data for the bootstrap compiler.
+//
+// The full V2 checker will build concrete type schemes in check/types.pf. That
+// file does not exist yet, so this module keeps `Scheme.body` and
+// `Scheme.constraints` generic. Later passes can store the real Type/Constraint
+// values without changing ModIface's map shape.
+
+import * as A from "../syntax/ast";
+import * as IMS from "../data/imaps";
+import * as Compat from "../compat";
+
+// ── exported interface model ───────────────────────────────────────────────
+
+export type ExportKind = {
+	| KFun
+	| KProc
+	| KValue
+	| KMutable
+	| KType
+	| KOpaqueType
+}
+
+export type Scheme = { vars, generic constraints, generic body }
+
+// Temporary type atom used by `ifaceOfAst` before type inference exists. The
+// real checker can store its own Type values in Scheme.body because the field is
+// generic.
+export type IfaceType = {
+	| ITUnknown
+	| ITName: name
+}
+
+export type ModIface = { path, kinds, types, unions }
+
+// Small input shapes for the two public extractors in the architecture. The
+// eventual checker/builtin manifest may provide richer records with the same
+// fields; these helpers only require the fields they read.
+export type CheckedModule = { path, kinds, types, unions }
+
+export type BuiltinExport = { name, kind, scheme }
+export type BuiltinUnion = { name, variants }
+export type BuiltinModule = { path, exports, unions }
+
+// ── constructors ───────────────────────────────────────────────────────────
+
+export function kFun() { KFun }
+export function kProc() { KProc }
+export function kValue() { KValue }
+export function kMutable() { KMutable }
+export function kType() { KType }
+export function kOpaqueType() { KOpaqueType }
+
+export function mkScheme(vars, constraints, body) {
+	Scheme { vars, constraints, body }
+}
+
+export function unknownType() { ITUnknown }
+
+export function nameType(name) { ITName { name } }
+
+export function mkIface(path, kinds, types, unions) {
+	ModIface { path, kinds, types, unions }
+}
+
+export function mkCheckedModule(path, kinds, types, unions) {
+	CheckedModule { path, kinds, types, unions }
+}
+
+export function mkBuiltinExport(name, kind, scheme) {
+	BuiltinExport { name, kind, scheme }
+}
+
+export function mkBuiltinUnion(name, variants) {
+	BuiltinUnion { name, variants }
+}
+
+export function mkBuiltinModule(path, exports, unions) {
+	BuiltinModule { path, exports, unions }
+}
+
+// ── basic lookup/update API ────────────────────────────────────────────────
+
+export function emptyIface(path) {
+	mkIface(path, IMS.imsEmpty(), IMS.imsEmpty(), IMS.imsEmpty())
+}
+
+export function lookupKind(iface, name) {
+	IMS.imsGet(iface.kinds, name)
+}
+
+export function lookupType(iface, name) {
+	IMS.imsGet(iface.types, name)
+}
+
+export function lookupUnion(iface, name) {
+	IMS.imsGet(iface.unions, name)
+}
+
+export function putKind(iface, name, kind) {
+	mkIface(iface.path, IMS.imsPut(iface.kinds, name, kind), iface.types, iface.unions)
+}
+
+export function putType(iface, name, scheme) {
+	mkIface(iface.path, iface.kinds, IMS.imsPut(iface.types, name, scheme), iface.unions)
+}
+
+export function putUnion(iface, name, variants) {
+	mkIface(iface.path, iface.kinds, iface.types, IMS.imsPut(iface.unions, name, variants))
+}
+
+export function hasExport(iface, name) {
+	IMS.imsHas(iface.kinds, name)
+}
+
+export function exportedNames(iface) {
+	IMS.imsKeys(iface.kinds)
+}
+
+export function kindToStr(kind) {
+	match kind with
+	| KFun -> "function"
+	| KProc -> "proc"
+	| KValue -> "value"
+	| KMutable -> "mutable"
+	| KType -> "type"
+	| KOpaqueType -> "opaque type"
+}
+
+// ── AST skeleton interface ─────────────────────────────────────────────────
+
+function unknownScheme() {
+	mkScheme([], [], unknownType())
+}
+
+function typeNameOfDecl(decl) {
+	match decl with
+	| RecordDecl r -> r.tname
+	| UnionDecl u -> u.tname
+}
+
+function variantsOfDecl(decl) {
+	match decl with
+	| RecordDecl _ -> []
+	| UnionDecl u -> u.variants
+}
+
+function typeKind(isOpaque) {
+	if isOpaque then { KOpaqueType } else { KType }
+}
+
+function fnExportKind(kind) {
+	match kind with
+	| PureFn _ -> KFun
+	| ProcFn _ -> KProc
+}
+
+function addTypeExport(iface, stmt) {
+	match stmt with
+	| SType s -> {
+		let name = typeNameOfDecl(s.decl);
+		let kind = typeKind(s.isOpaque);
+		let iface1 = putKind(iface, name, kind);
+		let iface2 = putType(iface1, name, mkScheme([], [], nameType(name)));
+		let variants = variantsOfDecl(s.decl);
+		if length(variants) == 0 then { iface2 }
+		else { putUnion(iface2, name, variants) }
+	}
+	| _ -> iface
+}
+
+function addValueExport(iface, stmt) {
+	match stmt with
+	| SLet s -> putType(putKind(iface, s.name, KValue), s.name, unknownScheme())
+	| SVar s -> putType(putKind(iface, s.name, KMutable), s.name, unknownScheme())
+	| SFun s -> putType(putKind(iface, s.name, fnExportKind(s.kind)), s.name, unknownScheme())
+	| SType _ -> addTypeExport(iface, stmt)
+	| SExtern _ -> iface
+	| _ -> iface
+}
+
+function addExportedStmt(iface, stmt) {
+	match stmt with
+	| SExport e -> addValueExport(iface, e.inner)
+	| _ -> iface
+}
+
+function ifaceAstLoop(stmts, iface) {
+	match Compat.uncons(stmts) with
+	| None -> iface
+	| Some cell -> ifaceAstLoop(cell.value.value, addExportedStmt(iface, cell.value.key))
+}
+
+// A convenience for early bootstrap tests before type inference exists. This is
+// not the final checker interface; it records exported names, declared exported
+// type names, and exported union variant declarations with unknown schemes.
+export function ifaceOfAst(ast) {
+	ifaceAstLoop(ast.stmts, emptyIface(ast.path))
+}
+
+// ── extractors required by the architecture ────────────────────────────────
+
+export function ifaceOfChecked(cm) {
+	mkIface(cm.path, cm.kinds, cm.types, cm.unions)
+}
+
+function builtinExportsLoop(exports, iface) {
+	match Compat.uncons(exports) with
+	| None -> iface
+	| Some cell -> {
+		let ex = cell.value.key;
+		let iface1 = putKind(iface, ex.name, ex.kind);
+		let iface2 = putType(iface1, ex.name, ex.scheme);
+		builtinExportsLoop(cell.value.value, iface2)
+	}
+}
+
+function builtinUnionsLoop(unions, iface) {
+	match Compat.uncons(unions) with
+	| None -> iface
+	| Some cell -> {
+		let u = cell.value.key;
+		builtinUnionsLoop(cell.value.value, putUnion(iface, u.name, u.variants))
+	}
+}
+
+export function ifaceOfBuiltin(bm) {
+	let iface0 = emptyIface(bm.path);
+	let iface1 = builtinExportsLoop(bm.exports, iface0);
+	builtinUnionsLoop(bm.unions, iface1)
+}

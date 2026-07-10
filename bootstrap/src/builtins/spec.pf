@@ -1,0 +1,394 @@
+// builtins/spec.pf — minimal builtin manifest for the bootstrap compiler.
+//
+// This is intentionally a small semantic floor, not the eventual complete
+// standard library. The manifest answers the questions the checker/emitter need
+// early: what names exist, whether they are pure functions or procs, what their
+// type schemes are, which platform they belong to, and which host intrinsic they
+// lower to. Ordinary library behavior should move into bootstrap-safe Pfun
+// modules as soon as the compiler can compile it.
+
+import * as A from "../syntax/ast";
+import * as I from "../check/iface";
+import * as TY from "../check/types";
+import * as IMS from "../data/imaps";
+import * as Compat from "../compat";
+
+// ── manifest model ────────────────────────────────────────────────────────
+
+export type BuiltinPlatform = {
+	| PlatformAll
+	| PlatformNode
+	| PlatformBrowser
+}
+
+export type BuiltinEntry = {
+	name,
+	kind,
+	scheme,
+	platform,
+	intrinsic
+}
+
+export type BuiltinUnion = {
+	name,
+	variants
+}
+
+export type BuiltinModuleSpec = {
+	path,
+	exports,
+	unions
+}
+
+export function platformAll() { PlatformAll }
+export function platformNode() { PlatformNode }
+export function platformBrowser() { PlatformBrowser }
+
+export function builtinEntry(name, kind, scheme, platform, intrinsic) {
+	BuiltinEntry { name, kind, scheme, platform, intrinsic }
+}
+
+export function builtinUnion(name, variants) {
+	BuiltinUnion { name, variants }
+}
+
+export function builtinModule(path, exports, unions) {
+	BuiltinModuleSpec { path, exports, unions }
+}
+
+// ── type helpers ──────────────────────────────────────────────────────────
+
+function tv(n) { TY.tVar(n) }
+function listOf(t) { TY.tList(t) }
+function arrayOf(t) { TY.tArray(t) }
+function dictOf(k, v) { TY.tDict(k, v) }
+function optionOf(t) { TY.tNamed("Option", [t]) }
+function resultOf(v, e) { TY.tNamed("Result", [v, e]) }
+function pairOf(k, v) { TY.tNamed("Pair", [k, v]) }
+function ioResult(t) { resultOf(t, TY.tStr()) }
+
+function sch(vars, body) {
+	TY.mkScheme(vars, [], body)
+}
+
+function pure(name, scheme, intrinsic) {
+	builtinEntry(name, I.kFun(), scheme, PlatformAll, intrinsic)
+}
+
+function nodePure(name, scheme, intrinsic) {
+	builtinEntry(name, I.kFun(), scheme, PlatformNode, intrinsic)
+}
+
+function browserPure(name, scheme, intrinsic) {
+	builtinEntry(name, I.kFun(), scheme, PlatformBrowser, intrinsic)
+}
+
+function procEntry(name, scheme, intrinsic) {
+	builtinEntry(name, I.kProc(), scheme, PlatformAll, intrinsic)
+}
+
+function nodeProc(name, scheme, intrinsic) {
+	builtinEntry(name, I.kProc(), scheme, PlatformNode, intrinsic)
+}
+
+function browserProc(name, scheme, intrinsic) {
+	builtinEntry(name, I.kProc(), scheme, PlatformBrowser, intrinsic)
+}
+
+function fn1(a, r) { TY.tFun([a], r) }
+function fn2(a, b, r) { TY.tFun([a, b], r) }
+function fn3(a, b, c, r) { TY.tFun([a, b, c], r) }
+function proc0(r, isAsync) { TY.tProc([], r, isAsync) }
+function proc1(a, r, isAsync) { TY.tProc([a], r, isAsync) }
+function proc2(a, b, r, isAsync) { TY.tProc([a, b], r, isAsync) }
+function proc3(a, b, c, r, isAsync) { TY.tProc([a, b, c], r, isAsync) }
+
+// ── builtin type/variant declarations ─────────────────────────────────────
+
+function optionVariants() {
+	[
+		A.mkVariantDecl("None", []),
+		A.mkVariantDecl("Some", [A.mkFieldDecl("value", true)])
+	]
+}
+
+function resultVariants() {
+	[
+		A.mkVariantDecl("Ok", [A.mkFieldDecl("value", true)]),
+		A.mkVariantDecl("Err", [A.mkFieldDecl("message", false)])
+	]
+}
+
+function readResultVariants() {
+	[
+		A.mkVariantDecl("Ok", [A.mkFieldDecl("value", true)]),
+		A.mkVariantDecl("Eof", []),
+		A.mkVariantDecl("Err", [A.mkFieldDecl("message", false)])
+	]
+}
+
+function fileModeVariants() {
+	[
+		A.mkVariantDecl("Read", []),
+		A.mkVariantDecl("Write", []),
+		A.mkVariantDecl("Append", [])
+	]
+}
+
+function bufferModeVariants() {
+	[
+		A.mkVariantDecl("ByteMode", []),
+		A.mkVariantDecl("CharMode", [])
+	]
+}
+
+function dbValueVariants() {
+	[
+		A.mkVariantDecl("DbText", [A.mkFieldDecl("value", false)]),
+		A.mkVariantDecl("DbInt", [A.mkFieldDecl("value", false)]),
+		A.mkVariantDecl("DbFloat", [A.mkFieldDecl("value", false)]),
+		A.mkVariantDecl("DbBool", [A.mkFieldDecl("value", false)]),
+		A.mkVariantDecl("DbBytes", [A.mkFieldDecl("value", false)]),
+		A.mkVariantDecl("DbNull", [])
+	]
+}
+
+// Pair is a builtin record, so there is no union variant list to expose through
+// ModIface.unions. Its type scheme is still exported as an ordinary type name.
+function slotVarIds(slotCount) {
+	if slotCount <= 0 then { [] } else { range(0, slotCount - 1) }
+}
+
+function slotVarTypes(slotCount) {
+	map(fn n => tv(n), slotVarIds(slotCount))
+}
+
+function putBuiltinType(iface, name, slotCount) {
+	let vars = slotVarIds(slotCount);
+	let body = TY.tNamed(name, slotVarTypes(slotCount));
+	I.putType(I.putKind(iface, name, I.kType()), name, sch(vars, body))
+}
+
+function putBuiltinUnion(iface, name, variants, slotCount) {
+	let iface1 = putBuiltinType(iface, name, slotCount);
+	I.putUnion(iface1, name, variants)
+}
+
+function coreTypeIface() {
+	let iface0 = I.emptyIface("$builtin/core");
+	let iface1 = putBuiltinUnion(iface0, "Option", optionVariants(), 1);
+	let iface2 = putBuiltinUnion(iface1, "Result", resultVariants(), 2);
+	let iface3 = putBuiltinType(iface2, "Pair", 2);
+	let iface4 = putBuiltinType(iface3, "NonZero", 0);
+	iface4
+}
+
+// ── builtin module specs ──────────────────────────────────────────────────
+
+function coreExports() {
+	let a = tv(0);
+	let b = tv(1);
+	let c = tv(2);
+	[
+		pure("__str__", sch([0], fn1(a, TY.tStr())), "$str"),
+		pure("str", sch([0], fn1(a, TY.tStr())), "$str"),
+
+		pure("length", sch([], fn1(TY.tAny(), TY.tInt())), "$length"),
+		pure("reverse", sch([0], fn1(listOf(a), listOf(a))), "$reverse"),
+		pure("cons", sch([0], fn2(a, listOf(a), listOf(a))), "$cons"),
+		pure("slice", sch([], fn3(TY.tInt(), TY.tInt(), TY.tAny(), TY.tAny())), "$slice"),
+		pure("take", sch([0], fn2(TY.tInt(), listOf(a), listOf(a))), "$take"),
+		pure("range", sch([], fn2(TY.tInt(), TY.tInt(), listOf(TY.tInt()))), "$range"),
+		pure("find", sch([], fn2(TY.tAny(), TY.tAny(), optionOf(TY.tInt()))), "$find"),
+		pure("findSlice", sch([], fn2(TY.tAny(), TY.tAny(), optionOf(TY.tInt()))), "$findSlice"),
+		pure("map", sch([0, 1], fn2(TY.tFun([a], b), listOf(a), listOf(b))), "$map"),
+		pure("filter", sch([0], fn2(TY.tFun([a], TY.tBool()), listOf(a), listOf(a))), "$filter"),
+		pure("reduce", sch([0, 1], fn3(TY.tFun([a, b], a), a, listOf(b), a)), "$reduce"),
+
+		pure("split", sch([], fn2(TY.tStr(), TY.tStr(), listOf(TY.tStr()))), "$split"),
+		pure("join", sch([0], fn2(listOf(a), TY.tStr(), TY.tStr())), "$join"),
+		pure("asc", sch([], fn1(TY.tChar(), TY.tInt())), "$asc"),
+		pure("chr", sch([], fn1(TY.tInt(), optionOf(TY.tChar()))), "$chr"),
+		pure("charBytes", sch([], fn1(TY.tChar(), listOf(TY.tByte()))), "$charBytes"),
+		pure("bytesToChar", sch([], fn1(listOf(TY.tByte()), optionOf(TY.tChar()))), "$bytesToChar"),
+
+		pure("floor", sch([], fn1(TY.tFloat(), TY.tInt())), "$floor"),
+		pure("ceil", sch([], fn1(TY.tFloat(), TY.tInt())), "$ceil"),
+		pure("round", sch([], fn1(TY.tFloat(), TY.tInt())), "$round"),
+		pure("isNaN", sch([], fn1(TY.tFloat(), TY.tBool())), "$isNaN"),
+		pure("isFinite", sch([], fn1(TY.tFloat(), TY.tBool())), "$isFinite"),
+		pure("nonZero", sch([], fn1(TY.tInt(), optionOf(TY.tNonZero()))), "$nonZero"),
+		pure("safeDiv", sch([], fn2(TY.tInt(), TY.tInt(), optionOf(TY.tInt()))), "$safeDiv"),
+		pure("safeMod", sch([], fn2(TY.tInt(), TY.tInt(), optionOf(TY.tInt()))), "$safeMod")
+	]
+}
+
+function ioExports() {
+	[
+		procEntry("print", sch([0], proc1(tv(0), TY.tUnit(), false)), "$print"),
+		procEntry("println", sch([0], proc1(tv(0), TY.tUnit(), false)), "$println"),
+		procEntry("flushStdout", sch([], proc0(TY.tUnit(), false)), "$flushStdout"),
+		nodeProc("scanln", sch([], proc0(optionOf(TY.tStr()), false)), "$scanln"),
+		nodeProc("scanChar", sch([], proc0(optionOf(TY.tChar()), false)), "$scanChar"),
+		nodeProc("scriptArgs", sch([], proc0(listOf(TY.tStr()), false)), "$scriptArgs"),
+		nodeProc("getEnv", sch([], proc1(TY.tStr(), optionOf(TY.tStr()), false)), "$getEnv"),
+		nodeProc("exit", sch([], proc1(TY.tInt(), TY.tUnit(), false)), "$exit")
+	]
+}
+
+function fileExports() {
+	let handle = TY.tNamed("FileHandle", []);
+	let mode = TY.tNamed("FileMode", []);
+	let readResult = TY.tNamed("ReadResult", [tv(0), TY.tStr()]);
+	[
+		nodeProc("readFile", sch([], proc1(TY.tStr(), ioResult(TY.tStr()), false)), "$readFile"),
+		nodeProc("writeFile", sch([], proc2(TY.tStr(), TY.tStr(), ioResult(TY.tInt()), false)), "$writeFile"),
+		nodeProc("fileExists", sch([], proc1(TY.tStr(), TY.tBool(), false)), "$fileExists"),
+		nodeProc("mkdirP", sch([], proc1(TY.tStr(), ioResult(TY.tUnit()), false)), "$mkdirP"),
+		nodeProc("fileOpen", sch([], proc2(TY.tStr(), mode, ioResult(handle), false)), "$fileOpen"),
+		nodeProc("fileClose", sch([], proc1(handle, ioResult(TY.tUnit()), false)), "$fileClose")
+	]
+}
+
+function jsonExports() {
+	[
+		pure("jsonSerialize", sch([0], fn1(tv(0), optionOf(TY.tStr()))), "$jsonSerialize"),
+		pure("jsonDeserialize", sch([0], fn1(TY.tStr(), optionOf(tv(0)))), "$jsonDeserialize")
+	]
+}
+
+function asyncExports() {
+	[
+		procEntry("sleep", sch([], proc1(TY.tInt(), TY.tUnit(), true)), "$sleep")
+	]
+}
+
+function mathExports() {
+	[
+		pure("pi", sch([], fn1(TY.tUnit(), TY.tFloat())), "$pi"),
+		pure("e", sch([], fn1(TY.tUnit(), TY.tFloat())), "$e"),
+		pure("tau", sch([], fn1(TY.tUnit(), TY.tFloat())), "$tau"),
+		pure("sqrt", sch([], fn1(TY.tFloat(), TY.tFloat())), "$sqrt"),
+		pure("pow", sch([], fn2(TY.tFloat(), TY.tFloat(), TY.tFloat())), "$pow"),
+		pure("abs", sch([], fn1(TY.tInt(), TY.tInt())), "$absInt"),
+		pure("min", sch([], fn2(TY.tInt(), TY.tInt(), TY.tInt())), "$minInt"),
+		pure("max", sch([], fn2(TY.tInt(), TY.tInt(), TY.tInt())), "$maxInt")
+	]
+}
+
+export function coreModuleSpec() {
+	builtinModule("$builtin/core", coreExports(), [builtinUnion("Option", optionVariants()), builtinUnion("Result", resultVariants())])
+}
+
+export function ioModuleSpec() {
+	builtinModule("io", ioExports(), [])
+}
+
+export function fileModuleSpec() {
+	builtinModule("file", fileExports(), [builtinUnion("FileMode", fileModeVariants()), builtinUnion("ReadResult", readResultVariants()), builtinUnion("Result", resultVariants())])
+}
+
+export function jsonModuleSpec() {
+	builtinModule("json", jsonExports(), [])
+}
+
+export function asyncModuleSpec() {
+	builtinModule("async", asyncExports(), [])
+}
+
+export function mathModuleSpec() {
+	builtinModule("math", mathExports(), [])
+}
+
+export function allModuleSpecs() {
+	[
+		coreModuleSpec(),
+		ioModuleSpec(),
+		fileModuleSpec(),
+		jsonModuleSpec(),
+		asyncModuleSpec(),
+		mathModuleSpec()
+	]
+}
+
+// ── conversion to ModIface ────────────────────────────────────────────────
+
+function addEntryToIface(iface, entry) {
+	let iface1 = I.putKind(iface, entry.name, entry.kind);
+	I.putType(iface1, entry.name, entry.scheme)
+}
+
+function addEntriesToIface(entries, iface) {
+	match Compat.uncons(entries) with
+	| None -> iface
+	| Some cell -> {
+		let p = cell.value;
+		addEntriesToIface(p.value, addEntryToIface(iface, p.key))
+	}
+}
+
+function addUnionToIface(iface, uni) {
+	I.putUnion(I.putKind(iface, uni.name, I.kType()), uni.name, uni.variants)
+}
+
+function addUnionsToIface(unions, iface) {
+	match Compat.uncons(unions) with
+	| None -> iface
+	| Some cell -> {
+		let p = cell.value;
+		addUnionsToIface(p.value, addUnionToIface(iface, p.key))
+	}
+}
+
+export function ifaceOfSpec(spec) {
+	let iface0 = if spec.path == "$builtin/core" then { coreTypeIface() } else { I.emptyIface(spec.path) };
+	let iface1 = addEntriesToIface(spec.exports, iface0);
+	addUnionsToIface(spec.unions, iface1)
+}
+
+function putSpecIface(m, spec) {
+	let iface = ifaceOfSpec(spec);
+	let m1 = IMS.imsPut(m, spec.path, iface);
+	let m2 = if spec.path == "$builtin/core" then { IMS.imsPut(m1, "core", iface) } else { m1 };
+	m2
+}
+
+export function allBuiltinIfaces() {
+	reduce(fn m, spec => putSpecIface(m, spec), IMS.imsEmpty(), allModuleSpecs())
+}
+
+export function builtinNames() {
+	map(fn spec => spec.path, allModuleSpecs())
+}
+
+export function lookupBuiltinIface(name) {
+	IMS.imsGet(allBuiltinIfaces(), name)
+}
+
+export function intrinsicName(moduleName, exportName) {
+	match findModuleSpec(moduleName) with
+	| None -> None
+	| Some spec -> findIntrinsic(spec.value.exports, exportName)
+}
+
+function findModuleSpec(name) {
+	findModuleSpecLoop(allModuleSpecs(), name)
+}
+
+function findModuleSpecLoop(specs, name) {
+	match Compat.uncons(specs) with
+	| None -> None
+	| Some cell -> {
+		let p = cell.value;
+		if p.key.path == name then { Some { p.key } } else { findModuleSpecLoop(p.value, name) }
+	}
+}
+
+function findIntrinsic(entries, name) {
+	match Compat.uncons(entries) with
+	| None -> None
+	| Some cell -> {
+		let p = cell.value;
+		if p.key.name == name then { Some { p.key.intrinsic } } else { findIntrinsic(p.value, name) }
+	}
+}

@@ -1,0 +1,53 @@
+// data/optionx.pf — tiny helpers over the builtin Option shape.
+
+export function isSome(opt) {
+	match opt with
+	| Some _ -> true
+	| None -> false
+}
+
+export function isNone(opt) {
+	match opt with
+	| Some _ -> false
+	| None -> true
+}
+
+export function withDefault(defaultValue, opt) {
+	match opt with
+	| Some x -> x.value
+	| None -> defaultValue
+}
+
+export function mapOption(f, opt) {
+	match opt with
+	| Some x -> Some { f(x.value) }
+	| None -> None
+}
+
+export function andThenOption(opt, f) {
+	match opt with
+	| Some x -> f(x.value)
+	| None -> None
+}
+
+export function orElseOption(opt, fallback) {
+	match opt with
+	| Some _ -> opt
+	| None -> fallback
+}
+
+export function toList(opt) {
+	match opt with
+	| Some x -> [x.value]
+	| None -> []
+}
+
+export function fromBool(ok, value) {
+	if ok then { Some { value } } else { None }
+}
+
+export function flattenOption(opt) {
+	match opt with
+	| Some x -> x.value
+	| None -> None
+}

@@ -572,16 +572,50 @@ There is no interpreter branch and no REPL branch.
 
 ## 5. Repository layout
 
+Two levels. The repository root hosts the frozen V1 toolchain that builds and
+tests the bootstrap; the V2 compiler lives entirely under `bootstrap/src/`.
+
 ```text
-pfun/
-  src/
+pfun/                      # repository root ($PFUN_HOME)
+  src/                     # V1 TypeScript toolchain (frozen + dialect patches)
+    runtime/               # pfun-runtime.js, pfun-io.js, ...
+    test/                  # Jest suites (*.test.ts), incl. bootstrapLint
+  dist/                    # tsc output; `node dist/main.js` is the V1 compiler
+  lib/                     # V1-dialect Pfun stdlib — NOT importable from
+    testing/               #   bootstrap/src (framework used by tests only)
+    test/                  # legacy self-contained .pf tests
+  utils/                   # gen-test-harness.js, gen-test-runner.js, pfun.sh
+  bootstrap/
+    src/                   # THE V2 COMPILER (bootstrap dialect; module map below)
+    test/                  # <module>_test.pf (annotated); *_gen.pf and
+                           #   run-tests.sh are generated, gitignored
+  doc/                     # this document, bootstrap-style-guide.md
+  examples/
+```
+
+The vendoring rule: **`bootstrap/src` imports nothing from `lib/`.** `lib/` is
+V1-dialect (`head`/`tail`/`nth`, `+` on lists and strings) and cannot join the
+V2 module graph. Anything the compiler needs is vendored inside
+`bootstrap/src` in the bootstrap-safe subset. The one exception is test files
+under `bootstrap/test/`, which import the `lib/testing/` framework — its
+contract (annotations in, exit code out) is stable even though its
+implementation is V1-dialect and known porting work.
+
+The module map below is the target tree **inside `bootstrap/src/`**. Modules
+marked ✔ exist and are tested; the rest are planned.
+
+```text
+bootstrap/src/
+    compat.pf              # ✔ listAt, uncons — the ONE dialect-divergent file
     data/
-      imaps.pf             # persistent immutable map, Str keys
-      imapi.pf             # persistent immutable map, Int keys (node ids, type vars)
+      imaps.pf             # ✔ persistent immutable map, Str keys (ims* prefix)
+      imapi.pf             # ✔ persistent immutable map, Int keys (imi* prefix)
+      listx.pf             # ✔ vendored list helpers: appendL, concat, sortBy
+      strx.pf              # ✔ vendored string helpers: strRepeat, trimRight
       result.pf            # helpers over Result/Option
 
     syntax/
-      token.pf             # token categories, source positions, spans
+      token.pf             # ✔ (seed: Pos, Span, smart constructors) token categories
       lexer.pf             # pure scanner
       ast.pf               # immutable AST, node ids, spans
       parser.pf            # Pratt/parser combinator hybrid
@@ -590,7 +624,7 @@ pfun/
       modgraph.pf          # import extraction, resolution, topological sort
 
     check/
-      diag.pf              # diagnostic data model and renderer
+      diag.pf              # ✔ diagnostic data model and renderer
       iface.pf             # one module interface type
       types.pf             # type inference and unification
       purity.pf            # pure/proc/effect/mutation rules
@@ -627,19 +661,24 @@ pfun/
       app.pf               # optional browser playground UI
       sandbox.pf           # sandbox protocol and srcdoc assembly
 
-  host/
-    core.js                # shared JS value ABI and host intrinsics
-    node.js                # Node-only host intrinsics
-    browser.js             # browser-only host intrinsics
+    host/
+      core.js              # shared JS value ABI and host intrinsics
+      node.js              # Node-only host intrinsics
+      browser.js           # browser-only host intrinsics
 
-  boot/
-    pfc.js                 # checked-in bootstrap compiler artifact
+    boot/
+      pfc.js               # checked-in bootstrap compiler artifact
 ```
+
+(`host/` and `boot/` sit under `bootstrap/` beside `src/` when they land;
+they are shown here for the dependency picture.)
 
 Dependency rule:
 
 ```text
-data
+compat
+  ↓
+data (imaps, imapi, listx, strx)
   ↓
 syntax
   ↓
@@ -654,6 +693,8 @@ drivers
 builtins/spec is read by check and compile.
 stdlib is compiled like normal Pfun code.
 host is not imported by Pfun modules directly; it is read and embedded by drivers/linker.
+compat and data/{listx,strx} are importable from every layer: they are the
+vendored floor that keeps bootstrap/src free of lib/ imports.
 ```
 
 No compiler component imports `drivers`.
@@ -662,11 +703,50 @@ No compiler component imports `drivers`.
 
 ## 6.1 `data/imaps.pf` and `data/imapi.pf`
 
-Two persistent maps with identical surfaces: `imaps` keyed by `Str`, `imapi` keyed by `Int`. Under monomorphic-by-default with no typeclasses, key comparison cannot be abstracted over, so the map is stamped out once per key type. Consumers import them namespaced (`import * as IMS from "data/imaps"`, `import * as IMI from "data/imapi"`) so the two modules can keep identical function names.
+Two persistent maps with parallel surfaces: `imaps` keyed by `Str`, `imapi` keyed by `Int`. Under monomorphic-by-default with no typeclasses, key comparison cannot be abstracted over, so the map is stamped out once per key type.
+
+**As implemented**, the function names carry per-module prefixes (`imsPut`/`imiPut`, `imsGet`/`imiGet`, …) rather than sharing names behind namespaced imports. The variant names (`MLeaf`/`MNode`) *are* shared, which is fine for the compiler — no module imports both maps — but means the two cannot meet in one scope; their test suites are therefore separate files. Status: implemented and tested (`bootstrap/test/imaps_test.pf`, `imapi_test.pf`; 10 tests each per the Phase 1 list).
 
 `imaps` (Str keys) covers environments, module interfaces, builtin manifests, export maps, and variant maps. `imapi` (Int keys) covers node-id tables (`InferResult.types`, exhaustiveness side tables) and substitution maps keyed by type-variable id.
 
-One shared immutable map shape removes the need for pass-specific map shapes. Keep the two modules textually parallel so fixes apply to both; the same test suite runs against each.
+One shared immutable map shape removes the need for pass-specific map shapes. Keep the two modules textually parallel so fixes apply to both; the same test suite (mechanically transformed) runs against each.
+
+## 6.1b `compat.pf`, `data/listx.pf`, `data/strx.pf`
+
+The vendored floor. `bootstrap/src` imports nothing from `lib/` (§5), so the
+list and string helpers the compiler needs live here, written in the
+bootstrap-safe subset and shared by every layer. **These are the repositories
+for list and string functions usable within the bootstrap** — a helper needed
+by two compiler modules goes here, not into both consumers, and nothing
+reimplements them locally.
+
+- `compat.pf` — `listAt(xs, i)` (Option-shaped element access; normalizes
+  V1 `nth`'s bare-element/`false`-sentinel behavior) and `uncons(xs)`
+  (`None` / `Some { Pair { head, rest } }`, built on `slice` — there is no
+  `drop` builtin). The **only** file in the tree with dialect-divergent code;
+  it gets a trivial V2 body at transition, and `bootstrap/test/compat_test.pf`
+  is the contract that must pass unchanged on both sides.
+- `data/listx.pf` — `appendL` (`append` is an unshadowable builtin name),
+  `concat` (single linear pass), `sortBy` (stable merge sort, three-way
+  comparator; `cmp(x,y) <= 0` keeps the left element, and `renderAll`'s
+  diagnostic ordering depends on that stability).
+- `data/strx.pf` — `strRepeat` (doubling, log₂ depth) and `trimRight`
+  (fold + `slice`; preserves leading and interior whitespace, which caret
+  alignment in `check/diag.pf` relies on; handles CR from CRLF sources —
+  `\r` is not a string escape, so it is built as `"" ++ chr(13)`).
+
+Two implementation constraints shape everything in these files (full
+rationale in `doc/bootstrap-style-guide.md`): compiled Pfun has **no
+tail-call optimization**, so whole-list walks are written as `reduce` (a
+runtime loop) and recursion is reserved for logarithmic depth; and fold state
+threaded through builtin callbacks must be the builtin `Pair`, never a
+module-local record, because such records resolve against the *calling*
+module's type registry and fail across library-to-library calls in the
+interpreter.
+
+Status: implemented and tested (`compat_test.pf` 10, `listx_test.pf` 15,
+`strx_test.pf` 11 — including stability, permutation properties, and
+5,000-element scale tests).
 
 ## 6.2 `syntax/token.pf`
 
@@ -678,6 +758,8 @@ Defines:
 - helpers for matching keywords/operators
 
 The lexer produces these tokens. The parser consumes them. Diagnostics point back to their spans.
+
+Status: the position seed exists — `Pos`, `Span`, and the smart constructors `mkPos`/`mkSpan`/`pointSpan` (namespaced record construction does not parse in the bootstrap dialect, so cross-module callers build positions through functions). Token categories land with the lexer. Note that `check/diag.pf` reads span fields without importing this module: cross-module *field access* needs no type import; only construction and matching do.
 
 ## 6.3 `syntax/lexer.pf`
 
@@ -758,6 +840,8 @@ Each diagnostic has:
 - notes
 
 Only this module renders human-readable diagnostics.
+
+Status: implemented and tested (`bootstrap/test/diag_test.pf`; 6 unit + 4 golden). The rendering format is decided and frozen by the golden snapshots — see Phase 2 for the format and its rationale.
 
 ## 6.8 `check/iface.pf`
 
@@ -1360,9 +1444,14 @@ Transforms values while preserving keys.
 export function imGet(m, k) {
   match m with
   | MLeaf -> None
-  | MNode n -> if k == n.k then Some n.v
-               else if k < n.k then imGet(n.left, k)
-               else imGet(n.right, k)
+  | MNode n -> {
+    // Some { n.v }, never `Some n.v`: variant juxtaposition type-checks in
+    // the bootstrap dialect and fails at runtime. And remember the wrapper
+    // rule: `| Some s ->` binds the whole Some; the payload is s.value.
+    if k == n.k then { Some { n.v } }
+    else if k < n.k then { imGet(n.left, k) }
+    else { imGet(n.right, k) }
+  }
 }
 ```
 
@@ -1384,7 +1473,9 @@ Property tests:
 - `imHas(imPut(m,k,v),k)` is true
 - removing unknown key preserves existing entries
 
-The identical suite runs against both `imaps` and `imapi`.
+The identical suite (mechanically transformed for key type and prefixes) runs against both `imaps` and `imapi` — as separate test files, since the two share variant names and cannot be imported into one scope.
+
+Status: implemented and passing (`bootstrap/test/imaps_test.pf`, `imapi_test.pf`; 7 unit + 3 property tests each, properties over 20 deterministic LCG seeds). The randomized AVL test earned its place immediately: it found a wrapper-binding bug in the two-children case of `imsRemove`/`imiRemove` (`s.key` where the payload is `s.value.key`) that the simple removal unit test can never reach, because a two-key map never has a node with two children. Note these tests run under `--mode compile` only: the white-box AVL checker matches `MNode` cross-module, which the V1 interpreter's variant resolution does not support.
 
 ---
 
@@ -1477,7 +1568,24 @@ Renders one diagnostic with file, line, column, message, and caret.
 export function renderAll(diags, sourceOf)
 ```
 
-Sorts diagnostics by path and offset, then renders all.
+Sorts diagnostics by path then `span.start.offset` (stable sort — equal-position diagnostics keep emission order), then renders all, blank-line separated.
+
+### Rendering format (decided)
+
+This document specifies rendering *behavior*; the bytes are an implementation decision, frozen by the golden snapshots. The decision:
+
+```text
+demo.pf:2:9: error[Parse]: Expected ')' after expression.
+  let b = (2;
+          ^^
+  note: opened here
+```
+
+- Header is `path:line:col: severity[CodeLabel]: message` — GCC/rustc shape, so editors (Emacs compilation-mode included) parse it for jump-to-error. Code labels are one word per `DiagCode` variant (`Lex`, `Parse`, `Name`, `Type`, `Exhaust`, `Purity`, `Import`, `Arity`, `Runtime`).
+- The source line renders with a two-space indent, trailing whitespace trimmed (leading/interior preserved — caret alignment depends on it).
+- The underline covers the span exactly: width `end.col - start.col` (end-exclusive), minimum 1 so zero-width spans (EOF, insertion points) still show one caret, clamped to the trimmed line. This deliberately drops V1's renderer quirk of placing the caret one column past the reported position.
+- Multi-line spans show the first line, underlined from `start.col` to its end, plus `(span continues for N more lines)` — the "render sanely" contract, not a faithful multi-line drawing.
+- Missing source (`sourceOf` answers `None`, or the span's line is past EOF) drops the snippet and keeps header and notes. Rendering never fails.
 
 ### Tests
 
@@ -1496,6 +1604,10 @@ Golden tests:
 - type error snapshot
 - import cycle snapshot
 - match exhaustiveness snapshot
+
+Golden strings are captured from real renderer output and generated into the test programmatically — never hand-typed — and are regenerated deliberately, never loosened. Mutation-verified: a one-word label change fails exactly its snapshot; a one-character caret off-by-one fails both caret unit tests and all four snapshots.
+
+Status: implemented (`bootstrap/src/check/diag.pf`) and tested (`bootstrap/test/diag_test.pf`, 10 tests). `renderAll`'s ordering is exercised indirectly through `sortBy`'s stability tests; a dedicated `renderAll` suite is still worth adding.
 
 ---
 
@@ -1522,7 +1634,7 @@ export type Span = {
 }
 ```
 
-End-exclusive source span.
+End-exclusive source span. (Status: `Pos`, `Span`, and smart constructors `mkPos`/`mkSpan`/`pointSpan` exist as the Phase 3 seed in `bootstrap/src/syntax/token.pf`; the compiler uses code-unit offsets.)
 
 ```pfun
 export type Tok = {
@@ -4393,6 +4505,17 @@ Tests:
 
 ## 26. Test pyramid
 
+### 26.0 Implemented infrastructure
+
+Unit and golden testing for `bootstrap/src` is running today on the V1 toolchain:
+
+- Test files live in `bootstrap/test/<module>_test.pf`, annotated with `//![suite("Name")]` / `//![test("Name")]`, main-less and self-contained per file. Pure suites have zero-parameter tests; a suite whose annotation is followed by a proc is an effect-capturing inputs builder, and its tests take one parameter (the inputs record).
+- `utils/gen-test-harness.js` generates a sibling `<module>_test_gen.pf` per file and a `run-tests.sh` orchestrator. The generator emits lambda-closing inside a pure function and a lambda-free `main`, dodging the V1 fn-in-proc purity quirk, so effectful suites work today. Generated files are gitignored and regenerated, never edited.
+- The orchestrator runs each test file as its own process (per-file isolation also converts non-termination into a timeout failure), `cd`s to the project root derived from its own location, defaults `PFUN_HOME` to that root, and aggregates exit codes — nonzero on any failure. `runSuites` signals via the `exit(code)` builtin.
+- `--mode compile` is the required mode: exit codes are reliable there, and it is the only mode V2 will have. One module under test per file (parallel modules share variant names). Golden strings are captured from real output programmatically, never hand-typed, and every new suite is mutation-checked once — break the code, confirm the right tests go red.
+
+Current coverage: 66 tests across six files — `compat_test` (10, the dialect-transition contract), `listx_test` (15, including sort stability and permutation properties), `strx_test` (11), `imaps_test`/`imapi_test` (10 each), `diag_test` (10, including the four format-freezing goldens).
+
 ### 26.1 Unit tests
 
 Each pure module gets direct tests:
@@ -4680,6 +4803,14 @@ Effects and determinism:
 13. All effects confined to drivers; drivers sequence effects with explicit statements, never through argument-evaluation order.
 14. Deterministic output: wherever emission or diagnostic order matters, iterate maps via sorted `imKeys`/`imEntries`; never depend on host Map insertion order.
 
+Measured toolchain constraints (discovered while building Phases 1–2; full treatment with idioms in `doc/bootstrap-style-guide.md`, which is the authoritative authoring reference for `bootstrap/src`):
+
+17. **No tail-call optimization in the compiled path.** A function recursing once per list element dies ("Maximum call stack size exceeded") around 1,200–3,000 elements depending on per-frame weight, while the interpreter runs the same code fine. Whole-list walks are written as `reduce` (a runtime loop); recursion is reserved for logarithmic depth. Verified: the vendored `sortBy` handles 10,000 elements compiled.
+18. **Fold state through builtin callbacks is builtin `Pair`, never a module-local record.** A record constructed inside a `reduce`/`map` lambda in a library module resolves against the *calling* module's type registry: it fails ("Unknown type") once another library calls the function, `export type` relieves only one hop, and the compiled path tolerates all of it — so the failure appears only interpreted.
+19. **`while`/`var` loops are rejected in pure functions by the interpreter and not checked by the compiled path.** Another silent divergence; pure code loops via `reduce`.
+20. **Vendoring rule** (§5): `bootstrap/src` imports nothing from `lib/`. List/string helpers live in `data/listx.pf`/`data/strx.pf`; dialect divergence only in `compat.pf`.
+21. **Exit status is the test contract.** The `exit(code)` builtin exists in both paths; `runSuites` exits 0/1 and the generated orchestrator aggregates per-file exit codes. Test runs use `--mode compile` (the reliable path and the only one V2 has), with the caveat that cross-module variant matching in white-box tests does not work interpreted, and interpreter-only failure modes (items 18–19) need at least one interpreted pass when library modules change.
+
 CI:
 
 15. Until stage2 is trusted, every compiler-source change is compiled with BOTH toolchains (V1-extended and the latest trusted stage), and the shared-semantics corpus runs under both.
@@ -4704,10 +4835,30 @@ Success condition:
 
 This appendix collects the module surfaces without the explanations.
 
-## `data/imaps.pf` / `data/imapi.pf` (identical surfaces; Str vs Int keys; import namespaced)
+## `compat.pf` (the only dialect-divergent file)
 
 ```pfun
-export type IMap = { | MLeaf | MNode: k, v, left, right, height }
+export function listAt(xs, i)     // None out of range, Some { elem } in range
+export function uncons(xs)        // None on empty, Some { Pair { head, rest } }
+```
+
+## `data/listx.pf` / `data/strx.pf` (vendored list/string helpers — the canonical home)
+
+```pfun
+// listx
+export function appendL(a, b)     // `append` is an unshadowable builtin name
+export function concat(lists)     // single linear pass
+export function sortBy(cmp, xs)   // stable merge sort; cmp(x,y) <= 0 keeps left
+
+// strx
+export function strRepeat(s, n)   // doubling, log2 depth
+export function trimRight(s)      // trailing ws incl. CR; preserves leading/interior
+```
+
+## `data/imaps.pf` / `data/imapi.pf` (parallel surfaces; Str vs Int keys; as implemented the function names carry `ims*`/`imi*` prefixes — shown here with the generic `im*` for brevity)
+
+```pfun
+export type IMapS = { | MLeaf | MNode: k, v, left, right, height }   // IMapI in imapi
 
 export function imEmpty()
 export function imGet(m, k)
@@ -4716,7 +4867,7 @@ export function imHas(m, k)
 export function imRemove(m, k)
 export function imKeys(m)
 export function imEntries(m)
-export function imUnion(a, b)
+export function imUnion(a, b)     // right-biased on duplicate keys
 export function imFromList(pairs)
 export function imMap(f, m)
 ```

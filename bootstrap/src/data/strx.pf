@@ -1,47 +1,113 @@
-// data/strx.pf — vendored string helpers for the compiler, in the
-// bootstrap-safe subset (`++` only, no head/tail; see data/listx.pf note).
+// data/strx.pf — bootstrap-safe string helpers for compiler code.
 //
-// RECURSION DEPTH. Compiled Pfun has no tail-call optimization, so anything
-// that recurses once per character dies on a long input in the compiled path
-// while passing in the interpreter. strRepeat halves (log2 depth) and
-// trimRight folds (no recursion at all).
-//
-// FOLD STATE. The accumulator threaded through `reduce` below is a builtin
-// `Pair`, not a record declared here. A record type declared in a library
-// module and constructed inside a builtin's callback resolves against the
-// *calling* module's type registry, so it fails with "Unknown type" as soon
-// as another library module calls this one. Builtin types resolve everywhere.
+// Uses `++` only. Character-by-character helpers operate on split(s, "") so
+// callers never need head/tail/nth.
 
-// Carriage return as a 1-char string: \r is not a recognized escape in Pfun
-// string literals, so build it from its code point. (split(s, "") yields Str
-// elements, so comparisons here are Str == Str, not Char.)
+import * as Compat from "../compat";
+import * as ListX from "./listx";
+
 let crStr = "" ++ chr(13);
 
 function isWs(c) {
 	c == " " || c == "\t" || c == crStr || c == "\n"
 }
 
-// Repeat by doubling: depth is log2(n), not n.
 export function strRepeat(s, n) {
-	if n <= 0 then { "" }
-	else if n == 1 then { s }
-	else {
+	if n <= 0 then {
+		""
+	} else if n == 1 then {
+		s
+	} else {
 		let half = strRepeat(s, n / 2);
 		if n % 2 == 0 then { half ++ half } else { half ++ half ++ s }
 	}
 }
 
-// Fold state is Pair { index, lastNonWsIndex }.
-function trimStep(st, c) {
-	if isWs(c) then { Pair { st.key + 1, st.value } }
-	else { Pair { st.key + 1, st.key } }
+function trimRightStep(st, c) {
+	if isWs(c) then { Pair { st.key + 1, st.value } } else { Pair { st.key + 1, st.key } }
 }
 
-// Drop trailing whitespace. Iterative: one reduce over the characters finds
-// the last non-whitespace index, then a single slice. Leading and interior
-// whitespace is preserved (check/diag.pf relies on this for caret alignment).
 export function trimRight(s) {
 	let cs = split(s, "");
-	let fin = reduce(fn st, c => trimStep(st, c), Pair { 0, 0 - 1 }, cs);
+	let fin = reduce(fn st, c => trimRightStep(st, c), Pair { 0, 0 - 1 }, cs);
 	if fin.value < 0 then { "" } else { slice(0, fin.value + 1, s) }
+}
+
+function trimLeftLoop(chars) {
+	match Compat.uncons(chars) with
+	| None -> ""
+	| Some cell -> {
+		let p = cell.value;
+		if isWs(p.key) then { trimLeftLoop(p.value) } else { join(chars, "") }
+	}
+}
+
+export function trimLeft(s) {
+	trimLeftLoop(split(s, ""))
+}
+
+export function trim(s) {
+	trimRight(trimLeft(s))
+}
+
+export function startsWith(s, prefix) {
+	if length(prefix) > length(s) then { false } else { slice(0, length(prefix), s) == prefix }
+}
+
+export function endsWith(s, suffix) {
+	let ls = length(s);
+	let lx = length(suffix);
+	if lx > ls then { false } else { slice(ls - lx, lx, s) == suffix }
+}
+
+export function contains(s, needle) {
+	match findSlice(s, needle) with
+	| None -> false
+	| Some _ -> true
+}
+
+export function nullOrEmpty(s) {
+	length(s) == 0
+}
+
+export function quote(s) {
+	"\"" ++ s ++ "\""
+}
+
+export function indentLine(spaces, line) {
+	strRepeat(" ", spaces) ++ line
+}
+
+export function indent(spaces, text) {
+	join(map(fn line => indentLine(spaces, line), split(text, "\n")), "\n")
+}
+
+export function joinLines(lines) {
+	join(lines, "\n")
+}
+
+export function splitLines(text) {
+	split(text, "\n")
+}
+
+export function replaceAll(s, old, newText) {
+	join(split(s, old), newText)
+}
+
+export function padLeft(width, fill, s) {
+	let missing = width - length(s);
+	if missing <= 0 then { s } else { strRepeat(fill, missing) ++ s }
+}
+
+export function padRight(width, fill, s) {
+	let missing = width - length(s);
+	if missing <= 0 then { s } else { s ++ strRepeat(fill, missing) }
+}
+
+export function commaList(items) {
+	join(items, ", ")
+}
+
+export function surround(prefix, suffix, s) {
+	prefix ++ s ++ suffix
 }

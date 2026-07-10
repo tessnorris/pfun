@@ -1,0 +1,103 @@
+// test/assertions.pf — pure assertion helpers for bootstrap tests.
+//
+// Test bodies stay pure and return TestResult. Effectful printing/exiting lives
+// in runner.pf or in generated harnesses.
+
+import * from "../data/resultx";
+
+export type Assertion = {
+	| AssertPass
+	| AssertFail: message
+}
+
+export type TestResult = {
+	| TestPassed
+	| TestFailed: messages
+}
+
+export function pass() {
+	AssertPass
+}
+
+export function fail(message) {
+	AssertFail { message }
+}
+
+export function testPassed() {
+	TestPassed
+}
+
+export function testFailed(messages) {
+	TestFailed { messages }
+}
+
+export function assertTrue(value) {
+	if value then { AssertPass } else { AssertFail { "Expected true." } }
+}
+
+export function assertFalse(value) {
+	if value then { AssertFail { "Expected false." } } else { AssertPass }
+}
+
+export function assertEqual(expected, actual) {
+	if expected == actual then {
+		AssertPass
+	} else {
+		AssertFail { "Expected " ++ __str__(expected) ++ ", got " ++ __str__(actual) ++ "." }
+	}
+}
+
+export function assertNotEqual(unexpected, actual) {
+	if unexpected == actual then {
+		AssertFail { "Did not expect " ++ __str__(actual) ++ "." }
+	} else {
+		AssertPass
+	}
+}
+
+export function assertSome(opt) {
+	match opt with
+	| Some _ -> AssertPass
+	| None -> AssertFail { "Expected Some, got None." }
+}
+
+export function assertNone(opt) {
+	match opt with
+	| Some x -> AssertFail { "Expected None, got Some(" ++ __str__(x.value) ++ ")." }
+	| None -> AssertPass
+}
+
+export function assertOk(r) {
+	match r with
+	| BOk _ -> AssertPass
+	| BErr e -> AssertFail { "Expected BOk, got BErr(" ++ e.message ++ ")." }
+}
+
+export function assertErr(r) {
+	match r with
+	| BOk x -> AssertFail { "Expected BErr, got BOk(" ++ __str__(x.value) ++ ")." }
+	| BErr _ -> AssertPass
+}
+
+function collectAssertion(st, a) {
+	match a with
+	| AssertPass -> st
+	| AssertFail f -> cons(f.message, st)
+}
+
+export function assertions(items) {
+	let failures = reverse(reduce(fn acc, a => collectAssertion(acc, a), [], items));
+	if length(failures) == 0 then { TestPassed } else { TestFailed { failures } }
+}
+
+export function resultMessages(result) {
+	match result with
+	| TestPassed -> []
+	| TestFailed f -> f.messages
+}
+
+export function resultOk(result) {
+	match result with
+	| TestPassed -> true
+	| TestFailed _ -> false
+}

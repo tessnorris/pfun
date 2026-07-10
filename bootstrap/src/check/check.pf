@@ -1,0 +1,302 @@
+// check/check.pf — Phase 10 checker orchestration for the bootstrap compiler.
+//
+// This module owns the pass order. Individual passes stay focused:
+//   - types.pf infers/checks types and produces node-type side tables
+//   - purity.pf enforces pure/proc/effect rules
+//   - exhaust.pf checks match coverage from the inferred node types
+//   - iface.pf freezes the exported interface for downstream modules
+//
+// `checkModule` checks one parsed module against already-checked dependency
+// interfaces. `checkGraph` checks dependency-sorted RawModule values and skips a
+// module when one of its imported user dependencies failed, preventing cascades.
+
+import * as A from "../syntax/ast";
+import * as T from "../syntax/token";
+import * as M from "../graph/modgraph";
+import * as D from "./diag";
+import * as I from "./iface";
+import * as TY from "./types";
+import * as P from "./purity";
+import * as X from "./exhaust";
+import * as IMS from "../data/imaps";
+import * as IMI from "../data/imapi";
+import * as Compat from "../compat";
+
+// ── public result model ───────────────────────────────────────────────────
+
+export type CheckedUnit = { path, ast, infer, iface, diags }
+
+export type CheckGraphResult = { modules, ifaces, diags }
+
+export function mkCheckedUnit(path, ast, infer, iface, diags) {
+	CheckedUnit { path = path, ast = ast, infer = infer, iface = iface, diags = diags }
+}
+
+export function mkCheckGraphResult(modules, ifaces, diags) {
+	CheckGraphResult { modules = modules, ifaces = ifaces, diags = diags }
+}
+
+// ── small bootstrap-safe helpers ──────────────────────────────────────────
+
+function appendList(a, b) {
+	reduce(fn acc, x => cons(x, acc), b, reverse(a))
+}
+
+function appendOne(xs, x) {
+	reverse(cons(x, reverse(xs)))
+}
+
+function hasBlockingDiags(diags) {
+	length(diags) > 0
+}
+
+function strListContains(xs, s) {
+	match Compat.uncons(xs) with
+	| None -> false
+	| Some cell -> {
+		let p = cell.value;
+		if p.key == s then { true } else { strListContains(p.value, s) }
+	}
+}
+
+function addUniqueStr(xs, s) {
+	if strListContains(xs, s) then { xs } else { cons(s, xs) }
+}
+
+function fallbackSpan() {
+	let p = T.mkPos(1, 1, 0);
+	T.pointSpan(p)
+}
+
+function importDiag(path, span, message) {
+	D.err(ImportD, message, path, span)
+}
+
+function emptyInfer(diags) {
+	TY.mkInferResult(IMI.imiEmpty(), IMS.imsEmpty(), diags)
+}
+
+function emptyCheckedUnit(path, ast, diags) {
+	mkCheckedUnit(path, ast, emptyInfer(diags), I.emptyIface(path), diags)
+}
+
+// ── interface construction from type inference ────────────────────────────
+
+function ifaceSchemeFromTypeScheme(s) {
+	I.mkScheme(s.vars, s.constraints, s.body)
+}
+
+function putTypedExport(acc, pair) {
+	IMS.imsPut(acc, pair.key, ifaceSchemeFromTypeScheme(pair.value))
+}
+
+function mergeTypedExports(entries, acc) {
+	match Compat.uncons(entries) with
+	| None -> acc
+	| Some cell -> {
+		let p = cell.value;
+		mergeTypedExports(p.value, putTypedExport(acc, p.key))
+	}
+}
+
+function ifaceFromInfer(ast, infer) {
+	let skeleton = I.ifaceOfAst(ast);
+	let typedExports = mergeTypedExports(IMS.imsEntries(infer.exports), skeleton.types);
+	I.mkIface(ast.path, skeleton.kinds, typedExports, skeleton.unions)
+}
+
+// ── single-module checking ────────────────────────────────────────────────
+
+function runExhaustIfTyped(ast, infer, deps) {
+	if hasBlockingDiags(infer.diags) then { X.mkExhaustResult([]) }
+	else { X.checkModule(ast, infer, deps) }
+}
+
+export function checkModule(ast, deps) {
+	let infer = TY.inferModule(ast, deps);
+	let purity = P.checkModule(ast, deps);
+	let exhaust = runExhaustIfTyped(ast, infer, deps);
+	let d1 = appendList(infer.diags, purity.diags);
+	let d2 = appendList(d1, exhaust.diags);
+	let iface = if hasBlockingDiags(d2) then { I.emptyIface(ast.path) } else { ifaceFromInfer(ast, infer) };
+	mkCheckedUnit(ast.path, ast, infer, iface, d2)
+}
+
+// Alias for tests and callers that prefer the phase name.
+export function checkOneModule(ast, deps) {
+	checkModule(ast, deps)
+}
+
+// ── dependency map shaping for graph checks ───────────────────────────────
+
+function tryIfaceKey(ifaces, key) {
+	IMS.imsGet(ifaces, key)
+}
+
+function ifaceForBuiltin(ifaces, name, rawPath) {
+	match tryIfaceKey(ifaces, name) with
+	| Some iface -> Some { iface.value }
+	| None -> {
+		match tryIfaceKey(ifaces, "$builtin/" ++ name) with
+		| Some iface2 -> Some { iface2.value }
+		| None -> {
+			match tryIfaceKey(ifaces, rawPath) with
+			| Some iface3 -> Some { iface3.value }
+			| None -> None
+		}
+	}
+}
+
+function ifaceForUserPath(ifaces, path, rawPath) {
+	match tryIfaceKey(ifaces, path) with
+	| Some iface -> Some { iface.value }
+	| None -> {
+		match tryIfaceKey(ifaces, rawPath) with
+		| Some iface2 -> Some { iface2.value }
+		| None -> None
+	}
+}
+
+function ifaceForEdge(ifaces, edge) {
+	match edge.resolved with
+	| BuiltinPath b -> ifaceForBuiltin(ifaces, b.name, edge.rawPath)
+	| UserPath u -> ifaceForUserPath(ifaces, u.p, edge.rawPath)
+}
+
+function putDepAlias(deps, edge, iface) {
+	let deps1 = IMS.imsPut(deps, edge.rawPath, iface);
+	IMS.imsPut(deps1, M.resolvedPathToStr(edge.resolved), iface)
+}
+
+function depsForEdges(globalIfaces, edges, acc) {
+	match Compat.uncons(edges) with
+	| None -> acc
+	| Some cell -> {
+		let edge = cell.value.key;
+		let rest = cell.value.value;
+		match ifaceForEdge(globalIfaces, edge) with
+		| Some iface -> depsForEdges(globalIfaces, rest, putDepAlias(acc, edge, iface.value))
+		| None -> depsForEdges(globalIfaces, rest, acc)
+	}
+}
+
+function depsForRawModule(globalIfaces, raw) {
+	depsForEdges(globalIfaces, raw.edges, globalIfaces)
+}
+
+function putCheckedIface(ifaces, raw, unit) {
+	let ifaces1 = IMS.imsPut(ifaces, unit.iface.path, unit.iface);
+	let ifaces2 = IMS.imsPut(ifaces1, raw.path, unit.iface);
+	IMS.imsPut(ifaces2, raw.ast.path, unit.iface)
+}
+
+// ── skip logic for failed or unavailable dependencies ─────────────────────
+
+function resolvedUserFailed(edge, failedPaths) {
+	match edge.resolved with
+	| BuiltinPath _ -> false
+	| UserPath u -> strListContains(failedPaths, u.p) || strListContains(failedPaths, edge.rawPath)
+}
+
+function firstFailedDependency(edges, failedPaths) {
+	match Compat.uncons(edges) with
+	| None -> None
+	| Some cell -> {
+		let edge = cell.value.key;
+		if resolvedUserFailed(edge, failedPaths) then { Some { edge } }
+		else { firstFailedDependency(cell.value.value, failedPaths) }
+	}
+}
+
+function firstMissingInterface(edges, ifaces) {
+	match Compat.uncons(edges) with
+	| None -> None
+	| Some cell -> {
+		let edge = cell.value.key;
+		match ifaceForEdge(ifaces, edge) with
+		| Some _ -> firstMissingInterface(cell.value.value, ifaces)
+		| None -> Some { edge }
+	}
+}
+
+function failedDependencyDiag(raw, edge) {
+	importDiag(
+		raw.path,
+		edge.span,
+		"Skipping module '" ++ raw.path ++ "' because imported dependency '" ++ M.resolvedPathToStr(edge.resolved) ++ "' failed to check."
+	)
+}
+
+function missingInterfaceDiag(raw, edge) {
+	importDiag(
+		raw.path,
+		edge.span,
+		"Skipping module '" ++ raw.path ++ "' because imported dependency '" ++ M.resolvedPathToStr(edge.resolved) ++ "' has no checked interface."
+	)
+}
+
+function skipUnit(raw, diag) {
+	emptyCheckedUnit(raw.path, raw.ast, [diag])
+}
+
+function addFailedRawPaths(failedPaths, raw) {
+	let f1 = addUniqueStr(failedPaths, raw.path);
+	addUniqueStr(f1, raw.ast.path)
+}
+
+// ── graph checking ────────────────────────────────────────────────────────
+
+function checkedGraphLoop(mods, ifaces, checkedAcc, diagAcc, failedPaths) {
+	match Compat.uncons(mods) with
+	| None -> mkCheckGraphResult(reverse(checkedAcc), ifaces, diagAcc)
+	| Some cell -> {
+		let raw = cell.value.key;
+		let rest = cell.value.value;
+		match firstFailedDependency(raw.edges, failedPaths) with
+		| Some badDep -> {
+			let diag = failedDependencyDiag(raw, badDep.value);
+			let unit = skipUnit(raw, diag);
+			let failed2 = addFailedRawPaths(failedPaths, raw);
+			checkedGraphLoop(rest, ifaces, cons(unit, checkedAcc), appendOne(diagAcc, diag), failed2)
+		}
+		| None -> {
+			match firstMissingInterface(raw.edges, ifaces) with
+			| Some missing -> {
+				let diag = missingInterfaceDiag(raw, missing.value);
+				let unit = skipUnit(raw, diag);
+				let failed2 = addFailedRawPaths(failedPaths, raw);
+				checkedGraphLoop(rest, ifaces, cons(unit, checkedAcc), appendOne(diagAcc, diag), failed2)
+			}
+			| None -> {
+				let deps = depsForRawModule(ifaces, raw);
+				let unit = checkModule(raw.ast, deps);
+				let diagAcc2 = appendList(diagAcc, unit.diags);
+				if hasBlockingDiags(unit.diags) then {
+					let failed2 = addFailedRawPaths(failedPaths, raw);
+					checkedGraphLoop(rest, ifaces, cons(unit, checkedAcc), diagAcc2, failed2)
+				} else {
+					let ifaces2 = putCheckedIface(ifaces, raw, unit);
+					checkedGraphLoop(rest, ifaces2, cons(unit, checkedAcc), diagAcc2, failedPaths)
+				}
+			}
+		}
+	}
+}
+
+// `mods` must already be dependency-first, normally from graph/modgraph.pf's
+// `TopoOk.modules`. `builtinIfaces` is an imaps map from builtin module names
+// and/or `$builtin/<name>` paths to ModIface values.
+export function checkGraph(mods, builtinIfaces) {
+	checkedGraphLoop(mods, builtinIfaces, [], [], [])
+}
+
+export function checkGraphNoBuiltins(mods) {
+	checkGraph(mods, IMS.imsEmpty())
+}
+
+// Convenience for callers that have a `TopoResult` from graph/modgraph.pf.
+export function checkTopo(topo, builtinIfaces) {
+	match topo with
+	| TopoOk ok -> checkGraph(ok.modules, builtinIfaces)
+	| TopoErr bad -> mkCheckGraphResult([], builtinIfaces, bad.diags)
+}

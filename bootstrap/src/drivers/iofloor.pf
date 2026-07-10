@@ -1,0 +1,55 @@
+// drivers/iofloor.pf — tiny effectful wrappers for bootstrap drivers.
+//
+// The pure compiler pipeline should not import this module. Drivers may use it
+// for process args, file reads/writes, diagnostics output, and exit status.
+
+import * from "io";
+import * from "file";
+import * from "../data/resultx";
+
+export function okText(text) {
+	BOk { text }
+}
+
+export function errText(message) {
+	BErr { message }
+}
+
+export proc args() {
+	scriptArgs()
+}
+
+export proc readTextFile(path) {
+	match readFile(path) with
+	| Ok o -> BOk { o.value }
+	| Err e -> BErr { e.message }
+}
+
+export proc writeTextFile(path, text) {
+	match writeFile(path, text) with
+	| Ok o -> BOk { o.value }
+	| Err e -> BErr { e.message }
+}
+
+export proc ensureDir(path) {
+	match mkdirP(path) with
+	| Ok o -> BOk { o.value }
+	| Err e -> BErr { e.message }
+}
+
+export proc printLines(lines) {
+	println(join(lines, "\n"));
+}
+
+export proc fail(message, code) {
+	println(message);
+	exit(code);
+}
+
+export proc exitOk() {
+	exit(0);
+}
+
+export proc exitErr() {
+	exit(1);
+}

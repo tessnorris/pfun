@@ -1,70 +1,570 @@
-// syntax/lexer.pf
-//Phase 3, processes the source code into tokens
+// syntax/lexer.pf — Phase 3 scanner.
+//
+// Pure source scanner for the bootstrap compiler. The public result is a local
+// union instead of the generic built-in Result so this module does not depend on
+// any V1/V2-divergent Result import behavior.
+
+import * as T from "./token";
+import * as D from "../check/diag";
 
 // Scanner state. `acc` is reversed token output.
-type LexSt = {
-  path,
-  src,
-  len,
-  offset,
-  line,
-  col,
-  acc
-}
-
+type LexSt = { path, src, len, offset, line, col, acc }
 
 // One scanner step.
 type LexStep = {
-  | LexTok: st, token
-  | LexSkip: st
-  | LexDone: st
-  | LexFail: diag
+	| LexTok: st, token
+	| LexSkip: st
+	| LexDone: st
+	| LexFail: diag
 }
 
+export type LexResult = {
+	| LexOk: tokens
+	| LexErr: diags
+}
 
-// Str -> Str -> Result<List<Token>, List<Diag>>
+// ── position/state helpers ──────────────────────────────────────────────────
+
+function posOf(st) {
+	T.mkPos(st.line, st.col, st.offset)
+}
+
+function spanFrom(startPos, st) {
+	T.mkSpan(startPos, posOf(st))
+}
+
+function withOffset(st, offset, line, col) {
+	LexSt { st.path, st.src, st.len, offset, line, col, st.acc }
+}
+
+function withAcc(st, acc) {
+	LexSt { st.path, st.src, st.len, st.offset, st.line, st.col, acc }
+}
+
+function addToken(st, token) {
+	withAcc(st, cons(token, st.acc))
+}
+
+function charAt(src, len, i) {
+	if i < 0 then { None }
+	else if i >= len then { None }
+	else { Some { slice(i, 1, src) } }
+}
+
+function current(st) {
+	charAt(st.src, st.len, st.offset)
+}
+
+function charAtOffset(st, delta) {
+	charAt(st.src, st.len, st.offset + delta)
+}
+
+function advanceOne(st) {
+	match current(st) with
+	| None -> st
+	| Some c -> {
+		if c.value == "\n" then {
+			withOffset(st, st.offset + 1, st.line + 1, 1)
+		} else {
+			withOffset(st, st.offset + 1, st.line, st.col + 1)
+		}
+	}
+}
+
+function advanceN(st, n) {
+	if n <= 0 then { st }
+	else { advanceN(advanceOne(st), n - 1) }
+}
+
+function textAt(src, len, offset, n) {
+	if offset < 0 then { "" }
+	else if offset + n > len then { "" }
+	else { slice(offset, n, src) }
+}
+
+function startsWithAt(src, len, offset, needle) {
+	let n = length(needle);
+	if offset < 0 then { false }
+	else if offset + n > len then { false }
+	else { slice(offset, n, src) == needle }
+}
+
+function startsWith(st, needle) {
+	startsWithAt(st.src, st.len, st.offset, needle)
+}
+
+function lexDiagAt(st, startPos, message) {
+	D.err(LexD, message, st.path, T.mkSpan(startPos, posOf(st)))
+}
+
+function lexDiagPoint(st, message) {
+	let p = posOf(st);
+	D.err(LexD, message, st.path, T.pointSpan(p))
+}
+
+// ── character classes ───────────────────────────────────────────────────────
+
+function isDigit(c) {
+	c >= "0" && c <= "9"
+}
+
+function isLower(c) {
+	c >= "a" && c <= "z"
+}
+
+function isUpper(c) {
+	c >= "A" && c <= "Z"
+}
+
+function isAlpha(c) {
+	isLower(c) || isUpper(c)
+}
+
+function isIdentStart(c) {
+	isAlpha(c) || c == "_"
+}
+
+function isIdentPart(c) {
+	isIdentStart(c) || isDigit(c)
+}
+
+function isHexDigit(c) {
+	isDigit(c) || (c >= "a" && c <= "f") || (c >= "A" && c <= "F")
+}
+
+function isWs(c) {
+	c == " " || c == "\t" || c == "\n" || c == "" ++ chr(13)
+}
+
+function digitVal(c) {
+	if c == "0" then { 0 }
+	else if c == "1" then { 1 }
+	else if c == "2" then { 2 }
+	else if c == "3" then { 3 }
+	else if c == "4" then { 4 }
+	else if c == "5" then { 5 }
+	else if c == "6" then { 6 }
+	else if c == "7" then { 7 }
+	else if c == "8" then { 8 }
+	else if c == "9" then { 9 }
+	else { 0 }
+}
+
+function hexVal(c) {
+	if isDigit(c) then { digitVal(c) }
+	else if c == "a" || c == "A" then { 10 }
+	else if c == "b" || c == "B" then { 11 }
+	else if c == "c" || c == "C" then { 12 }
+	else if c == "d" || c == "D" then { 13 }
+	else if c == "e" || c == "E" then { 14 }
+	else if c == "f" || c == "F" then { 15 }
+	else { 0 }
+}
+
+// ── small parsers over literal text ─────────────────────────────────────────
+
+function parseDecFrom(text, i, acc) {
+	if i >= length(text) then { acc }
+	else {
+		parseDecFrom(text, i + 1, acc * 10 + digitVal(slice(i, 1, text)))
+	}
+}
+
+function parseDec(text) {
+	parseDecFrom(text, 0, 0)
+}
+
+function parseHexFrom(text, i, acc) {
+	if i >= length(text) then { acc }
+	else {
+		parseHexFrom(text, i + 1, acc * 16 + hexVal(slice(i, 1, text)))
+	}
+}
+
+function parseHex(text) {
+	parseHexFrom(text, 0, 0)
+}
+
+function scanWhile(st, pred) {
+	match current(st) with
+	| None -> st
+	| Some c -> {
+		if pred(c.value) then { scanWhile(advanceOne(st), pred) }
+		else { st }
+	}
+}
+
+function scanRequiredDigits(st) {
+	scanWhile(st, isDigit)
+}
+
+function scanRequiredHexDigits(st) {
+	scanWhile(st, isHexDigit)
+}
+
+// ── keywords/operators ──────────────────────────────────────────────────────
+
+function isKeywordText(s) {
+	s == "let" || s == "var" || s == "type" || s == "generic" ||
+	s == "if" || s == "then" || s == "else" || s == "function" ||
+	s == "proc" || s == "memo" || s == "async" || s == "await" ||
+	s == "return" || s == "fn" || s == "for" || s == "while" ||
+	s == "dict" || s == "array" || s == "import" || s == "export" ||
+	s == "as" || s == "from" || s == "match" || s == "with" ||
+	s == "where" || s == "extern" || s == "lazy"
+}
+
+function twoCharOp(st) {
+	let two = textAt(st.src, st.len, st.offset, 2);
+	if two == "==" || two == "!=" || two == "<=" || two == ">=" ||
+	   two == "&&" || two == "||" || two == "++" || two == "<<" ||
+	   two == ">>" || two == "|>" || two == "->" || two == "=>" ||
+	   two == "<-" then { Some { two } }
+	else { None }
+}
+
+function isSingleOp(c) {
+	c == "+" || c == "-" || c == "*" || c == "/" || c == "%" ||
+	c == "=" || c == "<" || c == ">" || c == "!" || c == "&" ||
+	c == "|" || c == "(" || c == ")" || c == "{" || c == "}" ||
+	c == "[" || c == "]" || c == "," || c == ";" || c == ":" ||
+	c == "?" || c == "."
+}
+
+// ── public scanner ──────────────────────────────────────────────────────────
+
 export function lex(path, source) {
-
+	let st = LexSt { path, source, length(source), 0, 1, 1, [] };
+	scan(st)
 }
 
+function scan(st) {
+	let st1 = skipTrivia(st);
+	match step(st1) with
+	| LexDone d -> {
+		let eof = T.eofToken(posOf(d.st));
+		LexOk { reverse(cons(eof, d.st.acc)) }
+	}
+	| LexTok t -> scan(addToken(t.st, t.token))
+	| LexSkip s -> scan(s.st)
+	| LexFail f -> LexErr { [f.diag] }
+}
 
-// Scans one token or one trivia span.
+// Scans one token or one trivia span. Whitespace and line comments are consumed
+// before this function is called; block comments are handled here so an
+// unterminated block can become a LexD instead of being silently swallowed.
 function step(st) {
-
+	match current(st) with
+	| None -> LexDone { st }
+	| Some c -> {
+		if startsWith(st, "/*") then { scanBlockComment(st) }
+		else if startsWith(st, "@\"") then { scanRawString(st) }
+		else if startsWith(st, "$\"") then { scanFormatString(st) }
+		else if c.value == "\"" then { scanString(st) }
+		else if c.value == "'" then { scanChar(st) }
+		else if isDigit(c.value) then { scanNumber(st) }
+		else if isIdentStart(c.value) then { scanIdentOrKw(st) }
+		else { scanOperatorOrFail(st) }
+	}
 }
 
+// ── trivia ──────────────────────────────────────────────────────────────────
 
-// Handles decimal ints, hex ints, floats, exponents, bytes.
+function skipLineComment(st) {
+	match current(st) with
+	| None -> st
+	| Some c -> {
+		if c.value == "\n" then { st }
+		else { skipLineComment(advanceOne(st)) }
+	}
+}
+
+function skipTrivia(st) {
+	match current(st) with
+	| None -> st
+	| Some c -> {
+		if isWs(c.value) then { skipTrivia(advanceOne(st)) }
+		else if startsWith(st, "//") then { skipTrivia(skipLineComment(advanceN(st, 2))) }
+		else { st }
+	}
+}
+
+function blockCommentLoop(startPos, st) {
+	if startsWith(st, "*/") then { LexSkip { advanceN(st, 2) } }
+	else {
+		match current(st) with
+		| None -> LexFail { lexDiagAt(st, startPos, "Unterminated block comment.") }
+		| Some _ -> blockCommentLoop(startPos, advanceOne(st))
+	}
+}
+
+function scanBlockComment(st) {
+	blockCommentLoop(posOf(st), advanceN(st, 2))
+}
+
+// ── numbers ─────────────────────────────────────────────────────────────────
+
+function scanHexNumber(st) {
+	let start = posOf(st);
+	let digitsStart = st.offset + 2;
+	let afterPrefix = advanceN(st, 2);
+	let afterDigits = scanRequiredHexDigits(afterPrefix);
+	if afterDigits.offset == digitsStart then {
+		LexFail { lexDiagAt(afterDigits, start, "Expected hexadecimal digits after 0x.") }
+	} else {
+		let digits = slice(digitsStart, afterDigits.offset - digitsStart, st.src);
+		let value = parseHex(digits);
+		if startsWith(afterDigits, "_b") then {
+			let fin = advanceN(afterDigits, 2);
+			if value > 255 then {
+				LexFail { lexDiagAt(fin, start, "Byte literal is outside 0..255.") }
+			} else {
+				LexTok { fin, T.byteTok(value, spanFrom(start, fin)) }
+			}
+		} else {
+			LexTok { afterDigits, T.intTok(value, spanFrom(start, afterDigits)) }
+		}
+	}
+}
+
+// `if` is not a let-initializer in the bootstrap dialect; branch in helpers.
+function skipExpSign(stp) {
+	if startsWith(stp, "+") || startsWith(stp, "-") then { advanceOne(stp) } else { stp }
+}
+
+function scanFracIfPresent(hasFrac, afterWhole) {
+	if hasFrac then { scanRequiredDigits(advanceOne(afterWhole)) } else { afterWhole }
+}
+
+function scanExponent(afterMantissa) {
+	if startsWith(afterMantissa, "e") || startsWith(afterMantissa, "E") then {
+		let epos = posOf(afterMantissa);
+		let afterE = advanceOne(afterMantissa);
+		let afterSign = skipExpSign(afterE);
+		let afterDigits = scanRequiredDigits(afterSign);
+		if afterDigits.offset == afterSign.offset then {
+			LexFail { lexDiagAt(afterDigits, epos, "Expected digits in exponent.") }
+		} else {
+			LexSkip { afterDigits }
+		}
+	} else {
+		LexSkip { afterMantissa }
+	}
+}
+
+function scanDecimalNumber(st) {
+	let start = posOf(st);
+	let digitsStart = st.offset;
+	let afterWhole = scanRequiredDigits(st);
+	let hasFrac = startsWith(afterWhole, ".") && match charAt(afterWhole.src, afterWhole.len, afterWhole.offset + 1) with | None -> false | Some d -> isDigit(d.value);
+	let afterMantissa = scanFracIfPresent(hasFrac, afterWhole);
+	match scanExponent(afterMantissa) with
+	| LexFail f -> LexFail { f.diag }
+	| LexSkip expOut -> {
+		let fin = expOut.st;
+		let isFloat = hasFrac || fin.offset > afterMantissa.offset;
+		let text = slice(digitsStart, fin.offset - digitsStart, st.src);
+		if isFloat then {
+			LexTok { fin, T.floatTok(text, spanFrom(start, fin)) }
+		} else if startsWith(fin, "b") then {
+			let byteFin = advanceOne(fin);
+			let value = parseDec(text);
+			if value > 255 then {
+				LexFail { lexDiagAt(byteFin, start, "Byte literal is outside 0..255.") }
+			} else {
+				LexTok { byteFin, T.byteTok(value, spanFrom(start, byteFin)) }
+			}
+		} else {
+			LexTok { fin, T.intTok(parseDec(text), spanFrom(start, fin)) }
+		}
+	}
+	| _ -> LexFail { lexDiagPoint(st, "Internal lexer error while scanning number.") }
+}
+
+// Handles decimal ints, hex ints, floats, exponents, and bytes.
 function scanNumber(st) {
-
+	if startsWith(st, "0x") || startsWith(st, "0X") then { scanHexNumber(st) }
+	else { scanDecimalNumber(st) }
 }
 
+// ── strings/chars ───────────────────────────────────────────────────────────
+
+function escapeValue(c) {
+	if c == "n" then { Some { "\n" } }
+	else if c == "t" then { Some { "\t" } }
+	else if c == "\\" then { Some { "\\" } }
+	else if c == "\"" then { Some { "\"" } }
+	else if c == "'" then { Some { "'" } }
+	else if c == "{" then { Some { "{" } }
+	else if c == "}" then { Some { "}" } }
+	else { None }
+}
+
+function stringLoop(startPos, st, acc) {
+	match current(st) with
+	| None -> LexFail { lexDiagAt(st, startPos, "Unterminated string literal.") }
+	| Some c -> {
+		if c.value == "\"" then {
+			let fin = advanceOne(st);
+			LexTok { fin, T.strTok(acc, spanFrom(startPos, fin)) }
+		} else if c.value == "\n" then {
+			LexFail { lexDiagAt(st, startPos, "Unterminated string literal.") }
+		} else if c.value == "\\" then {
+			let escSt = advanceOne(st);
+			match current(escSt) with
+			| None -> LexFail { lexDiagAt(escSt, startPos, "Unterminated string escape.") }
+			| Some esc -> {
+				match escapeValue(esc.value) with
+				| None -> LexFail { lexDiagAt(advanceOne(escSt), posOf(st), "Unknown escape sequence.") }
+				| Some v -> stringLoop(startPos, advanceOne(escSt), acc ++ v.value)
+			}
+		} else {
+			stringLoop(startPos, advanceOne(st), acc ++ c.value)
+		}
+	}
+}
 
 // Handles escaped strings.
 function scanString(st) {
-
+	stringLoop(posOf(st), advanceOne(st), "")
 }
 
+function rawStringLoop(startPos, st, acc) {
+	match current(st) with
+	| None -> LexFail { lexDiagAt(st, startPos, "Unterminated raw string literal.") }
+	| Some c -> {
+		if c.value == "\"" then {
+			let fin = advanceOne(st);
+			LexTok { fin, T.rawStrTok(acc, spanFrom(startPos, fin)) }
+		} else {
+			rawStringLoop(startPos, advanceOne(st), acc ++ c.value)
+		}
+	}
+}
 
 // Handles `@"..."`.
 function scanRawString(st) {
-
+	rawStringLoop(posOf(st), advanceN(st, 2), "")
 }
 
+function charPayload(startPos, st) {
+	match current(st) with
+	| None -> LexFail { lexDiagAt(st, startPos, "Unterminated character literal.") }
+	| Some c -> {
+		if c.value == "\n" then {
+			LexFail { lexDiagAt(st, startPos, "Unterminated character literal.") }
+		} else if c.value == "'" then {
+			LexFail { lexDiagAt(advanceOne(st), startPos, "Empty character literal.") }
+		} else if c.value == "\\" then {
+			let escSt = advanceOne(st);
+			match current(escSt) with
+			| None -> LexFail { lexDiagAt(escSt, startPos, "Unterminated character escape.") }
+			| Some esc -> {
+				match escapeValue(esc.value) with
+				| None -> LexFail { lexDiagAt(advanceOne(escSt), posOf(st), "Unknown character escape.") }
+				| Some v -> LexTok { advanceOne(escSt), T.charTok(v.value, T.pointSpan(posOf(st))) }
+			}
+		} else {
+			LexTok { advanceOne(st), T.charTok(c.value, T.pointSpan(posOf(st))) }
+		}
+	}
+}
 
-// Handles character literals.
+// Handles character literals. The payload is the one-character string spelling
+// of the character; later phases can decide whether to intern it as Char.
 function scanChar(st) {
-
+	let start = posOf(st);
+	let body = advanceOne(st);
+	match charPayload(start, body) with
+	| LexFail f -> LexFail { f.diag }
+	| LexTok p -> {
+		match current(p.st) with
+		| None -> LexFail { lexDiagAt(p.st, start, "Unterminated character literal.") }
+		| Some close -> {
+			if close.value == "'" then {
+				let fin = advanceOne(p.st);
+				LexTok { fin, T.charTok(T.tokenPayload(p.token), spanFrom(start, fin)) }
+			} else {
+				LexFail { lexDiagAt(p.st, start, "Character literal contains more than one character.") }
+			}
+		}
+	}
+	| _ -> LexFail { lexDiagAt(st, start, "Invalid character literal.") }
 }
 
+// Minimal but brace-aware format string scanner. It preserves the raw body text
+// inside `$"..."` so the parser can split literal/interpolation pieces later.
+function fmtLoop(startPos, st, acc, depth) {
+	match current(st) with
+	| None -> LexFail { lexDiagAt(st, startPos, "Unterminated format string literal.") }
+	| Some c -> {
+		if depth == 0 && c.value == "\"" then {
+			let fin = advanceOne(st);
+			LexTok { fin, T.fmtStrTok(acc, spanFrom(startPos, fin)) }
+		} else if c.value == "\\" then {
+			let escSt = advanceOne(st);
+			match current(escSt) with
+			| None -> LexFail { lexDiagAt(escSt, startPos, "Unterminated format string escape.") }
+			| Some esc -> fmtLoop(startPos, advanceOne(escSt), acc ++ "\\" ++ esc.value, depth)
+		} else if depth > 0 && startsWith(st, "$\"") then {
+			LexFail { lexDiagAt(advanceN(st, 2), posOf(st), "Nested format strings inside interpolation are not allowed.") }
+		} else if c.value == "{" then {
+			fmtLoop(startPos, advanceOne(st), acc ++ c.value, depth + 1)
+		} else if c.value == "}" then {
+			if depth <= 0 then {
+				LexFail { lexDiagAt(advanceOne(st), posOf(st), "Unmatched '}' in format string.") }
+			} else {
+				fmtLoop(startPos, advanceOne(st), acc ++ c.value, depth - 1)
+			}
+		} else {
+			fmtLoop(startPos, advanceOne(st), acc ++ c.value, depth)
+		}
+	}
+}
+
+function scanFormatString(st) {
+	fmtLoop(posOf(st), advanceN(st, 2), "", 0)
+}
+
+// ── identifiers/operators ───────────────────────────────────────────────────
+
+function scanIdentPart(st) {
+	scanWhile(st, isIdentPart)
+}
 
 // Scans identifiers and maps keywords.
 function scanIdentOrKw(st) {
-
+	let start = posOf(st);
+	let fin = scanIdentPart(st);
+	let text = slice(st.offset, fin.offset - st.offset, st.src);
+	if text == "true" then {
+		LexTok { fin, T.boolTok(true, spanFrom(start, fin)) }
+	} else if text == "false" then {
+		LexTok { fin, T.boolTok(false, spanFrom(start, fin)) }
+	} else if isKeywordText(text) then {
+		LexTok { fin, T.kwTok(text, spanFrom(start, fin)) }
+	} else {
+		LexTok { fin, T.identTok(text, spanFrom(start, fin)) }
+	}
 }
 
-
-// Skips whitespace and comments. {
-function skipTrivia(st) {
-
+function scanOperatorOrFail(st) {
+	let start = posOf(st);
+	match twoCharOp(st) with
+	| Some two -> {
+		let fin = advanceN(st, 2);
+		LexTok { fin, T.opTok(two.value, spanFrom(start, fin)) }
+	}
+	| None -> {
+		match current(st) with
+		| None -> LexDone { st }
+		| Some c -> {
+			if isSingleOp(c.value) then {
+				let fin = advanceOne(st);
+				LexTok { fin, T.opTok(c.value, spanFrom(start, fin)) }
+			} else {
+				LexFail { lexDiagAt(advanceOne(st), start, "Unexpected character '" ++ c.value ++ "'.") }
+			}
+		}
+	}
 }

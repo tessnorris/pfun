@@ -1,0 +1,674 @@
+// check/purity.pf — Phase 8 purity/effect checker for the bootstrap compiler.
+//
+// This pass enforces the V2 effect boundary over the syntax AST:
+//
+//   * functions and fn lambdas are pure contexts
+//   * procs are effectful contexts, but procs are second-class values
+//   * proc names may appear only in callee position, or as the direct right
+//     operand of a pipe expression
+//   * var/assignment/while are procedural only
+//   * await is allowed only inside async proc bodies
+//   * lazy list contents and comprehension bodies are checked as pure contexts
+//
+// The checker deliberately does not resolve types. It only needs name-kind
+// information: function/proc/value/type/namespace. Dependency interfaces provide
+// imported name kinds; local declarations are pre-bound before their bodies are
+// checked so recursion and mutual references see the right callable kind.
+
+import * as A from "../syntax/ast";
+import * as D from "./diag";
+import * as I from "./iface";
+import * as IMS from "../data/imaps";
+import * as Compat from "../compat";
+
+// ── public result/model ───────────────────────────────────────────────────
+
+export type NameKind = {
+	| NKValue
+	| NKFunction
+	| NKProc: isAsync
+	| NKType
+	| NKNamespace: table
+}
+
+export type PurityCtx = {
+	| CtxPure
+	| CtxProc: isAsync
+	| CtxTop
+}
+
+export type PurityResult = { diags }
+
+// Internal threaded state.
+type PSt = { path, env, diags }
+
+type ArmOut = { st, env }
+
+// ── constructors/helpers exported for tests ───────────────────────────────
+
+export function nkValue() { NKValue }
+export function nkFunction() { NKFunction }
+export function nkProc(isAsync) { NKProc { isAsync } }
+export function nkType() { NKType }
+export function nkNamespace(table) { NKNamespace { table } }
+
+export function ctxPure() { CtxPure }
+export function ctxProc(isAsync) { CtxProc { isAsync } }
+export function ctxTop() { CtxTop }
+
+export function mkPurityResult(diags) {
+	PurityResult { diags }
+}
+
+function mkState(path, env, diags) {
+	PSt { path, env, diags }
+}
+
+function withEnv(st, env) {
+	PSt { st.path, env, st.diags }
+}
+
+function withDiags(st, diags) {
+	PSt { st.path, st.env, diags }
+}
+
+function armOut(st, env) {
+	ArmOut { st, env }
+}
+
+function addDiag(st, span, message) {
+	withDiags(st, cons(D.err(PurityD, message, st.path, span), st.diags))
+}
+
+function bindName(st, name, kind) {
+	withEnv(st, IMS.imsPut(st.env, name, kind))
+}
+
+function bindInEnv(env, name, kind) {
+	IMS.imsPut(env, name, kind)
+}
+
+function lookupName(st, name) {
+	IMS.imsGet(st.env, name)
+}
+
+function ctxAllowsEffects(ctx) {
+	match ctx with
+	| CtxPure -> false
+	| CtxProc _ -> true
+	| CtxTop -> true
+}
+
+function ctxAllowsAwait(ctx) {
+	match ctx with
+	| CtxProc c -> c.isAsync
+	| CtxPure -> false
+	| CtxTop -> false
+}
+
+function pureContextForLazy(mode, ctx) {
+	match mode with
+	| LazyList -> CtxPure
+	| StrictList -> ctx
+}
+
+// ── dependency interface binding ──────────────────────────────────────────
+
+function kindFromExportKind(kind) {
+	match kind with
+	| KFun -> NKFunction
+	| KProc -> NKProc { false }
+	| KValue -> NKValue
+	| KMutable -> NKValue
+	| KType -> NKType
+	| KOpaqueType -> NKType
+}
+
+function tableFromKindEntries(entries, table) {
+	match Compat.uncons(entries) with
+	| None -> table
+	| Some cell -> {
+		let p = cell.value.key;
+		let table1 = IMS.imsPut(table, p.key, kindFromExportKind(p.value));
+		tableFromKindEntries(cell.value.value, table1)
+	}
+}
+
+function tableFromVariants(variants, table) {
+	match Compat.uncons(variants) with
+	| None -> table
+	| Some cell -> {
+		let v = cell.value.key;
+		let table1 = IMS.imsPut(table, v.vname, NKFunction);
+		tableFromVariants(cell.value.value, table1)
+	}
+}
+
+function tableFromUnionEntries(entries, table) {
+	match Compat.uncons(entries) with
+	| None -> table
+	| Some cell -> {
+		let p = cell.value.key;
+		let table1 = tableFromVariants(p.value, table);
+		tableFromUnionEntries(cell.value.value, table1)
+	}
+}
+
+function tableFromIface(iface) {
+	let table1 = tableFromKindEntries(IMS.imsEntries(iface.kinds), IMS.imsEmpty());
+	tableFromUnionEntries(IMS.imsEntries(iface.unions), table1)
+}
+
+function variantKindInVariants(variants, name) {
+	match Compat.uncons(variants) with
+	| None -> None
+	| Some cell -> {
+		let v = cell.value.key;
+		if v.vname == name then { Some { NKFunction } }
+		else { variantKindInVariants(cell.value.value, name) }
+	}
+}
+
+function variantKindInUnionEntries(entries, name) {
+	match Compat.uncons(entries) with
+	| None -> None
+	| Some cell -> {
+		let p = cell.value.key;
+		match variantKindInVariants(p.value, name) with
+		| Some k -> Some { k.value }
+		| None -> variantKindInUnionEntries(cell.value.value, name)
+	}
+}
+
+function lookupIfaceNameKind(iface, name) {
+	match I.lookupKind(iface, name) with
+	| Some k -> Some { kindFromExportKind(k.value) }
+	| None -> variantKindInUnionEntries(IMS.imsEntries(iface.unions), name)
+}
+
+function ifacePathMatches(rawPath, iface) {
+	iface.path == rawPath
+}
+
+function ifaceForImportLoop(entries, rawPath) {
+	match Compat.uncons(entries) with
+	| None -> None
+	| Some cell -> {
+		let p = cell.value.key;
+		let iface = p.value;
+		if ifacePathMatches(rawPath, iface) then { Some { iface } }
+		else { ifaceForImportLoop(cell.value.value, rawPath) }
+	}
+}
+
+function ifaceForImport(rawPath, deps) {
+	match IMS.imsGet(deps, rawPath) with
+	| Some iface -> Some { iface.value }
+	| None -> ifaceForImportLoop(IMS.imsEntries(deps), rawPath)
+}
+
+function importAliasName(importName) {
+	match importName.alias with
+	| Some a -> a.value
+	| None -> importName.name
+}
+
+function bindNamedImports(st, iface, names) {
+	match Compat.uncons(names) with
+	| None -> st
+	| Some cell -> {
+		let item = cell.value.key;
+		let localName = importAliasName(item);
+		match lookupIfaceNameKind(iface, item.name) with
+		| Some k -> bindNamedImports(bindName(st, localName, k.value), iface, cell.value.value)
+		| None -> bindNamedImports(bindName(st, localName, NKValue), iface, cell.value.value)
+	}
+}
+
+function bindStarImports(st, iface) {
+	let table = tableFromIface(iface);
+	let entries = IMS.imsEntries(table);
+	bindStarEntries(st, entries)
+}
+
+function bindStarEntries(st, entries) {
+	match Compat.uncons(entries) with
+	| None -> st
+	| Some cell -> {
+		let p = cell.value.key;
+		bindStarEntries(bindName(st, p.key, p.value), cell.value.value)
+	}
+}
+
+function bindImportStmt(st, stmt, deps) {
+	match stmt with
+	| SImport s -> {
+		match ifaceForImport(s.rawPath, deps) with
+		| None -> st
+		| Some ifaceCell -> {
+			let iface = ifaceCell.value;
+			match s.spec with
+			| INames spec -> bindNamedImports(st, iface, spec.names)
+			| INamespace spec -> bindName(st, spec.alias, NKNamespace { tableFromIface(iface) })
+			| IStar -> bindStarImports(st, iface)
+		}
+	}
+	| _ -> st
+}
+
+function bindImportStmts(st, stmts, deps) {
+	match Compat.uncons(stmts) with
+	| None -> st
+	| Some cell -> bindImportStmts(bindImportStmt(st, cell.value.key, deps), cell.value.value, deps)
+}
+
+// ── local declaration pre-binding ─────────────────────────────────────────
+
+function nameOfTypeDecl(decl) {
+	match decl with
+	| RecordDecl r -> r.tname
+	| UnionDecl u -> u.tname
+}
+
+function variantsOfTypeDecl(decl) {
+	match decl with
+	| RecordDecl _ -> []
+	| UnionDecl u -> u.variants
+}
+
+function kindOfFnKind(kind) {
+	match kind with
+	| PureFn _ -> NKFunction
+	| ProcFn p -> NKProc { p.isAsync }
+}
+
+function kindOfExternKind(kind) {
+	match kind with
+	| ExternFunction -> NKFunction
+	| ExternProc p -> NKProc { p.isAsync }
+}
+
+function bindVariantDecls(st, variants) {
+	match Compat.uncons(variants) with
+	| None -> st
+	| Some cell -> {
+		let v = cell.value.key;
+		bindVariantDecls(bindName(st, v.vname, NKFunction), cell.value.value)
+	}
+}
+
+function prebindOne(st, stmt) {
+	match stmt with
+	| SLet s -> bindName(st, s.name, NKValue)
+	| SVar s -> bindName(st, s.name, NKValue)
+	| SFun s -> bindName(st, s.name, kindOfFnKind(s.kind))
+	| SExtern s -> bindName(st, s.decl.name, kindOfExternKind(s.decl.kind))
+	| SType s -> {
+		let st1 = bindName(st, nameOfTypeDecl(s.decl), NKType);
+		bindVariantDecls(st1, variantsOfTypeDecl(s.decl))
+	}
+	| SExport e -> prebindOne(st, e.inner)
+	| _ -> st
+}
+
+function prebindLocalDecls(st, stmts) {
+	match Compat.uncons(stmts) with
+	| None -> st
+	| Some cell -> prebindLocalDecls(prebindOne(st, cell.value.key), cell.value.value)
+}
+
+function bindParams(st, params) {
+	match Compat.uncons(params) with
+	| None -> st
+	| Some cell -> bindParams(bindName(st, cell.value.key, NKValue), cell.value.value)
+}
+
+// ── named expression/callee recognition ───────────────────────────────────
+
+function lookupNamespaceField(st, objectExpr, fname) {
+	match objectExpr with
+	| EVar e -> {
+		match lookupName(st, e.name) with
+		| Some k -> {
+			match k.value with
+			| NKNamespace ns -> IMS.imsGet(ns.table, fname)
+			| _ -> None
+		}
+		| None -> None
+	}
+	| _ -> None
+}
+
+function kindOfNamedExpr(st, expr) {
+	match expr with
+	| EVar e -> lookupName(st, e.name)
+	| EField e -> lookupNamespaceField(st, e.object, e.fname)
+	| _ -> None
+}
+
+function nameOfNamedExpr(expr) {
+	match expr with
+	| EVar e -> e.name
+	| EField e -> e.fname
+	| _ -> "<expression>"
+}
+
+function procValueDiag(st, span, name) {
+	addDiag(st, span, "Procedure '" ++ name ++ "' cannot be used as a value; procs are second-class and may only appear in call position.")
+}
+
+function procCallDiag(st, span, name) {
+	addDiag(st, span, "Pure code cannot call procedure '" ++ name ++ "'.")
+}
+
+function checkNamedValueUse(st, ctx, expr) {
+	match kindOfNamedExpr(st, expr) with
+	| Some k -> {
+		match k.value with
+		| NKProc _ -> procValueDiag(st, A.exprSpan(expr), nameOfNamedExpr(expr))
+		| _ -> checkExprObjectPart(st, ctx, expr)
+	}
+	| None -> checkExprObjectPart(st, ctx, expr)
+}
+
+function checkExprObjectPart(st, ctx, expr) {
+	match expr with
+	| EField e -> checkExpr(st, ctx, e.object)
+	| _ -> st
+}
+
+// ── expression checking ───────────────────────────────────────────────────
+
+function checkExprList(st, ctx, exprs) {
+	match Compat.uncons(exprs) with
+	| None -> st
+	| Some cell -> checkExprList(checkExpr(st, ctx, cell.value.key), ctx, cell.value.value)
+}
+
+function checkFieldExprs(st, ctx, fields) {
+	match Compat.uncons(fields) with
+	| None -> st
+	| Some cell -> {
+		let f = cell.value.key;
+		checkFieldExprs(checkExpr(st, ctx, f.value), ctx, cell.value.value)
+	}
+}
+
+function checkDictEntries(st, ctx, entries) {
+	match Compat.uncons(entries) with
+	| None -> st
+	| Some cell -> {
+		let e = cell.value.key;
+		let st1 = checkExpr(st, ctx, e.key);
+		let st2 = checkExpr(st1, ctx, e.value);
+		checkDictEntries(st2, ctx, cell.value.value)
+	}
+}
+
+function checkFmtParts(st, ctx, parts) {
+	match Compat.uncons(parts) with
+	| None -> st
+	| Some cell -> {
+		let p = cell.value.key;
+		match p with
+		| FmtLit _ -> checkFmtParts(st, ctx, cell.value.value)
+		| FmtExpr f -> checkFmtParts(checkExpr(st, ctx, f.e), ctx, cell.value.value)
+	}
+}
+
+function checkCall(st, ctx, expr) {
+	match expr with
+	| ECall c -> {
+		match kindOfNamedExpr(st, c.callee) with
+		| Some k -> {
+			match k.value with
+			| NKProc _ -> {
+				let st1 = if ctxAllowsEffects(ctx) then { st } else { procCallDiag(st, c.span, nameOfNamedExpr(c.callee)) };
+				checkExprList(st1, ctx, c.args)
+			}
+			| _ -> checkExprList(st, ctx, c.args)
+		}
+		| None -> {
+			let st1 = checkExpr(st, ctx, c.callee);
+			checkExprList(st1, ctx, c.args)
+		}
+	}
+	| _ -> st
+}
+
+function checkPipe(st, ctx, lhs, rhs, span) {
+	let st1 = checkExpr(st, ctx, lhs);
+	match kindOfNamedExpr(st1, rhs) with
+	| Some k -> {
+		match k.value with
+		| NKProc _ -> {
+			if ctxAllowsEffects(ctx) then { st1 }
+			else { procCallDiag(st1, span, nameOfNamedExpr(rhs)) }
+		}
+		| _ -> checkExpr(st1, ctx, rhs)
+	}
+	| None -> checkExpr(st1, ctx, rhs)
+}
+
+function checkCompGens(st, ctx, gens) {
+	match Compat.uncons(gens) with
+	| None -> st
+	| Some cell -> {
+		let g = cell.value.key;
+		let st1 = checkExpr(st, ctx, g.source);
+		let st2 = bindName(st1, g.gvar, NKValue);
+		checkCompGens(st2, ctx, cell.value.value)
+	}
+}
+
+function checkComprehension(st, ctx, body, gens, guard, mode) {
+	let oldEnv = st.env;
+	let compCtx = pureContextForLazy(mode, ctx);
+	let st1 = checkCompGens(st, compCtx, gens);
+	let st2 = checkExpr(st1, compCtx, body);
+	let st3 = match guard with
+		| Some g -> checkExpr(st2, compCtx, g.value)
+		| None -> st2;
+	withEnv(st3, oldEnv)
+}
+
+function bindPatElem(st, elem) {
+	match elem with
+	| PeBind p -> bindName(st, p.pname, NKValue)
+	| PeWild -> st
+}
+
+function bindPatElems(st, elems) {
+	match Compat.uncons(elems) with
+	| None -> st
+	| Some cell -> bindPatElems(bindPatElem(st, cell.value.key), cell.value.value)
+}
+
+function bindPattern(st, pattern) {
+	match pattern with
+	| PWild -> st
+	| PVariant p -> {
+		match p.bind with
+		| Some b -> bindName(st, b.value, NKValue)
+		| None -> st
+	}
+	| PList p -> {
+		let st1 = bindPatElems(st, p.elems);
+		match p.rest with
+		| Some r -> bindPatElem(st1, r.value)
+		| None -> st1
+	}
+}
+
+function checkArm(st, ctx, arm) {
+	let oldEnv = st.env;
+	let st1 = bindPattern(st, arm.pattern);
+	let st2 = match arm.guard with
+		| Some g -> checkExpr(st1, ctx, g.value)
+		| None -> st1;
+	let st3 = checkExpr(st2, ctx, arm.body);
+	withEnv(st3, oldEnv)
+}
+
+function checkArms(st, ctx, arms) {
+	match Compat.uncons(arms) with
+	| None -> st
+	| Some cell -> checkArms(checkArm(st, ctx, cell.value.key), ctx, cell.value.value)
+}
+
+function checkExpr(st, ctx, expr) {
+	match expr with
+	| EInt _ -> st
+	| EFloat _ -> st
+	| EBool _ -> st
+	| EStr _ -> st
+	| EChar _ -> st
+	| EByte _ -> st
+	| EVar _ -> checkNamedValueUse(st, ctx, expr)
+	| EUnary e -> checkExpr(st, ctx, e.operand)
+	| EBinary e -> {
+		if e.op == "|>" then { checkPipe(st, ctx, e.lhs, e.rhs, e.span) }
+		else {
+			let st1 = checkExpr(st, ctx, e.lhs);
+			checkExpr(st1, ctx, e.rhs)
+		}
+	}
+	| EIf e -> {
+		let st1 = checkExpr(st, ctx, e.cond);
+		let st2 = checkExpr(st1, ctx, e.thenE);
+		checkExpr(st2, ctx, e.elseE)
+	}
+	| ECall _ -> checkCall(st, ctx, expr)
+	| ELambda e -> checkLambda(st, e.params, e.body)
+	| EBlock e -> checkScopedStmtList(st, ctx, e.stmts)
+	| EList e -> checkExprList(st, pureContextForLazy(e.mode, ctx), e.elems)
+	| EComp e -> checkComprehension(st, ctx, e.body, e.gens, e.guard, e.mode)
+	| ERecord e -> checkFieldExprs(st, ctx, e.fields)
+	| EField _ -> checkNamedValueUse(st, ctx, expr)
+	| EIndex e -> {
+		let st1 = checkExpr(st, ctx, e.object);
+		checkExpr(st1, ctx, e.index)
+	}
+	| EMatch e -> {
+		let st1 = checkExpr(st, ctx, e.subject);
+		checkArms(st1, ctx, e.arms)
+	}
+	| EDict e -> checkDictEntries(st, ctx, e.entries)
+	| EArray e -> checkExprList(st, ctx, e.elems)
+	| EAwait e -> {
+		let st1 = if ctxAllowsAwait(ctx) then { st } else { addDiag(st, e.span, "await is only allowed inside async proc bodies.") };
+		checkExpr(st1, ctx, e.value)
+	}
+	| EFmt e -> checkFmtParts(st, ctx, e.parts)
+}
+
+function checkLambda(st, params, body) {
+	let oldEnv = st.env;
+	let st1 = bindParams(st, params);
+	let st2 = checkExpr(st1, CtxPure, body);
+	withEnv(st2, oldEnv)
+}
+
+// ── statement checking ────────────────────────────────────────────────────
+
+function checkMaybeExpr(st, ctx, value) {
+	match value with
+	| Some v -> checkExpr(st, ctx, v.value)
+	| None -> st
+}
+
+function checkPureOnlyStmt(st, ctx, span, message) {
+	if ctxAllowsEffects(ctx) then { st } else { addDiag(st, span, message) }
+}
+
+function ctxForFnKind(kind) {
+	match kind with
+	| PureFn _ -> CtxPure
+	| ProcFn p -> CtxProc { p.isAsync }
+}
+
+function checkFunctionBody(st, fnStmt) {
+	match fnStmt.kind with
+	| PureFn _ -> {
+		let oldEnv = st.env;
+		let st1 = bindParams(st, fnStmt.params);
+		let st2 = checkScopedStmtList(st1, CtxPure, fnStmt.body);
+		withEnv(st2, oldEnv)
+	}
+	| ProcFn p -> {
+		let oldEnv = st.env;
+		let st1 = bindParams(st, fnStmt.params);
+		let st2 = checkScopedStmtList(st1, CtxProc { p.isAsync }, fnStmt.body);
+		withEnv(st2, oldEnv)
+	}
+}
+
+function checkStmt(st, ctx, stmt) {
+	match stmt with
+	| SLet s -> checkExpr(st, ctx, s.init)
+	| SVar s -> {
+		let st1 = checkPureOnlyStmt(st, ctx, s.span, "var bindings are not allowed in pure functions or fn lambdas.");
+		checkExpr(st1, ctx, s.init)
+	}
+	| SAssign s -> {
+		let st1 = checkPureOnlyStmt(st, ctx, s.span, "Assignment is not allowed in pure functions or fn lambdas.");
+		checkExpr(st1, ctx, s.value)
+	}
+	| SIndexAssign s -> {
+		let st1 = checkPureOnlyStmt(st, ctx, s.span, "Index assignment is not allowed in pure functions or fn lambdas.");
+		let st2 = checkExpr(st1, ctx, s.object);
+		let st3 = checkExpr(st2, ctx, s.index);
+		checkExpr(st3, ctx, s.value)
+	}
+	| SFun s -> checkFunctionBody(st, s)
+	| SType _ -> st
+	| SExpr s -> checkExpr(st, ctx, s.expr)
+	| SReturn s -> checkMaybeExpr(st, ctx, s.value)
+	| SIf s -> {
+		let st1 = checkExpr(st, ctx, s.cond);
+		let st2 = checkScopedStmtList(st1, ctx, s.thenS);
+		match s.elseS with
+		| Some e -> checkScopedStmtList(st2, ctx, e.value)
+		| None -> st2
+	}
+	| SWhile s -> {
+		let st1 = checkPureOnlyStmt(st, ctx, s.span, "while loops are not allowed in pure functions or fn lambdas.");
+		let st2 = checkExpr(st1, ctx, s.cond);
+		checkScopedStmtList(st2, ctx, s.body)
+	}
+	| SImport _ -> st
+	| SExport s -> checkStmt(st, ctx, s.inner)
+	| SExtern _ -> st
+}
+
+function checkStmtListLoop(st, ctx, stmts) {
+	match Compat.uncons(stmts) with
+	| None -> st
+	| Some cell -> checkStmtListLoop(checkStmt(st, ctx, cell.value.key), ctx, cell.value.value)
+}
+
+function checkScopedStmtList(st, ctx, stmts) {
+	let oldEnv = st.env;
+	let st1 = prebindLocalDecls(st, stmts);
+	let st2 = checkStmtListLoop(st1, ctx, stmts);
+	withEnv(st2, oldEnv)
+}
+
+// ── public entry points ───────────────────────────────────────────────────
+
+function bindModuleNames(ast, deps) {
+	let st0 = mkState(ast.path, IMS.imsEmpty(), []);
+	let st1 = bindImportStmts(st0, ast.stmts, deps);
+	prebindLocalDecls(st1, ast.stmts)
+}
+
+export function checkModule(ast, deps) {
+	let st0 = bindModuleNames(ast, deps);
+	let st1 = checkStmtListLoop(st0, CtxTop, ast.stmts);
+	mkPurityResult(reverse(st1.diags))
+}
+
+// Alias matching the phase name; useful in tests and later check/check.pf glue.
+export function checkPurity(ast, deps) {
+	checkModule(ast, deps)
+}

@@ -54,8 +54,24 @@ bare `if` after `->` is a parse error. Wrap the arm:
 }
 ```
 
-**`while` takes parenthesized conditions and a braced body.** `while (i < n) {
-... }`. V2 does not relax this; keep the parens.
+**`while` takes parenthesized conditions and a braced body** — and is legal
+only in procs. `while (i < n) { ... }`. The interpreter rejects `while`/`var`
+loops in pure functions ("Move the loop to a procedure"); the compiled path
+does **not** enforce this, so a loop in a pure function is a silent
+interpreter/compiled divergence. In pure code, the loop is `reduce` (§6).
+
+**`if` is not an expression.** It does not parse as a `let` initializer
+(`let x = if c then { a } else { b };` is a syntax error) and, with literal
+match patterns also absent, there is no expression-position conditional at
+all. The idiom is a selection helper:
+
+```
+// Both arms are thunks; only the chosen one is forced. Arms must be pure —
+// then evaluation order can't matter (§5).
+function pick(cond, a, b) { if cond then { a } else { b } }
+
+let width = pick(multi, lineLen + 1, endP.col);
+```
 
 **Guards use `where`, never `when`.** Both in match arms
 (`| Some v where v.value > 0 -> ...`) and comprehensions
@@ -102,7 +118,8 @@ checks anyway.
 
 **Guard every division.** V1 throws on zero; V2's `NonZero` divisor typing is
 stage2. Bootstrap sources check the divisor first and return a `Result`/default
-on zero, so neither dialect's failure path is ever reached.
+on zero, so neither dialect's failure path is ever reached. Integer division
+truncates (`7 / 2` is `3`) and `%` exists; both are dialect-stable.
 
 **No float literals, no float arithmetic.** [LINT] This is the bootstrap-scoped
 ban (checklist 11): V2 carries floats as source text through the pipeline, so
@@ -137,7 +154,10 @@ let d = Diag { code = "E101", message = m, line = ln, col = c };
 named fields when a record has more than two or three.
 
 **Use the builtin `Pair` for key/value carriers** instead of inventing
-one-off `Entry` types. Its accessors are `.key` and `.value`.
+one-off `Entry` types. Its accessors are `.key` and `.value`. In library
+modules, `Pair` is also **mandatory** as fold state passed through builtin
+callbacks — a module-local record there fails cross-module type resolution
+(§7); nest as `Pair { Pair { i, j }, acc }` when the state has three parts.
 
 **Variant construction requires braces or parens — never juxtaposition.**
 This one is a landmine: `Some n.v` *type-checks* in V1 and then fails at
@@ -304,7 +324,8 @@ export function listAt(xs, i) {
 
 export function uncons(xs) {
 	if length(xs) == 0 then { None }
-	else { Some { Pair { nth(xs, 0), drop(xs, 1) } } }
+	// no `drop` builtin exists — slice(start, count, list) is the primitive
+	else { Some { Pair { nth(xs, 0), slice(1, length(xs) - 1, xs) } } }
 }
 ```
 
@@ -313,13 +334,58 @@ port, everything else dialect-identical. The compat module is the sanctioned
 home for any future divergence you discover — keep it small and obvious.
 
 **Prefer whole-structure operations so decomposition is rarely needed.**
-`map`, `filter`, `reduce`, comprehensions, `length`, `take`, `drop`, `slice`,
-`cons`, `reverse`, `join`, `split` all have identical shapes in both dialects.
-A lexer written as a fold needs `uncons` almost nowhere.
+`map`, `filter`, `reduce`, comprehensions, `length`, `take`, `slice`, `cons`,
+`reverse`, `join`, `split`, `iterate` all have identical shapes in both
+dialects (`take`/`iterate` work inside library modules too, interpreted and
+compiled). There is **no `drop` builtin** — `slice(start, count, list)` is the
+primitive. A lexer written as a fold needs `uncons` almost nowhere. The
+iterative range idiom is `take(n, iterate(fn x => x + 1, 0))`.
 
 **`reduce` is `foldl` with an explicit init** — accumulator first, element
 second, front-to-back. There is no `foldr`; don't simulate one with `reverse`
 unless the operation is genuinely direction-sensitive, and comment it if so.
+
+**Whole-list walks are `reduce`, never element-per-frame recursion.**
+[DISCIPLINE — measured, and interpreter/compiled divergent.] Compiled Pfun
+emits plain JS calls with **no tail-call optimization**: a function that
+recurses once per element dies with "Maximum call stack size exceeded" around
+1,200–3,000 elements depending on per-frame weight, *while the same code passes
+in the interpreter* (a bare tail-recursive countdown reaches 8,000; add two
+`listAt` calls per frame and it dies near 1,200). Token lists will be far
+longer than that. Rules: every function that visits all elements of a list is
+written as `reduce` (a loop in the runtime); recursion is reserved for
+logarithmic depth (binary splitting, AVL descent, `mergeAll`-style halving);
+`strRepeat`-style repetition doubles instead of decrementing. `while` is not
+an escape hatch — it is banned in pure functions (§1).
+
+**Use the vendored helper modules; never reimplement them and never import
+`lib/` for them.** `bootstrap/src` is self-contained: `lib/` is V1-dialect
+(`head`/`tail`/`nth`, `+` on lists and strings) and cannot join the V2 module
+graph — `lib/listutils.pf` alone has 23 `head`/`tail`/`nth` call sites. The
+canonical homes, all in the bootstrap-safe subset and depth-safe per the rule
+above:
+
+- `bootstrap/src/compat.pf` — `listAt`, `uncons`. The only dialect-divergent
+  file (§6 above).
+- `bootstrap/src/data/listx.pf` — `appendL` (note: `append` is a
+  builtin name and cannot be shadowed), `concat` (single linear pass),
+  `sortBy` (stable merge sort, three-way comparator, `<= 0` keeps left;
+  `renderAll`'s diagnostic ordering depends on the stability).
+- `bootstrap/src/data/strx.pf` — `strRepeat` (doubling), `trimRight`
+  (fold + `slice`; preserves leading/interior whitespace, which caret
+  alignment in `check/diag.pf` relies on).
+
+A helper needed by two compiler modules goes in one of these files, not in
+both consumers. The sole `lib/` exception is test files importing the
+`lib/testing/` framework — its *contract* (annotations in, exit code out) is
+stable even though its implementation is V1-dialect and known porting work.
+
+**String facts for library authors.** `\r` is not a recognized string escape
+(the full set: `\n`, `\t`, `\\`, `\"`, `\'`, `\{`, `\}`); build a
+carriage return as `"" ++ chr(13)` — CRLF-sourced lines make this
+load-bearing for `trimRight`. And `split(s, "")` yields **`Str` elements, not
+`Char`s**: `asc` rejects them, so character comparisons are `Str == Str`
+against one-character strings.
 
 **Use `imaps.pf` / `imapi.pf` for maps, never the builtin `Dict`.**
 [DISCIPLINE] `dictGet`'s return shape is another V1/V2 divergence, and the
@@ -363,6 +429,21 @@ server) is proof — so structure the compiler the same way: each phase's types
 live in one defining module (`tokens.pf`, `ast.pf`, `diag.pf`), and consumers
 import and match on them directly.
 
+**Fold state passed through builtin callbacks must be a builtin type.**
+[DISCIPLINE — verified, and interpreter/compiled divergent.] A record type
+declared in a library module and *constructed inside a builtin's callback*
+(a `reduce` lambda, a `map` lambda) resolves against the **calling module's**
+type registry at runtime. It works while `main` calls the library directly,
+then fails with `Unknown type 'PassSt'` the moment another library module
+calls it — exporting the type buys one hop, not two (`diag → strx` still
+failed). The compiled path tolerates all of it, so the bug is invisible under
+`--mode compile` testing and detonates under `pfun file.pf`. Rule: state
+threaded through a builtin callback in any `bootstrap/src` module is `Pair`
+(nested if needed: `Pair { Pair { i, j }, acc }`, read as `st.key.key` /
+`st.key.value` / `st.value`), a scalar, or a list — never a module-local
+record. Records remain fine everywhere else: as arguments, returns, and inside
+plain functions.
+
 **Do not implicitly stringify foreign-typed values.** [DISCIPLINE] The one
 cross-module operation verified to fail in V1 is `__str__`/display of a
 user-typed value constructed in another module (this is what broke the
@@ -385,8 +466,28 @@ Bootstrap compiler modules are tested with the annotation-driven harness, and
 the testing rules are the purity rules of §4 applied ruthlessly.
 
 **Test files are annotated, main-less, and self-contained per file.** The
-generator (`scripts/gen-test-harness.js`) emits the harness and orchestrator;
-annotated files must not define `proc main` (the generator rejects it).
+generator (`utils/gen-test-harness.js`) emits the harness and orchestrator;
+annotated files must not define `proc main` (the generator rejects it). The
+orchestrator `cd`s to the project root derived from its own location, defaults
+`PFUN_HOME` to that root, and is safe to commit (no absolute paths); generated
+`*_gen.pf` files and `run-tests.sh` are regenerated, not edited. Compiling
+from anywhere other than the project root makes `$PFUN_HOME/lib/...` imports
+climb *above* the output directory and write outside it — the generator
+handles this; don't hand-roll runners that don't.
+
+**One module under test per test file.** `imaps` and `imapi` (and any other
+textually-parallel pair) share variant names (`MLeaf`/`MNode`); importing both
+into one scope collides. The convention is `<module>_test.pf` per module even
+when the test bodies are mechanical transforms of each other.
+
+**Golden strings are captured from real output, never hand-typed.** Run the
+renderer, capture stdout, generate the literals programmatically. Hand-counting
+the spaces before a caret is how a golden test ends up asserting the bug. Fix
+a golden by deliberately regenerating it, never by loosening an assertion.
+
+**Verify tests can fail.** After writing a suite, break the code under test
+once (a label, an off-by-one) and confirm the expected tests — and only they —
+go red. A green suite that has never been red proves nothing.
 
 **Test bodies are pure functions returning `TestResult` via `assertions`.**
 Never procs. Under the totality architecture there is nothing else a test
@@ -434,10 +535,20 @@ function testArithGolden(inputs) {
 }
 ```
 
-**Pass/fail travels as exit status, nothing else.** `runSuites` exits 0/1;
-the generated orchestrator aggregates per-file exit codes and exits nonzero on
-any failure. Never scrape stdout for "PASS". Use `--mode compile` in the
-orchestrator — it is the verified-reliable path and the only one V2 has.
+**Pass/fail travels as exit status, nothing else.** `runSuites` exits 0/1
+via the `exit(code)` builtin; the generated orchestrator aggregates per-file
+exit codes and exits nonzero on any failure. Never scrape stdout for "PASS".
+This contract only holds once the exit package is applied — an unpatched
+`runner.pf` always exits 0 and **a failing suite reports green**.
+
+**Use `--mode compile` in the orchestrator** — it is the verified-reliable
+path and the only one V2 has. Two consequences to know: white-box tests that
+`match` on an imported union (the imap AVL-invariant checker matching `MNode`)
+pass compiled but trip the V1 interpreter's cross-module variant resolution,
+so don't expect `pfun <file>_test_gen.pf` to work for those; and conversely,
+compile-mode green does not exercise the interpreter-only failure modes (§7
+fold-state rule, pure-`while` rejection), so run library modules through the
+interpreter at least once when touching them.
 
 **Differential tests are the compiler's real suite.** Unit tests cover
 modules; the bootstrap gate is the differential harness: compile a corpus with
@@ -503,6 +614,16 @@ exhaustiveness. Every match is exhaustive over variants with unguarded arms;
 guards only *refine* within an arm. Consequently `matchFail` should be
 unreachable by construction.
 
+**Shadowing builtin names.** `head`, `append`, and friends are runtime
+errors when redefined even under a namespace import — hence `appendL`,
+`headLine`. When a natural name collides, suffix it.
+
+**`if` as a `let` initializer; whole-list recursion; module-local records as
+builtin-callback state.** The three measured traps of this round: no
+expression-position `if` (use `pick`, §1); no per-element recursion (no TCO
+compiled, §6); no local record types threaded through `reduce` in library
+modules (registry resolution, §7).
+
 **`readln`/`readChar`, `when`, `fn` as a parameter name, bare `main()` under
 `pfun -i`.** Deprecated alias, wrong keyword, reserved word, and the REPL's
 pure-context quirk respectively — each has bitten once already. Tests and
@@ -522,8 +643,11 @@ Tabs for indentation, matching the existing codebase. `PascalCase` for types
 and variants; `camelCase` for functions, procs, and bindings; module-local
 helpers carry a module prefix (`imsBalance`, `lexScanHex`). One type-owning
 module per phase, with its rendering functions. File names lower-case
-(`lexer.pf`, `tokens.pf`); tests `<module>_test.pf`; generated files
-`*_gen.pf` and gitignored. Comment the *why* on anything present because of a
+(`lexer.pf`, `tokens.pf`); tests `<module>_test.pf` in `bootstrap/test/`;
+generated files (`*_gen.pf`, `run-tests.sh`) regenerated by
+`utils/gen-test-harness.js` and gitignored. Shared pure helpers live in
+`data/listx.pf` / `data/strx.pf` (§6), dialect divergence only in
+`compat.pf`. Comment the *why* on anything present because of a
 rule in this guide — a future reader (possibly the V2 compiler's author, i.e.
 you) should never "simplify" a compat call back into `nth`:
 
@@ -536,14 +660,23 @@ let c = listAt(chars, i);
 
 ## 11. Open items to verify before leaning on them
 
-Three boundaries are only partially mapped and deserve a probe before the
-relevant compiler phase depends on them. First, cross-module `match` on
-imported unions is proven by the protocol.pf pattern, but the exact extent of
-the stringify failure (does it affect `==` on foreign records? field access in
-guards?) hasn't been charted — the §7 rules are conservative enough to not
-need the answer, but chart it if you ever feel tempted to relax them. Second,
-V1 `==` on records/unions vs V2 Equatable: the guide bans structured equality
-[§2]; verify parity before ever unbanning it. Third, `where`-guard evaluation
-order when multiple guarded arms could match: both dialects take the first
-truthy arm top-to-bottom by spec, but this hasn't been differentially tested —
-write matches so at most one arm can match and the question never arises.
+Partially charted since the first edition of this guide: **field access on
+foreign-constructed records works** in both paths (`diag.pf` reads
+`span.start.line` on `token.pf`-built values throughout — no import of the
+type is needed for field reads; only construction and matching need one).
+**Cross-module `match` on imported unions works compiled but is unreliable
+interpreted** (the imap white-box checker matching `MNode` cross-module passes
+under `--mode compile` and fails under `pfun file.pf`) — treat interpreter
+runs of such code as best-effort. And the **builtin-callback registry rule**
+(§7) is now fully mapped: caller-module resolution, one-hop relief from
+`export type`, multi-hop failure, compiled-path tolerance.
+
+Still open. First, the remaining extent of the stringify failure (does it
+affect `==` on foreign records?) hasn't been charted — the §7 rules are
+conservative enough to not need the answer, but chart it if you ever feel
+tempted to relax them. Second, V1 `==` on records/unions vs V2 Equatable: the
+guide bans structured equality [§2]; verify parity before ever unbanning it.
+Third, `where`-guard evaluation order when multiple guarded arms could match:
+both dialects take the first truthy arm top-to-bottom by spec, but this hasn't
+been differentially tested — write matches so at most one arm can match and
+the question never arises.

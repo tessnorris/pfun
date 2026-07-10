@@ -1,0 +1,494 @@
+// syntax/ast.pf — Phase 4 AST model for the bootstrap compiler.
+
+import * as T from "./token";
+
+//
+// The AST is syntax only. It carries stable node ids and source spans, but no
+// inferred types, name-resolution facts, purity facts, exhaustiveness data, or
+// emission metadata. Later passes keep analysis results in side tables keyed by
+// node id.
+
+// ── expressions ─────────────────────────────────────────────────────────────
+
+export type ListMode = {
+	| StrictList
+	| LazyList
+}
+
+export type Field = { fname, value }
+
+export type GenClause = { gvar, source }
+
+export type DictEntry = { key, value }
+
+export type PatElem = {
+	| PeBind: pname
+	| PeWild
+}
+
+export type Pattern = {
+	| PWild
+	| PVariant: vname, bind
+	| PList: elems, rest
+}
+
+export type MatchArm = { pattern, guard, body }
+
+export type FmtPart = {
+	| FmtLit: s
+	| FmtExpr: e
+}
+
+export type Expr = {
+	| EInt: id, n, span
+	| EFloat: id, text, span
+	| EBool: id, b, span
+	| EStr: id, s, span
+	| EChar: id, c, span
+	| EByte: id, b, span
+
+	| EVar: id, name, span
+
+	| EUnary: id, op, operand, span
+	| EBinary: id, op, lhs, rhs, span
+	| EIf: id, cond, thenE, elseE, span
+
+	| ECall: id, callee, args, span
+	| ELambda: id, params, body, span
+	| EBlock: id, stmts, span
+
+	| EList: id, elems, mode, span
+	| EComp: id, body, gens, guard, mode, span
+	| ERecord: id, tname, fields, span
+
+	| EField: id, object, fname, span
+	| EIndex: id, object, index, span
+	| EMatch: id, subject, arms, span
+
+	| EDict: id, entries, span
+	| EArray: id, elems, span
+	| EAwait: id, value, span
+	| EFmt: id, parts, span
+}
+
+// ── statements/declarations ────────────────────────────────────────────────
+
+export type FnKind = {
+	| PureFn: isMemo, isGeneric
+	| ProcFn: isAsync, isGeneric
+}
+
+export type FieldDecl = { fname, isGeneric }
+
+export type VariantDecl = { vname, fields }
+
+export type TypeDecl = {
+	| RecordDecl: tname, fields
+	| UnionDecl: tname, variants
+}
+
+export type ImportName = { name, alias }
+
+export type ImportSpec = {
+	| INames: names
+	| INamespace: alias
+	| IStar
+}
+
+export type TypeExpr = {
+	| TyName: name, args
+	| TyFun: params, ret
+}
+
+export type ExternKind = {
+	| ExternFunction
+	| ExternProc: isAsync
+}
+
+export type TypedParam = { name, typeExpr }
+
+export type ExternDecl = { kind, name, params, ret, platform }
+
+export type Stmt = {
+	| SLet: id, name, init, span
+	| SVar: id, name, init, span
+	| SAssign: id, name, value, span
+	| SIndexAssign: id, object, index, value, span
+	| SFun: id, name, params, body, kind, span
+	| SType: id, decl, isOpaque, span
+	| SExpr: id, expr, span
+	| SReturn: id, value, span
+	| SIf: id, cond, thenS, elseS, span
+	| SWhile: id, cond, body, span
+	| SImport: id, spec, rawPath, span
+	| SExport: id, inner, span
+	| SExtern: id, decl, span
+}
+
+export type Module = { path, stmts, nextId }
+
+// ── smart constructors: supporting nodes ───────────────────────────────────
+
+export function strictListMode() { StrictList }
+export function lazyListMode() { LazyList }
+
+export function mkField(fname, value) {
+	Field { fname, value }
+}
+
+export function mkGenClause(gvar, source) {
+	GenClause { gvar, source }
+}
+
+export function mkDictEntry(key, value) {
+	DictEntry { key, value }
+}
+
+export function peBind(pname) {
+	PeBind { pname }
+}
+
+export function peWild() {
+	PeWild
+}
+
+export function pWild() {
+	PWild
+}
+
+export function pVariant(vname, bind) {
+	PVariant { vname, bind }
+}
+
+export function pList(elems, rest) {
+	PList { elems, rest }
+}
+
+export function mkMatchArm(pattern, guard, body) {
+	MatchArm { pattern, guard, body }
+}
+
+export function fmtLit(s) {
+	FmtLit { s }
+}
+
+export function fmtExpr(e) {
+	FmtExpr { e }
+}
+
+// ── smart constructors: expressions ────────────────────────────────────────
+
+export function eInt(id, n, span) {
+	EInt { id, n, span }
+}
+
+export function eFloat(id, text, span) {
+	EFloat { id, text, span }
+}
+
+export function eBool(id, b, span) {
+	EBool { id, b, span }
+}
+
+export function eStr(id, s, span) {
+	EStr { id, s, span }
+}
+
+export function eChar(id, c, span) {
+	EChar { id, c, span }
+}
+
+export function eByte(id, b, span) {
+	EByte { id, b, span }
+}
+
+export function eVar(id, name, span) {
+	EVar { id, name, span }
+}
+
+export function eUnary(id, op, operand, span) {
+	EUnary { id, op, operand, span }
+}
+
+export function eBinary(id, op, lhs, rhs, span) {
+	EBinary { id, op, lhs, rhs, span }
+}
+
+export function eIf(id, cond, thenE, elseE, span) {
+	EIf { id, cond, thenE, elseE, span }
+}
+
+export function eCall(id, callee, args, span) {
+	ECall { id, callee, args, span }
+}
+
+export function eLambda(id, params, body, span) {
+	ELambda { id, params, body, span }
+}
+
+export function eBlock(id, stmts, span) {
+	EBlock { id, stmts, span }
+}
+
+export function eList(id, elems, mode, span) {
+	EList { id, elems, mode, span }
+}
+
+export function eComp(id, body, gens, guard, mode, span) {
+	EComp { id, body, gens, guard, mode, span }
+}
+
+export function eRecord(id, tname, fields, span) {
+	ERecord { id, tname, fields, span }
+}
+
+export function eField(id, object, fname, span) {
+	EField { id, object, fname, span }
+}
+
+export function eIndex(id, object, index, span) {
+	EIndex { id, object, index, span }
+}
+
+export function eMatch(id, subject, arms, span) {
+	EMatch { id, subject, arms, span }
+}
+
+export function eDict(id, entries, span) {
+	EDict { id, entries, span }
+}
+
+export function eArray(id, elems, span) {
+	EArray { id, elems, span }
+}
+
+export function eAwait(id, value, span) {
+	EAwait { id, value, span }
+}
+
+export function eFmt(id, parts, span) {
+	EFmt { id, parts, span }
+}
+
+// ── smart constructors: declarations/statements ────────────────────────────
+
+export function pureFn(isMemo, isGeneric) {
+	PureFn { isMemo, isGeneric }
+}
+
+export function procFn(isAsync, isGeneric) {
+	ProcFn { isAsync, isGeneric }
+}
+
+export function mkFieldDecl(fname, isGeneric) {
+	FieldDecl { fname, isGeneric }
+}
+
+export function mkVariantDecl(vname, fields) {
+	VariantDecl { vname, fields }
+}
+
+export function recordDecl(tname, fields) {
+	RecordDecl { tname, fields }
+}
+
+export function unionDecl(tname, variants) {
+	UnionDecl { tname, variants }
+}
+
+export function mkImportName(name, alias) {
+	ImportName { name, alias }
+}
+
+export function iNames(names) {
+	INames { names }
+}
+
+export function iNamespace(alias) {
+	INamespace { alias }
+}
+
+export function iStar() {
+	IStar
+}
+
+export function tyName(name, args) {
+	TyName { name, args }
+}
+
+export function tyFun(params, ret) {
+	TyFun { params, ret }
+}
+
+export function externFunction() {
+	ExternFunction
+}
+
+export function externProc(isAsync) {
+	ExternProc { isAsync }
+}
+
+export function mkTypedParam(name, typeExpr) {
+	TypedParam { name, typeExpr }
+}
+
+export function mkExternDecl(kind, name, params, ret, platform) {
+	ExternDecl { kind, name, params, ret, platform }
+}
+
+export function sLet(id, name, init, span) {
+	SLet { id, name, init, span }
+}
+
+export function sVar(id, name, init, span) {
+	SVar { id, name, init, span }
+}
+
+export function sAssign(id, name, value, span) {
+	SAssign { id, name, value, span }
+}
+
+export function sIndexAssign(id, object, index, value, span) {
+	SIndexAssign { id, object, index, value, span }
+}
+
+export function sFun(id, name, params, body, kind, span) {
+	SFun { id, name, params, body, kind, span }
+}
+
+export function sType(id, decl, isOpaque, span) {
+	SType { id, decl, isOpaque, span }
+}
+
+export function sExpr(id, expr, span) {
+	SExpr { id, expr, span }
+}
+
+export function sReturn(id, value, span) {
+	SReturn { id, value, span }
+}
+
+export function sIf(id, cond, thenS, elseS, span) {
+	SIf { id, cond, thenS, elseS, span }
+}
+
+export function sWhile(id, cond, body, span) {
+	SWhile { id, cond, body, span }
+}
+
+export function sImport(id, spec, rawPath, span) {
+	SImport { id, spec, rawPath, span }
+}
+
+export function sExport(id, inner, span) {
+	SExport { id, inner, span }
+}
+
+export function sExtern(id, decl, span) {
+	SExtern { id, decl, span }
+}
+
+export function mkModule(path, stmts, nextId) {
+	Module { path, stmts, nextId }
+}
+
+// ── common AST queries used by the parser and later passes ─────────────────
+
+export function exprId(expr) {
+	match expr with
+	| EInt e -> e.id
+	| EFloat e -> e.id
+	| EBool e -> e.id
+	| EStr e -> e.id
+	| EChar e -> e.id
+	| EByte e -> e.id
+	| EVar e -> e.id
+	| EUnary e -> e.id
+	| EBinary e -> e.id
+	| EIf e -> e.id
+	| ECall e -> e.id
+	| ELambda e -> e.id
+	| EBlock e -> e.id
+	| EList e -> e.id
+	| EComp e -> e.id
+	| ERecord e -> e.id
+	| EField e -> e.id
+	| EIndex e -> e.id
+	| EMatch e -> e.id
+	| EDict e -> e.id
+	| EArray e -> e.id
+	| EAwait e -> e.id
+	| EFmt e -> e.id
+}
+
+export function exprSpan(expr) {
+	match expr with
+	| EInt e -> e.span
+	| EFloat e -> e.span
+	| EBool e -> e.span
+	| EStr e -> e.span
+	| EChar e -> e.span
+	| EByte e -> e.span
+	| EVar e -> e.span
+	| EUnary e -> e.span
+	| EBinary e -> e.span
+	| EIf e -> e.span
+	| ECall e -> e.span
+	| ELambda e -> e.span
+	| EBlock e -> e.span
+	| EList e -> e.span
+	| EComp e -> e.span
+	| ERecord e -> e.span
+	| EField e -> e.span
+	| EIndex e -> e.span
+	| EMatch e -> e.span
+	| EDict e -> e.span
+	| EArray e -> e.span
+	| EAwait e -> e.span
+	| EFmt e -> e.span
+}
+
+export function stmtSpan(stmt) {
+	match stmt with
+	| SLet s -> s.span
+	| SVar s -> s.span
+	| SAssign s -> s.span
+	| SIndexAssign s -> s.span
+	| SFun s -> s.span
+	| SType s -> s.span
+	| SExpr s -> s.span
+	| SReturn s -> s.span
+	| SIf s -> s.span
+	| SWhile s -> s.span
+	| SImport s -> s.span
+	| SExport s -> s.span
+	| SExtern s -> s.span
+}
+
+export function spanJoin(a, b) {
+	// `a` and `b` are end-exclusive spans. The parser only joins spans where
+	// `a.start` is before `b.end`, so no ordering comparison is needed here.
+	T.mkSpan(a.start, b.end)
+}
+
+export function assignVarName(expr) {
+	match expr with
+	| EVar e -> Some { e.name }
+	| _ -> None
+}
+
+export function assignIndexParts(expr) {
+	match expr with
+	| EIndex e -> Some { Pair { e.object, e.index } }
+	| _ -> None
+}
+
+export function isNoArgVariantPattern(pattern) {
+	match pattern with
+	| PVariant p -> {
+		match p.bind with
+		| None -> true
+		| Some _ -> false
+	}
+	| _ -> false
+}

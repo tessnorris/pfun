@@ -363,6 +363,12 @@ function emitExpr(e: Expr): Node {
     }
 
     case 'CallExpr': {
+      // Self-TCO: a marked tail self-call becomes a bounce value; the
+      // enclosing function's loop wrapper intercepts it and reassigns params.
+      if ((e as any).__tcoSelf) {
+        return obj([{ key: TCO_KEY,
+                      value: arrExpr(((e as any).args as Expr[]).map(emitExpr)) }]);
+      }
       const callee = emitExpr((e as any).callee);
       const args   = ((e as any).args as Expr[]).map(emitExpr);
       // Wire stdlib names to runtime functions
@@ -501,12 +507,12 @@ const STDLIB_MAP: Record<string, string> = {
   scanChar:      '$readChar',
   readln:        '$readln',
   readChar:      '$readChar',
+  exit:          '$exit',
 
   // Environment
   scriptArgs:    '$scriptArgs',
   getEnv:        '$getEnv',
   envVars:       '$envVars',
-  exit:          '$exit',
 
   // Core list ops
   length:        '$length',
@@ -588,6 +594,219 @@ const STDLIB_MAP: Record<string, string> = {
 // ─── Match lowering ───────────────────────────────────────────────────────────
 // match subject with | … lowers to $match(subject, [...arms])
 // Each arm becomes { variant, guard, body } where guard/body are arrow fns.
+
+
+// ─── Self-tail-call optimization (TCO) ───────────────────────────────────────
+// Emitted JS has no tail calls: a Pfun function recursing once per element
+// dies near two thousand frames. Direct self-calls in tail position are
+// therefore compiled to a loop. Mechanism: the function body is wrapped in
+// `while (true)`, each marked tail self-call emits a sentinel "bounce" object
+// carrying the evaluated arguments instead of performing the call, and every
+// function-level return is intercepted — if the returned value is a bounce,
+// parameters are reassigned and the loop continues. Because the bounce is a
+// *value*, it propagates out of $match arm closures and BlockExpr IIFEs to
+// the interception point, so the transform is independent of emission shape.
+//
+// Scope and safety:
+//  - only direct calls where the callee is a bare identifier equal to the
+//    enclosing function's name, with a full argument list (Pfun's $curry
+//    handles partial application; a partial self-call is left as a call)
+//  - skipped entirely if the function's name is shadowed or reassigned
+//    anywhere in its body, or if the function is memoized (looping would
+//    bypass the $memoize cache on the recursive path)
+//  - argument expressions are evaluated into the bounce array before any
+//    parameter is reassigned, so no interdependence issues
+//  - guards, non-tail expressions, and nested function/lambda bodies are
+//    never marked; nested functions are transformed independently
+
+const TCO_KEY = '__$tco$__';
+
+function tcoNameShadowed(fnName: string, stmts: Stmt[]): boolean {
+  let shadowed = false;
+  const stmt = (s: Stmt): void => {
+    if (shadowed || !s) return;
+    switch (s.type) {
+      case 'LetStmt': case 'VarStmt':
+        if ((s as any).name === fnName) shadowed = true;
+        else expr((s as any).initializer);
+        break;
+      case 'FunctionStmt': case 'ProcedureStmt':
+        if ((s as any).name === fnName || ((s as any).params as string[]).includes(fnName)) shadowed = true;
+        // do not descend: inner scope; but an inner decl of the same name shadows
+        break;
+      case 'ExprStmt': case 'EvalStmt': expr((s as any).expression); break;
+      case 'ReturnStmt': if ((s as any).value) expr((s as any).value); break;
+      case 'BlockStmt': ((s as any).statements as Stmt[]).forEach(stmt); break;
+      case 'IfStmt':
+        expr((s as any).condition);
+        stmt((s as any).thenBranch);
+        if ((s as any).elseBranch) stmt((s as any).elseBranch);
+        break;
+      case 'WhileStmt':
+        expr((s as any).condition);
+        ((s as any).body as Stmt[]).forEach(stmt);
+        break;
+      default: break;
+    }
+  };
+  const expr = (e: Expr): void => {
+    if (shadowed || !e) return;
+    switch (e.type) {
+      case 'AssignExpr':
+        if ((e as any).name === fnName) shadowed = true;
+        else expr((e as any).value);
+        break;
+      case 'LambdaExpr':
+        if (((e as any).params as string[]).includes(fnName)) shadowed = true;
+        else expr((e as any).body);
+        break;
+      case 'MatchExpr':
+        expr((e as any).subject);
+        for (const arm of (e as any).arms) {
+          if (arm.binding === fnName) { shadowed = true; return; }
+          if (arm.guard) expr(arm.guard);
+          expr(arm.body);
+        }
+        break;
+      case 'BlockExpr': ((e as any).statements as Stmt[]).forEach(stmt); break;
+      case 'CallExpr': expr((e as any).callee); ((e as any).args as Expr[]).forEach(expr); break;
+      case 'BinaryExpr': expr((e as any).left); expr((e as any).right); break;
+      case 'UnaryExpr': expr((e as any).right); break;
+      case 'GroupExpr': expr((e as any).expression); break;
+      case 'TernaryExpr': expr((e as any).condition); expr((e as any).thenBranch); expr((e as any).elseBranch); break;
+      case 'ListExpr': case 'ArrayExpr': ((e as any).elements as Expr[]).forEach(expr); break;
+      case 'RecordExpr': for (const f of (e as any).fields) expr(f.value); break;
+      case 'GetExpr': expr((e as any).object); break;
+      case 'IndexExpr': expr((e as any).object); expr((e as any).index); break;
+      case 'IndexAssignExpr': expr((e as any).object); expr((e as any).index); expr((e as any).value); break;
+      case 'DictExpr': for (const en of (e as any).entries) { expr(en.key); expr(en.value); } break;
+      case 'ComprehensionExpr':
+        for (const g of (e as any).generators) {
+          if (g.variable === fnName) { shadowed = true; return; }
+          expr(g.source);
+        }
+        if ((e as any).guard) expr((e as any).guard);
+        expr((e as any).body);
+        break;
+      case 'AwaitExpr': expr((e as any).value); break;
+      default: break;
+    }
+  };
+  stmts.forEach(stmt);
+  return shadowed;
+}
+
+// Marks tail-position direct self-calls; returns how many were marked.
+// Mirrors makeReturning/emitFunctionBodyInner: the last statement's value
+// position is tail, every ReturnStmt at function level is tail, and tail-ness
+// distributes through IfStmt branches, BlockStmt/BlockExpr last statements,
+// TernaryExpr branches, GroupExpr, AwaitExpr, and MatchExpr arm bodies.
+function tcoMarkTails(fnName: string, arity: number, stmts: Stmt[]): number {
+  let marks = 0;
+  const tailStmts = (ss: Stmt[]): void => {
+    for (let i = 0; i < ss.length; i++) {
+      if (i === ss.length - 1) tailStmt(ss[i]);
+      else nonTailStmt(ss[i]);
+    }
+  };
+  const branchStmts = (b: any): Stmt[] => (b && b.type === 'BlockStmt') ? b.statements : [b];
+  const tailStmt = (s: Stmt): void => {
+    if (!s) return;
+    switch (s.type) {
+      case 'ExprStmt': case 'EvalStmt': tailExpr((s as any).expression); break;
+      case 'ReturnStmt': if ((s as any).value) tailExpr((s as any).value); break;
+      case 'BlockStmt': tailStmts((s as any).statements); break;
+      case 'IfStmt':
+        tailStmts(branchStmts((s as any).thenBranch));
+        if ((s as any).elseBranch) tailStmts(branchStmts((s as any).elseBranch));
+        break;
+      default: nonTailStmt(s); break;
+    }
+  };
+  // Non-tail statements can still contain function-level ReturnStmts (early
+  // returns inside mid-body ifs/blocks/whiles); those are tail exits too.
+  const nonTailStmt = (s: Stmt): void => {
+    if (!s) return;
+    switch (s.type) {
+      case 'ReturnStmt': if ((s as any).value) tailExpr((s as any).value); break;
+      case 'BlockStmt': ((s as any).statements as Stmt[]).forEach(nonTailStmt); break;
+      case 'IfStmt':
+        branchStmts((s as any).thenBranch).forEach(nonTailStmt);
+        if ((s as any).elseBranch) branchStmts((s as any).elseBranch).forEach(nonTailStmt);
+        break;
+      case 'WhileStmt': ((s as any).body as Stmt[]).forEach(nonTailStmt); break;
+      default: break; // expressions cannot contain function-level returns
+    }
+  };
+  const tailExpr = (e: Expr): void => {
+    if (!e) return;
+    switch (e.type) {
+      case 'CallExpr': {
+        const callee = (e as any).callee;
+        if (callee && callee.type === 'IdentExpr' && callee.name === fnName
+            && ((e as any).args as Expr[]).length === arity) {
+          (e as any).__tcoSelf = true;
+          marks++;
+        }
+        break;
+      }
+      case 'MatchExpr': for (const arm of (e as any).arms) tailExpr(arm.body); break;
+      case 'BlockExpr': tailStmts((e as any).statements); break;
+      case 'TernaryExpr': tailExpr((e as any).thenBranch); tailExpr((e as any).elseBranch); break;
+      case 'GroupExpr': tailExpr((e as any).expression); break;
+      case 'AwaitExpr': tailExpr((e as any).value); break;
+      default: break;
+    }
+  };
+  tailStmts(stmts);
+  return marks;
+}
+
+// Rewrites every function-level ReturnStatement in emitted JS to intercept
+// bounce values. Does not descend into nested functions/arrows (their returns
+// deliver values to $match / IIFE call sites, which propagate to a
+// function-level return that IS rewritten).
+function tcoWrapReturns(nodes: Node[], paramNames: string[]): Node[] {
+  const rewriteRet = (arg: Node): Node => {
+    const r = id('__tcoR');
+    const isBounce: Node = {
+      type: 'LogicalExpression', operator: '&&',
+      left: { type: 'BinaryExpression', operator: '===',
+              left: { type: 'UnaryExpression', operator: 'typeof', prefix: true, argument: r },
+              right: str('object') },
+      right: { type: 'LogicalExpression', operator: '&&',
+               left: { type: 'BinaryExpression', operator: '!==', left: r, right: { type: 'Literal', value: null } },
+               right: { type: 'BinaryExpression', operator: '!==',
+                        left: { type: 'MemberExpression', object: r, property: id(TCO_KEY), computed: false },
+                        right: { type: 'UnaryExpression', operator: 'void', prefix: true, argument: lit(0) } } },
+    };
+    const reassign: Node[] = paramNames.map((p, i) => exprStmt(assign(id(p), {
+      type: 'MemberExpression', computed: true,
+      object: { type: 'MemberExpression', object: r, property: id(TCO_KEY), computed: false },
+      property: lit(i),
+    })));
+    return block([
+      varDecl('const', '__tcoR', arg ?? { type: 'Identifier', name: 'undefined' }),
+      ifNode(isBounce, block([...reassign, { type: 'ContinueStatement', label: null }])),
+      ret(r),
+    ]);
+  };
+  const walk = (n: Node): Node => {
+    if (!n || typeof n !== 'object') return n;
+    if (n.type === 'FunctionDeclaration' || n.type === 'FunctionExpression'
+        || n.type === 'ArrowFunctionExpression') return n; // inner scope: leave
+    if (n.type === 'ReturnStatement') return rewriteRet(n.argument);
+    const out: any = Array.isArray(n) ? [] : { ...n };
+    for (const k of Object.keys(n)) {
+      const v = (n as any)[k];
+      if (Array.isArray(v)) out[k] = v.map(walk);
+      else if (v && typeof v === 'object' && v.type) out[k] = walk(v);
+      else out[k] = v;
+    }
+    return out;
+  };
+  return nodes.map(walk);
+}
 
 function emitMatch(e: any): Node {
   const subject = emitExpr(e.subject);
@@ -693,10 +912,24 @@ function emitStmt(s: Stmt): Node[] {
       // async function. The top-level async IIFE wrapper does NOT set this —
       // only `async proc`/`async function` declarations do. This prevents
       // spurious `await $match(...)` in synchronous top-level code.
+      // Self-TCO: mark direct tail self-calls before emission; skip memoized
+      // functions (looping would bypass the $memoize cache) and any function
+      // whose name is shadowed in its own body.
+      const tcoOn = !isMemo
+        && !params.includes(name)
+        && !tcoNameShadowed(name, (s as any).body)
+        && tcoMarkTails(name, params.length, (s as any).body) > 0;
+
       const prevAsync = _inAsyncContext;
       _inAsyncContext = isAsync;
-      const body = emitFunctionBody((s as any).body);
+      let body = emitFunctionBody((s as any).body);
       _inAsyncContext = prevAsync;
+
+      if (tcoOn) {
+        const mangled = params.map(mangle);
+        body = [{ type: 'WhileStatement', test: lit(true),
+                  body: block(tcoWrapReturns(body, mangled)) }];
+      }
 
       const decl    = fnDecl(name, params, body, isAsync);
       const nodes: Node[] = [decl];
