@@ -1,0 +1,25 @@
+import * from "io";
+
+function countdown(n) {
+  if n <= 0 then return "Liftoff!" else countdown(n - 1);
+}
+
+function fact(n, acc) {
+  if n <= 1 then return acc else fact(n - 1, n * acc);
+}
+
+memo function fib(n) {
+  if n <= 1 then n else fib(n - 1) + fib(n - 2);
+}
+
+function clamp(lo, hi, x) {
+  return x < lo ? lo : (x > hi ? hi : x);
+}
+
+let clamp0to100 = clamp(0)(100);
+
+println(countdown(10000));
+println(fact(5, 1));
+println(fib(10));
+println(fib(20));
+println(clamp0to100(150));

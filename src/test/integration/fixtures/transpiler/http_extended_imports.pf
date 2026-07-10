@@ -1,0 +1,5 @@
+import * from "io";
+import * from "http";
+
+println(urlEncode("hello world"));
+println(urlEncode("a+b & c/d?"));

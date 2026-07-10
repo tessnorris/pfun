@@ -928,7 +928,13 @@ function emitStmt(s: Stmt): Node[] {
       if (tcoOn) {
         const mangled = params.map(mangle);
         body = [{ type: 'WhileStatement', test: lit(true),
-                  body: block(tcoWrapReturns(body, mangled)) }];
+                  body: block([
+          ...tcoWrapReturns(body, mangled),
+          // A TCO-enabled body may legitimately fall through, especially a
+          // procedure ending in `if ... then { recurse(...) }` with no else.
+          // Exit the function normally instead of spinning in while(true).
+          { type: 'ReturnStatement', argument: null },
+        ]) }];
       }
 
       const decl    = fnDecl(name, params, body, isAsync);
@@ -999,8 +1005,23 @@ function emitStmt(s: Stmt): Node[] {
           'Read','Write','Append',
         ]},
         'async': { file: _bpaths['async'] ?? 'pfun-async', names: ['sleep','asyncAll','asyncRace'] },
-        'http':  { file: _bpaths['http']  ?? 'pfun-http',  names: ['httpGet','httpGetBytes','httpListen'] },
-        'db/postgresql': { file: _bpaths['db/postgresql'] ?? 'pfun-db-postgresql', names: ['dbConnect','dbQuery','dbClose','DbNull'] },
+        'http':  { file: _bpaths['http']  ?? 'pfun-http',  names: ['httpGet','httpGetBytes','httpListen','httpRequest','httpRequestBytes','fetchWithTimeout','urlEncode'] },
+        'foreign': {
+  file: _bpaths['foreign'] ?? 'pfun-foreign',
+  names: [
+    'FOk', 'FErr',
+    'foreignRequire', 'foreignGlobal', 'foreignGet', 'foreignSet',
+    'foreignCall', 'foreignInvoke', 'foreignNew', 'foreignDelete',
+    'foreignTypeof', 'foreignAwait', 'foreignCallback', 'foreignApply',
+    'dForeign', 'dUnit', 'dBool', 'dInt', 'dFloat', 'dStr',
+    'dList', 'dOption', 'dDict', 'dField', 'dMap', 'dAndThen', 'dOneOf',
+  ],
+},
+'timer': {
+  file: _bpaths['timer'] ?? 'pfun-timer',
+  names: ['setTimer', 'clearTimer'],
+},
+'db/postgresql': { file: _bpaths['db/postgresql'] ?? 'pfun-db-postgresql', names: ['dbConnect','dbQuery','dbClose','DbNull'] },
         'db/mariadb':    { file: _bpaths['db/mariadb']    ?? 'pfun-db-mariadb',    names: ['dbConnect','dbQuery','dbClose','DbNull'] },
       };
 
