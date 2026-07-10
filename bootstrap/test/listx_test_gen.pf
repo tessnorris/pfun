@@ -1,0 +1,283 @@
+// bootstrap/test/listx_test.pf — tests for src/data/listx.pf.
+//
+// listx is vendored (bootstrap/src imports nothing from lib/, which is
+// V1-dialect). sortBy's *stability* is load-bearing: check/diag.pf's
+// renderAll relies on equal-position diagnostics keeping emission order.
+
+import * from "$PFUN_HOME/lib/testing/testing";
+import * from "$PFUN_HOME/lib/testing/assertions";
+import * as Lx from "../src/data/listx";
+import * as Compat from "../src/compat";
+import * from "io"; // added by gen-test-harness
+import * from "$PFUN_HOME/lib/testing/runner"; // added by gen-test-harness
+
+// ── helpers ─────────────────────────────────────────────────────────────────
+
+function optVal(o, dflt) {
+	match o with
+	| None -> dflt
+	| Some v -> v.value
+}
+
+// Iterative range: 0..n-1. Built with take/iterate (runtime loops) rather
+// than recursion — compiled Pfun has no TCO, so a recursive builder would
+// blow the stack on the scale tests below while passing in the interpreter.
+function upto(n) { take(n, iterate(fn x => x + 1, 0)) }
+
+function intCmp(a, b) {
+	if a < b then { 0 - 1 } else if b < a then { 1 } else { 0 }
+}
+
+// Elementwise equality, folded rather than recursed.
+function sameAt(a, b, i) {
+	match Compat.listAt(a, i) with
+	| None -> false
+	| Some ea -> {
+		match Compat.listAt(b, i) with
+		| None -> false
+		| Some eb -> ea.value == eb.value
+	}
+}
+function eqAt(a, b) {
+	if length(a) != length(b) then { false }
+	else {
+		let fin = reduce(fn ok, i => ok && sameAt(a, b, i), true, upto(length(a)));
+		fin
+	}
+}
+function eqInts(a, b) { eqAt(a, b) }
+function eqStrs(a, b) { eqAt(a, b) }
+
+// Non-strict ascending check, folded.
+type NDSt = { ok, started, prev }
+function ndStep(st, x) {
+	if st.started then { NDSt { st.ok && st.prev <= x, true, x } }
+	else { NDSt { true, true, x } }
+}
+function nonDescending(xs) {
+	let fin = reduce(fn st, x => ndStep(st, x), NDSt { true, false, 0 }, xs);
+	fin.ok
+}
+
+// sum, used as a cheap multiset fingerprint (with length) for permutation checks
+function sumOf(xs) { reduce(fn acc, x => acc + x, 0, xs) }
+
+// deterministic PRNG
+function lcg(s) { (s * 1103515245 + 12345) % 2147483648 }
+function randList(seed, n) {
+	function go(s, i, acc) {
+		if i >= n then { reverse(acc) }
+		else { go(lcg(s), i + 1, cons(lcg(s) % 500, acc)) }
+	}
+	go(seed, 0, [])
+}
+
+// Items with a sort key and an input-order tag, for stability checks.
+type Item = { k, tag }
+function itemCmp(a, b) { intCmp(a.k, b.k) }
+function tagsOf(xs) { map(fn i => i.tag, xs) }
+function keysOf(xs) { map(fn i => i.k, xs) }
+// ── appendL ─────────────────────────────────────────────────────────────────
+
+//![suite("listx appendL")]
+//![test("empty operands behave as identity")]
+function testAppendEmpty() {
+	assertions([
+		assertEqual(0, length(Lx.appendL([], []))),
+		assertTrue(eqInts([1, 2], Lx.appendL([], [1, 2]))),
+		assertTrue(eqInts([1, 2], Lx.appendL([1, 2], [])))
+	]);
+}
+
+//![test("preserves order across the join")]
+function testAppendOrder() {
+	let r = Lx.appendL([1, 2, 3], [4, 5]);
+	assertions([
+		assertEqual(5, length(r)),
+		assertTrue(eqInts([1, 2, 3, 4, 5], r)),
+		// no `+` on lists anywhere: this is the sanctioned append
+		assertEqual(1, optVal(Compat.listAt(r, 0), 0 - 1)),
+		assertEqual(5, optVal(Compat.listAt(r, 4), 0 - 1))
+	]);
+}
+
+//![test("does not mutate its operands")]
+function testAppendImmutable() {
+	let a = [1, 2];
+	let b = [3];
+	let ignored = Lx.appendL(a, b);
+	assertions([
+		assertEqual(2, length(a)),
+		assertEqual(1, length(b)),
+		assertTrue(eqInts([1, 2], a)),
+		assertTrue(eqInts([3], b))
+	]);
+}
+
+//![test("handles large operands without overflowing the stack")]
+function testAppendScale() {
+	let r = Lx.appendL(upto(1000), upto(1000));
+	assertions([
+		assertEqual(2000, length(r)),
+		assertEqual(0, optVal(Compat.listAt(r, 0), 0 - 1)),
+		assertEqual(999, optVal(Compat.listAt(r, 999), 0 - 1)),
+		assertEqual(0, optVal(Compat.listAt(r, 1000), 0 - 1))
+	]);
+}
+
+// ── concat ──────────────────────────────────────────────────────────────────
+
+//![suite("listx concat")]
+//![test("empty and all-empty inputs yield empty")]
+function testConcatEmpty() {
+	assertions([
+		assertEqual(0, length(Lx.concat([]))),
+		assertEqual(0, length(Lx.concat([[]]))),
+		assertEqual(0, length(Lx.concat([[], [], []])))
+	]);
+}
+
+//![test("flattens in order, skipping empty segments")]
+function testConcatOrder() {
+	let r = Lx.concat([[1, 2], [], [3], [4, 5]]);
+	assertions([
+		assertEqual(5, length(r)),
+		assertTrue(eqInts([1, 2, 3, 4, 5], r))
+	]);
+}
+
+//![test("is equivalent to a fold of appendL")]
+function testConcatMatchesAppend() {
+	let segs = [[1, 2], [3], [], [4, 5, 6]];
+	let folded = reduce(fn acc, xs => Lx.appendL(acc, xs), [], segs);
+	assertions([assertTrue(eqInts(folded, Lx.concat(segs)))]);
+}
+
+//![test("handles many segments without overflowing the stack")]
+function testConcatScale() {
+	// 500 segments of 10 = 5000 elements; concat is a single linear pass
+	let r = Lx.concat(map(fn i => upto(10), upto(500)));
+	assertions([
+		assertEqual(5000, length(r)),
+		assertEqual(0, optVal(Compat.listAt(r, 0), 0 - 1)),
+		assertEqual(9, optVal(Compat.listAt(r, 9), 0 - 1)),
+		assertEqual(0, optVal(Compat.listAt(r, 10), 0 - 1))
+	]);
+}
+
+// ── sortBy ──────────────────────────────────────────────────────────────────
+
+//![suite("listx sortBy")]
+//![test("empty and single-element lists are returned as-is")]
+function testSortTrivial() {
+	assertions([
+		assertEqual(0, length(Lx.sortBy(intCmp, []))),
+		assertTrue(eqInts([42], Lx.sortBy(intCmp, [42])))
+	]);
+}
+
+//![test("sorts sorted, reversed, and unsorted inputs")]
+function testSortBasic() {
+	assertions([
+		assertTrue(eqInts([1, 2, 3], Lx.sortBy(intCmp, [1, 2, 3]))),
+		assertTrue(eqInts([1, 2, 3], Lx.sortBy(intCmp, [3, 2, 1]))),
+		assertTrue(eqInts([1, 2, 3, 4, 5], Lx.sortBy(intCmp, [3, 1, 5, 2, 4]))),
+		// odd and even lengths exercise the pairwise merge pass differently
+		assertTrue(eqInts([1, 2, 3, 4], Lx.sortBy(intCmp, [4, 3, 2, 1]))),
+		assertTrue(eqInts([1, 2, 3, 4, 5, 6, 7], Lx.sortBy(intCmp, [7, 6, 5, 4, 3, 2, 1])))
+	]);
+}
+
+//![test("handles duplicates and all-equal input")]
+function testSortDuplicates() {
+	assertions([
+		assertTrue(eqInts([1, 1, 2, 2, 3], Lx.sortBy(intCmp, [2, 1, 3, 2, 1]))),
+		assertTrue(eqInts([5, 5, 5, 5], Lx.sortBy(intCmp, [5, 5, 5, 5])))
+	]);
+}
+
+//![test("is stable: equal keys keep their input order")]
+function testSortStable() {
+	// renderAll depends on this: diagnostics at the same position must render
+	// in the order the passes emitted them.
+	let xs = [Item{5,"a"}, Item{1,"b"}, Item{3,"c"}, Item{1,"d"},
+	          Item{9,"e"}, Item{3,"f"}, Item{0,"g"}, Item{5,"h"}];
+	let sorted = Lx.sortBy(itemCmp, xs);
+	assertions([
+		assertTrue(eqInts([0, 1, 1, 3, 3, 5, 5, 9], keysOf(sorted))),
+		// ties resolve b-before-d, c-before-f, a-before-h — input order
+		assertTrue(eqStrs(["g", "b", "d", "c", "f", "a", "h", "e"], tagsOf(sorted)))
+	]);
+}
+
+//![test("all-equal keys preserve input order exactly")]
+function testSortStableAllEqual() {
+	let xs = [Item{1,"a"}, Item{1,"b"}, Item{1,"c"}, Item{1,"d"}, Item{1,"e"}];
+	assertions([
+		assertTrue(eqStrs(["a", "b", "c", "d", "e"], tagsOf(Lx.sortBy(itemCmp, xs))))
+	]);
+}
+
+//![test("output is a permutation of the input")]
+function testSortPermutation() {
+	function holds(seed) {
+		let xs = randList(seed, 60);
+		let s = Lx.sortBy(intCmp, xs);
+		nonDescending(s) && length(s) == length(xs) && sumOf(s) == sumOf(xs)
+	}
+	assertions(map(fn i => assertTrue(holds(i * 7 + 1)), upto(15)));
+}
+
+//![test("sorts a large list without overflowing the stack")]
+function testSortScale() {
+	// Every whole-list walk in listx is a reduce, not recursion: a recursive
+	// merge dies near two thousand elements in the compiled path.
+	let s = Lx.sortBy(intCmp, reverse(upto(5000)));
+	assertions([
+		assertEqual(5000, length(s)),
+		assertTrue(nonDescending(s)),
+		assertEqual(0, optVal(Compat.listAt(s, 0), 0 - 1)),
+		assertEqual(4999, optVal(Compat.listAt(s, 4999), 0 - 1))
+	]);
+}
+
+// ─────────────────────────────────────────────────────────────────
+// GENERATED TEST HARNESS (gen-test-harness.js) — do not edit.
+// Lambda-closing lives in pure functions; the generated main has no
+// lambdas, so V1's fn-lambda-in-proc purity quirk is never triggered.
+// ─────────────────────────────────────────────────────────────────
+
+function __gen_suite_listx_appendL() {
+	suite("listx appendL", [
+		test("empty operands behave as identity", testAppendEmpty),
+		test("preserves order across the join", testAppendOrder),
+		test("does not mutate its operands", testAppendImmutable),
+		test("handles large operands without overflowing the stack", testAppendScale)
+	])
+}
+
+function __gen_suite_listx_concat() {
+	suite("listx concat", [
+		test("empty and all-empty inputs yield empty", testConcatEmpty),
+		test("flattens in order, skipping empty segments", testConcatOrder),
+		test("is equivalent to a fold of appendL", testConcatMatchesAppend),
+		test("handles many segments without overflowing the stack", testConcatScale)
+	])
+}
+
+function __gen_suite_listx_sortBy() {
+	suite("listx sortBy", [
+		test("empty and single-element lists are returned as-is", testSortTrivial),
+		test("sorts sorted, reversed, and unsorted inputs", testSortBasic),
+		test("handles duplicates and all-equal input", testSortDuplicates),
+		test("is stable: equal keys keep their input order", testSortStable),
+		test("all-equal keys preserve input order exactly", testSortStableAllEqual),
+		test("output is a permutation of the input", testSortPermutation),
+		test("sorts a large list without overflowing the stack", testSortScale)
+	])
+}
+
+proc main() {
+	runSuites([__gen_suite_listx_appendL(), __gen_suite_listx_concat(), __gen_suite_listx_sortBy()]);
+}
+main();

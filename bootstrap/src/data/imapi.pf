@@ -183,7 +183,7 @@ export function imiRemove(m, k) {
 					| None -> n.left
 					| Some s -> {
 						let newRight = imiRemoveMin(n.right);
-						imiBalance(imiNode(s.key, s.value, n.left, newRight))
+						imiBalance(imiNode(s.value.key, s.value.value, n.left, newRight))
 					}
 				}
 			}

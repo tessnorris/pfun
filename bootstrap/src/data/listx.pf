@@ -1,0 +1,122 @@
+// data/listx.pf — vendored list helpers for the compiler, in the
+// bootstrap-safe subset. bootstrap/src imports nothing from lib/: lib/ is
+// V1-dialect (head/tail/nth, list +) and cannot join the V2 module graph.
+// Decomposition goes through Compat.uncons; building through cons/reverse.
+//
+// RECURSION DEPTH. Compiled Pfun emits plain JS calls with no tail-call
+// optimization, so a function that recurses once per list element dies around
+// two thousand elements in the compiled path — even though the interpreter
+// handles it fine. Every helper here that walks a whole list is therefore a
+// `reduce` (a loop in the runtime). The only recursion left is mergeAll,
+// whose depth is log2(n).
+//
+// FOLD STATE. The accumulators threaded through `reduce` are builtin `Pair`s,
+// not records declared here. A record type declared in a library module and
+// constructed inside a builtin's callback resolves against the *calling*
+// module's type registry, so it fails with "Unknown type 'PassSt'" as soon as
+// another library module calls this one. Builtin types resolve everywhere.
+// Nested Pairs are read as st.key.key / st.key.value / st.value.
+
+import * as Compat from "../compat";
+
+// reverse xs onto acc. Iterative: reduce is a runtime loop.
+function revOnto(xs, acc) {
+	reduce(fn a, x => cons(x, a), acc, xs)
+}
+
+// Append two lists without `+`.
+export function appendL(a, b) {
+	revOnto(revOnto(a, []), b)
+}
+
+// Concatenate a list of lists. Single linear pass: each element is consed
+// once onto a reversed accumulator, then reversed back — rather than folding
+// with appendL, which copies the accumulator on every step (quadratic).
+export function concat(lists) {
+	reverse(reduce(fn acc, xs => revOnto(xs, acc), [], lists))
+}
+
+// ── merge sort ──────────────────────────────────────────────────────────────
+
+// Merge state: Pair { Pair { i, j }, reversedOutput }.
+function mergeStep(cmp, a, b, la, lb, st) {
+	let i = st.key.key;
+	let j = st.key.value;
+	let acc = st.value;
+	if i >= la then {
+		match Compat.listAt(b, j) with
+		| None -> st
+		| Some y -> Pair { Pair { i, j + 1 }, cons(y.value, acc) }
+	} else if j >= lb then {
+		match Compat.listAt(a, i) with
+		| None -> st
+		| Some x -> Pair { Pair { i + 1, j }, cons(x.value, acc) }
+	} else {
+		match Compat.listAt(a, i) with
+		| None -> st
+		| Some x -> {
+			match Compat.listAt(b, j) with
+			| None -> st
+			| Some y -> {
+				// `<= 0` keeps the left element first on ties, which is what
+				// makes the whole sort stable.
+				if cmp(x.value, y.value) <= 0 then {
+					Pair { Pair { i + 1, j }, cons(x.value, acc) }
+				} else {
+					Pair { Pair { i, j + 1 }, cons(y.value, acc) }
+				}
+			}
+		}
+	}
+}
+
+// Merge two cmp-sorted runs. Driven by a reduce over exactly la+lb steps; the
+// driving list's *values* are ignored, only its length matters, so we reuse
+// the concatenation rather than materializing a range.
+function mergeTwo(cmp, a, b) {
+	let la = length(a);
+	let lb = length(b);
+	let steps = appendL(a, b);
+	let fin = reduce(fn st, ignored => mergeStep(cmp, a, b, la, lb, st),
+	                 Pair { Pair { 0, 0 }, [] }, steps);
+	reverse(fin.value)
+}
+
+// One pairwise merge pass over the run list. State is
+// Pair { Pair { hasPending, pendingRun }, reversedOutput }; reversing at the
+// end restores run order, which stability needs.
+function passStep(cmp, st, run) {
+	let hasPending = st.key.key;
+	let pending = st.key.value;
+	let out = st.value;
+	if hasPending then {
+		Pair { Pair { false, [] }, cons(mergeTwo(cmp, pending, run), out) }
+	} else {
+		Pair { Pair { true, run }, out }
+	}
+}
+
+function mergePass(cmp, runs) {
+	let fin = reduce(fn st, run => passStep(cmp, st, run),
+	                 Pair { Pair { false, [] }, [] }, runs);
+	if fin.key.key then { reverse(cons(fin.key.value, fin.value)) }
+	else { reverse(fin.value) }
+}
+
+// Repeatedly halve the number of runs. Depth is log2(n): safe to recurse.
+function mergeAll(cmp, runs) {
+	if length(runs) <= 1 then {
+		match Compat.uncons(runs) with
+		| None -> []
+		| Some u -> u.value.key
+	} else {
+		mergeAll(cmp, mergePass(cmp, runs))
+	}
+}
+
+// Stable merge sort with a three-way comparator: cmp(x, y) < 0 when x sorts
+// before y, 0 when equivalent (input order is then preserved).
+export function sortBy(cmp, xs) {
+	if length(xs) <= 1 then { xs }
+	else { mergeAll(cmp, map(fn x => [x], xs)) }
+}

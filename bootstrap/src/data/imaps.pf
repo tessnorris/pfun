@@ -183,7 +183,7 @@ export function imsRemove(m, k) {
 					| None -> n.left
 					| Some s -> {
 						let newRight = imsRemoveMin(n.right);
-						imsBalance(imsNode(s.key, s.value, n.left, newRight))
+						imsBalance(imsNode(s.value.key, s.value.value, n.left, newRight))
 					}
 				}
 			}

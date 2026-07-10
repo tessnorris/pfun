@@ -1,0 +1,51 @@
+// syntax/token.pf — Phase 3 seed: source positions and spans.
+
+// 1-based line and column; 0-based offset. (Arch doc: pick code-unit or byte
+// offset and use it everywhere — this compiler uses code units.)
+export type Pos = { line, col, offset }
+
+// End-exclusive source span.
+export type Span = { start, end }
+
+// Smart constructors: namespaced record construction (`T.Pos { .. }`) does
+// not parse, so cross-module callers build positions through these.
+export function mkPos(line, col, offset) { Pos { line, col, offset } }
+export function mkSpan(startPos, endPos) { Span { startPos, endPos } }
+
+// A zero-width span at a position (EOF errors, insertion points).
+export function pointSpan(p) { Span { p, p } }
+
+export type Tok = {
+  | TInt: n
+  | TFloat: text
+  | TBool: b
+  | TStr: s
+  | TRawStr: s
+  | TFmtStr: s
+  | TChar: c
+  | TByte: b
+  | TIdent: name
+  | TKw: word
+  | TOp: op
+  | TEof
+	}
+
+export type Token = {
+  tok,
+  span
+	}
+
+// Returns true if `token.tok` is `TOp op`.
+export function isOp(token, op) {
+  match token.tok with
+  | TOp -> true
+	| _   -> false
+}
+
+// Returns true if `token.tok` is `TKw word`.
+export function isKw(token, word) {
+  match token.tok with
+  | TKw -> true
+	| _   -> false  
+}
+

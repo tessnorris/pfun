@@ -1,0 +1,70 @@
+// syntax/lexer.pf
+//Phase 3, processes the source code into tokens
+
+// Scanner state. `acc` is reversed token output.
+type LexSt = {
+  path,
+  src,
+  len,
+  offset,
+  line,
+  col,
+  acc
+}
+
+
+// One scanner step.
+type LexStep = {
+  | LexTok: st, token
+  | LexSkip: st
+  | LexDone: st
+  | LexFail: diag
+}
+
+
+// Str -> Str -> Result<List<Token>, List<Diag>>
+export function lex(path, source) {
+
+}
+
+
+// Scans one token or one trivia span.
+function step(st) {
+
+}
+
+
+// Handles decimal ints, hex ints, floats, exponents, bytes.
+function scanNumber(st) {
+
+}
+
+
+// Handles escaped strings.
+function scanString(st) {
+
+}
+
+
+// Handles `@"..."`.
+function scanRawString(st) {
+
+}
+
+
+// Handles character literals.
+function scanChar(st) {
+
+}
+
+
+// Scans identifiers and maps keywords.
+function scanIdentOrKw(st) {
+
+}
+
+
+// Skips whitespace and comments. {
+function skipTrivia(st) {
+
+}

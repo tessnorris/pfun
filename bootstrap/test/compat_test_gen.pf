@@ -1,0 +1,188 @@
+// bootstrap/test/compat_test.pf — tests for src/compat.pf.
+//
+// compat.pf is the one module whose *implementation* changes at the V2
+// transition (V1's `nth` returns a bare element and `false` out of range;
+// V2's returns an Option). These tests are therefore the contract that pins
+// its behavior across the port: they must pass unchanged, before and after,
+// on both dialects. Treat a failure here as a port defect, not a test defect.
+
+import * from "$PFUN_HOME/lib/testing/testing";
+import * from "$PFUN_HOME/lib/testing/assertions";
+import * as Compat from "../src/compat";
+import * from "io"; // added by gen-test-harness
+import * from "$PFUN_HOME/lib/testing/runner"; // added by gen-test-harness
+
+// ── helpers ─────────────────────────────────────────────────────────────────
+
+function optVal(o, dflt) {
+	match o with
+	| None -> dflt
+	| Some v -> v.value
+}
+
+// Iterative range (take/iterate are runtime loops; compiled Pfun has no TCO).
+function upto(n) { take(n, iterate(fn x => x + 1, 0)) }
+
+// Rebuild a list by repeated uncons; if uncons is faithful this is identity.
+function rebuild(xs) {
+	function go(rest, acc) {
+		match Compat.uncons(rest) with
+		| None -> reverse(acc)
+		| Some u -> go(u.value.value, cons(u.value.key, acc))
+	}
+	go(xs, [])
+}
+
+function eqIntsFrom(a, b, i) {
+	match Compat.listAt(a, i) with
+	| None -> true
+	| Some ea -> {
+		match Compat.listAt(b, i) with
+		| None -> false
+		| Some eb -> {
+			if ea.value == eb.value then { eqIntsFrom(a, b, i + 1) } else { false }
+		}
+	}
+}
+function eqInts(a, b) { length(a) == length(b) && eqIntsFrom(a, b, 0) }
+
+// ── listAt ──────────────────────────────────────────────────────────────────
+
+//![suite("compat listAt")]
+//![test("empty list yields None at any index")]
+function testListAtEmpty() {
+	assertions([
+		assertNone(Compat.listAt([], 0)),
+		assertNone(Compat.listAt([], 1)),
+		assertNone(Compat.listAt([], 0 - 1))
+	]);
+}
+
+//![test("negative index yields None")]
+function testListAtNegative() {
+	// V1's `nth` would happily return `false` here rather than signalling;
+	// compat must normalize that to None.
+	assertions([
+		assertNone(Compat.listAt([10, 20, 30], 0 - 1)),
+		assertNone(Compat.listAt([10, 20, 30], 0 - 99))
+	]);
+}
+
+//![test("index past end yields None")]
+function testListAtPastEnd() {
+	assertions([
+		assertNone(Compat.listAt([10, 20, 30], 3)),
+		assertNone(Compat.listAt([10, 20, 30], 4)),
+		assertNone(Compat.listAt([7], 1))
+	]);
+}
+
+//![test("in-range index yields Some of the element")]
+function testListAtInRange() {
+	let xs = [10, 20, 30];
+	assertions([
+		assertSome(Compat.listAt(xs, 0)),
+		assertEqual(10, optVal(Compat.listAt(xs, 0), 0 - 1)),
+		assertEqual(20, optVal(Compat.listAt(xs, 1), 0 - 1)),
+		assertEqual(30, optVal(Compat.listAt(xs, 2), 0 - 1)),
+		// single-element list: index 0 in range, 1 out
+		assertEqual(7, optVal(Compat.listAt([7], 0), 0 - 1))
+	]);
+}
+
+//![test("a falsy element is returned, not confused with absence")]
+function testListAtFalsyElement() {
+	// The V1 `nth` sentinel for out-of-range is literally `false`, so a list
+	// that *contains* false, 0, or "" must still report Some.
+	assertions([
+		assertSome(Compat.listAt([false, true], 0)),
+		assertEqual(false, optVal(Compat.listAt([false, true], 0), true)),
+		assertSome(Compat.listAt([0, 1], 0)),
+		assertEqual(0, optVal(Compat.listAt([0, 1], 0), 0 - 1)),
+		assertSome(Compat.listAt(["", "x"], 0)),
+		assertEqual("", optVal(Compat.listAt(["", "x"], 0), "fallback"))
+	]);
+}
+
+// ── uncons ──────────────────────────────────────────────────────────────────
+
+//![suite("compat uncons")]
+//![test("empty list yields None")]
+function testUnconsEmpty() {
+	assertions([assertNone(Compat.uncons([]))]);
+}
+
+//![test("single element yields head and empty rest")]
+function testUnconsSingle() {
+	match Compat.uncons([7]) with
+	| None -> assertions([assertTrue(false)])
+	| Some u -> assertions([
+		assertEqual(7, u.value.key),
+		assertEqual(0, length(u.value.value))
+	])
+}
+
+//![test("multi element yields head and rest in order")]
+function testUnconsMulti() {
+	match Compat.uncons([1, 2, 3, 4]) with
+	| None -> assertions([assertTrue(false)])
+	| Some u -> assertions([
+		assertEqual(1, u.value.key),
+		assertEqual(3, length(u.value.value)),
+		assertTrue(eqInts([2, 3, 4], u.value.value))
+	])
+}
+
+//![test("repeated uncons reconstructs the original list")]
+function testUnconsRebuild() {
+	assertions([
+		assertTrue(eqInts([], rebuild([]))),
+		assertTrue(eqInts([5], rebuild([5]))),
+		assertTrue(eqInts([1, 2, 3], rebuild([1, 2, 3]))),
+		assertTrue(eqInts(upto(200), rebuild(upto(200))))
+	]);
+}
+
+//![test("uncons does not mutate its argument")]
+function testUnconsImmutable() {
+	let xs = [1, 2, 3];
+	let ignored = Compat.uncons(xs);
+	let again = Compat.uncons(xs);
+	assertions([
+		assertEqual(3, length(xs)),
+		assertEqual(1, optVal(Compat.listAt(xs, 0), 0 - 1)),
+		// a second uncons sees the same head, not an advanced one
+		assertEqual(1, match again with | None -> 0 - 1 | Some u -> u.value.key)
+	]);
+}
+
+// ─────────────────────────────────────────────────────────────────
+// GENERATED TEST HARNESS (gen-test-harness.js) — do not edit.
+// Lambda-closing lives in pure functions; the generated main has no
+// lambdas, so V1's fn-lambda-in-proc purity quirk is never triggered.
+// ─────────────────────────────────────────────────────────────────
+
+function __gen_suite_compat_listAt() {
+	suite("compat listAt", [
+		test("empty list yields None at any index", testListAtEmpty),
+		test("negative index yields None", testListAtNegative),
+		test("index past end yields None", testListAtPastEnd),
+		test("in-range index yields Some of the element", testListAtInRange),
+		test("a falsy element is returned, not confused with absence", testListAtFalsyElement)
+	])
+}
+
+function __gen_suite_compat_uncons() {
+	suite("compat uncons", [
+		test("empty list yields None", testUnconsEmpty),
+		test("single element yields head and empty rest", testUnconsSingle),
+		test("multi element yields head and rest in order", testUnconsMulti),
+		test("repeated uncons reconstructs the original list", testUnconsRebuild),
+		test("uncons does not mutate its argument", testUnconsImmutable)
+	])
+}
+
+proc main() {
+	runSuites([__gen_suite_compat_listAt(), __gen_suite_compat_uncons()]);
+}
+main();

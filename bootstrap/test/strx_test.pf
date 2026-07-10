@@ -1,0 +1,138 @@
+// bootstrap/test/strx_test.pf — tests for src/data/strx.pf.
+//
+// strx is vendored (bootstrap/src imports nothing from lib/). trimRight is
+// used by check/diag.pf to trim the source line under a caret, so its
+// treatment of trailing tabs and CR (from CRLF files) is load-bearing for
+// caret alignment.
+
+import * from "$PFUN_HOME/lib/testing/testing";
+import * from "$PFUN_HOME/lib/testing/assertions";
+import * as Strx from "../src/data/strx";
+
+// ── fixtures ────────────────────────────────────────────────────────────────
+
+// `\r` is not a recognized escape in Pfun string literals; build it from its
+// code point. (A CRLF-terminated source file leaves this at end of line.)
+let CR = "" ++ chr(13);
+let TAB = "\t";
+let NL = "\n";
+
+// ── strRepeat ───────────────────────────────────────────────────────────────
+
+//![suite("strx strRepeat")]
+//![test("zero and negative counts yield the empty string")]
+function testRepeatZero() {
+	assertions([
+		assertEqual("", Strx.strRepeat("x", 0)),
+		assertEqual("", Strx.strRepeat("x", 0 - 1)),
+		assertEqual("", Strx.strRepeat("abc", 0 - 99))
+	]);
+}
+
+//![test("repeats single and multi-character strings")]
+function testRepeatBasic() {
+	assertions([
+		assertEqual("x", Strx.strRepeat("x", 1)),
+		assertEqual("xxx", Strx.strRepeat("x", 3)),
+		assertEqual("ababab", Strx.strRepeat("ab", 3)),
+		// the caret-pad use in diag.pf
+		assertEqual("     ", Strx.strRepeat(" ", 5)),
+		assertEqual("^^^^", Strx.strRepeat("^", 4))
+	]);
+}
+
+//![test("repeating the empty string yields the empty string")]
+function testRepeatEmptySource() {
+	assertions([
+		assertEqual("", Strx.strRepeat("", 0)),
+		assertEqual("", Strx.strRepeat("", 5))
+	]);
+}
+
+//![test("length is the product of source length and count")]
+function testRepeatLength() {
+	assertions([
+		assertEqual(0, length(Strx.strRepeat("ab", 0))),
+		assertEqual(20, length(Strx.strRepeat("ab", 10))),
+		assertEqual(300, length(Strx.strRepeat("abc", 100))),
+		assertEqual(2000, length(Strx.strRepeat("x", 2000)))
+	]);
+}
+
+// ── trimRight ───────────────────────────────────────────────────────────────
+
+//![suite("strx trimRight")]
+//![test("empty and whitespace-only strings")]
+function testTrimEmpty() {
+	assertions([
+		assertEqual("", Strx.trimRight("")),
+		assertEqual("", Strx.trimRight("   ")),
+		assertEqual("", Strx.trimRight(TAB ++ TAB)),
+		assertEqual("", Strx.trimRight(" " ++ TAB ++ CR))
+	]);
+}
+
+//![test("strings without trailing whitespace are unchanged")]
+function testTrimNoop() {
+	assertions([
+		assertEqual("abc", Strx.trimRight("abc")),
+		assertEqual("a b c", Strx.trimRight("a b c")),
+		assertEqual("x", Strx.trimRight("x"))
+	]);
+}
+
+//![test("removes trailing spaces, tabs, and carriage returns")]
+function testTrimTrailing() {
+	assertions([
+		assertEqual("abc", Strx.trimRight("abc   ")),
+		assertEqual("abc", Strx.trimRight("abc" ++ TAB)),
+		// the CRLF case: a source line read from a Windows-authored file
+		assertEqual("let x = 1;", Strx.trimRight("let x = 1;" ++ CR)),
+		assertEqual("abc", Strx.trimRight("abc" ++ TAB ++ " " ++ CR ++ " "))
+	]);
+}
+
+//![test("preserves leading and interior whitespace")]
+function testTrimPreserves() {
+	// diag.pf depends on this: the source line keeps its indentation so the
+	// caret, padded from column 1, lands under the right character.
+	assertions([
+		assertEqual("  indented", Strx.trimRight("  indented   ")),
+		assertEqual("  inner  kept", Strx.trimRight("  inner  kept  ")),
+		assertEqual(TAB ++ "tabbed", Strx.trimRight(TAB ++ "tabbed" ++ TAB)),
+		// a string that is *only* leading whitespace has nothing to preserve
+		assertEqual("", Strx.trimRight("    "))
+	]);
+}
+
+//![test("removes a trailing newline")]
+function testTrimNewline() {
+	assertions([
+		assertEqual("abc", Strx.trimRight("abc" ++ NL)),
+		assertEqual("abc", Strx.trimRight("abc" ++ NL ++ NL))
+	]);
+}
+
+//![test("is idempotent")]
+function testTrimIdempotent() {
+	function once(s) { Strx.trimRight(s) }
+	function twice(s) { Strx.trimRight(Strx.trimRight(s)) }
+	assertions([
+		assertEqual(once("abc   "), twice("abc   ")),
+		assertEqual(once("   "), twice("   ")),
+		assertEqual(once("  x  "), twice("  x  ")),
+		assertEqual(once(""), twice(""))
+	]);
+}
+
+//![test("handles a long line without overflowing the stack")]
+function testTrimScale() {
+	// source lines in a real file are short, but nothing should cliff here
+	// strRepeat halves (log2 depth) and trimRight folds, so neither cliffs
+	let line = Strx.strRepeat("a", 5000) ++ "   ";
+	assertions([
+		assertEqual(5000, length(Strx.trimRight(line))),
+		assertEqual(0, length(Strx.trimRight(Strx.strRepeat(" ", 5000)))),
+		assertEqual(5000, length(Strx.strRepeat("x", 5000)))
+	]);
+}

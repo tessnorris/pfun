@@ -1,0 +1,47 @@
+// data/strx.pf — vendored string helpers for the compiler, in the
+// bootstrap-safe subset (`++` only, no head/tail; see data/listx.pf note).
+//
+// RECURSION DEPTH. Compiled Pfun has no tail-call optimization, so anything
+// that recurses once per character dies on a long input in the compiled path
+// while passing in the interpreter. strRepeat halves (log2 depth) and
+// trimRight folds (no recursion at all).
+//
+// FOLD STATE. The accumulator threaded through `reduce` below is a builtin
+// `Pair`, not a record declared here. A record type declared in a library
+// module and constructed inside a builtin's callback resolves against the
+// *calling* module's type registry, so it fails with "Unknown type" as soon
+// as another library module calls this one. Builtin types resolve everywhere.
+
+// Carriage return as a 1-char string: \r is not a recognized escape in Pfun
+// string literals, so build it from its code point. (split(s, "") yields Str
+// elements, so comparisons here are Str == Str, not Char.)
+let crStr = "" ++ chr(13);
+
+function isWs(c) {
+	c == " " || c == "\t" || c == crStr || c == "\n"
+}
+
+// Repeat by doubling: depth is log2(n), not n.
+export function strRepeat(s, n) {
+	if n <= 0 then { "" }
+	else if n == 1 then { s }
+	else {
+		let half = strRepeat(s, n / 2);
+		if n % 2 == 0 then { half ++ half } else { half ++ half ++ s }
+	}
+}
+
+// Fold state is Pair { index, lastNonWsIndex }.
+function trimStep(st, c) {
+	if isWs(c) then { Pair { st.key + 1, st.value } }
+	else { Pair { st.key + 1, st.key } }
+}
+
+// Drop trailing whitespace. Iterative: one reduce over the characters finds
+// the last non-whitespace index, then a single slice. Leading and interior
+// whitespace is preserved (check/diag.pf relies on this for caret alignment).
+export function trimRight(s) {
+	let cs = split(s, "");
+	let fin = reduce(fn st, c => trimStep(st, c), Pair { 0, 0 - 1 }, cs);
+	if fin.value < 0 then { "" } else { slice(0, fin.value + 1, s) }
+}

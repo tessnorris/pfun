@@ -1,0 +1,17 @@
+// compat.pf — the ONE module with dialect-divergent list access (style §6).
+// V1: nth returns the bare element in range, `false` out of range.
+// V2: nth returns Option. This file gets a trivial V2 body at transition;
+// everything else imports listAt and never says nth.
+export function listAt(xs, i) {
+	if i < 0 then { None }
+	else if i >= length(xs) then { None }
+	else { Some { nth(xs, i) } }
+}
+
+// Head/tail replacement with a dialect-stable shape: None on empty,
+// Some { Pair { first, rest } } otherwise.
+export function uncons(xs) {
+	if length(xs) == 0 then { None }
+	// no `drop` builtin exists — slice(start, count, list) is the primitive
+	else { Some { Pair { nth(xs, 0), slice(1, length(xs) - 1, xs) } } }
+}
