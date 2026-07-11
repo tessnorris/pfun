@@ -213,6 +213,13 @@ function subjectKindFromType(st, typ) {
 		| Some variants -> SubjectUnion { n.tname, variants.value }
 		| None -> SubjectOther
 	}
+	| TVariant v -> {
+		// A binder statically known to be one variant: a nested match on it
+		// must still cover the full union (no narrowing yet).
+		match IMS.imsGet(st.unions, v.unionName) with
+		| Some variants -> SubjectUnion { v.unionName, variants.value }
+		| None -> SubjectOther
+	}
 	| TList _ -> SubjectList
 	| TUnknown -> SubjectUnknown
 	| TAny -> SubjectUnknown

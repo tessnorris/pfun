@@ -76,3 +76,135 @@ function testFormatStringIsString() {
 	let src = "let x = $\"count: {3}\" ++ \"!\";";
 	H.assertOkDiags(H.typeDiags("format_string_type.pf", src))
 }
+
+//![test("expression lambda body infers")]
+function testExpressionLambdaBodyInfers() {
+	let src = "let f = fn x => x + 1;\nlet y = f(2) + 1;";
+	H.assertOkDiags(H.typeDiags("lambda_expr.pf", src))
+}
+
+//![test("trailing if block is the lambda value")]
+function testTrailingIfBlockIsLambdaValue() {
+	let src = "let g = fn x => { if x then { 1 } else { 2 } };\nlet y = g(true) + 1;";
+	H.assertOkDiags(H.typeDiags("lambda_trailing_if.pf", src))
+}
+
+//![test("trailing if branch type mismatch fails")]
+function testTrailingIfBranchMismatchFails() {
+	let src = "let g = fn x => { if x then { 1 } else { \"a\" } };";
+	H.assertHasDiag(H.typeDiags("lambda_trailing_if_bad.pf", src))
+}
+
+//![test("reduce fold with trailing if succeeds")]
+function testReduceFoldWithTrailingIfSucceeds() {
+	let src = "function cw(pred, xs) { reduce(fn n, x => { if pred(x) then { n + 1 } else { n } }, 0, xs) }\nlet c = cw(fn v => v == 1, [1, 2]) + 1;";
+	H.assertOkDiags(H.typeDiags("fold_trailing_if.pf", src))
+}
+
+//![test("statement if discards branch values")]
+function testStatementIfDiscardsBranchValues() {
+	let src = "proc p(c) { if c then { 1; } else { \"x\"; } 0; }";
+	H.assertOkDiags(H.typeDiags("stmt_if_discard.pf", src))
+}
+
+//![test("float int arithmetic promotes to Float")]
+function testFloatIntPromotes() {
+	let src = "let x = 1.5 + 2;\nlet y = 2 + 1.5;\nlet s = x + y;";
+	H.assertOkDiags(H.typeDiags("float_promotion.pf", src))
+}
+
+//![test("unary minus on Float succeeds")]
+function testUnaryMinusFloatSucceeds() {
+	let src = "let z = -1.5;\nlet w = z + 0.5;";
+	H.assertOkDiags(H.typeDiags("unary_minus_float.pf", src))
+}
+
+//![test("unary minus on Str fails")]
+function testUnaryMinusStrFails() {
+	let src = "let z = -\"a\";";
+	H.assertHasMessage(H.typeDiags("unary_minus_str.pf", src), "numeric")
+}
+
+//![test("deferred field access resolved by call succeeds")]
+function testDeferredFieldAccessResolvedSucceeds() {
+	let src = "type User = { name };\nfunction getName(u) { u.name; }\nlet n = getName(User { name = \"Ada\" }) ++ \"!\";";
+	H.assertOkDiags(H.typeDiags("deferred_field_ok.pf", src))
+}
+
+//![test("deferred field access to missing field fails")]
+function testDeferredFieldAccessMissingFails() {
+	let src = "type User = { name };\nfunction f(u) { u.age; }\nlet n = f(User { name = \"x\" });";
+	H.assertHasMessage(H.typeDiags("deferred_field_bad.pf", src), "no field")
+}
+
+//![test("deferred equatable resolved by call succeeds")]
+function testDeferredEquatableResolvedSucceeds() {
+	let src = "function eq(a, b) { a == b; }\nlet t = eq(1, 2);";
+	H.assertOkDiags(H.typeDiags("deferred_eq_ok.pf", src))
+}
+
+//![test("equality on functions fails")]
+function testEqualityOnFunctionsFails() {
+	let src = "function eq(a, b) { a == b; }\nfunction g() { 1; }\nlet t = eq(g, g);";
+	H.assertHasMessage(H.typeDiags("deferred_eq_bad.pf", src), "equality")
+}
+
+//![test("match binder payload field access succeeds")]
+function testBinderPayloadFieldAccessSucceeds() {
+	let src = "type T = { | A: n | B }\nfunction h(t) { match t with | A a -> a.n | B -> 0; }\nlet r = h(B) + 1;";
+	H.assertOkDiags(H.typeDiags("binder_payload.pf", src))
+}
+
+//![test("guard using binder payload succeeds")]
+function testGuardUsingBinderPayloadSucceeds() {
+	let src = "type T = { | A: n | B }\nfunction h(t) { match t with | A a where a.n > 0 -> 1 | _ -> 0; }";
+	H.assertOkDiags(H.typeDiags("binder_guard.pf", src))
+}
+
+//![test("binder widens to union at call sites")]
+function testBinderWidensToUnion() {
+	let src = "type T = { | A: n | B }\nfunction use(t) { match t with | A a -> a.n | B -> 0; }\nfunction h(t) { match t with | A a -> use(a) | B -> 0; }";
+	H.assertOkDiags(H.typeDiags("binder_widen.pf", src))
+}
+
+//![test("mixed variant list joins to union")]
+function testMixedVariantListJoins() {
+	let src = "type T = { | A: n | B }\nlet xs = cons(A { n = 1 }, cons(B, []));\nlet k = length(xs) + 1;";
+	H.assertOkDiags(H.typeDiags("variant_list_join.pf", src))
+}
+
+//![test("constructor payload field access succeeds")]
+function testConstructorPayloadFieldAccessSucceeds() {
+	let src = "type T = { | A: n | B }\nlet x = A { n = 1 };\nlet y = x.n + 1;";
+	H.assertOkDiags(H.typeDiags("ctor_field.pf", src))
+}
+
+//![test("variant-returning function widens to union")]
+function testVariantReturnWidensToUnion() {
+	let src = "type T = { | A: n | B }\nfunction use(t) { match t with | A a -> a.n | B -> 0; }\nfunction mk() { A { n = 1 } }\nlet r = use(mk()) + 1;";
+	H.assertOkDiags(H.typeDiags("variant_return.pf", src))
+}
+
+//![test("trailing if joins sibling variants")]
+function testTrailingIfJoinsSiblingVariants() {
+	let src = "type T = { | A: n | B }\nfunction use(t) { match t with | A a -> a.n | B -> 0; }\nlet g = fn c => { if c then { A { n = 1 } } else { B } };\nlet r = use(g(true)) + 1;";
+	H.assertOkDiags(H.typeDiags("trailing_if_join.pf", src))
+}
+
+//![test("sibling variant field access fails")]
+function testSiblingVariantFieldAccessFails() {
+	let src = "type T = { | A: n | B }\nfunction h(t) { match t with | A a -> a.n | B b -> b.n; }";
+	H.assertHasMessage(H.typeDiags("sibling_field.pf", src), "no field")
+}
+
+//![test("binder field typo fails")]
+function testBinderFieldTypoFails() {
+	let src = "type T = { | A: n | B }\nfunction h(t) { match t with | A a -> a.zzz | B -> 0; }";
+	H.assertHasMessage(H.typeDiags("binder_typo.pf", src), "no field")
+}
+
+//![test("variant passed to wrong union fails")]
+function testVariantPassedToWrongUnionFails() {
+	let src = "type T = { | A: n | B }\ntype U2 = { | X: m | Y }\nfunction f(u) { match u with | X x -> 1 | Y -> 2; }\nfunction h(t) { match t with | A a -> f(a) | B -> 0; }";
+	H.assertHasDiag(H.typeDiags("variant_wrong_union.pf", src))
+}

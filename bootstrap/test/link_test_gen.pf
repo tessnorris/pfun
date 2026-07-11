@@ -201,7 +201,16 @@ function testNodeFilesStructure() {
 			)
 		),
 		Assert.assertTrue(StrX.contains(moduleText, "$coreMarker")),
-		Assert.assertTrue(StrX.contains(moduleText, "$platformMarker"))
+		Assert.assertTrue(StrX.contains(moduleText, "$platformMarker")),
+		Assert.assertTrue(
+			StrX.contains(moduleText, "globalThis.PfunBuiltins")
+		),
+		Assert.assertTrue(
+			StrX.contains(
+				moduleText,
+				"function(module, exports, require)"
+			)
+		)
 	])
 }
 
@@ -265,6 +274,18 @@ function testNodeBundleStructure() {
 			StrX.contains(
 				text,
 				"\"./util.pf\": \"src/util\""
+			)
+		),
+		Assert.assertTrue(
+			StrX.contains(
+				text,
+				"const $builtinModules = globalThis.PfunBuiltins"
+			)
+		),
+		Assert.assertTrue(
+			StrX.contains(
+				text,
+				"})(undefined, undefined, typeof require"
 			)
 		)
 	])

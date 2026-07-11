@@ -73,3 +73,9 @@ function testScalarGuardedWildcardDoesNotCount() {
 	let src = "function f() { match 1 with | _ where true -> 1; }";
 	H.assertHasMessage(H.exhaustDiags("scalar_guard_only.pf", src), "fallback")
 }
+
+//![test("nested match on binder must cover the union")]
+function testNestedMatchOnBinderCoversUnion() {
+	let src = "type T = { | A: n | B }\nfunction h(t) { match t with | A a -> (match a with | A x -> x.n) | B -> 0; }";
+	H.assertHasMessage(H.exhaustDiags("nested_binder.pf", src), "missing")
+}

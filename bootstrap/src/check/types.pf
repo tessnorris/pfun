@@ -37,6 +37,10 @@ export type Type = {
 	| TProc: params, ret, isAsync
 
 	| TNamed: tname, args
+	// A value statically known to be a specific variant of a union. Members
+	// of the union for unification purposes (see design_variant_binder_widening.md);
+	// field access resolves against the variant's own payload fields.
+	| TVariant: vname, unionName, args
 	| TVar: v
 	| TUnknown
 }
@@ -119,6 +123,7 @@ export function tDict(keyT, valT) { TDict { keyT, valT } }
 export function tFun(params, ret) { TFun { params, ret } }
 export function tProc(params, ret, isAsync) { TProc { params, ret, isAsync } }
 export function tNamed(tname, args) { TNamed { tname, args } }
+export function tVariant(vname, unionName, args) { TVariant { vname, unionName, args } }
 export function tVar(v) { TVar { v } }
 export function tUnknown() { TUnknown }
 
@@ -304,6 +309,10 @@ export function formatType(t) {
 		if length(n.args) == 0 then { n.tname }
 		else { n.tname ++ "<" ++ joinTypeList(n.args) ++ ">" }
 	}
+	| TVariant v -> {
+		if length(v.args) == 0 then { v.vname }
+		else { v.vname ++ "<" ++ joinTypeList(v.args) ++ ">" }
+	}
 	| TVar v -> "'" ++ __str__(v.v)
 	| TUnknown -> "?"
 }
@@ -335,6 +344,7 @@ export function applyType(subst, t) {
 	| TFun f -> TFun { applyList(subst, f.params), applyType(subst, f.ret) }
 	| TProc p -> TProc { applyList(subst, p.params), applyType(subst, p.ret), p.isAsync }
 	| TNamed n -> TNamed { n.tname, applyList(subst, n.args) }
+	| TVariant v -> TVariant { v.vname, v.unionName, applyList(subst, v.args) }
 	| _ -> t
 }
 
@@ -355,6 +365,7 @@ export function freeVars(t) {
 	| TFun f -> intUnion(freeVarsList(f.params), freeVars(f.ret))
 	| TProc p -> intUnion(freeVarsList(p.params), freeVars(p.ret))
 	| TNamed n -> freeVarsList(n.args)
+	| TVariant v -> freeVarsList(v.args)
 	| _ -> []
 }
 
@@ -406,8 +417,18 @@ function sameScalar(a, b) {
 	| _ -> false
 }
 
+// Rule 2 (eager widening): a type variable never holds a variant type.
+// Binding a var to TVariant pins it to the union instead, so later sibling
+// merges through the same variable join correctly regardless of order.
+// See doc/design_variant_binder_widening.md.
+function widenVariant(t) {
+	match t with
+	| TVariant v -> TNamed { v.unionName, v.args }
+	| _ -> t
+}
+
 function bindVar(st, v, t, path, span) {
-	let t1 = apply(st.subst, t);
+	let t1 = widenVariant(apply(st.subst, t));
 	match t1 with
 	| TVar other -> {
 		if other.v == v then { st }
@@ -544,6 +565,27 @@ export function unify(st, a, b, path, span) {
 	| TNamed an -> {
 		match b1 with
 		| TNamed bn -> unifyNamed(st, an, bn, path, span)
+		| TVariant bv -> {
+			if an.tname == bv.unionName then { unifyTypeLists(st, an.args, bv.args, path, span) }
+			else { addTypeDiag(st, path, span, "Expected " ++ formatType(a1) ++ ", got " ++ formatType(b1) ++ ".") }
+		}
+		| TVar bv -> bindVar(st, bv.v, a1, path, span)
+		| TAny -> st
+		| TUnknown -> st
+		| _ -> addTypeDiag(st, path, span, "Expected " ++ formatType(a1) ++ ", got " ++ formatType(b1) ++ ".")
+	}
+	| TVariant av -> {
+		// Rule 1: a known variant unifies with itself, with any sibling of
+		// the same union (the join is the union), and widens to its union.
+		match b1 with
+		| TVariant bv -> {
+			if av.unionName == bv.unionName then { unifyTypeLists(st, av.args, bv.args, path, span) }
+			else { addTypeDiag(st, path, span, "Expected " ++ formatType(a1) ++ ", got " ++ formatType(b1) ++ ".") }
+		}
+		| TNamed bn -> {
+			if av.unionName == bn.tname then { unifyTypeLists(st, av.args, bn.args, path, span) }
+			else { addTypeDiag(st, path, span, "Expected " ++ formatType(a1) ++ ", got " ++ formatType(b1) ++ ".") }
+		}
 		| TVar bv -> bindVar(st, bv.v, a1, path, span)
 		| TAny -> st
 		| TUnknown -> st
@@ -575,6 +617,7 @@ function typeContainsCallable(t) {
 	| TArray x -> typeContainsCallable(x.elem)
 	| TDict x -> typeContainsCallable(x.keyT) || typeContainsCallable(x.valT)
 	| TNamed n -> anyTypeContainsCallable(n.args)
+	| TVariant v -> anyTypeContainsCallable(v.args)
 	| _ -> false
 }
 
@@ -623,15 +666,54 @@ function requireComparable(st, typ, path, span) {
 	}
 }
 
-function pendingDiag(st, path, c) {
+// At module end, re-check each deferred constraint against the final
+// substitution. Constraints whose variable resolved to a concrete type are
+// re-validated (and may still fail); constraints still resting on an unbound
+// type variable are deferred silently — this pass does not yet carry
+// constraints on schemes, so diagnosing them here would reject legitimate
+// polymorphic helpers. Exported non-generic bindings are still caught by the
+// groundedness check.
+function recheckPending(st, path, c) {
 	match c with
-	| HasField h -> addTypeDiag(st, path, h.span, "Cannot determine the record type of field access '." ++ h.fname ++ "'.")
-	| Equatable e -> addTypeDiag(st, path, e.span, "Cannot prove " ++ formatType(apply(st.subst, e.t)) ++ " is Equatable.")
-	| Comparable c2 -> addTypeDiag(st, path, c2.span, "Cannot prove " ++ formatType(apply(st.subst, c2.t)) ++ " is Comparable.")
+	| HasField h -> {
+		let t = apply(st.subst, TVar { h.tvar });
+		match t with
+		| TVar _ -> st
+		| TUnknown -> st
+		| TAny -> st
+		| TNamed n -> {
+			match IMS.imsGet(st.records, n.tname) with
+			| None -> addTypeDiag(st, path, h.span, "Type " ++ n.tname ++ " has no known fields.")
+			| Some info -> {
+				match findFieldByName(info.value.fields, h.fname) with
+				| None -> addTypeDiag(st, path, h.span, "Type " ++ n.tname ++ " has no field '" ++ h.fname ++ "'.")
+				| Some f -> unify(st, h.ftype, fieldTypeFromShape(f.value.shape, n.args), path, h.span)
+			}
+		}
+		| _ -> addTypeDiag(st, path, h.span, "Cannot access field '." ++ h.fname ++ "' on " ++ formatType(t) ++ ".")
+	}
+	| Equatable e -> {
+		let t = apply(st.subst, e.t);
+		match t with
+		| TVar _ -> st
+		| _ -> {
+			if typeContainsCallable(t) then { addTypeDiag(st, path, e.span, "Type " ++ formatType(t) ++ " cannot be compared for equality.") }
+			else { st }
+		}
+	}
+	| Comparable c2 -> {
+		let t = apply(st.subst, c2.t);
+		match t with
+		| TVar _ -> st
+		| _ -> {
+			if comparableType(t) then { st }
+			else { addTypeDiag(st, path, c2.span, "Type " ++ formatType(t) ++ " is not Comparable.") }
+		}
+	}
 }
 
 function finalizePending(st, path) {
-	reduce(fn acc, c => pendingDiag(acc, path, c), st, st.pending)
+	reduce(fn acc, c => recheckPending(acc, path, c), st, reverse(st.pending))
 }
 
 // ── schemes ────────────────────────────────────────────────────────────────
@@ -671,6 +753,7 @@ function replaceQuantified(t, m) {
 	| TFun f -> TFun { map(fn x => replaceQuantified(x, m), f.params), replaceQuantified(f.ret, m) }
 	| TProc p -> TProc { map(fn x => replaceQuantified(x, m), p.params), replaceQuantified(p.ret, m), p.isAsync }
 	| TNamed n -> TNamed { n.tname, map(fn x => replaceQuantified(x, m), n.args) }
+	| TVariant v -> TVariant { v.vname, v.unionName, map(fn x => replaceQuantified(x, m), v.args) }
 	| _ -> t
 }
 
@@ -944,25 +1027,43 @@ function isDefinitelyNonStringType(t) {
 	| _ -> true
 }
 
+function isFloatType(t) {
+	match t with
+	| TFloat -> true
+	| _ -> false
+}
+
+// The other operand of a Float-typed binary: Int promotes silently, an
+// unbound variable is pinned to Float, wildcards pass. Definitely-non-numeric
+// operands were already rejected in inferBinaryByOp.
+function promoteFloatOperand(st, t, path, span) {
+	match t with
+	| TVar v -> unify(st, t, TFloat, path, span)
+	| _ -> st
+}
+
 function inferNumericBinary(st, path, span, leftT, rightT) {
 	let l = apply(st.subst, leftT);
 	let r = apply(st.subst, rightT);
-	match l with
-	| TFloat -> {
-		let st1 = unify(st, r, TFloat, path, span);
-		exprOut(st1, TFloat)
+	if isFloatType(l) || isFloatType(r) then {
+		let st1 = promoteFloatOperand(st, l, path, span);
+		let st2 = promoteFloatOperand(st1, r, path, span);
+		exprOut(st2, TFloat)
+	} else {
+		let st1 = unify(st, l, TInt, path, span);
+		let st2 = unify(st1, r, TInt, path, span);
+		exprOut(st2, TInt)
 	}
-	| _ -> {
-		match r with
-		| TFloat -> {
-			let st1 = unify(st, l, TFloat, path, span);
-			exprOut(st1, TFloat)
-		}
-		| _ -> {
-			let st1 = unify(st, l, TInt, path, span);
-			let st2 = unify(st1, r, TInt, path, span);
-			exprOut(st2, TInt)
-		}
+}
+
+function inferNumericUnary(st, path, span, op, t0) {
+	let t = apply(st.subst, t0);
+	if isDefinitelyNonNumericType(t) then {
+		exprOut(addTypeDiag(st, path, span, "Operator '" ++ op ++ "' requires a numeric operand."), TUnknown)
+	} else {
+		match t with
+		| TFloat -> exprOut(st, TFloat)
+		| _ -> exprOut(unify(st, t, TInt, path, span), TInt)
 	}
 }
 
@@ -1166,7 +1267,7 @@ function inferRecordConstruction(st, env, name, fields, span, path) {
 		| Some vi -> {
 			let args = slotArgs(st, vi.value.slotCount);
 			let st1 = inferConstructorFields(args.st, env, fields, vi.value.fields, args.types, path, 0);
-			exprOut(st1, TNamed { vi.value.unionName, args.types })
+			exprOut(st1, TVariant { name, vi.value.unionName, args.types })
 		}
 		| None -> exprOut(addTypeDiag(st, path, span, "Unknown record or variant constructor '" ++ name ++ "'."), TUnknown)
 	}
@@ -1175,6 +1276,15 @@ function inferRecordConstruction(st, env, name, fields, span, path) {
 function inferFieldAccess(st, objectType, fieldName, span, path) {
 	let t = apply(st.subst, objectType);
 	match t with
+	| TVariant v -> {
+		match IMS.imsGet(st.variants, v.vname) with
+		| None -> exprOut(addTypeDiag(st, path, span, "Unknown variant '" ++ v.vname ++ "'."), TUnknown)
+		| Some vi -> {
+			match findFieldByName(vi.value.fields, fieldName) with
+			| None -> exprOut(addTypeDiag(st, path, span, "Variant " ++ v.vname ++ " has no field '" ++ fieldName ++ "'."), TUnknown)
+			| Some f -> exprOut(st, fieldTypeFromShape(f.value.shape, v.args))
+		}
+	}
 	| TNamed n -> {
 		match IMS.imsGet(st.records, n.tname) with
 		| None -> exprOut(addTypeDiag(st, path, span, "Type " ++ n.tname ++ " has no known fields."), TUnknown)
@@ -1236,7 +1346,7 @@ function bindPattern(st, env, pattern, subjectT, path, span) {
 			let st1 = unify(args.st, subjectT, TNamed { vi.value.unionName, args.types }, path, span);
 			let env1 = match p.bind with
 				| None -> env
-				| Some name -> putEnv(env, name.value, TMono { TNamed { vi.value.unionName, args.types } });
+				| Some name -> putEnv(env, name.value, TMono { TVariant { p.vname, vi.value.unionName, args.types } });
 			envOut(st1, env1)
 		}
 	}
@@ -1308,7 +1418,7 @@ export function cgenExpr(st, env, e, path) {
 			| TVariantCtor vc -> {
 				if length(vc.info.fields) == 0 then {
 					let args = slotArgs(st, vc.info.slotCount);
-					let typ = TNamed { vc.info.unionName, args.types };
+					let typ = TVariant { vc.info.vname, vc.info.unionName, args.types };
 					exprOut(addTypedNode(args.st, x.id, typ), typ)
 				} else {
 					exprOut(addTypedNode(addTypeDiag(st, path, x.span, "Variant '" ++ x.name ++ "' requires a payload."), x.id, TUnknown), TUnknown)
@@ -1324,7 +1434,7 @@ export function cgenExpr(st, env, e, path) {
 			let st1 = unify(oo.st, oo.typ, TBool, path, x.span);
 			exprOut(addTypedNode(st1, x.id, TBool), TBool)
 		} else if x.op == "-" then {
-			let ro = inferNumericBinary(oo.st, path, x.span, oo.typ, TInt);
+			let ro = inferNumericUnary(oo.st, path, x.span, "-", oo.typ);
 			exprOut(addTypedNode(ro.st, x.id, ro.typ), ro.typ)
 		} else {
 			exprOut(addTypedNode(oo.st, x.id, oo.typ), oo.typ)
@@ -1341,9 +1451,13 @@ export function cgenExpr(st, env, e, path) {
 		let st1 = unify(co.st, co.typ, TBool, path, A.exprSpan(x.cond));
 		let to = cgenExpr(st1, env, x.thenE, path);
 		let eo = cgenExpr(to.st, env, x.elseE, path);
-		let st2 = unify(eo.st, to.typ, eo.typ, path, x.span);
-		let typ = apply(st2.subst, to.typ);
-		exprOut(addTypedNode(st2, x.id, typ), typ)
+		// Rule 3: merge the branches through a fresh variable so sibling
+		// variants join to their union (eager widening in bindVar).
+		let j = freshVar(eo.st);
+		let st2 = unify(j.key, j.value, to.typ, path, x.span);
+		let st3 = unify(st2, j.value, eo.typ, path, x.span);
+		let typ = apply(st3.subst, j.value);
+		exprOut(addTypedNode(st3, x.id, typ), typ)
 	}
 	| ECall x -> {
 		let co = inferCall(st, env, x.callee, x.args, x.span, path);
@@ -1352,7 +1466,9 @@ export function cgenExpr(st, env, e, path) {
 	| ELambda x -> {
 		let ps = freshTypeList(st, length(x.params));
 		let env1 = bindParams(env, x.params, ps.types);
-		let bo = inferBody(ps.st, env1, x.body, path);
+		// Lambda bodies are expressions (an EBlock for block-bodied lambdas),
+		// never bare statement lists — those belong to SFun.
+		let bo = cgenExpr(ps.st, env1, x.body, path);
 		let typ = TFun { ps.types, bo.typ };
 		exprOut(addTypedNode(bo.st, x.id, typ), typ)
 	}
@@ -1449,6 +1565,32 @@ function inferBodyLoop(st, env, stmts, lastT, path) {
 		| SExpr sx -> {
 			let eo = cgenExpr(st, env, sx.expr, path);
 			inferBodyLoop(eo.st, env, p.value, eo.typ, path)
+		}
+		| SIf sx -> {
+			// A trailing `if` is the block's value (house style for lambda
+			// bodies and function results): both branches are unified and
+			// their type becomes the body result. In any other position the
+			// branches' trailing values are discarded, so they are checked
+			// independently and deliberately NOT unified.
+			if length(p.value) == 0 then {
+				let co = cgenExpr(st, env, sx.cond, path);
+				let st1 = unify(co.st, co.typ, TBool, path, A.exprSpan(sx.cond));
+				let thenOut = inferBody(st1, env, sx.thenS, path);
+				match sx.elseS with
+				| None -> bodyOut(addTypedNode(thenOut.st, sx.id, TUnit), TUnit)
+				| Some es -> {
+					let elseOut = inferBody(thenOut.st, env, es.value, path);
+					// Rule 3: merge through a fresh variable (see EIf).
+					let j = freshVar(elseOut.st);
+					let st2 = unify(j.key, j.value, thenOut.typ, path, sx.span);
+					let st3 = unify(st2, j.value, elseOut.typ, path, sx.span);
+					let typ = apply(st3.subst, j.value);
+					bodyOut(addTypedNode(st3, sx.id, typ), typ)
+				}
+			} else {
+				let so = cgenStmt(st, env, p.key, path);
+				inferBodyLoop(so.st, so.env, p.value, TUnit, path)
+			}
 		}
 		| SReturn sr -> {
 			match sr.value with
@@ -1605,11 +1747,13 @@ export function cgenStmt(st, env, s, path) {
 		let co = cgenExpr(st, env, x.cond, path);
 		let st1 = unify(co.st, co.typ, TBool, path, A.exprSpan(x.cond));
 		let thenOut = inferBody(st1, env, x.thenS, path);
+		// Statement-position if discards branch values, so the branches'
+		// trailing expression types are deliberately NOT unified here.
+		// Value-position (trailing) ifs are handled in inferBodyLoop.
 		let elseOut = match x.elseS with
 			| None -> bodyOut(thenOut.st, TUnit)
 			| Some es -> inferBody(thenOut.st, env, es.value, path);
-		let st2 = unify(elseOut.st, thenOut.typ, elseOut.typ, path, x.span);
-		envOut(addTypedNode(st2, x.id, TUnit), env)
+		envOut(addTypedNode(elseOut.st, x.id, TUnit), env)
 	}
 	| SWhile x -> {
 		let co = cgenExpr(st, env, x.cond, path);
@@ -1660,6 +1804,20 @@ function typeHasFreeVars(t) {
 	length(freeVars(t)) > 0
 }
 
+// Rule 4: exported interfaces are variant-free. Deep-widen every TVariant
+// to its union so iface schemes and importers never see variant types.
+function widenVariantsDeep(t) {
+	match t with
+	| TVariant v -> TNamed { v.unionName, map(widenVariantsDeep, v.args) }
+	| TList x -> TList { widenVariantsDeep(x.elem) }
+	| TArray x -> TArray { widenVariantsDeep(x.elem) }
+	| TDict x -> TDict { widenVariantsDeep(x.keyT), widenVariantsDeep(x.valT) }
+	| TFun f -> TFun { map(widenVariantsDeep, f.params), widenVariantsDeep(f.ret) }
+	| TProc pr -> TProc { map(widenVariantsDeep, pr.params), widenVariantsDeep(pr.ret), pr.isAsync }
+	| TNamed n -> TNamed { n.tname, map(widenVariantsDeep, n.args) }
+	| _ -> t
+}
+
 function exportSchemeFor(st, env, stmt, path) {
 	match exportedNameOf(stmt) with
 	| None -> Pair { st, None }
@@ -1668,9 +1826,9 @@ function exportSchemeFor(st, env, stmt, path) {
 		| None -> Pair { st, Some { Pair { n.value, mkScheme([], [], TNamed { n.value, [] }) } } }
 		| Some entry -> {
 			match entry.value with
-			| TScheme s -> Pair { st, Some { Pair { n.value, s.scheme } } }
+			| TScheme s -> Pair { st, Some { Pair { n.value, mkScheme(s.scheme.vars, s.scheme.constraints, widenVariantsDeep(s.scheme.body)) } } }
 			| TMono m -> {
-				let solved = apply(st.subst, m.t);
+				let solved = widenVariantsDeep(apply(st.subst, m.t));
 				let st1 = checkExportGround(st, stmt, path, n.value, solved);
 				Pair { st1, Some { Pair { n.value, mkScheme([], [], solved) } } }
 			}

@@ -76,6 +76,12 @@ function testScalarGuardedWildcardDoesNotCount() {
 	H.assertHasMessage(H.exhaustDiags("scalar_guard_only.pf", src), "fallback")
 }
 
+//![test("nested match on binder must cover the union")]
+function testNestedMatchOnBinderCoversUnion() {
+	let src = "type T = { | A: n | B }\nfunction h(t) { match t with | A a -> (match a with | A x -> x.n) | B -> 0; }";
+	H.assertHasMessage(H.exhaustDiags("nested_binder.pf", src), "missing")
+}
+
 // ─────────────────────────────────────────────────────────────────
 // GENERATED TEST HARNESS (gen-test-harness.js) — do not edit.
 // Lambda-closing lives in pure functions; the generated main has no
@@ -94,7 +100,8 @@ function __gen_suite_check_exhaust() {
 		test("list exact patterns without rest fail at length two", testListExactPatternsWithoutRestFailAtLengthTwo),
 		test("guarded empty list arm does not count", testGuardedListArmDoesNotCount),
 		test("scalar wildcard fallback succeeds", testScalarWildcardFallbackSucceeds),
-		test("scalar guarded wildcard does not count", testScalarGuardedWildcardDoesNotCount)
+		test("scalar guarded wildcard does not count", testScalarGuardedWildcardDoesNotCount),
+		test("nested match on binder must cover the union", testNestedMatchOnBinderCoversUnion)
 	])
 }
 

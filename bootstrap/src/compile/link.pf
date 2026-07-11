@@ -570,21 +570,31 @@ function indentText(text, levels) {
 	)
 }
 
+function embeddedHostText(label, text, levels) {
+	let prefix = StrX.strRepeat(" ", levels * 2);
+	prefix
+	++ "/* "
+	++ label
+	++ " */\n"
+	++ prefix
+	++ "(function(module, exports, require) {\n"
+	++ indentText(ensureTrailingNewline(text), levels + 1)
+	++ prefix
+	++ "})(undefined, undefined, "
+	++ "typeof require === \"function\" ? require : undefined);\n"
+}
+
 function hostText(host, levels) {
 	let prefix = StrX.strRepeat(" ", levels * 2);
 	let abiNames = "$addI, $arrGet, $arrSet, $bitAndI, $bitNotI, $bitOrI, $cmpF, $compLazy, $compStrict, $concatS, $dictFromEntries, $dictGet, $dictSet, $divI, $eq, $eqF, $eqI, $extern, $field, $geI, $gtI, $index, $indexSet, $lazyList, $leI, $listExactLen, $listMinLen, $listRest, $ltI, $matchFail, $memoize, $modI, $mulI, $negI, $newArray, $nth, $nthU, $shlI, $shrI, $starGet, $str, $strAt, $subI, $toF";
-	prefix
-	++ "/* host core */\n"
-	++ indentText(ensureTrailingNewline(host.coreText), levels)
+	embeddedHostText("host core", host.coreText, levels)
 	++ prefix
 	++ "/* PfunCore ABI bindings */\n"
 	++ prefix
 	++ "const { "
 	++ abiNames
 	++ " } = globalThis.PfunCore;\n"
-	++ prefix
-	++ "/* host platform */\n"
-	++ indentText(ensureTrailingNewline(host.platformText), levels)
+	++ embeddedHostText("host platform", host.platformText, levels)
 }
 
 function replaceAllText(text, needle, replacement) {
@@ -631,6 +641,7 @@ function loaderText() {
 	"  const $mods = Object.create(null);\n"
 	++ "  const $maps = Object.create(null);\n"
 	++ "  const $cache = Object.create(null);\n"
+	++ "  const $builtinModules = globalThis.PfunBuiltins || Object.create(null);\n"
 	++ "\n"
 	++ "  function $own(object, key) {\n"
 	++ "    return Object.prototype.hasOwnProperty.call(object, key);\n"
@@ -639,9 +650,7 @@ function loaderText() {
 	++ "  function $req(id) {\n"
 	++ "    if ($own($cache, id)) return $cache[id].exports;\n"
 	++ "    if (!$own($mods, id)) {\n"
-	++ "      if (typeof $builtins !== \"undefined\" && $own($builtins, id)) {\n"
-	++ "        return $builtins[id];\n"
-	++ "      }\n"
+	++ "      if ($own($builtinModules, id)) return $builtinModules[id];\n"
 	++ "      throw new Error(\"Pfun module not found: \" + id);\n"
 	++ "    }\n"
 	++ "\n"
@@ -795,8 +804,24 @@ function browserHtml(jsText, page) {
 
 // ── NodeFiles ───────────────────────────────────────────────────────────────
 
+function emptyObjectExpr() {
+	J.jsCall(
+		J.jsMember(J.jsId("Object"), "create"),
+		[J.jsNull()]
+	)
+}
+
+function nodeBuiltinModulesExpr() {
+	J.jsLogic(
+		"||",
+		J.jsMember(J.jsId("globalThis"), "PfunBuiltins"),
+		emptyObjectExpr()
+	)
+}
+
 function nodeRequireFunction() {
 	let deps = J.jsId("$deps");
+	let builtins = J.jsId("$builtinModules");
 	let id = J.jsId("id");
 
 	J.jsFun(
@@ -816,6 +841,15 @@ function nodeRequireFunction() {
 								)
 							]
 						)
+					)
+				],
+				[]
+			),
+			J.jsIf(
+				ownCall(builtins, id),
+				[
+					J.jsRet(
+						J.jsIndex(builtins, id)
 					)
 				],
 				[]
@@ -843,6 +877,10 @@ function nodeModuleText(mod, ids, host) {
 					ids
 				)
 			)
+		),
+		J.jsConst(
+			"$builtinModules",
+			nodeBuiltinModulesExpr()
 		),
 		nodeRequireFunction()
 	];
