@@ -1,0 +1,384 @@
+// test/load_test.pf — Phase 16 graph-loader tests.
+
+import * as Assert from "$PFUN_HOME/lib/testing/assertions";
+import * as Load from "../src/drivers/load";
+import * as MG from "../src/graph/modgraph";
+import * as Compat from "../src/compat";
+import * from "io"; // added by gen-test-harness
+import * from "$PFUN_HOME/lib/testing/runner"; // added by gen-test-harness
+
+function env() {
+	MG.mkSearchEnv(
+		"lib",
+		"/pfun",
+		["io", "file", "json", "math"]
+	)
+}
+
+function source(path, text) {
+	MG.mkSourceFile(path, text)
+}
+
+function sourceMap(files) {
+	Load.sourceMapFromFiles(files)
+}
+
+function containsText(text, needle) {
+	match findSlice(text, needle) with
+	| None -> false
+	| Some _ -> true
+}
+
+function containsModule(modules, path) {
+	match Compat.uncons(modules) with
+	| None -> false
+	| Some cell -> {
+		if cell.value.key.path == path then { true }
+		else {
+			containsModule(
+				cell.value.value,
+				path
+			)
+		}
+	}
+}
+
+function firstModulePath(modules) {
+	match Compat.listAt(modules, 0) with
+	| None -> "<missing>"
+	| Some m -> m.value.path
+}
+
+function secondModulePath(modules) {
+	match Compat.listAt(modules, 1) with
+	| None -> "<missing>"
+	| Some m -> m.value.path
+}
+
+function firstEdgeText(module) {
+	match Compat.listAt(module.edges, 0) with
+	| None -> "<missing>"
+	| Some edge -> MG.resolvedPathToStr(
+		edge.value.resolved
+	)
+}
+
+function firstDiagMessage(diags) {
+	match Compat.listAt(diags, 0) with
+	| None -> "<missing diagnostic>"
+	| Some diag -> diag.value.message
+}
+
+//![suite("drivers/load parseOne")]
+//![test("lexes parses and extracts edges")]
+function testParseOneSuccess() {
+	let text =
+		"import * as IO from \"io\"; "
+		++ "import * as Dep from \"./dep\"; "
+		++ "let x = 1;";
+
+	match Load.parseOne("src/main", text, env()) with
+	| ParseOneErr e -> Assert.assertions([
+		Assert.fail(
+			"Expected parseOne success, got "
+			++ __str__(length(e.diags))
+			++ " diagnostics."
+		)
+	])
+	| ParseOneOk ok -> Assert.assertions([
+		Assert.assertEqual("src/main.pf", ok.module.path),
+		Assert.assertEqual(2, length(ok.module.edges)),
+		Assert.assertEqual(
+			"$builtin/io",
+			firstEdgeText(ok.module)
+		)
+	])
+}
+
+//![test("returns lexer diagnostics")]
+function testParseOneLexError() {
+	match Load.parseOne(
+		"bad-lex.pf",
+		"let x = \"unterminated;",
+		env()
+	) with
+	| ParseOneOk _ -> Assert.assertions([
+		Assert.fail("Expected lexer diagnostics.")
+	])
+	| ParseOneErr e -> Assert.assertions([
+		Assert.assertTrue(length(e.diags) > 0),
+		Assert.assertTrue(
+			containsText(
+				firstDiagMessage(e.diags),
+				"Unterminated string"
+			)
+		)
+	])
+}
+
+//![test("returns parser diagnostics")]
+function testParseOneParseError() {
+	match Load.parseOne(
+		"bad-parse.pf",
+		"let x = ;",
+		env()
+	) with
+	| ParseOneOk _ -> Assert.assertions([
+		Assert.fail("Expected parser diagnostics.")
+	])
+	| ParseOneErr e -> Assert.assertions([
+		Assert.assertTrue(length(e.diags) > 0)
+	])
+}
+
+//![suite("drivers/load memory graph")]
+//![test("loads an entry and follows relative imports")]
+function testLoadMemFollowsImports() {
+	let files = sourceMap([
+		source(
+			"src/main.pf",
+			"import * as Dep from \"./dep\"; let x = 1;"
+		),
+		source(
+			"src/dep.pf",
+			"import * as Leaf from \"./leaf\"; "
+			++ "export function dep() { 2 }"
+		),
+		source(
+			"src/leaf.pf",
+			"export function leaf() { 3 }"
+		)
+	]);
+
+	match Load.loadGraphMem(
+		files,
+		"./src/main",
+		env()
+	) with
+	| LoadErr e -> Assert.assertions([
+		Assert.fail(
+			"Expected graph success, got "
+			++ __str__(length(e.diags))
+			++ " diagnostics."
+		)
+	])
+	| LoadOk ok -> Assert.assertions([
+		Assert.assertEqual(3, length(ok.modules)),
+		Assert.assertTrue(
+			containsModule(ok.modules, "src/main.pf")
+		),
+		Assert.assertTrue(
+			containsModule(ok.modules, "src/dep.pf")
+		),
+		Assert.assertTrue(
+			containsModule(ok.modules, "src/leaf.pf")
+		)
+	])
+}
+
+//![test("loads duplicate imports once")]
+function testLoadMemDeduplicates() {
+	let files = sourceMap([
+		source(
+			"src/main.pf",
+			"import * as A from \"./dep\"; "
+			++ "import * as B from \"./dep\"; "
+			++ "let x = 1;"
+		),
+		source(
+			"src/dep.pf",
+			"export function dep() { 2 }"
+		)
+	]);
+
+	match Load.loadGraphMem(
+		files,
+		"src/main.pf",
+		env()
+	) with
+	| LoadErr _ -> Assert.assertions([
+		Assert.fail("Expected duplicate imports to load.")
+	])
+	| LoadOk ok -> Assert.assertions([
+		Assert.assertEqual(2, length(ok.modules))
+	])
+}
+
+//![test("does not read builtin imports from the source map")]
+function testLoadMemSkipsBuiltins() {
+	let files = sourceMap([
+		source(
+			"main.pf",
+			"import * as IO from \"io\"; let x = 1;"
+		)
+	]);
+
+	match Load.loadGraphMem(
+		files,
+		"main.pf",
+		env()
+	) with
+	| LoadErr _ -> Assert.assertions([
+		Assert.fail("Expected builtin import to be skipped.")
+	])
+	| LoadOk ok -> Assert.assertions([
+		Assert.assertEqual(1, length(ok.modules)),
+		Assert.assertTrue(
+			containsModule(ok.modules, "main.pf")
+		)
+	])
+}
+
+//![test("resolves bare library imports through libDir")]
+function testLoadMemLibraryImport() {
+	let files = sourceMap([
+		source(
+			"src/main.pf",
+			"import * as W from \"widgets\"; let x = 1;"
+		),
+		source(
+			"lib/widgets.pf",
+			"export function widget() { 1 }"
+		)
+	]);
+
+	match Load.loadGraphMem(
+		files,
+		"src/main.pf",
+		env()
+	) with
+	| LoadErr _ -> Assert.assertions([
+		Assert.fail("Expected library import to load.")
+	])
+	| LoadOk ok -> Assert.assertions([
+		Assert.assertEqual(2, length(ok.modules)),
+		Assert.assertTrue(
+			containsModule(ok.modules, "lib/widgets.pf")
+		)
+	])
+}
+
+//![test("reports missing in-memory source")]
+function testLoadMemMissingSource() {
+	let files = sourceMap([
+		source(
+			"src/main.pf",
+			"import * as Missing from \"./missing\"; "
+			++ "let x = 1;"
+		)
+	]);
+
+	match Load.loadGraphMem(
+		files,
+		"src/main.pf",
+		env()
+	) with
+	| LoadOk _ -> Assert.assertions([
+		Assert.fail("Expected missing-source diagnostic.")
+	])
+	| LoadErr e -> Assert.assertions([
+		Assert.assertTrue(length(e.diags) > 0),
+		Assert.assertTrue(
+			containsText(
+				firstDiagMessage(e.diags),
+				"src/missing.pf"
+			)
+		)
+	])
+}
+
+//![test("canonicalizes source-map and entry paths")]
+function testLoadMemCanonicalPaths() {
+	let files = sourceMap([
+		source(
+			"./src/ui/../main",
+			"let x = 1;"
+		)
+	]);
+
+	match Load.loadGraphMem(
+		files,
+		"src/./main",
+		env()
+	) with
+	| LoadErr _ -> Assert.assertions([
+		Assert.fail("Expected canonical source lookup.")
+	])
+	| LoadOk ok -> Assert.assertions([
+		Assert.assertEqual(1, length(ok.modules)),
+		Assert.assertEqual(
+			"src/main.pf",
+			firstModulePath(ok.modules)
+		)
+	])
+}
+
+//![test("produces raw modules accepted by toposort")]
+function testLoadMemTopoIntegration() {
+	let files = sourceMap([
+		source(
+			"src/main.pf",
+			"import * as Dep from \"./dep\"; let x = 1;"
+		),
+		source(
+			"src/dep.pf",
+			"export function dep() { 2 }"
+		)
+	]);
+
+	match Load.loadGraphMem(
+		files,
+		"src/main.pf",
+		env()
+	) with
+	| LoadErr _ -> Assert.assertions([
+		Assert.fail("Expected loader success.")
+	])
+	| LoadOk loaded -> {
+		match MG.toposort(loaded.modules) with
+		| TopoErr _ -> Assert.assertions([
+			Assert.fail("Expected toposort success.")
+		])
+		| TopoOk sorted -> Assert.assertions([
+			Assert.assertEqual(
+				"src/dep.pf",
+				firstModulePath(sorted.modules)
+			),
+			Assert.assertEqual(
+				"src/main.pf",
+				secondModulePath(sorted.modules)
+			)
+		])
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────
+// GENERATED TEST HARNESS (gen-test-harness.js) — do not edit.
+// Lambda-closing lives in pure functions; the generated main has no
+// lambdas, so V1's fn-lambda-in-proc purity quirk is never triggered.
+// ─────────────────────────────────────────────────────────────────
+
+function __gen_suite_drivers_load_parseOne() {
+	suite("drivers/load parseOne", [
+		test("lexes parses and extracts edges", testParseOneSuccess),
+		test("returns lexer diagnostics", testParseOneLexError),
+		test("returns parser diagnostics", testParseOneParseError)
+	])
+}
+
+function __gen_suite_drivers_load_memory_graph() {
+	suite("drivers/load memory graph", [
+		test("loads an entry and follows relative imports", testLoadMemFollowsImports),
+		test("loads duplicate imports once", testLoadMemDeduplicates),
+		test("does not read builtin imports from the source map", testLoadMemSkipsBuiltins),
+		test("resolves bare library imports through libDir", testLoadMemLibraryImport),
+		test("reports missing in-memory source", testLoadMemMissingSource),
+		test("canonicalizes source-map and entry paths", testLoadMemCanonicalPaths),
+		test("produces raw modules accepted by toposort", testLoadMemTopoIntegration)
+	])
+}
+
+proc main() {
+	runSuites([__gen_suite_drivers_load_parseOne(), __gen_suite_drivers_load_memory_graph()]);
+}
+main();

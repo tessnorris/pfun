@@ -1,0 +1,160 @@
+// drivers/cliargs.pf — pure parsing and path policy for the bootstrap CLI.
+//
+// The executable driver lives in cli.pf and calls main() at top level, so its
+// reusable/testable command logic is kept here. This module has no effects.
+
+import * as Compat from "../compat";
+
+export type CliPlan = {
+	| CliBuild: entry, output
+	| CliUsage: message
+}
+
+export function usageText() {
+	"Usage: pfc build <entry.pf> [-o <output.js>]"
+}
+
+function argAt(args, index) {
+	match Compat.listAt(args, index) with
+	| None -> ""
+	| Some value -> value.value
+}
+
+function validText(value) {
+	length(value) > 0
+}
+
+function parseDefaultBuild(args) {
+	let command = argAt(args, 0);
+	let entry = argAt(args, 1);
+
+	if command != "build" then {
+		CliUsage {
+			"Unknown command '" ++ command ++ "'.\n"
+			++ usageText()
+		}
+	} else if !validText(entry) then {
+		CliUsage {
+			"Build requires an entry file.\n"
+			++ usageText()
+		}
+	} else {
+		CliBuild {
+			entry = entry,
+			output = "pfc.js"
+		}
+	}
+}
+
+function outputFlagOk(flag) {
+	flag == "-o" || flag == "--output"
+}
+
+function parseOutputBuild(args) {
+	let command = argAt(args, 0);
+	let entry = argAt(args, 1);
+	let flag = argAt(args, 2);
+	let output = argAt(args, 3);
+
+	if command != "build" then {
+		CliUsage {
+			"Unknown command '" ++ command ++ "'.\n"
+			++ usageText()
+		}
+	} else if !validText(entry) then {
+		CliUsage {
+			"Build requires an entry file.\n"
+			++ usageText()
+		}
+	} else if !outputFlagOk(flag) then {
+		CliUsage {
+			"Expected -o or --output after the entry file.\n"
+			++ usageText()
+		}
+	} else if !validText(output) then {
+		CliUsage {
+			"Output path may not be empty.\n"
+			++ usageText()
+		}
+	} else {
+		CliBuild {
+			entry = entry,
+			output = output
+		}
+	}
+}
+
+export function parseArgs(args) {
+	if length(args) == 2 then {
+		parseDefaultBuild(args)
+	} else if length(args) == 4 then {
+		parseOutputBuild(args)
+	} else {
+		CliUsage {
+			usageText()
+		}
+	}
+}
+
+export function homeFromEnv(value) {
+	match value with
+	| None -> "."
+	| Some home -> {
+		if length(home.value) == 0 then {
+			"."
+		} else {
+			home.value
+		}
+	}
+}
+
+function endsWithSlash(path) {
+	length(path) > 0
+	&& slice(length(path) - 1, 1, path) == "/"
+}
+
+function startsWithSlash(path) {
+	length(path) > 0
+	&& slice(0, 1, path) == "/"
+}
+
+function stripLeadingSlash(path) {
+	if startsWithSlash(path) then {
+		slice(1, length(path) - 1, path)
+	} else {
+		path
+	}
+}
+
+export function joinPath(left, right) {
+	if length(left) == 0 then {
+		right
+	} else if length(right) == 0 then {
+		left
+	} else if endsWithSlash(left) then {
+		left ++ stripLeadingSlash(right)
+	} else {
+		left ++ "/" ++ stripLeadingSlash(right)
+	}
+}
+
+function lastSlashLoop(path, index, found) {
+	if index >= length(path) then {
+		found
+	} else if slice(index, 1, path) == "/" then {
+		lastSlashLoop(path, index + 1, index)
+	} else {
+		lastSlashLoop(path, index + 1, found)
+	}
+}
+
+export function outputDir(path) {
+	let slash = lastSlashLoop(path, 0, 0 - 1);
+	if slash < 0 then {
+		"."
+	} else if slash == 0 then {
+		"/"
+	} else {
+		slice(0, slash, path)
+	}
+}

@@ -16,6 +16,7 @@ import * as Check from "../src/check/check";
 import * as Iface from "../src/check/iface";
 import * as IMS from "../src/data/imaps";
 import * as IMI from "../src/data/imapi";
+import * as Spec from "../src/builtins/spec";
 import * as StrX from "../src/data/strx";
 import * as Compat from "../src/compat";
 
@@ -142,4 +143,19 @@ export function assertHasDiag(diags) {
 
 export function assertHasMessage(diags, needle) {
 	Assert.assertions([Assert.assertTrue(hasDiagContaining(diags, needle))])
+}
+
+export function typeDiagsWithBuiltins(path, source) {
+	match parseSource(path, source) with
+	| SourceErr e -> e.diags
+	| SourceOk parsed -> {
+		let r = Types.inferModule(parsed.module, Spec.allBuiltinIfaces());
+		r.diags
+	}
+}
+
+export function checkUnitWithDeps(path, source, deps) {
+	match parseSource(path, source) with
+	| SourceErr e -> Check.mkCheckedUnit(path, dummyModule(path), Types.mkInferResult(IMI.imiEmpty(), IMS.imsEmpty(), e.diags), Iface.emptyIface(path), e.diags)
+	| SourceOk parsed -> Check.checkModule(parsed.module, deps)
 }

@@ -18,41 +18,41 @@ export function nonEmpty(xs) {
 	length(xs) > 0
 }
 
-export function appendL(a, b) {
+export generic function appendL(a, b) {
 	revOnto(revOnto(a, []), b)
 }
 
-export function appendOne(xs, x) {
+export generic function appendOne(xs, x) {
 	reverse(cons(x, reverse(xs)))
 }
 
-export function concat(lists) {
+export generic function concat(lists) {
 	reverse(reduce(fn acc, xs => revOnto(xs, acc), [], lists))
 }
 
-export function foldLeft(f, init, xs) {
+export generic function foldLeft(f, init, xs) {
 	reduce(f, init, xs)
 }
 
-export function countWhere(pred, xs) {
+export generic function countWhere(pred, xs) {
 	reduce(fn n, x => {
 		if pred(x) then { n + 1 } else { n }
 	}, 0, xs)
 }
 
-export function any(pred, xs) {
+export generic function any(pred, xs) {
 	reduce(fn found, x => {
 		if found then { true } else { pred(x) }
 	}, false, xs)
 }
 
-export function all(pred, xs) {
+export generic function all(pred, xs) {
 	reduce(fn ok, x => {
 		if ok then { pred(x) } else { false }
 	}, true, xs)
 }
 
-export function containsBy(eq, needle, xs) {
+export generic function containsBy(eq, needle, xs) {
 	any(fn x => eq(x, needle), xs)
 }
 
@@ -65,17 +65,17 @@ function findByLoop(pred, xs, index) {
 	}
 }
 
-export function findBy(pred, xs) {
+export generic function findBy(pred, xs) {
 	findByLoop(pred, xs, 0)
 }
 
-export function indexOfBy(eq, needle, xs) {
+export generic function indexOfBy(eq, needle, xs) {
 	match findBy(fn x => eq(x, needle), xs) with
 	| None -> None
 	| Some found -> Some { found.value.key }
 }
 
-export function filterMap(f, xs) {
+export generic function filterMap(f, xs) {
 	let rev = reduce(fn acc, x => {
 		match f(x) with
 		| None -> acc
@@ -84,7 +84,7 @@ export function filterMap(f, xs) {
 	reverse(rev)
 }
 
-export function mapWithIndex(f, xs) {
+export generic function mapWithIndex(f, xs) {
 	let st = reduce(fn state, x => Pair { state.key + 1, cons(f(state.key, x), state.value) }, Pair { 0, [] }, xs);
 	reverse(st.value)
 }
@@ -103,11 +103,11 @@ function zipLoop(a, b, acc) {
 	}
 }
 
-export function zip(a, b) {
+export generic function zip(a, b) {
 	zipLoop(a, b, [])
 }
 
-export function takeL(n, xs) {
+export generic function takeL(n, xs) {
 	if n <= 0 then { [] } else { slice(0, n, xs) }
 }
 
@@ -115,11 +115,11 @@ export function dropL(n, xs) {
 	if n <= 0 then { xs } else { slice(n, length(xs) - n, xs) }
 }
 
-export function splitAt(n, xs) {
+export generic function splitAt(n, xs) {
 	Pair { takeL(n, xs), dropL(n, xs) }
 }
 
-export function intersperse(sep, xs) {
+export generic function intersperse(sep, xs) {
 	let st = reduce(fn state, x => {
 		if state.key then { Pair { true, cons(x, cons(sep, state.value)) } }
 		else { Pair { true, cons(x, state.value) } }
@@ -192,6 +192,6 @@ function mergeAll(cmp, runs) {
 	}
 }
 
-export function sortBy(cmp, xs) {
+export generic function sortBy(cmp, xs) {
 	if length(xs) <= 1 then { xs } else { mergeAll(cmp, map(fn x => [x], xs)) }
 }

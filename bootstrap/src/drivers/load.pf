@@ -1,0 +1,322 @@
+// drivers/load.pf — Phase 16 source-graph loader.
+//
+// The compiler core is pure. This module is the narrow effectful edge that
+// obtains source text and turns it into the RawModule graph consumed by
+// graph/modgraph.pf.
+//
+// `loadGraph` reads from disk through drivers/iofloor.pf.
+// `loadGraphMem` reads from an immutable in-memory source map.
+// Both share `parseOne`, so lexing, parsing, import extraction, diagnostics,
+// path normalization, duplicate suppression, and builtin handling are
+// identical.
+//
+// This file stays in the V1+V2 bootstrap subset:
+// - no head/tail/nth
+// - no builtin Dict
+// - no list `+`
+// - no proc values or proc lambdas
+// - no lazy lists, floats, or async effects
+
+import * as Lex from "../syntax/lexer";
+import * as Parser from "../syntax/parser";
+import * as MG from "../graph/modgraph";
+import * as D from "../check/diag";
+import * as T from "../syntax/token";
+import * as IMS from "../data/imaps";
+import * as Compat from "../compat";
+import * as IO from "./iofloor";
+
+// A local result shape avoids sharing generic Ok/Err constructors across
+// lexer, parser, graph, and file modules during the bootstrap.
+export type ParseOneResult = {
+	| ParseOneOk: module
+	| ParseOneErr: diags
+}
+
+export type LoadResult = {
+	| LoadOk: modules
+	| LoadErr: diags
+}
+
+// Queue entries retain the importing source location so missing-file
+// diagnostics point at the import that requested the file.
+type LoadPending = {
+	path,
+	importer,
+	span
+}
+
+// ── path helpers ───────────────────────────────────────────────────────────
+
+function startsWith(s, prefix) {
+	let n = length(prefix);
+	if length(s) < n then { false }
+	else { slice(0, n, s) == prefix }
+}
+
+function endsWith(s, suffix) {
+	let n = length(suffix);
+	let len = length(s);
+	if len < n then { false }
+	else { slice(len - n, n, s) == suffix }
+}
+
+function stripLeadingDotSlash(path) {
+	if startsWith(path, "./") then {
+		slice(2, length(path) - 2, path)
+	} else {
+		path
+	}
+}
+
+function ensurePfExtension(path) {
+	if endsWith(path, ".pf") then { path }
+	else { path ++ ".pf" }
+}
+
+// Uses the same spelling rules as graph/modgraph.pf's private
+// canonicalUserPath helper.
+export function canonicalPath(path) {
+	MG.normalizePath(
+		ensurePfExtension(
+			stripLeadingDotSlash(path)
+		)
+	)
+}
+
+function fallbackSpan() {
+	let p = T.mkPos(1, 1, 0);
+	T.pointSpan(p)
+}
+
+function entryPending(entryPath) {
+	let path = canonicalPath(entryPath);
+	LoadPending {
+		path = path,
+		importer = path,
+		span = fallbackSpan()
+	}
+}
+
+function importedPending(path, importer, span) {
+	LoadPending {
+		path = canonicalPath(path),
+		importer = importer,
+		span = span
+	}
+}
+
+// ── source-map construction ────────────────────────────────────────────────
+
+// The memory loader consumes an imaps map from canonical path to source text.
+// This constructor is the normal public way to build one from SourceFile
+// records and guarantees the keys use the same normalization as disk loading.
+function sourceMapLoop(files, acc) {
+	match Compat.uncons(files) with
+	| None -> acc
+	| Some cell -> {
+		let file = cell.value.key;
+		sourceMapLoop(
+			cell.value.value,
+			IMS.imsPut(
+				acc,
+				canonicalPath(file.path),
+				file.text
+			)
+		)
+	}
+}
+
+export function sourceMapFromFiles(files) {
+	sourceMapLoop(files, IMS.imsEmpty())
+}
+
+// ── diagnostics ────────────────────────────────────────────────────────────
+
+function missingSourceDiag(pending) {
+	D.err(
+		ImportD,
+		"Source for module '" ++ pending.path
+		++ "' is not available in the in-memory source map.",
+		pending.importer,
+		pending.span
+	)
+}
+
+function readSourceDiag(pending, message) {
+	D.err(
+		ImportD,
+		"Could not read module '" ++ pending.path
+		++ "': " ++ message,
+		pending.importer,
+		pending.span
+	)
+}
+
+// ── one-module pure step ───────────────────────────────────────────────────
+
+// Lexes, parses, and extracts resolved import edges for one source file.
+export function parseOne(path, text, env) {
+	let canonical = canonicalPath(path);
+	match Lex.lex(canonical, text) with
+	| LexErr e -> ParseOneErr { e.diags }
+	| LexOk l -> {
+		match Parser.parseModule(canonical, l.tokens) with
+		| ParseErr e -> ParseOneErr { e.diags }
+		| ParseOk p -> {
+			match MG.edgesOf(p.module, env) with
+			| EdgesErr e -> ParseOneErr { e.diags }
+			| EdgesOk g -> ParseOneOk {
+				MG.mkRawModule(
+					canonical,
+					p.module,
+					g.edges
+				)
+			}
+		}
+	}
+}
+
+// ── pending-edge helpers ───────────────────────────────────────────────────
+
+function pendingEdgesLoop(edges, importer, acc) {
+	match Compat.uncons(edges) with
+	| None -> reverse(acc)
+	| Some cell -> {
+		let edge = cell.value.key;
+		let rest = cell.value.value;
+		match edge.resolved with
+		| BuiltinPath _ -> pendingEdgesLoop(rest, importer, acc)
+		| UserPath p -> pendingEdgesLoop(
+			rest,
+			importer,
+			cons(
+				importedPending(
+					p.p,
+					importer,
+					edge.span
+				),
+				acc
+			)
+		)
+	}
+}
+
+function pendingFromEdges(edges, importer) {
+	pendingEdgesLoop(edges, importer, [])
+}
+
+// Stable list append specialized to LoadPending. Bootstrap sources never use
+// `+` for lists.
+function appendPending(left, right) {
+	match Compat.uncons(left) with
+	| None -> right
+	| Some cell -> cons(
+		cell.value.key,
+		appendPending(cell.value.value, right)
+	)
+}
+
+// ── pure in-memory loader ──────────────────────────────────────────────────
+
+function loadMemLoop(files, pending, seen, raws, env) {
+	match Compat.uncons(pending) with
+	| None -> LoadOk { reverse(raws) }
+	| Some cell -> {
+		let task = cell.value.key;
+		let rest = cell.value.value;
+
+		if IMS.imsHas(seen, task.path) then {
+			loadMemLoop(files, rest, seen, raws, env)
+		} else {
+			match IMS.imsGet(files, task.path) with
+			| None -> LoadErr { [missingSourceDiag(task)] }
+			| Some source -> {
+				match parseOne(task.path, source.value, env) with
+				| ParseOneErr e -> LoadErr { e.diags }
+				| ParseOneOk parsed -> {
+					let module = parsed.module;
+					let seen2 = IMS.imsPut(
+						seen,
+						task.path,
+						true
+					);
+					let imports = pendingFromEdges(
+						module.edges,
+						module.path
+					);
+					loadMemLoop(
+						files,
+						appendPending(imports, rest),
+						seen2,
+						cons(module, raws),
+						env
+					)
+				}
+			}
+		}
+	}
+}
+
+// Pure loader used by tests and, later, the browser playground.
+export function loadGraphMem(files, entryPath, env) {
+	loadMemLoop(
+		files,
+		[entryPending(entryPath)],
+		IMS.imsEmpty(),
+		[],
+		env
+	)
+}
+
+// ── effectful disk loader ──────────────────────────────────────────────────
+
+proc loadDiskLoop(pending, seen, raws, env) {
+	match Compat.uncons(pending) with
+	| None -> LoadOk { reverse(raws) }
+	| Some cell -> {
+		let task = cell.value.key;
+		let rest = cell.value.value;
+
+		if IMS.imsHas(seen, task.path) then {
+			loadDiskLoop(rest, seen, raws, env)
+		} else {
+			match IO.readTextFile(task.path) with
+			| BErr e -> LoadErr {
+				[readSourceDiag(task, e.message)]
+			}
+			| BOk source -> {
+				match parseOne(task.path, source.value, env) with
+				| ParseOneErr e -> LoadErr { e.diags }
+				| ParseOneOk parsed -> {
+					let module = parsed.module;
+					let seen2 = IMS.imsPut(
+						seen,
+						task.path,
+						true
+					);
+					let imports = pendingFromEdges(
+						module.edges,
+						module.path
+					);
+					loadDiskLoop(
+						appendPending(imports, rest),
+						seen2,
+						cons(module, raws),
+						env
+					)
+				}
+			}
+		}
+	}
+}
+
+// Effectful Node loader used by check/build/run drivers.
+export proc loadGraph(entryPath, env) {
+	loadDiskLoop(
+		[entryPending(entryPath)],
+		IMS.imsEmpty(),
+		[],
+		env
+	)
+}

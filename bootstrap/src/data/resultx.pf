@@ -9,69 +9,69 @@ export type BResult = {
 	| BErr: message
 }
 
-export function ok(value) {
+export generic function ok(value) {
 	BOk { value }
 }
 
-export function err(message) {
+export generic function err(message) {
 	BErr { message }
 }
 
-export function isOk(r) {
+export generic function isOk(r) {
 	match r with
 	| BOk _ -> true
 	| BErr _ -> false
 }
 
-export function isErr(r) {
+export generic function isErr(r) {
 	match r with
 	| BOk _ -> false
 	| BErr _ -> true
 }
 
-export function mapResult(f, r) {
+export generic function mapResult(f, r) {
 	match r with
 	| BOk x -> BOk { f(x.value) }
 	| BErr e -> BErr { e.message }
 }
 
-export function mapErr(f, r) {
+export generic function mapErr(f, r) {
 	match r with
 	| BOk x -> BOk { x.value }
 	| BErr e -> BErr { f(e.message) }
 }
 
-export function andThenResult(r, f) {
+export generic function andThenResult(r, f) {
 	match r with
 	| BOk x -> f(x.value)
 	| BErr e -> BErr { e.message }
 }
 
-export function withDefault(defaultValue, r) {
+export generic function withDefault(defaultValue, r) {
 	match r with
 	| BOk x -> x.value
 	| BErr _ -> defaultValue
 }
 
-export function toOption(r) {
+export generic function toOption(r) {
 	match r with
 	| BOk x -> Some { x.value }
 	| BErr _ -> None
 }
 
-export function fromOption(message, opt) {
+export generic function fromOption(message, opt) {
 	match opt with
 	| Some x -> BOk { x.value }
 	| None -> BErr { message }
 }
 
-export function combine(left, right) {
+export generic function combine(left, right) {
 	match left with
 	| BErr e -> BErr { e.message }
 	| BOk _ -> right
 }
 
-export function collect(results) {
+export generic function collect(results) {
 	let st = reduce(fn acc, r => {
 		match acc with
 		| BErr _ -> acc

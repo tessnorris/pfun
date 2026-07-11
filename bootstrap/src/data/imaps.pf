@@ -8,7 +8,7 @@ export function imsEmpty() {
 }
 
 function imsMax(a, b) {
-	if a > b then a else b
+	if a > b then { a } else { b }
 }
 
 function imsHeight(m) {
@@ -96,8 +96,9 @@ function imsBalance(m) {
 				}
 			}
 		}
-		else
+		else {
 			balancedNode
+		}
 	}
 }
 

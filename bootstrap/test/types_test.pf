@@ -208,3 +208,33 @@ function testVariantPassedToWrongUnionFails() {
 	let src = "type T = { | A: n | B }\ntype U2 = { | X: m | Y }\nfunction f(u) { match u with | X x -> 1 | Y -> 2; }\nfunction h(t) { match t with | A a -> f(a) | B -> 0; }";
 	H.assertHasDiag(H.typeDiags("variant_wrong_union.pf", src))
 }
+
+//![test("union with trailing slots keeps arity across arms")]
+function testUnionTrailingSlotArity() {
+	let src = "type T = { | B | A: generic v }\nfunction h(t) { match t with | B -> 0 | A a -> 1; }\nlet r = h(A { v = 2 }) + h(B);";
+	H.assertOkDiags(H.typeDiags("slot_arity.pf", src))
+}
+
+//![test("builtin Option match and payload succeed")]
+function testBuiltinOptionMatchSucceeds() {
+	let src = "function f(o) { match o with | Some x -> x.value | None -> 0; }\nlet r = f(Some { value = 3 }) + 1;";
+	H.assertOkDiags(H.typeDiagsWithBuiltins("builtin_option.pf", src))
+}
+
+//![test("builtin core exports are ambient")]
+function testBuiltinCoreExportsAmbient() {
+	let src = "let n = nth([1, 2], 0) + 1;\nlet c = __str__(chr(13));";
+	H.assertOkDiags(H.typeDiagsWithBuiltins("builtin_ambient.pf", src))
+}
+
+//![test("builtin Pair construction and field access succeed")]
+function testBuiltinPairSucceeds() {
+	let src = "let p = Pair { 1, \"x\" };\nlet k = p.key + 1;\nlet v = p.value ++ \"!\";";
+	H.assertOkDiags(H.typeDiags("builtin_pair.pf", src))
+}
+
+//![test("builtin Pair field type mismatch fails")]
+function testBuiltinPairMismatchFails() {
+	let src = "let p = Pair { 1, \"x\" };\nlet k = p.value + 1;";
+	H.assertHasDiag(H.typeDiags("builtin_pair_bad.pf", src))
+}

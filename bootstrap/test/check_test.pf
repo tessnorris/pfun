@@ -94,3 +94,15 @@ function testCheckTopoForwardsGraphDiagnostics() {
 		Assert.assertions([Assert.assertTrue(length(graph.diags) > 0)])
 	}
 }
+
+//![test("union imported from dependency is matchable")]
+function testImportedUnionMatchable() {
+	let libSrc = "export type Color = { | Red: n | Blue }";
+	let libUnit = H.checkUnit("colorlib.pf", libSrc);
+	let deps = IMS.imsPut(H.emptyDeps(), "./colorlib", libUnit.iface);
+	let mainSrc = "import * as C from \"./colorlib\";\nfunction f(c) { match c with | Red r -> r.n | Blue -> 0; }\nlet x = f(Blue) + f(Red { n = 2 });";
+	let unit = H.checkUnitWithDeps("main.pf", mainSrc, deps);
+	Assert.assertions([
+		Assert.assertEqual(0, length(unit.diags))
+	])
+}

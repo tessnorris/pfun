@@ -97,6 +97,18 @@ function testCheckTopoForwardsGraphDiagnostics() {
 	}
 }
 
+//![test("union imported from dependency is matchable")]
+function testImportedUnionMatchable() {
+	let libSrc = "export type Color = { | Red: n | Blue }";
+	let libUnit = H.checkUnit("colorlib.pf", libSrc);
+	let deps = IMS.imsPut(H.emptyDeps(), "./colorlib", libUnit.iface);
+	let mainSrc = "import * as C from \"./colorlib\";\nfunction f(c) { match c with | Red r -> r.n | Blue -> 0; }\nlet x = f(Blue) + f(Red { n = 2 });";
+	let unit = H.checkUnitWithDeps("main.pf", mainSrc, deps);
+	Assert.assertions([
+		Assert.assertEqual(0, length(unit.diags))
+	])
+}
+
 // ─────────────────────────────────────────────────────────────────
 // GENERATED TEST HARNESS (gen-test-harness.js) — do not edit.
 // Lambda-closing lives in pure functions; the generated main has no
@@ -111,7 +123,8 @@ function __gen_suite_check_check() {
 		test("dependency interface is visible to importer", testDependencyInterfaceVisible),
 		test("dependent of failed module is skipped once", testDependentOfFailedModuleSkippedOnce),
 		test("missing dependency interface skips module", testMissingDependencyInterfaceSkipsModule),
-		test("checkTopo forwards graph diagnostics", testCheckTopoForwardsGraphDiagnostics)
+		test("checkTopo forwards graph diagnostics", testCheckTopoForwardsGraphDiagnostics),
+		test("union imported from dependency is matchable", testImportedUnionMatchable)
 	])
 }
 

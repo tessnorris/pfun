@@ -821,24 +821,105 @@ function declareType(st, env, stmt) {
 	match stmt with
 	| SType s -> {
 		match s.decl with
-		| RecordDecl r -> {
-			let flds = fieldsFromDecls(st, r.fields, 0, []);
-			let info = typeInfo(r.tname, false, flds.value.fields, [], flds.value.slotCount);
-			let st1 = withRecords(flds.key, IMS.imsPut(flds.key.records, r.tname, info));
-			let env1 = IMS.imsPut(env, r.tname, TTypeName { r.tname });
-			envOut(st1, env1)
-		}
-		| UnionDecl u -> {
-			let built = variantsFromDecls(st, u.tname, u.variants, 0, []);
-			let info = typeInfo(u.tname, true, [], built.value.variants, built.value.slotCount);
-			let st1 = withRecords(built.key, IMS.imsPut(built.key.records, u.tname, info));
-			let st2 = putVariantInfos(st1, built.value.variants);
-			let env1 = IMS.imsPut(env, u.tname, TTypeName { u.tname });
-			let env2 = bindVariantCtors(env1, built.value.variants);
-			envOut(st2, env2)
-		}
+		| RecordDecl r -> registerRecord(st, env, r.tname, r.fields)
+		| UnionDecl u -> registerUnion(st, env, u.tname, u.variants)
 	}
 	| _ -> envOut(st, env)
+}
+
+function registerRecord(st, env, tname, fieldDecls) {
+	let flds = fieldsFromDecls(st, fieldDecls, 0, []);
+	let info = typeInfo(tname, false, flds.value.fields, [], flds.value.slotCount);
+	let st1 = withRecords(flds.key, IMS.imsPut(flds.key.records, tname, info));
+	let env1 = IMS.imsPut(env, tname, TTypeName { tname });
+	envOut(st1, env1)
+}
+
+// Builtin intrinsic types that are part of the runtime rather than any
+// module's exports. Pair is the runtime's fold/uncons cell. Interfaces
+// currently carry union declarations only, so record-shaped intrinsics are
+// seeded here; if ModIface grows record support, this moves to builtins/spec.
+function registerBuiltinTypes(st, env) {
+	registerRecord(st, env, "Pair", [A.mkFieldDecl("key", true), A.mkFieldDecl("value", true)])
+}
+
+// Register a union's variants into the records/variants tables and bind the
+// union name and variant constructors into the environment. Used for local
+// union declarations and for unions arriving through dependency interfaces
+// (which carry the same AST VariantDecl lists).
+function registerUnion(st, env, unionName, variantDecls) {
+	let built = variantsFromDecls(st, unionName, variantDecls, 0, []);
+	let info = typeInfo(unionName, true, [], built.value.variants, built.value.slotCount);
+	let st1 = withRecords(built.key, IMS.imsPut(built.key.records, unionName, info));
+	let st2 = putVariantInfos(st1, built.value.variants);
+	let env1 = IMS.imsPut(env, unionName, TTypeName { unionName });
+	let env2 = bindVariantCtors(env1, built.value.variants);
+	envOut(st2, env2)
+}
+
+// Register every union carried by dependency interfaces, before imports are
+// bound and before local declarations (so local declarations of the same
+// name win). Like exhaust's addDepIfaces, this walks ALL provided interfaces
+// rather than only explicitly imported ones: builtin interfaces are never
+// imported by name, and variant constructors are program-global in the V1
+// runtime anyway. Aliased entries (the same interface keyed under both its
+// raw and resolved path) are registered once.
+function registerIfaceUnionEntries(st, env, entries) {
+	match Compat.uncons(entries) with
+	| None -> envOut(st, env)
+	| Some cell -> {
+		let p = cell.value;
+		let one = registerUnion(st, env, p.key.key, p.key.value);
+		registerIfaceUnionEntries(one.st, one.env, p.value)
+	}
+}
+
+// Exports of implicit builtin interfaces ($builtin/*) are bound into scope
+// without an import statement; the core language surface is ambient. Explicit
+// imports and local declarations are bound later and take precedence.
+function isImplicitBuiltinPath(path) {
+	slice(0, 9, path) == "$builtin/"
+}
+
+function bindAllIfaceExports(st, env, entries) {
+	match Compat.uncons(entries) with
+	| None -> env
+	| Some cell -> {
+		let p = cell.value;
+		bindAllIfaceExports(st, putEnv(env, p.key.key, TScheme { schemeFromIface(p.key.value) }), p.value)
+	}
+}
+
+function registerDepUnionsLoop(st, env, entries, seen) {
+	match Compat.uncons(entries) with
+	| None -> envOut(st, env)
+	| Some cell -> {
+		let p = cell.value;
+		let iface = p.key.value;
+		if strListContains(seen, iface.path) then {
+			registerDepUnionsLoop(st, env, p.value, seen)
+		} else {
+			let one = registerIfaceUnionEntries(st, env, IMS.imsEntries(iface.unions));
+			if isImplicitBuiltinPath(iface.path) then {
+				let env2 = bindAllIfaceExports(one.st, one.env, IMS.imsEntries(iface.types));
+				registerDepUnionsLoop(one.st, env2, p.value, cons(iface.path, seen))
+			} else {
+				registerDepUnionsLoop(one.st, one.env, p.value, cons(iface.path, seen))
+			}
+		}
+	}
+}
+
+function strListContains(xs, s) {
+	match Compat.uncons(xs) with
+	| None -> false
+	| Some cell -> {
+		if cell.value.key == s then { true } else { strListContains(cell.value.value, s) }
+	}
+}
+
+function registerDepUnions(st, env, deps) {
+	registerDepUnionsLoop(st, env, IMS.imsEntries(deps), [])
 }
 
 function bindVariantCtors(env, variants) {
@@ -888,6 +969,16 @@ function findFieldByName(fields, name) {
 
 function fieldAt(fields, index) {
 	Compat.listAt(fields, index)
+}
+
+// Fresh type arguments sized to the UNION's total slot count (variant field
+// shapes index into this list by absolute slot). A variant's own slotCount
+// is only the running total at its declaration position and must not be
+// used as the union's arity.
+function unionSlotArgs(st, vi) {
+	match IMS.imsGet(st.records, vi.unionName) with
+	| Some info -> slotArgs(st, info.value.slotCount)
+	| None -> slotArgs(st, vi.slotCount)
 }
 
 function slotArgs(st, count) {
@@ -1265,7 +1356,7 @@ function inferRecordConstruction(st, env, name, fields, span, path) {
 	| None -> {
 		match IMS.imsGet(st.variants, name) with
 		| Some vi -> {
-			let args = slotArgs(st, vi.value.slotCount);
+			let args = unionSlotArgs(st, vi.value);
 			let st1 = inferConstructorFields(args.st, env, fields, vi.value.fields, args.types, path, 0);
 			exprOut(st1, TVariant { name, vi.value.unionName, args.types })
 		}
@@ -1342,7 +1433,7 @@ function bindPattern(st, env, pattern, subjectT, path, span) {
 		match IMS.imsGet(st.variants, p.vname) with
 		| None -> envOut(addTypeDiag(st, path, span, "Unknown variant '" ++ p.vname ++ "'."), env)
 		| Some vi -> {
-			let args = slotArgs(st, vi.value.slotCount);
+			let args = unionSlotArgs(st, vi.value);
 			let st1 = unify(args.st, subjectT, TNamed { vi.value.unionName, args.types }, path, span);
 			let env1 = match p.bind with
 				| None -> env
@@ -1417,7 +1508,7 @@ export function cgenExpr(st, env, e, path) {
 			| TMono m -> exprOut(addTypedNode(st, x.id, m.t), m.t)
 			| TVariantCtor vc -> {
 				if length(vc.info.fields) == 0 then {
-					let args = slotArgs(st, vc.info.slotCount);
+					let args = unionSlotArgs(st, vc.info);
 					let typ = TVariant { vc.info.vname, vc.info.unionName, args.types };
 					exprOut(addTypedNode(args.st, x.id, typ), typ)
 				} else {
@@ -1867,7 +1958,9 @@ function applyTypesMap(types, subst) {
 export function inferModule(ast, deps) {
 	let st0 = emptyState();
 	let env0 = builtinEnv();
-	let imported = bindImports(st0, env0, ast.stmts, deps);
+	let intrinsic = registerBuiltinTypes(st0, env0);
+	let seeded = registerDepUnions(intrinsic.st, intrinsic.env, deps);
+	let imported = bindImports(seeded.st, seeded.env, ast.stmts, deps);
 	let declared = declareTypes(imported.st, imported.env, ast.stmts);
 	let predeclared = predeclareFunctions(declared.st, declared.env, ast.stmts);
 	let solved = inferStmts(predeclared.st, predeclared.env, ast.stmts, ast.path);

@@ -1,0 +1,218 @@
+// bootstrap/test/cliargs_test.pf — pure minimal CLI policy tests.
+
+import * as Assert from "$PFUN_HOME/lib/testing/assertions";
+import * as Cli from "../src/drivers/cliargs";
+
+function containsText(text, needle) {
+	match findSlice(text, needle) with
+	| None -> false
+	| Some _ -> true
+}
+
+function buildEntry(plan) {
+	match plan with
+	| CliUsage _ -> "<usage>"
+	| CliBuild build -> build.entry
+}
+
+function buildOutput(plan) {
+	match plan with
+	| CliUsage _ -> "<usage>"
+	| CliBuild build -> build.output
+}
+
+function usageMessage(plan) {
+	match plan with
+	| CliBuild _ -> "<build>"
+	| CliUsage usage -> usage.message
+}
+
+function isBuild(plan) {
+	match plan with
+	| CliBuild _ -> true
+	| CliUsage _ -> false
+}
+
+function isUsage(plan) {
+	match plan with
+	| CliBuild _ -> false
+	| CliUsage _ -> true
+}
+
+//![suite("drivers/cliargs command parsing")]
+//![test("parses build with the default output")]
+function testDefaultBuild() {
+	let plan = Cli.parseArgs([
+		"build",
+		"bootstrap/src/drivers/cli.pf"
+	]);
+	Assert.assertions([
+		Assert.assertTrue(isBuild(plan)),
+		Assert.assertEqual(
+			"bootstrap/src/drivers/cli.pf",
+			buildEntry(plan)
+		),
+		Assert.assertEqual(
+			"pfc.js",
+			buildOutput(plan)
+		)
+	])
+}
+
+//![test("parses build with -o")]
+function testShortOutputFlag() {
+	let plan = Cli.parseArgs([
+		"build",
+		"src/main.pf",
+		"-o",
+		"boot/pfc.js"
+	]);
+	Assert.assertions([
+		Assert.assertTrue(isBuild(plan)),
+		Assert.assertEqual(
+			"src/main.pf",
+			buildEntry(plan)
+		),
+		Assert.assertEqual(
+			"boot/pfc.js",
+			buildOutput(plan)
+		)
+	])
+}
+
+//![test("parses build with --output")]
+function testLongOutputFlag() {
+	let plan = Cli.parseArgs([
+		"build",
+		"src/main.pf",
+		"--output",
+		"out/compiler.js"
+	]);
+	Assert.assertions([
+		Assert.assertTrue(isBuild(plan)),
+		Assert.assertEqual(
+			"out/compiler.js",
+			buildOutput(plan)
+		)
+	])
+}
+
+//![test("rejects an unknown command")]
+function testUnknownCommand() {
+	let plan = Cli.parseArgs([
+		"run",
+		"src/main.pf"
+	]);
+	Assert.assertions([
+		Assert.assertTrue(isUsage(plan)),
+		Assert.assertTrue(
+			containsText(
+				usageMessage(plan),
+				"Unknown command 'run'"
+			)
+		)
+	])
+}
+
+//![test("rejects missing and extra arguments")]
+function testWrongArity() {
+	let missing = Cli.parseArgs(["build"]);
+	let extra = Cli.parseArgs([
+		"build",
+		"src/main.pf",
+		"-o",
+		"out.js",
+		"extra"
+	]);
+	Assert.assertions([
+		Assert.assertTrue(isUsage(missing)),
+		Assert.assertTrue(isUsage(extra)),
+		Assert.assertEqual(
+			Cli.usageText(),
+			usageMessage(missing)
+		)
+	])
+}
+
+//![test("rejects an unknown output flag")]
+function testUnknownOutputFlag() {
+	let plan = Cli.parseArgs([
+		"build",
+		"src/main.pf",
+		"--target",
+		"node"
+	]);
+	Assert.assertions([
+		Assert.assertTrue(isUsage(plan)),
+		Assert.assertTrue(
+			containsText(
+				usageMessage(plan),
+				"Expected -o or --output"
+			)
+		)
+	])
+}
+
+//![suite("drivers/cliargs environment policy")]
+//![test("defaults PFUN_HOME to the working directory")]
+function testHomeDefault() {
+	Assert.assertions([
+		Assert.assertEqual(
+			".",
+			Cli.homeFromEnv(None)
+		),
+		Assert.assertEqual(
+			".",
+			Cli.homeFromEnv(Some { "" })
+		),
+		Assert.assertEqual(
+			"/opt/pfun",
+			Cli.homeFromEnv(
+				Some { "/opt/pfun" }
+			)
+		)
+	])
+}
+
+//![suite("drivers/cliargs path policy")]
+//![test("joins home-relative paths")]
+function testJoinPath() {
+	Assert.assertions([
+		Assert.assertEqual(
+			"./bootstrap/host/core.js",
+			Cli.joinPath(
+				".",
+				"bootstrap/host/core.js"
+			)
+		),
+		Assert.assertEqual(
+			"/opt/pfun/bootstrap/host/node.js",
+			Cli.joinPath(
+				"/opt/pfun/",
+				"/bootstrap/host/node.js"
+			)
+		)
+	])
+}
+
+//![test("derives the output parent directory")]
+function testOutputDir() {
+	Assert.assertions([
+		Assert.assertEqual(
+			".",
+			Cli.outputDir("pfc.js")
+		),
+		Assert.assertEqual(
+			"boot",
+			Cli.outputDir("boot/pfc.js")
+		),
+		Assert.assertEqual(
+			"/",
+			Cli.outputDir("/pfc.js")
+		),
+		Assert.assertEqual(
+			"/tmp/out",
+			Cli.outputDir("/tmp/out/pfc.js")
+		)
+	])
+}

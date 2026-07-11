@@ -1,7 +1,8 @@
 // drivers/iofloor.pf — tiny effectful wrappers for bootstrap drivers.
 //
 // The pure compiler pipeline should not import this module. Drivers may use it
-// for process args, file reads/writes, diagnostics output, and exit status.
+// for process args/environment, file reads/writes, diagnostics output, and exit
+// status.
 
 import * from "io";
 import * from "file";
@@ -17,6 +18,10 @@ export function errText(message) {
 
 export proc args() {
 	scriptArgs()
+}
+
+export proc env(name) {
+	getEnv(name)
 }
 
 export proc readTextFile(path) {

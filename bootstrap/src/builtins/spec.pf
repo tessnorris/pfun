@@ -196,6 +196,7 @@ function coreExports() {
 		pure("length", sch([], fn1(TY.tAny(), TY.tInt())), "$length"),
 		pure("reverse", sch([0], fn1(listOf(a), listOf(a))), "$reverse"),
 		pure("cons", sch([0], fn2(a, listOf(a), listOf(a))), "$cons"),
+		pure("nth", sch([0], fn2(listOf(a), TY.tInt(), a)), "$nth"),
 		pure("slice", sch([], fn3(TY.tInt(), TY.tInt(), TY.tAny(), TY.tAny())), "$slice"),
 		pure("take", sch([0], fn2(TY.tInt(), listOf(a), listOf(a))), "$take"),
 		pure("range", sch([], fn2(TY.tInt(), TY.tInt(), listOf(TY.tInt()))), "$range"),
@@ -208,7 +209,7 @@ function coreExports() {
 		pure("split", sch([], fn2(TY.tStr(), TY.tStr(), listOf(TY.tStr()))), "$split"),
 		pure("join", sch([0], fn2(listOf(a), TY.tStr(), TY.tStr())), "$join"),
 		pure("asc", sch([], fn1(TY.tChar(), TY.tInt())), "$asc"),
-		pure("chr", sch([], fn1(TY.tInt(), optionOf(TY.tChar()))), "$chr"),
+		pure("chr", sch([], fn1(TY.tInt(), TY.tChar())), "$chr"),
 		pure("charBytes", sch([], fn1(TY.tChar(), listOf(TY.tByte()))), "$charBytes"),
 		pure("bytesToChar", sch([], fn1(listOf(TY.tByte()), optionOf(TY.tChar()))), "$bytesToChar"),
 
