@@ -4,8 +4,10 @@
 // diagnostic cases: monomorphic vs generic functions, generic record slots,
 // `+`/`++` rules, field constraints, and unknown constructors.
 
-import * as Assert from "../assertions";
+import * as Assert from "$PFUN_HOME/lib/testing/assertions";
 import * as H from "./check_helpers";
+import * from "io"; // added by gen-test-harness
+import * from "$PFUN_HOME/lib/testing/runner"; // added by gen-test-harness
 
 //![suite("check/types")]
 
@@ -76,3 +78,31 @@ function testFormatStringIsString() {
 	let src = "let x = $\"count: {3}\" ++ \"!\";";
 	H.assertOkDiags(H.typeDiags("format_string_type.pf", src))
 }
+
+// ─────────────────────────────────────────────────────────────────
+// GENERATED TEST HARNESS (gen-test-harness.js) — do not edit.
+// Lambda-closing lives in pure functions; the generated main has no
+// lambdas, so V1's fn-lambda-in-proc purity quirk is never triggered.
+// ─────────────────────────────────────────────────────────────────
+
+function __gen_suite_check_types() {
+	suite("check/types", [
+		test("numeric plus succeeds", testNumericPlusSucceeds),
+		test("string plus fails", testStringPlusFails),
+		test("string concat succeeds", testStringConcatSucceeds),
+		test("concat number fails", testConcatNumberFails),
+		test("generic function instantiates independently", testGenericFunctionInstantiatesIndependently),
+		test("monomorphic function used at incompatible types fails", testMonomorphicFunctionIncompatibleTypesFails),
+		test("Indexed Str list succeeds", testIndexedStrListSucceeds),
+		test("mixed Indexed list fails", testMixedIndexedListFails),
+		test("field not found fails", testFieldNotFoundFails),
+		test("unknown variant fails", testUnknownVariantFails),
+		test("exported non-generic open field constraint fails", testExportedNonGenericOpenFieldConstraintFails),
+		test("format string expression is Str", testFormatStringIsString)
+	])
+}
+
+proc main() {
+	runSuites([__gen_suite_check_types()]);
+}
+main();

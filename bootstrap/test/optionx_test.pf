@@ -1,0 +1,143 @@
+// bootstrap/test/optionx_test.pf — tests for bootstrap/src/data/optionx.pf.
+
+import * as Assert from "$PFUN_HOME/lib/testing/assertions";
+import * as OptionX from "../src/data/optionx";
+
+function optionIntIs(opt, expected) {
+	match opt with
+	| Some found -> found.value == expected
+	| None -> false
+}
+
+function optionStrIs(opt, expected) {
+	match opt with
+	| Some found -> found.value == expected
+	| None -> false
+}
+
+function intListText(xs) {
+	join(map(fn x => __str__(x), xs), ",")
+}
+
+//![suite("data/optionx")]
+
+//![test("isSome and isNone")]
+function testPredicates() {
+	Assert.assertions([
+		Assert.assertTrue(OptionX.isSome(Some { 1 })),
+		Assert.assertFalse(OptionX.isSome(None)),
+		Assert.assertTrue(OptionX.isNone(None)),
+		Assert.assertFalse(OptionX.isNone(Some { 1 }))
+	])
+}
+
+//![test("withDefault")]
+function testWithDefault() {
+	Assert.assertions([
+		Assert.assertEqual(5, OptionX.withDefault(0, Some { 5 })),
+		Assert.assertEqual(0, OptionX.withDefault(0, None))
+	])
+}
+
+//![test("map and andThen")]
+function testMapAndAndThen() {
+	Assert.assertions([
+		Assert.assertTrue(
+			optionIntIs(
+				OptionX.mapOption(fn x => x + 1, Some { 5 }),
+				6
+			)
+		),
+		Assert.assertTrue(
+			OptionX.isNone(
+				OptionX.mapOption(fn x => x + 1, None)
+			)
+		),
+		Assert.assertTrue(
+			optionIntIs(
+				OptionX.andThenOption(
+					Some { 5 },
+					fn x => Some { x * 2 }
+				),
+				10
+			)
+		),
+		Assert.assertTrue(
+			OptionX.isNone(
+				OptionX.andThenOption(
+					None,
+					fn x => Some { x * 2 }
+				)
+			)
+		)
+	])
+}
+
+//![test("orElse optionToList and fromBool")]
+function testOrElseToListFromBool() {
+	Assert.assertions([
+		Assert.assertTrue(
+			optionIntIs(
+				OptionX.orElseOption(
+					Some { 1 },
+					Some { 2 }
+				),
+				1
+			)
+		),
+		Assert.assertTrue(
+			optionIntIs(
+				OptionX.orElseOption(
+					None,
+					Some { 2 }
+				),
+				2
+			)
+		),
+		Assert.assertEqual(
+			"7",
+			intListText(
+				OptionX.optionToList(Some { 7 })
+			)
+		),
+		Assert.assertEqual(
+			0,
+			length(OptionX.optionToList(None))
+		),
+		Assert.assertTrue(
+			optionStrIs(
+				OptionX.fromBool(true, "yes"),
+				"yes"
+			)
+		),
+		Assert.assertTrue(
+			OptionX.isNone(
+				OptionX.fromBool(false, "yes")
+			)
+		)
+	])
+}
+
+//![test("flattenOption")]
+function testFlattenOption() {
+	Assert.assertions([
+		Assert.assertTrue(
+			optionIntIs(
+				OptionX.flattenOption(
+					Some { Some { 3 } }
+				),
+				3
+			)
+		),
+		Assert.assertTrue(
+			OptionX.isNone(
+				OptionX.flattenOption(Some { None })
+			)
+		),
+		Assert.assertTrue(
+			OptionX.isNone(
+				OptionX.flattenOption(None)
+			)
+		)
+	])
+}

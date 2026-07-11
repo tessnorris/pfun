@@ -1,0 +1,127 @@
+// bootstrap/test/assertions_test.pf — tests for bootstrap/src/test/assertions.pf.
+
+import * as Assert from "$PFUN_HOME/lib/testing/assertions";
+import {
+	assertions as subjectAssertions,
+	assertTrue as subjectAssertTrue,
+	assertFalse as subjectAssertFalse,
+	assertEqual as subjectAssertEqual,
+	assertNotEqual as subjectAssertNotEqual,
+	assertSome as subjectAssertSome,
+	assertNone as subjectAssertNone,
+	assertOk as subjectAssertOk,
+	assertErr as subjectAssertErr,
+	testPassed as subjectTestPassed,
+	testFailed as subjectTestFailed,
+	resultMessages as subjectResultMessages,
+	resultOk as subjectResultOk
+} from "../src/test/assertions";
+import * from "../src/data/resultx";
+import * from "io"; // added by gen-test-harness
+import * from "$PFUN_HOME/lib/testing/runner"; // added by gen-test-harness
+
+function subjectFailureCount(items) {
+	length(subjectResultMessages(subjectAssertions(items)))
+}
+
+//![suite("test/assertions")]
+
+//![test("basic assertions pass and fail")]
+function testBasicAssertions() {
+	Assert.assertions([
+		Assert.assertTrue(
+			subjectResultOk(
+				subjectAssertions([
+					subjectAssertTrue(true),
+					subjectAssertFalse(false),
+					subjectAssertEqual(1, 1)
+				])
+			)
+		),
+		Assert.assertEqual(
+			1,
+			subjectFailureCount([subjectAssertTrue(false)])
+		),
+		Assert.assertEqual(
+			2,
+			subjectFailureCount([
+				subjectAssertNotEqual(1, 1),
+				subjectAssertSome(None)
+			])
+		)
+	])
+}
+
+//![test("option assertions")]
+function testOptionAssertions() {
+	Assert.assertions([
+		Assert.assertTrue(
+			subjectResultOk(
+				subjectAssertions([
+					subjectAssertSome(Some { 1 }),
+					subjectAssertNone(None)
+				])
+			)
+		),
+		Assert.assertEqual(
+			2,
+			subjectFailureCount([
+				subjectAssertSome(None),
+				subjectAssertNone(Some { 1 })
+			])
+		)
+	])
+}
+
+//![test("result assertions")]
+function testResultAssertions() {
+	Assert.assertions([
+		Assert.assertTrue(
+			subjectResultOk(
+				subjectAssertions([
+					subjectAssertOk(BOk { 1 }),
+					subjectAssertErr(BErr { "bad" })
+				])
+			)
+		),
+		Assert.assertEqual(
+			2,
+			subjectFailureCount([
+				subjectAssertOk(BErr { "bad" }),
+				subjectAssertErr(BOk { 1 })
+			])
+		)
+	])
+}
+
+//![test("resultMessages and resultOk")]
+function testResultMessagesAndResultOk() {
+	let passed = subjectTestPassed();
+	let failed = subjectTestFailed(["a", "b"]);
+	Assert.assertions([
+		Assert.assertTrue(subjectResultOk(passed)),
+		Assert.assertFalse(subjectResultOk(failed)),
+		Assert.assertEqual(0, length(subjectResultMessages(passed))),
+		Assert.assertEqual("a|b", join(subjectResultMessages(failed), "|"))
+	])
+}
+
+// ─────────────────────────────────────────────────────────────────
+// GENERATED TEST HARNESS (gen-test-harness.js) — do not edit.
+// Lambda-closing lives in pure functions; the generated main has no
+// lambdas, so V1's fn-lambda-in-proc purity quirk is never triggered.
+// ─────────────────────────────────────────────────────────────────
+
+function __gen_suite_test_assertions() {
+	suite("test/assertions", [
+		test("basic assertions pass and fail", testBasicAssertions),
+		test("option assertions", testOptionAssertions),
+		test("result assertions", testResultAssertions),
+		test("resultMessages and resultOk", testResultMessagesAndResultOk)
+	])
+}
+
+proc main() {
+	runSuites([__gen_suite_test_assertions()]);
+}
+main();

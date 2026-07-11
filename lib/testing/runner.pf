@@ -5,7 +5,11 @@
 //
 // Executes suites sequentially.
 // Continues after failures.
-// Prints a Jest-style summary.
+// Collapses passing suites by default.
+// Pass --verbose (or set PFUN_TEST_VERBOSE=1) for per-test output.
+//
+// Color is controlled by the generated orchestrator through PFUN_TEST_COLOR.
+// FORCE_COLOR enables it explicitly; NO_COLOR disables it.
 //
 // -----------------------------------------------------------------------------
 
@@ -13,147 +17,361 @@ import * from "io";
 import * from "./testing";
 import * from "./assertions";
 
-// Re-declare assertion outcome type so Fail/Pass variants resolve in matches here.
-type Check = { | Pass | Fail : failure }
-type Failure = { message, expected, actual }
+// Re-declare assertion outcome type so Fail/Pass variants resolve in matches
+// here. This is retained for V1 compatibility.
+type Check = {
+	| Pass
+	| Fail : failure
+}
+
+type Failure = {
+	message,
+	expected,
+	actual
+}
 
 export type Stats = {
-  suitePass,
-  suiteFail,
-  testPass,
-  testFail
+	suitePass,
+	suiteFail,
+	testPass,
+	testFail
 }
 
 let emptyStats =
-  Stats {
-    0,
-    0,
-    0,
-    0
-  };
+	Stats {
+		0,
+		0,
+		0,
+		0
+	};
 
 function addSuitePass(stats) {
-  Stats {
-    stats.suitePass + 1,
-    stats.suiteFail,
-    stats.testPass,
-    stats.testFail
-  };
+	Stats {
+		stats.suitePass + 1,
+		stats.suiteFail,
+		stats.testPass,
+		stats.testFail
+	};
 }
 
 function addSuiteFail(stats) {
-  Stats {
-    stats.suitePass,
-    stats.suiteFail + 1,
-    stats.testPass,
-    stats.testFail
-  };
+	Stats {
+		stats.suitePass,
+		stats.suiteFail + 1,
+		stats.testPass,
+		stats.testFail
+	};
 }
 
 function addTestPass(stats) {
-  Stats {
-    stats.suitePass,
-    stats.suiteFail,
-    stats.testPass + 1,
-    stats.testFail
-  };
+	Stats {
+		stats.suitePass,
+		stats.suiteFail,
+		stats.testPass + 1,
+		stats.testFail
+	};
 }
 
 function addTestFail(stats) {
-  Stats {
-    stats.suitePass,
-    stats.suiteFail,
-    stats.testPass,
-    stats.testFail + 1
-  };
+	Stats {
+		stats.suitePass,
+		stats.suiteFail,
+		stats.testPass,
+		stats.testFail + 1
+	};
 }
 
-
-proc printFailure(failure) {
-  match failure with
-  | Fail f -> {
-    println("      Expected : " + __str__(f.failure.expected));
-    println("      Actual   : " + __str__(f.failure.actual));
-    if f.failure.message != "" then
-       println("      " + f.failure.message);
-  }
-  | Pass -> {};
+function hasVerboseArg(args) {
+	if length(args) == 0 then {
+		false
+	} else if head(args) == "--verbose" then {
+		true
+	} else {
+		hasVerboseArg(tail(args))
+	}
 }
 
-
-proc printFailures(list) {
-  if length(list) > 0 then {
-     printFailure(head(list));
-     printFailures(tail(list));
-  }
+function envIsSet(value) {
+	match value with
+	| None -> false
+	| Some _ -> true
 }
 
-proc runTest(test, stats) {
-  test.fixture.before();
-  var results = test.body();
-  test.fixture.after();
-  let failed = results.failures;
-  if length(failed) == 0 then {
-    println("  ✓ " + test.name);
-    addTestPass(stats);
-  } else {
-    println("  ✗ " + test.name);
-    printFailures(failed);
-     addTestFail(stats);
-  }
+function envIsTruthy(value) {
+	match value with
+	| None -> false
+	| Some found -> {
+		found.value == "1"
+		|| found.value == "true"
+		|| found.value == "yes"
+		|| found.value == "always"
+	}
 }
 
-
-proc runSuiteTests(tests, stats) {
-  if length(tests) == 0 then
-    stats
-  else {
-    var next = runTest(head(tests), stats);
-    runSuiteTests(tail(tests), next);
-  }
+function ansi(code) {
+	__str__(chr(27)) + "[" + code + "m"
 }
 
-proc runSuite(suite, stats) {
-  println("");
-  println(suite.name);
-  let before = stats;
-  var after = runSuiteTests(suite.tests, stats);
-  if after.testFail == before.testFail then
-    addSuitePass(after)
-  else
-    addSuiteFail(after);
+function colorText(enabled, code, text) {
+	enabled
+		? ansi(code) + text + ansi("0")
+		: text
 }
 
-
-proc runSuitesRec(suites, stats) {
-  if length(suites) == 0 then
-    stats
-  else {
-    var next = runSuite(head(suites), stats);
-    runSuitesRec(tail(suites), next);
-  }
+function green(enabled, text) {
+	colorText(enabled, "32", text)
 }
 
-proc printSummary(stats) {
-  println("");
-  println("----------------------------------------");
-  println("");
-  println("Suites: " + __str__(stats.suitePass) + " passed, " + __str__(stats.suiteFail) + " failed");
-  println("Tests : " + __str__(stats.testPass) + " passed, " + __str__(stats.testFail) + " failed");
-  println("");
-  if stats.testFail == 0 then
-    println("PASS")
-  else
-    println("FAIL");
+function red(enabled, text) {
+	colorText(enabled, "31", text)
+}
+
+function yellow(enabled, text) {
+	colorText(enabled, "33", text)
+}
+
+function cyan(enabled, text) {
+	colorText(enabled, "36", text)
+}
+
+function boldGreen(enabled, text) {
+	colorText(enabled, "1;32", text)
+}
+
+function boldRed(enabled, text) {
+	colorText(enabled, "1;31", text)
+}
+
+proc verboseRequested() {
+	let fromArgs = hasVerboseArg(scriptArgs());
+	let fromEnv = envIsTruthy(getEnv("PFUN_TEST_VERBOSE"));
+	fromArgs || fromEnv;
+}
+
+proc colorRequested() {
+	let forced = envIsTruthy(getEnv("FORCE_COLOR"));
+	let disabled = envIsSet(getEnv("NO_COLOR"));
+	let fromHarness = envIsTruthy(getEnv("PFUN_TEST_COLOR"));
+
+	forced || (!disabled && fromHarness);
+}
+
+proc printFailure(failure, color) {
+	match failure with
+	| Fail f -> {
+		println(
+			"      "
+			+ yellow(color, "Expected")
+			+ " : "
+			+ __str__(f.failure.expected)
+		);
+		println(
+			"      "
+			+ red(color, "Actual")
+			+ "   : "
+			+ __str__(f.failure.actual)
+		);
+
+		if f.failure.message != "" then {
+			println("      " + yellow(color, f.failure.message));
+		}
+	}
+	| Pass -> {};
+}
+
+proc printFailures(list, color) {
+	if length(list) > 0 then {
+		printFailure(head(list), color);
+		printFailures(tail(list), color);
+	}
+}
+
+proc printTestFailure(suiteName, testName, verbose, color) {
+	if verbose then {
+		println("  " + red(color, "✗") + " " + testName);
+	} else {
+		println(
+			red(color, "✗")
+			+ " "
+			+ suiteName
+			+ " › "
+			+ testName
+		);
+	}
+}
+
+proc runTest(test, stats, suiteName, verbose, color) {
+	test.fixture.before();
+
+	var results = test.body();
+
+	test.fixture.after();
+
+	let failed = results.failures;
+
+	if length(failed) == 0 then {
+		if verbose then {
+			println("  " + green(color, "✓") + " " + test.name);
+		}
+
+		addTestPass(stats);
+	} else {
+		printTestFailure(suiteName, test.name, verbose, color);
+		printFailures(failed, color);
+		addTestFail(stats);
+	}
+}
+
+proc runSuiteTests(tests, stats, suiteName, verbose, color) {
+	if length(tests) == 0 then {
+		stats
+	} else {
+		var next =
+			runTest(
+				head(tests),
+				stats,
+				suiteName,
+				verbose,
+				color
+			);
+
+		runSuiteTests(
+			tail(tests),
+			next,
+			suiteName,
+			verbose,
+			color
+		);
+	}
+}
+
+proc printPassingSuite(suite, color) {
+	println(
+		green(color, "✓")
+		+ " "
+		+ suite.name
+		+ " ("
+		+ __str__(length(suite.tests))
+		+ " tests)"
+	);
+}
+
+proc runSuite(suite, stats, verbose, color) {
+	if verbose then {
+		println("");
+		println(cyan(color, suite.name));
+	}
+
+	let before = stats;
+
+	var after =
+		runSuiteTests(
+			suite.tests,
+			stats,
+			suite.name,
+			verbose,
+			color
+		);
+
+	if after.testFail == before.testFail then {
+		if verbose == false then {
+			printPassingSuite(suite, color);
+		}
+
+		addSuitePass(after);
+	} else {
+		addSuiteFail(after);
+	}
+}
+
+proc runSuitesRec(suites, stats, verbose, color) {
+	if length(suites) == 0 then {
+		stats
+	} else {
+		var next =
+			runSuite(
+				head(suites),
+				stats,
+				verbose,
+				color
+			);
+
+		runSuitesRec(
+			tail(suites),
+			next,
+			verbose,
+			color
+		);
+	}
+}
+
+proc printSummary(stats, color) {
+	println("");
+	println("----------------------------------------");
+	println("");
+
+	println(
+		"Suites: "
+		+ green(
+			color,
+			__str__(stats.suitePass) + " passed"
+		)
+		+ ", "
+		+ (
+			stats.suiteFail == 0
+				? green(color, "0 failed")
+				: red(
+					color,
+					__str__(stats.suiteFail) + " failed"
+				)
+		)
+	);
+
+	println(
+		"Tests : "
+		+ green(
+			color,
+			__str__(stats.testPass) + " passed"
+		)
+		+ ", "
+		+ (
+			stats.testFail == 0
+				? green(color, "0 failed")
+				: red(
+					color,
+					__str__(stats.testFail) + " failed"
+				)
+		)
+	);
+
+	println("");
+
+	if stats.testFail == 0 then {
+		println(boldGreen(color, "PASS"));
+	} else {
+		println(boldRed(color, "FAIL"));
+	}
 }
 
 export proc runSuites(suites) {
-  var stats = runSuitesRec(suites, emptyStats);
-  printSummary(stats);
-  // Signal overall result via exit status so orchestrators (and CI) can detect
-  // failure without scraping stdout. Any test failure -> nonzero exit.
-  if stats.testFail == 0 then
-    exit(0)
-  else
-    exit(1);
+	let verbose = verboseRequested();
+	let color = colorRequested();
+
+	var stats =
+		runSuitesRec(
+			suites,
+			emptyStats,
+			verbose,
+			color
+		);
+
+	printSummary(stats, color);
+
+	// Signal overall result via exit status so orchestrators and CI can detect
+	// failure without scraping stdout.
+	if stats.testFail == 0 then {
+		exit(0);
+	} else {
+		exit(1);
+	}
 }

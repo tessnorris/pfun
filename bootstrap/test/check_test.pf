@@ -4,12 +4,12 @@
 // interface production, and that checkGraph skips dependents of failed modules
 // instead of checking against missing interfaces.
 
-import * as Assert from "../assertions";
+import * as Assert from "$PFUN_HOME/lib/testing/assertions";
 import * as H from "./check_helpers";
-import * as Check from "../../src/check/check";
-import * as Iface from "../../src/check/iface";
-import * as ModGraph from "../../src/graph/modgraph";
-import * as IMS from "../../src/data/imaps";
+import * as Check from "../src/check/check";
+import * as Iface from "../src/check/iface";
+import * as ModGraph from "../src/graph/modgraph";
+import * as IMS from "../src/data/imaps";
 
 //![suite("check/check")]
 

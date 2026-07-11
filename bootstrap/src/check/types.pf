@@ -925,6 +925,25 @@ function bindImports(st, env, stmts, deps) {
 
 // ── expression inference helpers ───────────────────────────────────────────
 
+function isDefinitelyNonNumericType(t) {
+	match t with
+	| TInt -> false
+	| TFloat -> false
+	| TVar _ -> false
+	| TUnknown -> false
+	| TAny -> false
+	| _ -> true
+}
+
+function isDefinitelyNonStringType(t) {
+	match t with
+	| TStr -> false
+	| TVar _ -> false
+	| TUnknown -> false
+	| TAny -> false
+	| _ -> true
+}
+
 function inferNumericBinary(st, path, span, leftT, rightT) {
 	let l = apply(st.subst, leftT);
 	let r = apply(st.subst, rightT);
@@ -966,12 +985,39 @@ function inferComparison(st, path, span, leftT, rightT) {
 }
 
 function inferBinaryByOp(st, path, span, op, leftT, rightT) {
+	let left = apply(st.subst, leftT);
+	let right = apply(st.subst, rightT);
+
 	if op == "++" then {
-		let st1 = unify(st, leftT, TStr, path, span);
-		let st2 = unify(st1, rightT, TStr, path, span);
-		exprOut(st2, TStr)
+		if isDefinitelyNonStringType(left) || isDefinitelyNonStringType(right) then {
+			exprOut(
+				addTypeDiag(
+					st,
+					path,
+					span,
+					"Operator '++' requires Str operands."
+				),
+				TStr
+			)
+		} else {
+			let st1 = unify(st, leftT, TStr, path, span);
+			let st2 = unify(st1, rightT, TStr, path, span);
+			exprOut(st2, TStr)
+		}
 	} else if op == "+" || op == "-" || op == "*" || op == "/" || op == "%" then {
-		inferNumericBinary(st, path, span, leftT, rightT)
+		if isDefinitelyNonNumericType(left) || isDefinitelyNonNumericType(right) then {
+			exprOut(
+				addTypeDiag(
+					st,
+					path,
+					span,
+					"Operator '" ++ op ++ "' requires numeric operands."
+				),
+				TUnknown
+			)
+		} else {
+			inferNumericBinary(st, path, span, leftT, rightT)
+		}
 	} else if op == "==" || op == "!=" then {
 		inferEquality(st, path, span, leftT, rightT)
 	} else if op == "<" || op == ">" || op == "<=" || op == ">=" then {
@@ -983,7 +1029,15 @@ function inferBinaryByOp(st, path, span, op, leftT, rightT) {
 		let st2 = unify(st1, rightT, TInt, path, span);
 		exprOut(st2, TInt)
 	} else {
-		exprOut(addTypeDiag(st, path, span, "Unknown binary operator '" ++ op ++ "'."), TUnknown)
+		exprOut(
+			addTypeDiag(
+				st,
+				path,
+				span,
+				"Unknown binary operator '" ++ op ++ "'."
+			),
+			TUnknown
+		)
 	}
 }
 

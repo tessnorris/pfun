@@ -1,0 +1,98 @@
+// test/floor/spec_test.pf — tests for builtins/spec.pf.
+
+import * as Assert from "$PFUN_HOME/lib/testing/assertions";
+import * from "../src/builtins/spec";
+import * as Iface from "../src/check/iface";
+import * as ListX from "../src/data/listx";
+import * as StrX from "../src/data/strx";
+
+
+function assertSomeValue(opt, message) {
+	match opt with
+	| Some _ -> Assert.assertTrue(true)
+	| None -> Assert.fail(message)
+}
+
+//![suite("builtins/spec")]
+//![test("platform constructors return expected variants")]
+function testPlatformConstructors() {
+	Assert.assertions([
+		match platformAll() with | PlatformAll -> Assert.assertTrue(true) | _ -> Assert.fail("platformAll did not return PlatformAll."),
+		match platformNode() with | PlatformNode -> Assert.assertTrue(true) | _ -> Assert.fail("platformNode did not return PlatformNode."),
+		match platformBrowser() with | PlatformBrowser -> Assert.assertTrue(true) | _ -> Assert.fail("platformBrowser did not return PlatformBrowser.")
+	])
+}
+
+//![test("all module specs include the bootstrap floor")]
+function testAllModuleSpecsIncludeFloor() {
+	let names = builtinNames();
+	Assert.assertions([
+		Assert.assertTrue(ListX.containsBy(fn a, b => a == b, "$builtin/core", names)),
+		Assert.assertTrue(ListX.containsBy(fn a, b => a == b, "io", names)),
+		Assert.assertTrue(ListX.containsBy(fn a, b => a == b, "file", names)),
+		Assert.assertTrue(ListX.containsBy(fn a, b => a == b, "json", names)),
+		Assert.assertTrue(ListX.containsBy(fn a, b => a == b, "async", names)),
+		Assert.assertTrue(ListX.containsBy(fn a, b => a == b, "math", names))
+	])
+}
+
+//![test("core iface exposes builtin types and functions")]
+function testCoreIfaceExposesBuiltinTypesAndFunctions() {
+	match lookupBuiltinIface("core") with
+	| None -> Assert.assertions([Assert.fail("Missing core builtin iface.")])
+	| Some iface -> {
+		let i = iface.value;
+		Assert.assertions([
+			Assert.assertTrue(Iface.hasExport(i, "Option")),
+			Assert.assertTrue(Iface.hasExport(i, "Result")),
+			Assert.assertTrue(Iface.hasExport(i, "Pair")),
+			Assert.assertTrue(Iface.hasExport(i, "length")),
+			Assert.assertTrue(Iface.hasExport(i, "map")),
+			Assert.assertTrue(Iface.hasExport(i, "reduce"))
+		])
+	}
+}
+
+//![test("io iface marks println as a proc")]
+function testIoIfaceMarksPrintlnAsProc() {
+	match lookupBuiltinIface("io") with
+	| None -> Assert.assertions([Assert.fail("Missing io builtin iface.")])
+	| Some iface -> {
+		match Iface.lookupKind(iface.value, "println") with
+		| None -> Assert.assertions([Assert.fail("Missing println export.")])
+		| Some kind -> Assert.assertions([Assert.assertEqual("proc", Iface.kindToStr(kind.value))])
+	}
+}
+
+//![test("intrinsic lookup returns host names")]
+function testIntrinsicLookupReturnsHostNames() {
+	Assert.assertions([
+		match intrinsicName("io", "println") with | Some i -> Assert.assertEqual("$println", i.value) | None -> Assert.fail("Missing println intrinsic."),
+		match intrinsicName("math", "sqrt") with | Some i -> Assert.assertEqual("$sqrt", i.value) | None -> Assert.fail("Missing sqrt intrinsic."),
+		Assert.assertNone(intrinsicName("math", "definitelyMissing"))
+	])
+}
+
+//![test("file iface includes FileMode and ReadResult unions")]
+function testFileIfaceIncludesUnions() {
+	match lookupBuiltinIface("file") with
+	| None -> Assert.assertions([Assert.fail("Missing file builtin iface.")])
+	| Some iface -> {
+		Assert.assertions([
+			assertSomeValue(Iface.lookupUnion(iface.value, "FileMode"), "Missing FileMode union."),
+			assertSomeValue(Iface.lookupUnion(iface.value, "ReadResult"), "Missing ReadResult union."),
+			Assert.assertTrue(Iface.hasExport(iface.value, "readFile")),
+			Assert.assertTrue(Iface.hasExport(iface.value, "writeFile"))
+		])
+	}
+}
+
+//![test("builtin iface map supports direct and core aliases")]
+function testBuiltinIfaceMapAliases() {
+	Assert.assertions([
+		assertSomeValue(lookupBuiltinIface("$builtin/core"), "Missing direct core iface."),
+		assertSomeValue(lookupBuiltinIface("core"), "Missing core alias iface."),
+		assertSomeValue(lookupBuiltinIface("io"), "Missing io iface."),
+		Assert.assertNone(lookupBuiltinIface("nope"))
+	])
+}

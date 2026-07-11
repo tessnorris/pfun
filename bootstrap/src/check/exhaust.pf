@@ -368,7 +368,7 @@ function hasUnguardedFallback(arms) {
 function checkOtherCoverage(st, matchExpr, arms) {
 	if hasUnguardedFallback(arms) then { st }
 	else {
-		addDiag(st, matchExpr.span, "Non-exhaustive match: add an unguarded wildcard or binding arm.")
+		addDiag(st, matchExpr.span, "Non-exhaustive match: add an unguarded fallback wildcard or binding arm.")
 	}
 }
 
@@ -514,7 +514,7 @@ function checkStmt(st, infer, stmt) {
 		let st2 = checkExpr(st1, infer, s.index);
 		checkExpr(st2, infer, s.value)
 	}
-	| SFun s -> checkExpr(st, infer, s.body)
+	| SFun s -> checkStmtList(st, infer, s.body)
 	| SType _ -> st
 	| SExpr s -> checkExpr(st, infer, s.expr)
 	| SReturn s -> checkMaybeExpr(st, infer, s.value)

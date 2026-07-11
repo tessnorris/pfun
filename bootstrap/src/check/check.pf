@@ -107,18 +107,20 @@ function ifaceFromInfer(ast, infer) {
 
 // ── single-module checking ────────────────────────────────────────────────
 
-function runExhaustIfTyped(ast, infer, deps) {
-	if hasBlockingDiags(infer.diags) then { X.mkExhaustResult([]) }
-	else { X.checkModule(ast, infer, deps) }
+function runExhaust(ast, infer, deps) {
+	// Exhaustiveness is deliberately run even when inference produced
+	// diagnostics. The pass handles unknown subject types conservatively, and
+	// checkModule batches diagnostics from every pass.
+	X.checkModule(ast, infer, deps)
 }
 
 export function checkModule(ast, deps) {
 	let infer = TY.inferModule(ast, deps);
 	let purity = P.checkModule(ast, deps);
-	let exhaust = runExhaustIfTyped(ast, infer, deps);
+	let exhaust = runExhaust(ast, infer, deps);
 	let d1 = appendList(infer.diags, purity.diags);
 	let d2 = appendList(d1, exhaust.diags);
-	let iface = if hasBlockingDiags(d2) then { I.emptyIface(ast.path) } else { ifaceFromInfer(ast, infer) };
+	let iface = hasBlockingDiags(d2) ? I.emptyIface(ast.path) : ifaceFromInfer(ast, infer);
 	mkCheckedUnit(ast.path, ast, infer, iface, d2)
 }
 

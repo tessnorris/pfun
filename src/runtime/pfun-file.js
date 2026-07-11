@@ -105,6 +105,20 @@ function writeFile(p, content) {
   try { fs.writeFileSync(p, content, 'utf8'); return ok(BigInt(content.length)); } catch (e) { return err(nodeErrMsg(e)); }
 }
 
+
+function mkdirP(p) {
+  if (typeof p !== 'string') {
+    throw new Error('mkdirP: path must be a string.');
+  }
+
+  try {
+    fs.mkdirSync(p, { recursive: true });
+    return ok(0n);
+  } catch (e) {
+    return err(nodeErrMsg(e));
+  }
+}
+
 function fileOpen(p, mode) {
   if (typeof p !== 'string') throw new Error('fileOpen: path must be a string.');
   if (!mode || !['Read','Write','Append'].includes(mode.__type))
@@ -222,6 +236,7 @@ function writeBuffer(handle, pbuf) {
 
 // ─── Exports ──────────────────────────────────────────────────────────────────
 module.exports = {
+  mkdirP,
   // Path operations
   fileExists, removeFile, touchFile, readFile, writeFile,
   // Handle lifecycle

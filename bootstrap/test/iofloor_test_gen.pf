@@ -1,0 +1,116 @@
+// bootstrap/test/iofloor_test.pf — tests for bootstrap/src/drivers/iofloor.pf.
+//
+// The suite builder proc performs effects once. Test bodies remain pure and
+// inspect captured BResult values.
+
+import * as Assert from "$PFUN_HOME/lib/testing/assertions";
+import * as IO from "../src/drivers/iofloor";
+import * from "../src/data/resultx";
+import * from "io"; // added by gen-test-harness
+import * from "$PFUN_HOME/lib/testing/runner"; // added by gen-test-harness
+
+export type IoFloorInputs = {
+	madeDir,
+	wrote,
+	readBack,
+	missing,
+	okTextResult,
+	errTextResult
+}
+
+function isBOk(result) {
+	match result with
+	| BOk _ -> true
+	| BErr _ -> false
+}
+
+function isBErr(result) {
+	match result with
+	| BOk _ -> false
+	| BErr _ -> true
+}
+
+function okTextIs(result, expected) {
+	match result with
+	| BOk ok -> ok.value == expected
+	| BErr _ -> false
+}
+
+function errTextIs(result, expected) {
+	match result with
+	| BOk _ -> false
+	| BErr err -> err.message == expected
+}
+
+//![suite("drivers/iofloor")]
+proc ioFloorInputs() {
+	let dir = "./bootstrap-test-output/iofloor";
+	let path = dir ++ "/roundtrip.txt";
+	let madeDir = IO.ensureDir(dir);
+	let wrote = IO.writeTextFile(path, "hello bootstrap");
+	let readBack = IO.readTextFile(path);
+	let missing = IO.readTextFile(
+		dir ++ "/missing-file-does-not-exist.txt"
+	);
+	IoFloorInputs {
+		madeDir,
+		wrote,
+		readBack,
+		missing,
+		IO.okText("ok"),
+		IO.errText("bad")
+	}
+}
+
+//![test("pure okText and errText wrappers")]
+function testTextWrappers(inputs) {
+	Assert.assertions([
+		Assert.assertTrue(okTextIs(inputs.okTextResult, "ok")),
+		Assert.assertTrue(errTextIs(inputs.errTextResult, "bad"))
+	])
+}
+
+//![test("ensureDir and writeTextFile succeed")]
+function testEnsureDirAndWrite(inputs) {
+	Assert.assertions([
+		Assert.assertTrue(isBOk(inputs.madeDir)),
+		Assert.assertTrue(isBOk(inputs.wrote))
+	])
+}
+
+//![test("readTextFile returns written text")]
+function testReadTextFile(inputs) {
+	Assert.assertions([
+		Assert.assertTrue(
+			okTextIs(inputs.readBack, "hello bootstrap")
+		)
+	])
+}
+
+//![test("readTextFile reports missing file as error")]
+function testReadTextFileMissing(inputs) {
+	Assert.assertions([
+		Assert.assertTrue(isBErr(inputs.missing))
+	])
+}
+
+// ─────────────────────────────────────────────────────────────────
+// GENERATED TEST HARNESS (gen-test-harness.js) — do not edit.
+// Lambda-closing lives in pure functions; the generated main has no
+// lambdas, so V1's fn-lambda-in-proc purity quirk is never triggered.
+// ─────────────────────────────────────────────────────────────────
+
+function __gen_suite_drivers_iofloor(inputs) {
+	suite("drivers/iofloor", [
+		test("pure okText and errText wrappers", fn () => testTextWrappers(inputs)),
+		test("ensureDir and writeTextFile succeed", fn () => testEnsureDirAndWrite(inputs)),
+		test("readTextFile returns written text", fn () => testReadTextFile(inputs)),
+		test("readTextFile reports missing file as error", fn () => testReadTextFileMissing(inputs))
+	])
+}
+
+proc main() {
+	let __in_drivers_iofloor = ioFloorInputs();
+	runSuites([__gen_suite_drivers_iofloor(__in_drivers_iofloor)]);
+}
+main();

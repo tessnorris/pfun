@@ -40,7 +40,7 @@ export type PurityCtx = {
 export type PurityResult = { diags }
 
 // Internal threaded state.
-type PSt = { path, env, diags }
+type PuritySt = { path, env, diags }
 
 type ArmOut = { st, env }
 
@@ -61,15 +61,15 @@ export function mkPurityResult(diags) {
 }
 
 function mkState(path, env, diags) {
-	PSt { path, env, diags }
+	PuritySt { path, env, diags }
 }
 
 function withEnv(st, env) {
-	PSt { st.path, env, st.diags }
+	PuritySt { st.path, env, st.diags }
 }
 
 function withDiags(st, diags) {
-	PSt { st.path, st.env, diags }
+	PuritySt { st.path, st.env, diags }
 }
 
 function armOut(st, env) {
@@ -423,7 +423,7 @@ function checkCall(st, ctx, expr) {
 		| Some k -> {
 			match k.value with
 			| NKProc _ -> {
-				let st1 = if ctxAllowsEffects(ctx) then { st } else { procCallDiag(st, c.span, nameOfNamedExpr(c.callee)) };
+				let st1 = ctxAllowsEffects(ctx) ? st : procCallDiag(st, c.span, nameOfNamedExpr(c.callee));
 				checkExprList(st1, ctx, c.args)
 			}
 			| _ -> checkExprList(st, ctx, c.args)
@@ -556,7 +556,7 @@ function checkExpr(st, ctx, expr) {
 	| EDict e -> checkDictEntries(st, ctx, e.entries)
 	| EArray e -> checkExprList(st, ctx, e.elems)
 	| EAwait e -> {
-		let st1 = if ctxAllowsAwait(ctx) then { st } else { addDiag(st, e.span, "await is only allowed inside async proc bodies.") };
+		let st1 = ctxAllowsAwait(ctx) ? st : addDiag(st, e.span, "await is only allowed inside async proc bodies.");
 		checkExpr(st1, ctx, e.value)
 	}
 	| EFmt e -> checkFmtParts(st, ctx, e.parts)

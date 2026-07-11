@@ -996,14 +996,7 @@ function emitStmt(s: Stmt): Node[] {
           'sinh','cosh','tanh',
         ]},
         'json': { file: _bpaths['json'] ?? 'pfun-json', names: ['jsonSerialize','jsonDeserialize'] },
-        'file': { file: _bpaths['file'] ?? 'pfun-file', names: [
-          'fileExists','removeFile','touchFile','readFile','writeFile',
-          'fileOpen','fileClose',
-          'readChar','readLine','writeChar','writeLine',
-          'readByte','writeByte','readBytes','writeBytes',
-          'readBuffer','writeBuffer',
-          'Read','Write','Append',
-        ]},
+        'file': { file: _bpaths['file'] ?? 'pfun-file', names: ['fileExists','fileSize','isDir','touchFile','removeFile','renameFile','mkdirP','readFile','writeFile','listDir','watchDir','fileOpen','fileClose','readChar','readLine','readByte','readBytes','writeChar','writeLine','writeByte','writeBytes','readBuffer','writeBuffer','Read','Write','Append']},
         'async': { file: _bpaths['async'] ?? 'pfun-async', names: ['sleep','asyncAll','asyncRace'] },
         'http':  { file: _bpaths['http']  ?? 'pfun-http',  names: ['httpGet','httpGetBytes','httpListen','httpRequest','httpRequestBytes','fetchWithTimeout','urlEncode'] },
         'foreign': {

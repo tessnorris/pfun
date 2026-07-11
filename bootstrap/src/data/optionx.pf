@@ -36,7 +36,7 @@ export function orElseOption(opt, fallback) {
 	| None -> fallback
 }
 
-export function toList(opt) {
+export function optionToList(opt) {
 	match opt with
 	| Some x -> [x.value]
 	| None -> []

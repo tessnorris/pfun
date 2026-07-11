@@ -341,7 +341,7 @@ function addUnionsToIface(unions, iface) {
 }
 
 export function ifaceOfSpec(spec) {
-	let iface0 = if spec.path == "$builtin/core" then { coreTypeIface() } else { I.emptyIface(spec.path) };
+	let iface0 = spec.path == "$builtin/core" ? coreTypeIface() : I.emptyIface(spec.path);
 	let iface1 = addEntriesToIface(spec.exports, iface0);
 	addUnionsToIface(spec.unions, iface1)
 }
@@ -349,7 +349,7 @@ export function ifaceOfSpec(spec) {
 function putSpecIface(m, spec) {
 	let iface = ifaceOfSpec(spec);
 	let m1 = IMS.imsPut(m, spec.path, iface);
-	let m2 = if spec.path == "$builtin/core" then { IMS.imsPut(m1, "core", iface) } else { m1 };
+	let m2 = spec.path == "$builtin/core" ? IMS.imsPut(m1, "core", iface) : m1;
 	m2
 }
 

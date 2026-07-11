@@ -4,7 +4,7 @@
 // mutation, await placement, fire-and-forget async calls, and lazy-comprehension
 // purity.
 
-import * as Assert from "../assertions";
+import * as Assert from "$PFUN_HOME/lib/testing/assertions";
 import * as H from "./check_helpers";
 
 //![suite("check/purity")]
@@ -30,7 +30,7 @@ function testPureFunctionUsingVarFails() {
 //![test("pure function assigning fails")]
 function testPureFunctionAssigningFails() {
 	let src = "function bad() { let x = 1; x = 2; x; }";
-	H.assertHasMessage(H.purityDiags("pure_assign.pf", src), "assignment")
+	H.assertHasMessage(H.purityDiags("pure_assign.pf", src), "Assignment")
 }
 
 //![test("pure function using index mutation fails")]

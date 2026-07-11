@@ -1,0 +1,121 @@
+// test/check/check_test.pf — Phase 10 master checker tests.
+//
+// These tests verify that check.pf coordinates type, purity, exhaustiveness, and
+// interface production, and that checkGraph skips dependents of failed modules
+// instead of checking against missing interfaces.
+
+import * as Assert from "$PFUN_HOME/lib/testing/assertions";
+import * as H from "./check_helpers";
+import * as Check from "../src/check/check";
+import * as Iface from "../src/check/iface";
+import * as ModGraph from "../src/graph/modgraph";
+import * as IMS from "../src/data/imaps";
+import * from "io"; // added by gen-test-harness
+import * from "$PFUN_HOME/lib/testing/runner"; // added by gen-test-harness
+
+//![suite("check/check")]
+
+//![test("successful module produces interface")]
+function testSuccessfulModuleProducesInterface() {
+	let src = "export function one() { 1; }";
+	let unit = H.checkUnit("success_iface.pf", src);
+	Assert.assertions([
+		Assert.assertEqual(0, length(unit.diags)),
+		Assert.assertTrue(Iface.hasExport(unit.iface, "one"))
+	])
+}
+
+//![test("failed module produces diagnostics")]
+function testFailedModuleProducesDiagnostics() {
+	let src = "export let bad = \"a\" + \"b\";";
+	let unit = H.checkUnit("failed_module.pf", src);
+	Assert.assertions([
+		Assert.assertTrue(length(unit.diags) > 0),
+		Assert.assertFalse(Iface.hasExport(unit.iface, "bad"))
+	])
+}
+
+//![test("diagnostics from type and purity are batched")]
+function testDiagnosticsFromAllPassesAreBatched() {
+	let src = "proc ping() { 0; }\nfunction bad() { ping(); }\nlet x = \"a\" + \"b\";";
+	let unit = H.checkUnit("batched_diags.pf", src);
+	Assert.assertions([Assert.assertTrue(length(unit.diags) >= 2)])
+}
+
+//![test("dependency interface is visible to importer")]
+function testDependencyInterfaceVisible() {
+	match H.rawSource("dep.pf", "export function one() { 1; }") with
+	| RawErr e -> Assert.assertions([Assert.assertEqual(0, length(e.diags))])
+	| RawOk dep -> {
+		match H.rawSource("main.pf", "import { one } from \"./dep\";\nlet x = one();") with
+		| RawErr bad -> Assert.assertions([Assert.assertEqual(0, length(bad.diags))])
+		| RawOk main -> {
+			let graph = Check.checkGraph([dep.raw, main.raw], H.emptyBuiltinIfaces());
+			Assert.assertions([Assert.assertEqual(0, length(graph.diags))])
+		}
+	}
+}
+
+//![test("dependent of failed module is skipped once")]
+function testDependentOfFailedModuleSkippedOnce() {
+	match H.rawSource("baddep.pf", "export let bad = \"a\" + \"b\";") with
+	| RawErr e -> Assert.assertions([Assert.assertEqual(0, length(e.diags))])
+	| RawOk dep -> {
+		match H.rawSource("usesbad.pf", "import { bad } from \"./baddep\";\nlet x = bad;") with
+		| RawErr bad -> Assert.assertions([Assert.assertEqual(0, length(bad.diags))])
+		| RawOk main -> {
+			let graph = Check.checkGraph([dep.raw, main.raw], H.emptyBuiltinIfaces());
+			Assert.assertions([
+				Assert.assertTrue(length(graph.diags) >= 2),
+				Assert.assertTrue(H.hasDiagContaining(graph.diags, "Skipping module"))
+			])
+		}
+	}
+}
+
+//![test("missing dependency interface skips module")]
+function testMissingDependencyInterfaceSkipsModule() {
+	match H.rawSource("usesmissing.pf", "import { nope } from \"./missing\";\nlet x = nope;") with
+	| RawErr bad -> Assert.assertions([Assert.assertEqual(0, length(bad.diags))])
+	| RawOk main -> {
+		let graph = Check.checkGraph([main.raw], H.emptyBuiltinIfaces());
+		Assert.assertions([
+			Assert.assertTrue(length(graph.diags) == 1),
+			Assert.assertTrue(H.hasDiagContaining(graph.diags, "no checked interface"))
+		])
+	}
+}
+
+//![test("checkTopo forwards graph diagnostics")]
+function testCheckTopoForwardsGraphDiagnostics() {
+	match H.rawSource("usesmissing2.pf", "import { nope } from \"./missing\";\nlet x = nope;") with
+	| RawErr bad -> Assert.assertions([Assert.assertEqual(0, length(bad.diags))])
+	| RawOk main -> {
+		let topo = ModGraph.toposort([main.raw]);
+		let graph = Check.checkTopo(topo, H.emptyBuiltinIfaces());
+		Assert.assertions([Assert.assertTrue(length(graph.diags) > 0)])
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────
+// GENERATED TEST HARNESS (gen-test-harness.js) — do not edit.
+// Lambda-closing lives in pure functions; the generated main has no
+// lambdas, so V1's fn-lambda-in-proc purity quirk is never triggered.
+// ─────────────────────────────────────────────────────────────────
+
+function __gen_suite_check_check() {
+	suite("check/check", [
+		test("successful module produces interface", testSuccessfulModuleProducesInterface),
+		test("failed module produces diagnostics", testFailedModuleProducesDiagnostics),
+		test("diagnostics from type and purity are batched", testDiagnosticsFromAllPassesAreBatched),
+		test("dependency interface is visible to importer", testDependencyInterfaceVisible),
+		test("dependent of failed module is skipped once", testDependentOfFailedModuleSkippedOnce),
+		test("missing dependency interface skips module", testMissingDependencyInterfaceSkipsModule),
+		test("checkTopo forwards graph diagnostics", testCheckTopoForwardsGraphDiagnostics)
+	])
+}
+
+proc main() {
+	runSuites([__gen_suite_check_check()]);
+}
+main();
