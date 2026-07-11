@@ -5,4 +5,4 @@ function Some(value) {
 function add(x, y) {
   return $addI(x, y);
 }
-const message = $strConcat("answer=", $stringify(add(2, 3)));
+const message = $concatS("answer=", $str(add(2, 3)));

@@ -11,8 +11,8 @@ trap 'rm -f "$tmp"' EXIT
 
 cat >"$tmp" <<'JS'
 function $addI(a, b) { return a + b; }
-function $strConcat(a, b) { return a + b; }
-function $stringify(value) { return String(value); }
+function $concatS(a, b) { return a + b; }
+function $str(value) { return String(value); }
 JS
 
 cat bootstrap/test/golden/emit_representative.js >>"$tmp"

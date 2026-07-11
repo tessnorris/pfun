@@ -168,7 +168,7 @@ function goldenExpected() {
 	++ "function add(x, y) {\n"
 	++ "  return $addI(x, y);\n"
 	++ "}\n"
-	++ "const message = $strConcat(\"answer=\", $stringify(add(2, 3)));\n"
+	++ "const message = $concatS(\"answer=\", $str(add(2, 3)));\n"
 }
 
 //![suite("compile/emit expressions")]
@@ -292,7 +292,7 @@ function testOperatorSpecialization() {
 			renderExpr(types, opts(), mixedAdd)
 		),
 		Assert.assertEqual(
-			"$strConcat(left, right);\n",
+			"$concatS(left, right);\n",
 			renderExpr(types, opts(), concat)
 		),
 		Assert.assertEqual(
@@ -329,7 +329,7 @@ function testFmtAndListEmission() {
 
 	Assert.assertions([
 		Assert.assertEqual(
-			"$strConcat($strConcat(\"n=\", $stringify(n)), \"!\");\n",
+			"$concatS($concatS(\"n=\", $str(n)), \"!\");\n",
 			renderExpr(noTypes(), opts(), fmt)
 		),
 		Assert.assertEqual(

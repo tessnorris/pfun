@@ -572,9 +572,16 @@ function indentText(text, levels) {
 
 function hostText(host, levels) {
 	let prefix = StrX.strRepeat(" ", levels * 2);
+	let abiNames = "$addI, $arrGet, $arrSet, $bitAndI, $bitNotI, $bitOrI, $cmpF, $compLazy, $compStrict, $concatS, $dictFromEntries, $dictGet, $dictSet, $divI, $eq, $eqF, $eqI, $extern, $field, $geI, $gtI, $index, $indexSet, $lazyList, $leI, $listExactLen, $listMinLen, $listRest, $ltI, $matchFail, $memoize, $modI, $mulI, $negI, $newArray, $nth, $nthU, $shlI, $shrI, $starGet, $str, $strAt, $subI, $toF";
 	prefix
 	++ "/* host core */\n"
 	++ indentText(ensureTrailingNewline(host.coreText), levels)
+	++ prefix
+	++ "/* PfunCore ABI bindings */\n"
+	++ prefix
+	++ "const { "
+	++ abiNames
+	++ " } = globalThis.PfunCore;\n"
 	++ prefix
 	++ "/* host platform */\n"
 	++ indentText(ensureTrailingNewline(host.platformText), levels)

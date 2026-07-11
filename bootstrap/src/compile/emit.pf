@@ -723,11 +723,11 @@ function intComparisonSuffix(op) {
 	if op == "<" then {
 		"lt"
 	} else if op == "<=" then {
-		"lte"
+		"le"
 	} else if op == ">" then {
 		"gt"
 	} else {
-		"gte"
+		"ge"
 	}
 }
 
@@ -756,7 +756,7 @@ function specializeBin(ctx, op, lhs, rhs) {
 	let rt = typeOfExpr(ctx, rhs);
 
 	if op == "++" then {
-		hostCall("$strConcat", [left, right])
+		hostCall("$concatS", [left, right])
 	} else if op == "==" || op == "!=" then {
 		emitEquality(ctx, op, lhs, rhs, left, right)
 	} else if op == "<" || op == "<=" || op == ">" || op == ">=" then {
@@ -1014,7 +1014,7 @@ function emitDict(ctx, dictExpr) {
 
 function emitArray(ctx, arrayExpr) {
 	hostCall(
-		"$array",
+		"$newArray",
 		[
 			J.jsArr(
 				map(fn elem => emitExpr(ctx, elem), arrayExpr.elems)
@@ -1027,7 +1027,7 @@ function emitFmtPart(ctx, part) {
 	match part with
 	| FmtLit lit -> J.jsStr(lit.s)
 	| FmtExpr expr -> {
-		hostCall("$stringify", [emitExpr(ctx, expr.e)])
+		hostCall("$str", [emitExpr(ctx, expr.e)])
 	}
 }
 
@@ -1036,7 +1036,7 @@ function concatStringExprs(parts) {
 	| None -> J.jsStr("")
 	| Some first -> {
 		reduce(
-			fn acc, part => hostCall("$strConcat", [acc, part]),
+			fn acc, part => hostCall("$concatS", [acc, part]),
 			first.value.key,
 			first.value.value
 		)
@@ -1476,7 +1476,7 @@ function emitIndexAssign(ctx, stmt) {
 	let value = emitExpr(ctx, stmt.value);
 	let call = match typeOfExpr(ctx, stmt.object) with
 	| TArray _ -> hostCall("$arrSet", [object, index, value])
-	| TDict _ -> hostCall("$dictPut", [object, index, value])
+	| TDict _ -> hostCall("$dictSet", [object, index, value])
 	| _ -> hostCall("$indexSet", [object, index, value]);
 	[J.jsExprStmt(call)]
 }

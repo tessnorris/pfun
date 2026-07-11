@@ -842,6 +842,190 @@
   function $getRef(cell) { return cell.$ref; }
   function $setRef(cell, value) { cell.$ref = value; return null; }
 
+
+  // ── Phase 13 emitter ABI reconciliation ────────────────────────────────
+
+  function $toF(value) {
+    return Number($canonI(value));
+  }
+
+  function $bitNotI(value) {
+    return $canonI(~$toBigI(value));
+  }
+
+  function $lazyList(thunks) {
+    if (!Array.isArray(thunks)) {
+      $runtimeError("lazyList expects an array of thunks");
+    }
+    return $lazy(function* emittedLazyList() {
+      for (const thunk of thunks) {
+        if (typeof thunk !== "function") {
+          $runtimeError("lazyList element is not a thunk");
+        }
+        yield thunk();
+      }
+    });
+  }
+
+  function $runComp(sources, guard, body, emit) {
+    function visit(level, args) {
+      if (level >= sources.length) {
+        if (guard.apply(null, args)) emit(body.apply(null, args));
+        return;
+      }
+      const sourceFn = sources[level];
+      const source = sourceFn.apply(null, args);
+      for (const value of $iteratorOf(source)) {
+        visit(level + 1, args.concat([value]));
+      }
+    }
+    visit(0, []);
+  }
+
+  function $compStrict(sources, names, guard, body) {
+    void names;
+    const out = [];
+    $runComp(sources, guard, body, function pushValue(value) {
+      out.push(value);
+    });
+    return out;
+  }
+
+  function $compLazy(sources, names, guard, body) {
+    void names;
+    return $lazy(function* emittedLazyComprehension() {
+      const out = [];
+      $runComp(sources, guard, body, function pushValue(value) {
+        out.push(value);
+      });
+      for (const value of out) yield value;
+    });
+  }
+
+  function $listExactLen(xs, count) {
+    count = Number($canonI(count));
+    if (count < 0) return false;
+    if (Array.isArray(xs)) return xs.length === count;
+    if (!$isLazyList(xs)) $runtimeError("list pattern expects List");
+    if ($forcePrefix(xs, count).length !== count) return false;
+    return !$forceLazyIndex(xs, count).ok;
+  }
+
+  function $listMinLen(xs, count) {
+    count = Number($canonI(count));
+    if (count <= 0) return $isList(xs);
+    if (Array.isArray(xs)) return xs.length >= count;
+    if (!$isLazyList(xs)) $runtimeError("list pattern expects List");
+    return $forcePrefix(xs, count).length === count;
+  }
+
+  function $nthU(xs, index) {
+    index = Number($canonI(index));
+    if (typeof xs === "string") {
+      const chars = Array.from(xs);
+      if (index < 0 || index >= chars.length) {
+        $runtimeError("internal list-pattern index is out of bounds");
+      }
+      return chars[index];
+    }
+    const cell = $forceLazyIndex(xs, index);
+    if (!cell.ok) $runtimeError("internal list-pattern index is out of bounds");
+    return cell.value;
+  }
+
+  function $listRest(xs, count) {
+    count = Number($canonI(count));
+    if (Array.isArray(xs)) return xs.slice(count);
+    if (!$isLazyList(xs)) $runtimeError("listRest expects List");
+    return $lazy(function* emittedListRest() {
+      let index = count;
+      while (true) {
+        const cell = $forceLazyIndex(xs, index);
+        if (!cell.ok) return;
+        yield cell.value;
+        index += 1;
+      }
+    });
+  }
+
+  function $strAt(str, index) {
+    if (typeof str !== "string") $runtimeError("strAt expects Str");
+    return $nth(str, index);
+  }
+
+  function $field(object, name) {
+    if (object === null || object === undefined) {
+      $runtimeError("field access on null");
+    }
+    if (Object.prototype.hasOwnProperty.call(object, name)) {
+      return object[name];
+    }
+    $runtimeError(
+      "field '" + name + "' is not available on " +
+      (object.$t !== undefined ? object.$t : typeof object)
+    );
+  }
+
+  function $index(object, index) {
+    if (typeof object === "string") return $strAt(object, index);
+    if ($isList(object)) return $nth(object, index);
+    if (object && object.$arr) return $arrGet(object, index);
+    if (object && object.$dict) return $dictGet(object, index);
+    $runtimeError("index expects Str, List, Array, or Dict");
+  }
+
+  function $indexSet(object, index, value) {
+    if (object && object.$arr) return $arrSet(object, index, value);
+    if (object && object.$dict) {
+      $dictSet(object, index, value);
+      return true;
+    }
+    $runtimeError("index assignment expects Array or Dict");
+  }
+
+  function $dictFromEntries(entries) {
+    const dict = $newDict();
+    for (const entry of entries) {
+      if (!Array.isArray(entry) || entry.length !== 2) {
+        $runtimeError("dictionary entry must be [key, value]");
+      }
+      $dictSet(dict, entry[0], entry[1]);
+    }
+    return dict;
+  }
+
+  function $starGet(modules, name) {
+    let found = false;
+    let value;
+    for (const moduleExports of modules) {
+      if (
+        moduleExports !== null &&
+        moduleExports !== undefined &&
+        Object.prototype.hasOwnProperty.call(moduleExports, name)
+      ) {
+        if (found && value !== moduleExports[name]) {
+          $runtimeError("ambiguous star import for '" + name + "'");
+        }
+        found = true;
+        value = moduleExports[name];
+      }
+    }
+    if (!found) $runtimeError("name '" + name + "' not found in star imports");
+    return value;
+  }
+
+  function $extern(platform, name) {
+    const tables = [
+      typeof globalThis !== "undefined" ? globalThis.PfunNode : undefined,
+      typeof globalThis !== "undefined" ? globalThis.PfunBrowser : undefined,
+      typeof globalThis !== "undefined" ? globalThis.PfunHost : undefined
+    ];
+    for (const table of tables) {
+      if (table && typeof table[name] === "function") return table[name];
+    }
+    $unsupportedIntrinsic(name, platform);
+  }
+
   // ── function helpers ────────────────────────────────────────────────────
 
   function $curry(fn, arity, collected) {
@@ -903,7 +1087,52 @@
     if (typeof value === "number") {
       if (Number.isNaN(value)) return { __pfun: "float", v: "NaN" };
       if (value === Infinity) return { __pfun: "float", v: "Infinity" };
-      if (value === -Infinity) return { __pfun: "float", v: "-Infinity" };
+      if (value === -Infinity) return {
+    $addI,
+    $arrGet,
+    $arrSet,
+    $bitAndI,
+    $bitNotI,
+    $bitOrI,
+    $cmpF,
+    $compLazy,
+    $compStrict,
+    $concatS,
+    $dictFromEntries,
+    $dictGet,
+    $dictSet,
+    $divI,
+    $eq,
+    $eqF,
+    $eqI,
+    $extern,
+    $field,
+    $geI,
+    $gtI,
+    $index,
+    $indexSet,
+    $lazyList,
+    $leI,
+    $listExactLen,
+    $listMinLen,
+    $listRest,
+    $ltI,
+    $matchFail,
+    $memoize,
+    $modI,
+    $mulI,
+    $negI,
+    $newArray,
+    $nth,
+    $nthU,
+    $shlI,
+    $shrI,
+    $starGet,
+    $str,
+    $strAt,
+    $subI,
+    $toF,
+ __pfun: "float", v: "-Infinity" };
       return value;
     }
     if (Array.isArray(value) || $isLazyList(value)) return $listToArray(value).map($toTaggedJson);
@@ -1009,6 +1238,24 @@
   // The early manifest currently names $isNaN / $isFinite. Avoid shadowing the
   // global constructors internally, but export the exact intrinsic spellings.
   const api = {
+    // Phase 13 emitter ABI
+    $bitNotI,
+    $compLazy,
+    $compStrict,
+    $dictFromEntries,
+    $extern,
+    $field,
+    $index,
+    $indexSet,
+    $lazyList,
+    $listExactLen,
+    $listMinLen,
+    $listRest,
+    $nthU,
+    $starGet,
+    $strAt,
+    $toF,
+
     // ABI constructors
     $unit,
     $makeRecord,
