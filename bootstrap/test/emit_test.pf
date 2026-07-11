@@ -1,0 +1,729 @@
+// bootstrap/test/emit_test.pf — Phase 13 emitter tests.
+
+import * as Assert from "$PFUN_HOME/lib/testing/assertions";
+import * as A from "../src/syntax/ast";
+import * as T from "../src/syntax/token";
+import * as TY from "../src/check/types";
+import * as C from "../src/check/check";
+import * as I from "../src/check/iface";
+import * as IMI from "../src/data/imapi";
+import * as IMS from "../src/data/imaps";
+import * as Compat from "../src/compat";
+import * as StrX from "../src/data/strx";
+import * as J from "../src/compile/js";
+import * as E from "../src/compile/emit";
+
+function testSpan() {
+	let p = T.mkPos(1, 1, 0);
+	T.pointSpan(p)
+}
+
+function opts() {
+	E.emitOpts("emit-test", IMS.imsEmpty(), false)
+}
+
+function browserOpts() {
+	E.emitOpts("emit-browser-test", IMS.imsEmpty(), true)
+}
+
+function singletonOpts() {
+	E.emitOpts(
+		"emit-singleton-test",
+		IMS.imsFromList([
+			Pair { "None", "Option" }
+		]),
+		false
+	)
+}
+
+function typeTable(entries) {
+	IMI.imiFromList(entries)
+}
+
+function noTypes() {
+	IMI.imiEmpty()
+}
+
+function renderExpr(types, emitOpts, expr) {
+	J.printJs([
+		J.jsExprStmt(
+			E.emitExprForTest(types, emitOpts, expr)
+		)
+	])
+}
+
+function checkedModule(ast, types) {
+	let infer = TY.mkInferResult(types, IMS.imsEmpty(), []);
+	C.mkCheckedUnit(
+		ast.path,
+		ast,
+		infer,
+		I.emptyIface(ast.path),
+		[]
+	)
+}
+
+function emitAst(ast, types, emitOpts) {
+	E.emitModule(checkedModule(ast, types), emitOpts)
+}
+
+function emittedText(ast, types, emitOpts) {
+	J.printJs(emitAst(ast, types, emitOpts).body)
+}
+
+function requireText(req) {
+	match req with
+	| HostReq -> "host"
+	| BuiltinReq r -> "builtin:" ++ r.mname
+	| UserReq r -> "user:" ++ r.path
+}
+
+function requireTexts(reqs) {
+	join(map(requireText, reqs), "|")
+}
+
+function firstSchemaName(schemas) {
+	match Compat.listAt(schemas, 0) with
+	| None -> ""
+	| Some schema -> schema.value.runtimeName
+}
+
+function goldenAst() {
+	let sp = testSpan();
+
+	let noneVariant = A.mkVariantDecl("None", []);
+	let someVariant = A.mkVariantDecl(
+		"Some",
+		[A.mkFieldDecl("value", true)]
+	);
+	let maybeDecl = A.sExport(
+		1,
+		A.sType(
+			2,
+			A.unionDecl("Maybe", [noneVariant, someVariant]),
+			false,
+			sp
+		),
+		sp
+	);
+
+	let x = A.eVar(10, "x", sp);
+	let y = A.eVar(11, "y", sp);
+	let sum = A.eBinary(12, "+", x, y, sp);
+	let addFn = A.sExport(
+		3,
+		A.sFun(
+			4,
+			"add",
+			["x", "y"],
+			[A.sExpr(5, sum, sp)],
+			A.pureFn(false, false),
+			sp
+		),
+		sp
+	);
+
+	let call = A.eCall(
+		20,
+		A.eVar(21, "add", sp),
+		[A.eInt(22, 2, sp), A.eInt(23, 3, sp)],
+		sp
+	);
+	let fmt = A.eFmt(
+		24,
+		[
+			A.fmtLit("answer="),
+			A.fmtExpr(call)
+		],
+		sp
+	);
+	let message = A.sExport(
+		6,
+		A.sLet(7, "message", fmt, sp),
+		sp
+	);
+
+	A.mkModule("golden_emit.pf", [maybeDecl, addFn, message], 25)
+}
+
+function goldenTypes() {
+	typeTable([
+		Pair { 10, TY.tInt() },
+		Pair { 11, TY.tInt() },
+		Pair { 12, TY.tInt() },
+		Pair { 20, TY.tInt() },
+		Pair { 22, TY.tInt() },
+		Pair { 23, TY.tInt() },
+		Pair { 24, TY.tStr() }
+	])
+}
+
+function goldenExpected() {
+	"const None = {$t: \"None\", $u: \"Maybe\", f: []};\n"
+	++ "function Some(value) {\n"
+	++ "  return {$t: \"Some\", $u: \"Maybe\", f: [value]};\n"
+	++ "}\n"
+	++ "function add(x, y) {\n"
+	++ "  return $addI(x, y);\n"
+	++ "}\n"
+	++ "const message = $strConcat(\"answer=\", $stringify(add(2, 3)));\n"
+}
+
+//![suite("compile/emit expressions")]
+
+//![test("emits scalar literals and singleton variants")]
+function testScalarAndSingletonEmission() {
+	let sp = testSpan();
+	Assert.assertions([
+		Assert.assertEqual(
+			"9007199254740992n;\n",
+			renderExpr(
+				noTypes(),
+				opts(),
+				A.eInt(1, 9007199254740992, sp)
+			)
+		),
+		Assert.assertEqual(
+			"\"x\";\n",
+			renderExpr(
+				noTypes(),
+				opts(),
+				A.eChar(2, "x", sp)
+			)
+		),
+		Assert.assertEqual(
+			"({$t: \"None\", $u: \"Option\", f: []});\n",
+			renderExpr(
+				noTypes(),
+				singletonOpts(),
+				A.eVar(3, "None", sp)
+			)
+		)
+	])
+}
+
+//![test("emits records and payload variants with the shared ABI")]
+function testRecordAndVariantAbi() {
+	let sp = testSpan();
+	let record = A.eRecord(
+		1,
+		"Point",
+		[
+			A.mkField(None, A.eInt(2, 10, sp)),
+			A.mkField(None, A.eInt(3, 20, sp))
+		],
+		sp
+	);
+	let variant = A.eCall(
+		4,
+		A.eVar(5, "Some", sp),
+		[A.eInt(6, 7, sp)],
+		sp
+	);
+	let types = typeTable([
+		Pair { 4, TY.tNamed("Option", [TY.tInt()]) }
+	]);
+
+	Assert.assertions([
+		Assert.assertEqual(
+			"({$t: \"Point\", f: [10, 20]});\n",
+			renderExpr(types, opts(), record)
+		),
+		Assert.assertEqual(
+			"({$t: \"Some\", $u: \"Option\", f: [7]});\n",
+			renderExpr(types, opts(), variant)
+		)
+	])
+}
+
+//![test("specializes Int Float and string operators")]
+function testOperatorSpecialization() {
+	let sp = testSpan();
+
+	let intAdd = A.eBinary(
+		3,
+		"+",
+		A.eVar(1, "a", sp),
+		A.eVar(2, "b", sp),
+		sp
+	);
+	let mixedAdd = A.eBinary(
+		6,
+		"+",
+		A.eVar(4, "i", sp),
+		A.eVar(5, "f", sp),
+		sp
+	);
+	let concat = A.eBinary(
+		9,
+		"++",
+		A.eVar(7, "left", sp),
+		A.eVar(8, "right", sp),
+		sp
+	);
+	let intEq = A.eBinary(
+		12,
+		"==",
+		A.eVar(10, "x", sp),
+		A.eVar(11, "y", sp),
+		sp
+	);
+
+	let types = typeTable([
+		Pair { 1, TY.tInt() },
+		Pair { 2, TY.tInt() },
+		Pair { 4, TY.tInt() },
+		Pair { 5, TY.tFloat() },
+		Pair { 7, TY.tStr() },
+		Pair { 8, TY.tStr() },
+		Pair { 10, TY.tInt() },
+		Pair { 11, TY.tInt() }
+	]);
+
+	Assert.assertions([
+		Assert.assertEqual(
+			"$addI(a, b);\n",
+			renderExpr(types, opts(), intAdd)
+		),
+		Assert.assertEqual(
+			"$toF(i) + f;\n",
+			renderExpr(types, opts(), mixedAdd)
+		),
+		Assert.assertEqual(
+			"$strConcat(left, right);\n",
+			renderExpr(types, opts(), concat)
+		),
+		Assert.assertEqual(
+			"$eqI(x, y);\n",
+			renderExpr(types, opts(), intEq)
+		)
+	])
+}
+
+//![test("emits format strings and strict or lazy list construction")]
+function testFmtAndListEmission() {
+	let sp = testSpan();
+	let fmt = A.eFmt(
+		1,
+		[
+			A.fmtLit("n="),
+			A.fmtExpr(A.eVar(2, "n", sp)),
+			A.fmtLit("!")
+		],
+		sp
+	);
+	let strict = A.eList(
+		3,
+		[A.eInt(4, 1, sp), A.eInt(5, 2, sp)],
+		A.strictListMode(),
+		sp
+	);
+	let lazyListExpr = A.eList(
+		6,
+		[A.eCall(7, A.eVar(8, "next", sp), [], sp)],
+		A.lazyListMode(),
+		sp
+	);
+
+	Assert.assertions([
+		Assert.assertEqual(
+			"$strConcat($strConcat(\"n=\", $stringify(n)), \"!\");\n",
+			renderExpr(noTypes(), opts(), fmt)
+		),
+		Assert.assertEqual(
+			"[1, 2];\n",
+			renderExpr(noTypes(), opts(), strict)
+		),
+		Assert.assertEqual(
+			"$lazyList([() => next()]);\n",
+			renderExpr(noTypes(), opts(), lazyListExpr)
+		)
+	])
+}
+
+//![test("emits strict and lazy comprehension descriptors")]
+function testComprehensionEmission() {
+	let sp = testSpan();
+	let gens = [
+		A.mkGenClause("x", A.eVar(1, "xs", sp)),
+		A.mkGenClause(
+			"y",
+			A.eCall(
+				2,
+				A.eVar(3, "children", sp),
+				[A.eVar(4, "x", sp)],
+				sp
+			)
+		)
+	];
+	let guard = Some {
+		A.eBinary(
+			5,
+			">",
+			A.eVar(6, "y", sp),
+			A.eInt(7, 0, sp),
+			sp
+		)
+	};
+	let body = A.eBinary(
+		8,
+		"+",
+		A.eVar(9, "x", sp),
+		A.eVar(10, "y", sp),
+		sp
+	);
+	let strict = A.eComp(
+		11,
+		body,
+		gens,
+		guard,
+		A.strictListMode(),
+		sp
+	);
+	let lazyCompExpr = A.eComp(
+		12,
+		body,
+		gens,
+		guard,
+		A.lazyListMode(),
+		sp
+	);
+	let types = typeTable([
+		Pair { 6, TY.tInt() },
+		Pair { 7, TY.tInt() },
+		Pair { 9, TY.tInt() },
+		Pair { 10, TY.tInt() }
+	]);
+	let strictText = renderExpr(types, opts(), strict);
+	let lazyText = renderExpr(types, opts(), lazyCompExpr);
+
+	Assert.assertions([
+		Assert.assertTrue(StrX.contains(strictText, "$compStrict")),
+		Assert.assertTrue(StrX.contains(lazyText, "$compLazy")),
+		Assert.assertTrue(StrX.contains(strictText, "() => xs")),
+		Assert.assertTrue(StrX.contains(strictText, "(x) => children(x)")),
+		Assert.assertTrue(
+			StrX.contains(strictText, "(x, y) => $gtI(y, 0)")
+		),
+		Assert.assertTrue(StrX.contains(strictText, "(x, y) => $addI(x, y)"))
+	])
+}
+
+//![suite("compile/emit control flow")]
+
+//![test("lowers variant and list matches to guarded straight-line checks")]
+function testMatchLowering() {
+	let sp = testSpan();
+
+	let variantArm = A.mkMatchArm(
+		A.pVariant("Some", Some { "whole" }),
+		None,
+		A.eField(10, A.eVar(11, "whole", sp), "value", sp)
+	);
+	let listArm = A.mkMatchArm(
+		A.pList(
+			[A.peBind("head"), A.peWild()],
+			Some { A.peBind("rest") }
+		),
+		Some {
+			A.eBool(12, true, sp)
+		},
+		A.eVar(13, "head", sp)
+	);
+	let fallback = A.mkMatchArm(
+		A.pWild(),
+		None,
+		A.eInt(14, 0, sp)
+	);
+
+	let variantMatch = A.eMatch(
+		1,
+		A.eVar(2, "value", sp),
+		[variantArm, fallback],
+		sp
+	);
+	let listMatch = A.eMatch(
+		3,
+		A.eVar(4, "items", sp),
+		[listArm, fallback],
+		sp
+	);
+
+	let variantText = renderExpr(noTypes(), opts(), variantMatch);
+	let listText = renderExpr(noTypes(), opts(), listMatch);
+
+	Assert.assertions([
+		Assert.assertTrue(
+			StrX.contains(variantText, ".$t === \"Some\"")
+		),
+		Assert.assertTrue(
+			StrX.contains(variantText, "const whole = $match$1")
+		),
+		Assert.assertTrue(
+			StrX.contains(listText, "$listMinLen($match$3, 2)")
+		),
+		Assert.assertTrue(
+			StrX.contains(listText, "$nthU($match$3, 0)")
+		),
+		Assert.assertTrue(
+			StrX.contains(listText, "$listRest($match$3, 2)")
+		),
+		Assert.assertTrue(
+			StrX.contains(listText, "$matchFail(\"emit-test\", 3)")
+		)
+	])
+}
+
+//![test("lowers direct self-tail calls to a loop with parallel temporaries")]
+function testTailCallLowering() {
+	let sp = testSpan();
+	let cond = A.eBinary(
+		3,
+		"==",
+		A.eVar(1, "n", sp),
+		A.eInt(2, 0, sp),
+		sp
+	);
+	let nextN = A.eBinary(
+		6,
+		"-",
+		A.eVar(4, "n", sp),
+		A.eInt(5, 1, sp),
+		sp
+	);
+	let nextAcc = A.eBinary(
+		9,
+		"+",
+		A.eVar(7, "acc", sp),
+		A.eVar(8, "n", sp),
+		sp
+	);
+	let recur = A.eCall(
+		10,
+		A.eVar(11, "sumDown", sp),
+		[nextN, nextAcc],
+		sp
+	);
+	let body = [
+		A.sIf(
+			12,
+			cond,
+			[A.sReturn(13, A.eVar(14, "acc", sp), sp)],
+			[A.sReturn(15, recur, sp)],
+			sp
+		)
+	];
+	let fnStmt = A.sFun(
+		16,
+		"sumDown",
+		["n", "acc"],
+		body,
+		A.pureFn(false, false),
+		sp
+	);
+	let ast = A.mkModule("tail.pf", [fnStmt], 17);
+	let types = typeTable([
+		Pair { 1, TY.tInt() },
+		Pair { 2, TY.tInt() },
+		Pair { 4, TY.tInt() },
+		Pair { 5, TY.tInt() },
+		Pair { 7, TY.tInt() },
+		Pair { 8, TY.tInt() }
+	]);
+	let text = emittedText(ast, types, opts());
+
+	Assert.assertions([
+		Assert.assertTrue(StrX.contains(text, "while (true)")),
+		Assert.assertTrue(StrX.contains(text, "const $tc$10$0")),
+		Assert.assertTrue(StrX.contains(text, "const $tc$10$1")),
+		Assert.assertTrue(StrX.contains(text, "n = $tc$10$0")),
+		Assert.assertTrue(StrX.contains(text, "acc = $tc$10$1")),
+		Assert.assertTrue(StrX.contains(text, "continue;")),
+		Assert.assertFalse(StrX.contains(text, "return sumDown(")),
+		Assert.assertEqual(1, length(E.tailCallsOf("sumDown", body)))
+	])
+}
+
+//![test("emits browser-safe extern stubs and private native bindings")]
+function testExternEmission() {
+	let sp = testSpan();
+	let decl = A.mkExternDecl(
+		A.externProc(true),
+		"readSecret",
+		[A.mkTypedParam("path", A.tyName("Str", []))],
+		A.tyName("Str", []),
+		"node"
+	);
+	let stmt = A.sExtern(1, decl, sp);
+	let normal = J.printJs(E.emitStmtForTest(noTypes(), opts(), stmt));
+	let browser = J.printJs(
+		E.emitStmtForTest(noTypes(), browserOpts(), stmt)
+	);
+
+	Assert.assertions([
+		Assert.assertEqual(
+			"const readSecret = $extern(\"node\", \"readSecret\");\n",
+			normal
+		),
+		Assert.assertTrue(
+			StrX.contains(browser, "async function readSecret(path)")
+		),
+		Assert.assertTrue(
+			StrX.contains(browser, "unavailable in browser builds")
+		)
+	])
+}
+
+//![test("binds named namespace and star imports deterministically")]
+function testImportEmission() {
+	let sp = testSpan();
+	let named = A.sImport(
+		1,
+		A.iNames([
+			A.mkImportName("map", None),
+			A.mkImportName("fold", Some { "foldLeft" })
+		]),
+		"list",
+		sp
+	);
+	let namespace = A.sImport(
+		2,
+		A.iNamespace("S"),
+		"./stringx",
+		sp
+	);
+	let star = A.sImport(3, A.iStar(), "core", sp);
+	let useStar = A.sExpr(
+		4,
+		A.eCall(
+			5,
+			A.eVar(6, "println", sp),
+			[A.eStr(7, "ok", sp)],
+			sp
+		),
+		sp
+	);
+	let ast = A.mkModule(
+		"imports.pf",
+		[named, namespace, star, useStar],
+		8
+	);
+	let mod = emitAst(ast, noTypes(), opts());
+	let text = J.printJs(mod.body);
+
+	Assert.assertions([
+		Assert.assertTrue(
+			StrX.contains(text, "const $imp$1 = $require(\"list\")")
+		),
+		Assert.assertTrue(
+			StrX.contains(text, "const map = $imp$1.map")
+		),
+		Assert.assertTrue(
+			StrX.contains(text, "const foldLeft = $imp$1.fold")
+		),
+		Assert.assertTrue(
+			StrX.contains(text, "const S = $require(\"./stringx\")")
+		),
+		Assert.assertTrue(
+			StrX.contains(text, "const $star$3 = $require(\"core\")")
+		),
+		Assert.assertTrue(
+			StrX.contains(text, "$starGet([$star$3], \"println\")")
+		),
+		Assert.assertEqual(
+			"host|builtin:list|user:./stringx|builtin:core",
+			requireTexts(mod.requires)
+		)
+	])
+}
+
+//![suite("compile/emit modules and golden output")]
+
+//![test("collects exports schemas and requirements")]
+function testModuleMetadata() {
+	let sp = testSpan();
+	let recordDecl = A.sType(
+		1,
+		A.recordDecl(
+			"Point",
+			[
+				A.mkFieldDecl("x", false),
+				A.mkFieldDecl("y", false)
+			]
+		),
+		false,
+		sp
+	);
+	let unionDecl = A.sExport(
+		2,
+		A.sType(
+			3,
+			A.unionDecl(
+				"Choice",
+				[
+					A.mkVariantDecl("Left", [
+						A.mkFieldDecl("value", true)
+					]),
+					A.mkVariantDecl("Right", [
+						A.mkFieldDecl("value", true)
+					])
+				]
+			),
+			false,
+			sp
+		),
+		sp
+	);
+	let value = A.sExport(
+		4,
+		A.sLet(5, "origin", A.eInt(6, 0, sp), sp),
+		sp
+	);
+	let ast = A.mkModule(
+		"meta.pf",
+		[
+			A.sImport(7, A.iNamespace("M"), "math", sp),
+			recordDecl,
+			unionDecl,
+			value
+		],
+		8
+	);
+	let mod = emitAst(ast, noTypes(), opts());
+
+	Assert.assertions([
+		Assert.assertEqual(
+			"Left|Right|origin",
+			join(mod.exportNames, "|")
+		),
+		Assert.assertEqual(3, length(mod.schemas)),
+		Assert.assertEqual("Point", firstSchemaName(mod.schemas)),
+		Assert.assertEqual("host|builtin:math", requireTexts(mod.requires)),
+		Assert.assertTrue(
+			StrX.contains(J.printJs(mod.body), "function Left(value)")
+		)
+	])
+}
+
+//![test("representative checked module matches stable golden JavaScript")]
+function testGoldenModule() {
+	let mod = emitAst(goldenAst(), goldenTypes(), opts());
+	Assert.assertions([
+		Assert.assertEqual(goldenExpected(), J.printJs(mod.body)),
+		Assert.assertEqual(
+			"None|Some|add|message",
+			join(mod.exportNames, "|")
+		),
+		Assert.assertEqual(2, length(mod.schemas))
+	])
+}
+
+//![test("emitter output avoids accidental object coercion text")]
+function testNoAccidentalPrinterText() {
+	let text = emittedText(goldenAst(), goldenTypes(), opts());
+	Assert.assertions([
+		Assert.assertFalse(StrX.contains(text, "undefined")),
+		Assert.assertFalse(StrX.contains(text, "[object Object]")),
+		Assert.assertTrue(length(text) > 0)
+	])
+}

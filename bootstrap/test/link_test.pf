@@ -1,0 +1,462 @@
+// bootstrap/test/link_test.pf — Phase 14 linker tests.
+
+import * as Assert from "$PFUN_HOME/lib/testing/assertions";
+import * as Compat from "../src/compat";
+import * as StrX from "../src/data/strx";
+import * as J from "../src/compile/js";
+import * as E from "../src/compile/emit";
+import * as L from "../src/compile/link";
+
+function testHost() {
+	L.hostSrc(
+		"const $coreMarker = \"core\";",
+		"const $platformMarker = \"platform\";"
+	)
+}
+
+function browserHost() {
+	L.hostSrc(
+		"const $coreMarker = \"core\";",
+		"const $browserMarker = \"browser\";"
+	)
+}
+
+function simpleModule(moduleId, value) {
+	E.emittedModule(
+		moduleId,
+		[J.jsConst("value", J.jsNum(value))],
+		["value"],
+		[E.hostReq()],
+		[]
+	)
+}
+
+function utilModule() {
+	simpleModule("src/util.pf", "41")
+}
+
+function mainModule() {
+	let util = J.jsId("util");
+	E.emittedModule(
+		"src/main.pf",
+		[
+			J.jsConst(
+				"util",
+				J.jsCall(
+					J.jsId("$require"),
+					[J.jsStr("./util.pf")]
+				)
+			),
+			J.jsConst(
+				"answer",
+				J.jsBin(
+					"+",
+					J.jsMember(util, "value"),
+					J.jsNum("1")
+				)
+			)
+		],
+		["answer"],
+		[
+			E.hostReq(),
+			E.userReq("./util.pf")
+		],
+		[]
+	)
+}
+
+function modules() {
+	[utilModule(), mainModule()]
+}
+
+function findFile(files, relPath) {
+	match Compat.uncons(files) with
+	| None -> None
+	| Some cell -> {
+		if cell.value.key.relPath == relPath then {
+			Some { cell.value.key }
+		} else {
+			findFile(cell.value.value, relPath)
+		}
+	}
+}
+
+function fileText(files, relPath) {
+	match findFile(files, relPath) with
+	| None -> ""
+	| Some file -> file.value.text
+}
+
+function filePaths(files) {
+	join(map(fn file => file.relPath, files), "|")
+}
+
+function singleText(artifact) {
+	match artifact with
+	| SingleJs a -> a.text
+	| _ -> ""
+}
+
+function htmlText(artifact) {
+	match artifact with
+	| HtmlPage a -> a.text
+	| _ -> ""
+}
+
+function filesOf(artifact) {
+	match artifact with
+	| FileSet a -> a.files
+	| _ -> []
+}
+
+//![suite("compile/link paths and files")]
+
+//![test("normalizes module ids and output file names stably")]
+function testModuleIdNormalization() {
+	Assert.assertions([
+		Assert.assertEqual(
+			"src/app/main",
+			L.normalizeModuleId("./src/app/./main.pf")
+		),
+		Assert.assertEqual(
+			"src/lib/value",
+			L.normalizeModuleId("src/app/../lib/value.pf")
+		),
+		Assert.assertEqual(
+			"src/main",
+			L.normalizeModuleId("$PFUN_HOME/src/main.pf")
+		),
+		Assert.assertEqual(
+			"$pf$115_114_99_47_109_97_105_110.js",
+			L.moduleFileNameForTest("src/main.pf")
+		)
+	])
+}
+
+//![test("resolves user and builtin requirements without source rewriting")]
+function testRequireResolution() {
+	let ids = ["src/main", "src/util", "stdlib/list"];
+	Assert.assertions([
+		Assert.assertEqual(
+			"src/util",
+			L.resolveRequireForTest(
+				"src/main",
+				E.userReq("./util.pf"),
+				ids
+			)
+		),
+		Assert.assertEqual(
+			"stdlib/list",
+			L.resolveRequireForTest(
+				"src/main",
+				E.builtinReq("list"),
+				ids
+			)
+		),
+		Assert.assertEqual(
+			"src/shared/value",
+			L.resolveRequireForTest(
+				"src/app/main",
+				E.userReq("../shared/value.pf"),
+				ids
+			)
+		)
+	])
+}
+
+//![test("NodeFiles emits a CommonJS runner and one file per module")]
+function testNodeFilesStructure() {
+	let artifact = L.link(
+		modules(),
+		L.nodeFiles("dist"),
+		testHost()
+	);
+	let files = filesOf(artifact);
+	let mainText = fileText(files, "dist/main.js");
+	let moduleText = fileText(
+		files,
+		"dist/modules/$pf$115_114_99_47_109_97_105_110.js"
+	);
+
+	Assert.assertions([
+		Assert.assertEqual(4, length(files)),
+		Assert.assertEqual(
+			"dist/package.json|dist/main.js|"
+			++ "dist/modules/$pf$115_114_99_47_117_116_105_108.js|"
+			++ "dist/modules/$pf$115_114_99_47_109_97_105_110.js",
+			filePaths(files)
+		),
+		Assert.assertTrue(
+			StrX.contains(
+				mainText,
+				"require(\"./modules/$pf$115_114_99_47_109_97_105_110.js\")"
+			)
+		),
+		Assert.assertTrue(
+			StrX.contains(
+				moduleText,
+				"\"./util.pf\": \"./$pf$115_114_99_47_117_116_105_108.js\""
+			)
+		),
+		Assert.assertTrue(StrX.contains(moduleText, "$coreMarker")),
+		Assert.assertTrue(StrX.contains(moduleText, "$platformMarker"))
+	])
+}
+
+//![test("NodeFiles leaves unresolved builtins to native require")]
+function testNodeFilesNativeFallback() {
+	let mod = E.emittedModule(
+		"main",
+		[
+			J.jsConst(
+				"fs",
+				J.jsCall(
+					J.jsId("$require"),
+					[J.jsStr("node:fs")]
+				)
+			)
+		],
+		[],
+		[E.builtinReq("node:fs")],
+		[]
+	);
+	let files = filesOf(
+		L.link([mod], L.nodeFiles(""), testHost())
+	);
+	let text = fileText(files, "modules/main.js");
+
+	Assert.assertions([
+		Assert.assertFalse(
+			StrX.contains(text, "\"node:fs\":")
+		),
+		Assert.assertTrue(
+			StrX.contains(text, "return require(id);")
+		)
+	])
+}
+
+//![suite("compile/link bundles and pages")]
+
+//![test("NodeBundle includes host sources registry maps and cache")]
+function testNodeBundleStructure() {
+	let text = singleText(
+		L.link(modules(), L.nodeBundle(), testHost())
+	);
+
+	Assert.assertions([
+		Assert.assertTrue(StrX.contains(text, "/* host core */")),
+		Assert.assertTrue(StrX.contains(text, "$coreMarker")),
+		Assert.assertTrue(StrX.contains(text, "$platformMarker")),
+		Assert.assertTrue(
+			StrX.contains(text, "const $mods = Object.create(null)")
+		),
+		Assert.assertTrue(
+			StrX.contains(text, "const $maps = Object.create(null)")
+		),
+		Assert.assertTrue(
+			StrX.contains(text, "const $cache = Object.create(null)")
+		),
+		Assert.assertTrue(
+			StrX.contains(text, "$req(\"src/main\")")
+		),
+		Assert.assertTrue(
+			StrX.contains(
+				text,
+				"\"./util.pf\": \"src/util\""
+			)
+		)
+	])
+}
+
+//![test("bundle wrappers append explicit exports")]
+function testBundleExports() {
+	let text = singleText(
+		L.link([simpleModule("main", "7")], L.nodeBundle(), testHost())
+	);
+
+	Assert.assertions([
+		Assert.assertTrue(
+			StrX.contains(text, "exports[\"value\"] = value;")
+		),
+		Assert.assertTrue(
+			StrX.contains(text, "$mods[\"main\"]")
+		),
+		Assert.assertTrue(
+			StrX.contains(text, "$maps[\"main\"] = {}")
+		)
+	])
+}
+
+//![test("BarePage includes escaped title browser host and entry load")]
+function testBarePage() {
+	let html = htmlText(
+		L.link(
+			[simpleModule("main", "1")],
+			L.browserBundle(L.barePage("A < B & C")),
+			browserHost()
+		)
+	);
+
+	Assert.assertions([
+		Assert.assertTrue(
+			StrX.contains(html, "<title>A &lt; B &amp; C</title>")
+		),
+		Assert.assertTrue(StrX.contains(html, "$browserMarker")),
+		Assert.assertFalse(StrX.contains(html, "$platformMarker")),
+		Assert.assertTrue(StrX.contains(html, "$req(\"main\")")),
+		Assert.assertTrue(StrX.contains(html, "<div id=\"app\"></div>"))
+	])
+}
+
+//![test("ServeApp injects a generated configuration module")]
+function testServeAppConfig() {
+	let html = htmlText(
+		L.link(
+			[simpleModule("main", "1")],
+			L.browserBundle(L.serveApp("/api/v2")),
+			browserHost()
+		)
+	);
+
+	Assert.assertions([
+		Assert.assertTrue(
+			StrX.contains(html, "$mods[\"<generated:config>\"]")
+		),
+		Assert.assertTrue(
+			StrX.contains(html, "const apiPath = \"/api/v2\";")
+		),
+		Assert.assertTrue(
+			StrX.contains(html, "exports[\"apiPath\"] = apiPath;")
+		),
+		Assert.assertTrue(
+			StrX.contains(html, "<title>Pfun Application</title>")
+		)
+	])
+}
+
+//![test("TeaPage validates and invokes the entry main export")]
+function testTeaPageBootstrap() {
+	let html = htmlText(
+		L.link(
+			[simpleModule("tea-entry", "1")],
+			L.browserBundle(L.teaPage("Tea Test")),
+			browserHost()
+		)
+	);
+
+	Assert.assertions([
+		Assert.assertTrue(
+			StrX.contains(html, "const $entry = $req(\"tea-entry\")")
+		),
+		Assert.assertTrue(
+			StrX.contains(html, "TEA entry module must export main")
+		),
+		Assert.assertTrue(
+			StrX.contains(html, "$entry.main();")
+		)
+	])
+}
+
+//![test("PlaygroundRunner exposes the registry without auto-running main")]
+function testPlaygroundBootstrap() {
+	let html = htmlText(
+		L.link(
+			[simpleModule("play", "1")],
+			L.browserBundle(L.playgroundRunner()),
+			browserHost()
+		)
+	);
+
+	Assert.assertions([
+		Assert.assertTrue(
+			StrX.contains(html, "globalThis.$pfun")
+		),
+		Assert.assertTrue(
+			StrX.contains(html, "require: $req")
+		),
+		Assert.assertTrue(
+			StrX.contains(html, "entry: \"play\"")
+		),
+		Assert.assertFalse(
+			StrX.contains(html, "$req(\"play\");")
+		)
+	])
+}
+
+//![suite("compile/link invariants and golden structure")]
+
+//![test("linking preserves require-looking string literals verbatim")]
+function testNoRegexRewriting() {
+	let mod = E.emittedModule(
+		"main",
+		[J.jsConst("text", J.jsStr("$require(\"not-an-import\")"))],
+		["text"],
+		[E.hostReq()],
+		[]
+	);
+	let text = singleText(
+		L.link([mod], L.nodeBundle(), testHost())
+	);
+
+	Assert.assertions([
+		Assert.assertTrue(
+			StrX.contains(
+				text,
+				"const text = \"$require(\\\"not-an-import\\\")\";"
+			)
+		)
+	])
+}
+
+//![test("HTML embedding neutralizes a closing script sequence")]
+function testScriptEscaping() {
+	let host = L.hostSrc(
+		"const marker = \"</script><p>bad</p>\";",
+		""
+	);
+	let html = htmlText(
+		L.link(
+			[simpleModule("main", "1")],
+			L.browserBundle(L.barePage("Safe")),
+			host
+		)
+	);
+
+	Assert.assertions([
+		Assert.assertFalse(
+			StrX.contains(html, "</script><p>bad")
+		),
+		Assert.assertTrue(
+			StrX.contains(html, "<\\/script><p>bad")
+		)
+	])
+}
+
+//![test("artifact structure snapshot is stable")]
+function testArtifactSnapshot() {
+	let files = filesOf(
+		L.link(
+			[simpleModule("./main.pf", "5")],
+			L.nodeFiles("build/out"),
+			testHost()
+		)
+	);
+
+	Assert.assertions([
+		Assert.assertEqual(
+			"build/out/package.json|build/out/main.js|"
+			++ "build/out/modules/main.js",
+			filePaths(files)
+		),
+		Assert.assertEqual(
+			"{\n  \"type\": \"commonjs\"\n}\n",
+			fileText(files, "build/out/package.json")
+		),
+		Assert.assertTrue(
+			StrX.contains(
+				fileText(files, "build/out/modules/main.js"),
+				"exports[\"value\"] = value;"
+			)
+		)
+	])
+}

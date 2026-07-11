@@ -1,0 +1,862 @@
+// compile/js.pf — Phase 12 JavaScript AST and stable printer.
+//
+// The emitter produces JsExpr/JsStmt data. This is the only compiler module
+// that turns those nodes into JavaScript text.
+//
+// Bootstrap constraints:
+// - strings use `++`, never `+`
+// - lists are traversed with map/reduce, never head/tail/nth
+// - float literals remain source text in JNum; the printer never parses them
+// - identifiers are emitted as valid ASCII JavaScript identifiers
+//
+// Object properties keep their source spelling. Binding identifiers are
+// mangled because JavaScript reserved words cannot be used as declarations.
+
+import * as StrX from "../data/strx";
+
+// Object-literal property. A dedicated type keeps JObj's representation
+// explicit and gives Phase 13 a namespaced smart constructor.
+export type JsProp = {
+	name,
+	value
+}
+
+export type JsExpr = {
+	| JNum : raw
+	| JBig : digits
+	| JStr : s
+	| JBool : b
+	| JNull
+	| JId : name
+
+	| JArr : elems
+	| JObj : props
+
+	| JArrow : params, body, isAsync
+	| JCall : callee, args
+	| JNew : callee, args
+
+	| JMember : obj, fname
+	| JIndex : obj, idx
+
+	| JBin : op, l, r
+	| JLogic : op, l, r
+	| JUn : op, e
+	| JCond : c, t, e
+
+	| JAssignE : target, value
+	| JAwait : e
+}
+
+export type JsBody = {
+	| JbExpr : e
+	| JbBlock : stmts
+}
+
+export type JsStmt = {
+	| JsExprS : e
+	| JsConst : name, init
+	| JsLet : name, init
+	| JsAssign : target, value
+	| JsIf : c, thenB, elseB
+	| JsWhile : c, body
+	| JsRet : value
+	| JsFun : name, params, body, isAsync
+	| JsTry : body, catchName, handler
+	| JsThrow : e
+	| JsBreak
+	| JsContinue
+	| JsBlock : body
+	| JsLabel : name, body
+}
+
+// ── namespaced smart constructors ─────────────────────────────────────────
+//
+// V1 cannot reliably construct an imported record through a module qualifier.
+// Phase 13 can therefore import this module as `J` and construct everything
+// through these functions without using a flat star import.
+
+export function jsProp(name, value) {
+	JsProp { name, value }
+}
+
+export function jsNum(raw) {
+	JNum { raw }
+}
+
+export function jsBig(digits) {
+	JBig { digits }
+}
+
+export function jsStr(s) {
+	JStr { s }
+}
+
+export function jsBool(b) {
+	JBool { b }
+}
+
+export function jsNull() {
+	JNull
+}
+
+export function jsId(name) {
+	JId { name }
+}
+
+export function jsArr(elems) {
+	JArr { elems }
+}
+
+export function jsObj(props) {
+	JObj { props }
+}
+
+export function jsExprBody(e) {
+	JbExpr { e }
+}
+
+export function jsBlockBody(stmts) {
+	JbBlock { stmts }
+}
+
+export function jsArrow(params, body, isAsync) {
+	JArrow { params, body, isAsync }
+}
+
+export function jsCall(callee, args) {
+	JCall { callee, args }
+}
+
+export function jsNew(callee, args) {
+	JNew { callee, args }
+}
+
+export function jsMember(obj, fname) {
+	JMember { obj, fname }
+}
+
+export function jsIndex(obj, idx) {
+	JIndex { obj, idx }
+}
+
+export function jsBin(op, l, r) {
+	JBin { op, l, r }
+}
+
+export function jsLogic(op, l, r) {
+	JLogic { op, l, r }
+}
+
+export function jsUn(op, e) {
+	JUn { op, e }
+}
+
+export function jsCond(c, t, e) {
+	JCond { c, t, e }
+}
+
+export function jsAssignExpr(target, value) {
+	JAssignE { target, value }
+}
+
+export function jsAwait(e) {
+	JAwait { e }
+}
+
+export function jsExprStmt(e) {
+	JsExprS { e }
+}
+
+export function jsConst(name, init) {
+	JsConst { name, init }
+}
+
+export function jsLet(name, init) {
+	JsLet { name, init }
+}
+
+export function jsAssign(target, value) {
+	JsAssign { target, value }
+}
+
+export function jsIf(c, thenB, elseB) {
+	JsIf { c, thenB, elseB }
+}
+
+export function jsWhile(c, body) {
+	JsWhile { c, body }
+}
+
+export function jsRet(value) {
+	JsRet { value }
+}
+
+export function jsFun(name, params, body, isAsync) {
+	JsFun { name, params, body, isAsync }
+}
+
+export function jsTry(body, catchName, handler) {
+	JsTry { body, catchName, handler }
+}
+
+export function jsThrow(e) {
+	JsThrow { e }
+}
+
+export function jsBreak() {
+	JsBreak
+}
+
+export function jsContinue() {
+	JsContinue
+}
+
+export function jsBlock(body) {
+	JsBlock { body }
+}
+
+export function jsLabel(name, body) {
+	JsLabel { name, body }
+}
+
+// ── identifier handling ────────────────────────────────────────────────────
+
+function jsIsDigit(c) {
+	c >= "0" && c <= "9"
+}
+
+function jsIsLower(c) {
+	c >= "a" && c <= "z"
+}
+
+function jsIsUpper(c) {
+	c >= "A" && c <= "Z"
+}
+
+function jsIsIdentStart(c) {
+	jsIsLower(c) || jsIsUpper(c) || c == "_" || c == "$"
+}
+
+function jsIsIdentPart(c) {
+	jsIsIdentStart(c) || jsIsDigit(c)
+}
+
+function jsValidIdentFrom(name, i) {
+	if i >= length(name) then {
+		true
+	} else {
+		let c = slice(i, 1, name);
+		let ok = i == 0 ? jsIsIdentStart(c) : jsIsIdentPart(c);
+		if ok then {
+			jsValidIdentFrom(name, i + 1)
+		} else {
+			false
+		}
+	}
+}
+
+function jsIsIdentifierName(name) {
+	length(name) > 0 && jsValidIdentFrom(name, 0)
+}
+
+function jsStartsWith(name, prefix) {
+	if length(prefix) > length(name) then {
+		false
+	} else {
+		slice(0, length(prefix), name) == prefix
+	}
+}
+
+function jsIsReserved(name) {
+	name == "await"
+	|| name == "break"
+	|| name == "case"
+	|| name == "catch"
+	|| name == "class"
+	|| name == "const"
+	|| name == "continue"
+	|| name == "debugger"
+	|| name == "default"
+	|| name == "delete"
+	|| name == "do"
+	|| name == "else"
+	|| name == "enum"
+	|| name == "export"
+	|| name == "extends"
+	|| name == "false"
+	|| name == "finally"
+	|| name == "for"
+	|| name == "function"
+	|| name == "if"
+	|| name == "implements"
+	|| name == "import"
+	|| name == "in"
+	|| name == "instanceof"
+	|| name == "interface"
+	|| name == "let"
+	|| name == "new"
+	|| name == "null"
+	|| name == "package"
+	|| name == "private"
+	|| name == "protected"
+	|| name == "public"
+	|| name == "return"
+	|| name == "static"
+	|| name == "super"
+	|| name == "switch"
+	|| name == "this"
+	|| name == "throw"
+	|| name == "true"
+	|| name == "try"
+	|| name == "typeof"
+	|| name == "var"
+	|| name == "void"
+	|| name == "while"
+	|| name == "with"
+	|| name == "yield"
+	|| name == "arguments"
+	|| name == "eval"
+}
+
+function jsFindCharCode(c, code, last) {
+	if code > last then {
+		-1
+	} else if c == __str__(chr(code)) then {
+		code
+	} else {
+		jsFindCharCode(c, code + 1, last)
+	}
+}
+
+function jsAsciiCode(c) {
+	let code = jsFindCharCode(c, 0, 127);
+	code >= 0 ? code : 63
+}
+
+function jsEncodeName(name) {
+	if length(name) == 0 then {
+		"$pf$empty"
+	} else {
+		"$pf$"
+		++ join(
+			map(
+				fn c => __str__(jsAsciiCode(c)),
+				split(name, "")
+			),
+			"_"
+		)
+	}
+}
+
+// Stable, injective for Pfun identifiers: `$` is not legal in Pfun source, so
+// the `$pf$` namespace cannot collide with an unmangled source identifier.
+export function mangle(name) {
+	if jsIsIdentifierName(name)
+		&& !jsIsReserved(name)
+		&& !jsStartsWith(name, "$pf$")
+	then {
+		name
+	} else {
+		jsEncodeName(name)
+	}
+}
+
+// ── string and numeric literals ────────────────────────────────────────────
+
+function jsHexDigit(n) {
+	if n < 10 then {
+		__str__(n)
+	} else if n == 10 then {
+		"a"
+	} else if n == 11 then {
+		"b"
+	} else if n == 12 then {
+		"c"
+	} else if n == 13 then {
+		"d"
+	} else if n == 14 then {
+		"e"
+	} else {
+		"f"
+	}
+}
+
+function jsHex4(n) {
+	jsHexDigit((n / 4096) % 16)
+	++ jsHexDigit((n / 256) % 16)
+	++ jsHexDigit((n / 16) % 16)
+	++ jsHexDigit(n % 16)
+}
+
+function jsControlCode(c) {
+	let code = jsFindCharCode(c, 0, 31);
+	if code >= 0 then {
+		code
+	} else if c == __str__(chr(127)) then {
+		127
+	} else {
+		-1
+	}
+}
+
+function jsEscapeChar(c) {
+	if c == "\\" then {
+		"\\\\"
+	} else if c == "\"" then {
+		"\\\""
+	} else if c == "\n" then {
+		"\\n"
+	} else if c == "\t" then {
+		"\\t"
+	} else if c == __str__(chr(13)) then {
+		"\\r"
+	} else if c == __str__(chr(8)) then {
+		"\\b"
+	} else if c == __str__(chr(12)) then {
+		"\\f"
+	} else {
+		let control = jsControlCode(c);
+		if control >= 0 then {
+			"\\u" ++ jsHex4(control)
+		} else if c == __str__(chr(8232)) then {
+			"\\u2028"
+		} else if c == __str__(chr(8233)) then {
+			"\\u2029"
+		} else {
+			c
+		}
+	}
+}
+
+function jsQuoteString(s) {
+	"\"" ++ join(map(jsEscapeChar, split(s, "")), "") ++ "\""
+}
+
+function jsNormalizeNumber(raw) {
+	if jsStartsWith(raw, ".") then {
+		"0" ++ raw
+	} else if jsStartsWith(raw, "-.") then {
+		"-0" ++ slice(1, length(raw) - 1, raw)
+	} else if jsStartsWith(raw, "+.") then {
+		"+0" ++ slice(1, length(raw) - 1, raw)
+	} else {
+		raw
+	}
+}
+
+// ── precedence ─────────────────────────────────────────────────────────────
+//
+// Larger values bind more tightly.
+
+function jsLogicPrec(op) {
+	if op == "||" || op == "??" then {
+		4
+	} else {
+		5
+	}
+}
+
+function jsBinPrec(op) {
+	if op == "|" then {
+		6
+	} else if op == "^" then {
+		7
+	} else if op == "&" then {
+		8
+	} else if op == "==" || op == "!=" || op == "===" || op == "!==" then {
+		9
+	} else if op == "<"
+		|| op == ">"
+		|| op == "<="
+		|| op == ">="
+		|| op == "in"
+		|| op == "instanceof"
+	then {
+		10
+	} else if op == "<<" || op == ">>" || op == ">>>" then {
+		11
+	} else if op == "+" || op == "-" then {
+		12
+	} else if op == "*" || op == "/" || op == "%" then {
+		13
+	} else if op == "**" then {
+		14
+	} else {
+		12
+	}
+}
+
+function prec(e) {
+	match e with
+	| JArrow _ -> 1
+	| JAssignE _ -> 2
+	| JCond _ -> 3
+	| JLogic x -> jsLogicPrec(x.op)
+	| JBin x -> jsBinPrec(x.op)
+	| JUn _ -> 15
+	| JAwait _ -> 15
+	| JCall _ -> 18
+	| JNew _ -> 18
+	| JMember _ -> 19
+	| JIndex _ -> 19
+	| _ -> 20
+}
+
+function jsNeedsNumericReceiverParens(e) {
+	match e with
+	| JNum _ -> true
+	| JBig _ -> true
+	| _ -> false
+}
+
+function jsExprStartsWithObject(e) {
+	match e with
+	| JObj _ -> true
+	| JMember x -> jsExprStartsWithObject(x.obj)
+	| JIndex x -> jsExprStartsWithObject(x.obj)
+	| JCall x -> jsExprStartsWithObject(x.callee)
+	| _ -> false
+}
+
+function jsExprStmtNeedsParens(e) {
+	jsExprStartsWithObject(e)
+}
+
+function jsExponentLeftNeedsParens(e) {
+	match e with
+	| JUn _ -> true
+	| JAwait _ -> true
+	| _ -> false
+}
+
+function jsUnaryNeedsSpace(op, e) {
+	if op == "typeof" || op == "void" || op == "delete" then {
+		true
+	} else {
+		match e with
+		| JUn child -> {
+			(op == "+" && child.op == "+")
+			|| (op == "-" && child.op == "-")
+		}
+		| _ -> false
+	}
+}
+
+function jsPrintUnary(op, e, indent) {
+	let sep = jsUnaryNeedsSpace(op, e) ? " " : "";
+	op ++ sep ++ jsPrintExprAt(e, 15, false, indent)
+}
+
+function jsPrintParams(params) {
+	"(" ++ join(map(mangle, params), ", ") ++ ")"
+}
+
+function jsPrintPropName(name) {
+	if name == "__proto__" then {
+		"[" ++ jsQuoteString(name) ++ "]"
+	} else if jsIsIdentifierName(name) then {
+		name
+	} else {
+		jsQuoteString(name)
+	}
+}
+
+function jsPrintProp(prop, indent) {
+	jsPrintPropName(prop.name)
+	++ ": "
+	++ jsPrintExprAt(prop.value, 0, false, indent)
+}
+
+function jsPrintBlock(stmts, indent) {
+	if length(stmts) == 0 then {
+		"{}"
+	} else {
+		"{\n"
+		++ join(map(fn s => printStmt(s, indent + 1), stmts), "\n")
+		++ "\n"
+		++ StrX.strRepeat(" ", indent * 2)
+		++ "}"
+	}
+}
+
+function jsPrintArrowBody(body, indent) {
+	match body with
+	| JbExpr b -> {
+		match b.e with
+		| JObj _ -> "(" ++ jsPrintExprAt(b.e, 0, false, indent) ++ ")"
+		| _ -> jsPrintExprAt(b.e, 1, false, indent)
+	}
+	| JbBlock b -> jsPrintBlock(b.stmts, indent)
+}
+
+function jsPrintBinaryLeft(op, l, own, indent) {
+	if op == "**" && jsExponentLeftNeedsParens(l) then {
+		"(" ++ jsPrintExprAt(l, 0, false, indent) ++ ")"
+	} else {
+		jsPrintExprAt(l, own, op == "**", indent)
+	}
+}
+
+function jsPrintBinary(op, l, r, indent) {
+	let own = jsBinPrec(op);
+	let rightEqualNeedsParens = op != "**";
+
+	jsPrintBinaryLeft(op, l, own, indent)
+	++ " "
+	++ op
+	++ " "
+	++ jsPrintExprAt(r, own, rightEqualNeedsParens, indent)
+}
+
+function jsLogicMixNeedsParens(parentOp, child) {
+	match child with
+	| JLogic x -> {
+		(parentOp == "??" && x.op != "??")
+		|| (parentOp != "??" && x.op == "??")
+	}
+	| _ -> false
+}
+
+function jsPrintLogicChild(parentOp, child, own, parenOnEqual, indent) {
+	if jsLogicMixNeedsParens(parentOp, child) then {
+		"(" ++ jsPrintExprAt(child, 0, false, indent) ++ ")"
+	} else {
+		jsPrintExprAt(child, own, parenOnEqual, indent)
+	}
+}
+
+function jsPrintLogic(op, l, r, indent) {
+	let own = jsLogicPrec(op);
+
+	jsPrintLogicChild(op, l, own, false, indent)
+	++ " "
+	++ op
+	++ " "
+	++ jsPrintLogicChild(op, r, own, true, indent)
+}
+
+function jsPrintExprRaw(e, indent) {
+	match e with
+	| JNum x -> jsNormalizeNumber(x.raw)
+	| JBig x -> x.digits ++ "n"
+	| JStr x -> jsQuoteString(x.s)
+	| JBool x -> x.b ? "true" : "false"
+	| JNull -> "null"
+	| JId x -> mangle(x.name)
+
+	| JArr x -> {
+		"["
+		++ join(
+			map(
+				fn item => jsPrintExprAt(item, 0, false, indent),
+				x.elems
+			),
+			", "
+		)
+		++ "]"
+	}
+	| JObj x -> {
+		"{"
+		++ join(
+			map(fn prop => jsPrintProp(prop, indent), x.props),
+			", "
+		)
+		++ "}"
+	}
+
+	| JArrow x -> {
+		let asyncPrefix = x.isAsync ? "async " : "";
+		asyncPrefix
+		++ jsPrintParams(x.params)
+		++ " => "
+		++ jsPrintArrowBody(x.body, indent)
+	}
+	| JCall x -> {
+		jsPrintExprAt(x.callee, 18, false, indent)
+		++ "("
+		++ join(
+			map(
+				fn arg => jsPrintExprAt(arg, 0, false, indent),
+				x.args
+			),
+			", "
+		)
+		++ ")"
+	}
+	| JNew x -> {
+		"new "
+		++ jsPrintExprAt(x.callee, 19, false, indent)
+		++ "("
+		++ join(
+			map(
+				fn arg => jsPrintExprAt(arg, 0, false, indent),
+				x.args
+			),
+			", "
+		)
+		++ ")"
+	}
+
+	| JMember x -> {
+		let receiver = jsNeedsNumericReceiverParens(x.obj)
+			? "(" ++ jsPrintExprAt(x.obj, 0, false, indent) ++ ")"
+			: jsPrintExprAt(x.obj, 19, false, indent);
+
+		if jsIsIdentifierName(x.fname) then {
+			receiver ++ "." ++ x.fname
+		} else {
+			receiver ++ "[" ++ jsQuoteString(x.fname) ++ "]"
+		}
+	}
+	| JIndex x -> {
+		jsPrintExprAt(x.obj, 19, false, indent)
+		++ "["
+		++ jsPrintExprAt(x.idx, 0, false, indent)
+		++ "]"
+	}
+
+	| JBin x -> jsPrintBinary(x.op, x.l, x.r, indent)
+	| JLogic x -> jsPrintLogic(x.op, x.l, x.r, indent)
+	| JUn x -> jsPrintUnary(x.op, x.e, indent)
+	| JCond x -> {
+		jsPrintExprAt(x.c, 4, false, indent)
+		++ " ? "
+		++ jsPrintExprAt(x.t, 2, false, indent)
+		++ " : "
+		++ jsPrintExprAt(x.e, 3, false, indent)
+	}
+
+	| JAssignE x -> {
+		jsPrintExprAt(x.target, 3, false, indent)
+		++ " = "
+		++ jsPrintExprAt(x.value, 2, false, indent)
+	}
+	| JAwait x -> {
+		"await " ++ jsPrintExprAt(x.e, 15, false, indent)
+	}
+}
+
+function jsPrintExprAt(e, parentPrec, parenOnEqual, indent) {
+	let own = prec(e);
+	let text = jsPrintExprRaw(e, indent);
+	if own < parentPrec || (parenOnEqual && own == parentPrec) then {
+		"(" ++ text ++ ")"
+	} else {
+		text
+	}
+}
+
+function printExpr(e, parentPrec) {
+	jsPrintExprAt(e, parentPrec, false, 0)
+}
+
+// ── statements and program printing ────────────────────────────────────────
+
+function jsIndent(indent) {
+	StrX.strRepeat(" ", indent * 2)
+}
+
+function printStmt(s, indent) {
+	let pad = jsIndent(indent);
+
+	match s with
+	| JsExprS x -> {
+		let text = jsPrintExprAt(x.e, 0, false, indent);
+		let safe = jsExprStmtNeedsParens(x.e)
+			? "(" ++ text ++ ")"
+			: text;
+		pad ++ safe ++ ";"
+	}
+	| JsConst x -> {
+		pad
+		++ "const "
+		++ mangle(x.name)
+		++ " = "
+		++ jsPrintExprAt(x.init, 0, false, indent)
+		++ ";"
+	}
+	| JsLet x -> {
+		pad
+		++ "let "
+		++ mangle(x.name)
+		++ " = "
+		++ jsPrintExprAt(x.init, 0, false, indent)
+		++ ";"
+	}
+	| JsAssign x -> {
+		pad
+		++ jsPrintExprAt(x.target, 3, false, indent)
+		++ " = "
+		++ jsPrintExprAt(x.value, 2, false, indent)
+		++ ";"
+	}
+	| JsIf x -> {
+		let base = pad
+			++ "if ("
+			++ jsPrintExprAt(x.c, 0, false, indent)
+			++ ") "
+			++ jsPrintBlock(x.thenB, indent);
+
+		if length(x.elseB) == 0 then {
+			base
+		} else {
+			base ++ " else " ++ jsPrintBlock(x.elseB, indent)
+		}
+	}
+	| JsWhile x -> {
+		pad
+		++ "while ("
+		++ jsPrintExprAt(x.c, 0, false, indent)
+		++ ") "
+		++ jsPrintBlock(x.body, indent)
+	}
+	| JsRet x -> {
+		pad
+		++ "return "
+		++ jsPrintExprAt(x.value, 0, false, indent)
+		++ ";"
+	}
+	| JsFun x -> {
+		let asyncPrefix = x.isAsync ? "async " : "";
+		pad
+		++ asyncPrefix
+		++ "function "
+		++ mangle(x.name)
+		++ jsPrintParams(x.params)
+		++ " "
+		++ jsPrintBlock(x.body, indent)
+	}
+	| JsTry x -> {
+		pad
+		++ "try "
+		++ jsPrintBlock(x.body, indent)
+		++ " catch ("
+		++ mangle(x.catchName)
+		++ ") "
+		++ jsPrintBlock(x.handler, indent)
+	}
+	| JsThrow x -> {
+		pad
+		++ "throw "
+		++ jsPrintExprAt(x.e, 0, false, indent)
+		++ ";"
+	}
+	| JsBreak -> pad ++ "break;"
+	| JsContinue -> pad ++ "continue;"
+	| JsBlock x -> pad ++ jsPrintBlock(x.body, indent)
+	| JsLabel x -> {
+		pad
+		++ mangle(x.name)
+		++ ": "
+		++ jsPrintBlock(x.body, indent)
+	}
+}
+
+export function printJs(stmts) {
+	if length(stmts) == 0 then {
+		""
+	} else {
+		join(map(fn s => printStmt(s, 0), stmts), "\n") ++ "\n"
+	}
+}
