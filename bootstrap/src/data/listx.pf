@@ -35,15 +35,21 @@ export function foldLeft(f, init, xs) {
 }
 
 export function countWhere(pred, xs) {
-	reduce(fn n, x => if pred(x) then { n + 1 } else { n }, 0, xs)
+	reduce(fn n, x => {
+		if pred(x) then { n + 1 } else { n }
+	}, 0, xs)
 }
 
 export function any(pred, xs) {
-	reduce(fn found, x => if found then { true } else { pred(x) }, false, xs)
+	reduce(fn found, x => {
+		if found then { true } else { pred(x) }
+	}, false, xs)
 }
 
 export function all(pred, xs) {
-	reduce(fn ok, x => if ok then { pred(x) } else { false }, true, xs)
+	reduce(fn ok, x => {
+		if ok then { pred(x) } else { false }
+	}, true, xs)
 }
 
 export function containsBy(eq, needle, xs) {

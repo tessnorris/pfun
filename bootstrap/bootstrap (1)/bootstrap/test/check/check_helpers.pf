@@ -1,0 +1,144 @@
+// test/check/check_helpers.pf — shared helpers for checker-pass tests.
+//
+// The tests exercise checker modules through source text so the cases read like
+// the architecture examples. This helper keeps lexer/parser plumbing in one
+// place and returns diagnostic lists instead of throwing.
+
+import * as Assert from "../assertions";
+import * as Lex from "../../src/syntax/lexer";
+import * as Parser from "../../src/syntax/parser";
+import * as A from "../../src/syntax/ast";
+import * as ModGraph from "../../src/graph/modgraph";
+import * as Types from "../../src/check/types";
+import * as Purity from "../../src/check/purity";
+import * as Exhaust from "../../src/check/exhaust";
+import * as Check from "../../src/check/check";
+import * as Iface from "../../src/check/iface";
+import * as IMS from "../../src/data/imaps";
+import * as IMI from "../../src/data/imapi";
+import * as StrX from "../../src/data/strx";
+import * as Compat from "../../src/compat";
+
+export type ParsedSource = {
+	| SourceOk: module
+	| SourceErr: diags
+}
+
+export type RawSource = {
+	| RawOk: raw
+	| RawErr: diags
+}
+
+export function emptyDeps() {
+	IMS.imsEmpty()
+}
+
+export function emptyBuiltinIfaces() {
+	IMS.imsEmpty()
+}
+
+export function checkerEnv() {
+	ModGraph.mkSearchEnv("", "", [])
+}
+
+export function parseSource(path, source) {
+	match Lex.lex(path, source) with
+	| LexErr e -> SourceErr { e.diags }
+	| LexOk l -> {
+		match Parser.parseModule(path, l.tokens) with
+		| ParseErr p -> SourceErr { p.diags }
+		| ParseOk p -> SourceOk { p.module }
+	}
+}
+
+export function rawSource(path, source) {
+	match parseSource(path, source) with
+	| SourceErr e -> RawErr { e.diags }
+	| SourceOk parsed -> {
+		let edges = ModGraph.edgesOf(parsed.module, checkerEnv());
+		match edges with
+		| EdgesErr bad -> RawErr { bad.diags }
+		| EdgesOk ok -> RawOk { ModGraph.mkRawModule(path, parsed.module, ok.edges) }
+	}
+}
+
+export function typeDiags(path, source) {
+	match parseSource(path, source) with
+	| SourceErr e -> e.diags
+	| SourceOk parsed -> {
+		let r = Types.inferModule(parsed.module, emptyDeps());
+		r.diags
+	}
+}
+
+export function purityDiags(path, source) {
+	match parseSource(path, source) with
+	| SourceErr e -> e.diags
+	| SourceOk parsed -> {
+		let r = Purity.checkModule(parsed.module, emptyDeps());
+		r.diags
+	}
+}
+
+export function exhaustDiags(path, source) {
+	match parseSource(path, source) with
+	| SourceErr e -> e.diags
+	| SourceOk parsed -> {
+		let infer = Types.inferModule(parsed.module, emptyDeps());
+		if length(infer.diags) > 0 then { infer.diags }
+		else {
+			let r = Exhaust.checkModule(parsed.module, infer, emptyDeps());
+			r.diags
+		}
+	}
+}
+
+function dummyModule(path) {
+	A.mkModule(path, [], 1)
+}
+
+export function checkUnit(path, source) {
+	match parseSource(path, source) with
+	| SourceErr e -> Check.mkCheckedUnit(path, dummyModule(path), Types.mkInferResult(IMI.imiEmpty(), IMS.imsEmpty(), e.diags), Iface.emptyIface(path), e.diags)
+	| SourceOk parsed -> Check.checkModule(parsed.module, emptyDeps())
+}
+
+export function checkDiags(path, source) {
+	let unit = checkUnit(path, source);
+	unit.diags
+}
+
+export function hasNoDiags(diags) {
+	length(diags) == 0
+}
+
+export function hasDiags(diags) {
+	length(diags) > 0
+}
+
+export function hasAtLeast(diags, n) {
+	length(diags) >= n
+}
+
+export function hasDiagContaining(diags, needle) {
+	match Compat.uncons(diags) with
+	| None -> false
+	| Some cell -> {
+		let p = cell.value;
+		let diag = p.key;
+		if StrX.contains(diag.message, needle) then { true }
+		else { hasDiagContaining(p.value, needle) }
+	}
+}
+
+export function assertOkDiags(diags) {
+	Assert.assertions([Assert.assertEqual(0, length(diags))])
+}
+
+export function assertHasDiag(diags) {
+	Assert.assertions([Assert.assertTrue(length(diags) > 0)])
+}
+
+export function assertHasMessage(diags, needle) {
+	Assert.assertions([Assert.assertTrue(hasDiagContaining(diags, needle))])
+}

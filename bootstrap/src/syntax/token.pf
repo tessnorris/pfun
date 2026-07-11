@@ -121,6 +121,7 @@ export function tokenEnd(token) {
 	token.span.end
 }
 
+// Canonical public category names mirror the Tok variant names.
 export function tokenKind(token) {
 	match token.tok with
 	| TokInt _ -> "TokInt"
@@ -174,5 +175,9 @@ export function tokToStr(tok) {
 }
 
 export function tokenToStr(token) {
-	tokToStr(token.tok) ++ "@" ++ __str__(token.span.start.line) ++ ":" ++ __str__(token.span.start.col)
+	tokToStr(token.tok)
+	++ "@"
+	++ __str__(token.span.start.line)
+	++ ":"
+	++ __str__(token.span.start.col)
 }

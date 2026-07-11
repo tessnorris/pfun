@@ -211,7 +211,7 @@ function isKeywordText(s) {
 	s == "return" || s == "fn" || s == "for" || s == "while" ||
 	s == "dict" || s == "array" || s == "import" || s == "export" ||
 	s == "as" || s == "from" || s == "match" || s == "with" ||
-	s == "where" || s == "extern" || s == "lazy"
+	s == "where" || s == "extern" || s == "opaque" || s == "lazy"
 }
 
 function twoCharOp(st) {
@@ -261,7 +261,7 @@ function step(st) {
 		else if startsWith(st, "@\"") then { scanRawString(st) }
 		else if startsWith(st, "$\"") then { scanFormatString(st) }
 		else if c.value == "\"" then { scanString(st) }
-		else if c.value == "'" then { scanChar(st) }
+		else if c.value == "'" then { scanCharLiteral(st) }
 		else if isDigit(c.value) then { scanNumber(st) }
 		else if isIdentStart(c.value) then { scanIdentOrKw(st) }
 		else { scanOperatorOrFail(st) }
@@ -472,7 +472,7 @@ function charPayload(startPos, st) {
 
 // Handles character literals. The payload is the one-character string spelling
 // of the character; later phases can decide whether to intern it as Char.
-function scanChar(st) {
+function scanCharLiteral(st) {
 	let start = posOf(st);
 	let body = advanceOne(st);
 	match charPayload(start, body) with

@@ -73,6 +73,8 @@ export type Expr = {
 
 // ── statements/declarations ────────────────────────────────────────────────
 
+// `memo` is a keyword, so using it as a field name makes `kind.memo`
+// unparseable. Keep the semantic meaning but expose the field as `isMemo`.
 export type FnKind = {
 	| PureFn: isMemo, isGeneric
 	| ProcFn: isAsync, isGeneric
