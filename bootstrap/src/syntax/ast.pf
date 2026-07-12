@@ -129,6 +129,106 @@ export type Stmt = {
 
 export type Module = { path, stmts, nextId }
 
+// Pin the complete non-generic AST schema before the exported constructor
+// surface is inferred. The AST is nominal and monomorphic; genericity belongs
+// in compiler functions that transform it, not in its syntax fields.
+function astTypeWitness() {
+	let p = T.mkPos(1, 1, 0);
+	let sp = T.mkSpan(p, p);
+	let baseExpr = EInt { 0, 0, sp };
+	let baseStmt = SExpr { 0, baseExpr, sp };
+	let patElem = PeBind { "p" };
+	let pattern = PVariant { "V", Some { "value" } };
+	let field = Field { Some { "field" }, baseExpr };
+	let gen = GenClause { "item", baseExpr };
+	let entry = DictEntry { baseExpr, baseExpr };
+	let arm = MatchArm { pattern, Some { baseExpr }, baseExpr };
+	let fmt = FmtLit { "" };
+	let kind = PureFn { false, false };
+	let fieldDecl = FieldDecl { "field", false };
+	let variantDecl = VariantDecl { "V", [fieldDecl] };
+	let typeDecl = RecordDecl { "R", [fieldDecl] };
+	let importName = ImportName { "name", Some { "alias" } };
+	let importSpec = INames { [importName] };
+	let typeExpr = TyName { "Int", [] };
+	let typedParam = TypedParam { "x", typeExpr };
+	let externDecl = ExternDecl {
+		ExternFunction,
+		"nativeThing",
+		[typedParam],
+		typeExpr,
+		"node"
+	};
+
+	let supporting = [
+		PeBind { "p" },
+		PeWild
+	];
+	let patterns = [
+		PWild,
+		pattern,
+		PList { [patElem], Some { patElem } }
+	];
+	let formatParts = [fmt, FmtExpr { baseExpr }];
+	let expressions = [
+		baseExpr,
+		EFloat { 0, "0.0", sp },
+		EBool { 0, false, sp },
+		EStr { 0, "", sp },
+		EChar { 0, 'x', sp },
+		EByte { 0, 0b, sp },
+		EVar { 0, "x", sp },
+		EUnary { 0, "-", baseExpr, sp },
+		EBinary { 0, "+", baseExpr, baseExpr, sp },
+		EIf { 0, baseExpr, baseExpr, baseExpr, sp },
+		ECall { 0, baseExpr, [baseExpr], sp },
+		ELambda { 0, ["x"], baseExpr, sp },
+		EBlock { 0, [baseStmt], sp },
+		EList { 0, [baseExpr], StrictList, sp },
+		EComp { 0, baseExpr, [gen], Some { baseExpr }, LazyList, sp },
+		ERecord { 0, "R", [field], sp },
+		EField { 0, baseExpr, "field", sp },
+		EIndex { 0, baseExpr, baseExpr, sp },
+		EMatch { 0, baseExpr, [arm], sp },
+		EDict { 0, [entry], sp },
+		EArray { 0, [baseExpr], sp },
+		EAwait { 0, baseExpr, sp },
+		EFmt { 0, formatParts, sp }
+	];
+	let fnKinds = [kind, ProcFn { false, false }];
+	let typeDecls = [
+		typeDecl,
+		UnionDecl { "U", [variantDecl] }
+	];
+	let importSpecs = [
+		importSpec,
+		INamespace { "N" },
+		IStar
+	];
+	let typeExprs = [
+		typeExpr,
+		TyFun { [typeExpr], typeExpr }
+	];
+	let externKinds = [ExternFunction, ExternProc { false }];
+	let statements = [
+		SLet { 0, "x", baseExpr, sp },
+		SVar { 0, "x", baseExpr, sp },
+		SAssign { 0, "x", baseExpr, sp },
+		SIndexAssign { 0, baseExpr, baseExpr, baseExpr, sp },
+		SFun { 0, "f", ["x"], [baseStmt], kind, sp },
+		SType { 0, typeDecl, false, sp },
+		baseStmt,
+		SReturn { 0, Some { baseExpr }, sp },
+		SIf { 0, baseExpr, [baseStmt], Some { [baseStmt] }, sp },
+		SWhile { 0, baseExpr, [baseStmt], sp },
+		SImport { 0, importSpec, "./dep", sp },
+		SExport { 0, baseStmt, sp },
+		SExtern { 0, externDecl, sp }
+	];
+
+	Module { "witness.pf", statements, 1 }
+}
+
 // ── smart constructors: supporting nodes ───────────────────────────────────
 
 export function strictListMode() { StrictList }
@@ -494,3 +594,476 @@ export function isNoArgVariantPattern(pattern) {
 	}
 	| _ -> false
 }
+
+// ── private concrete signature anchors ─────────────────────────────────────
+//
+// Pfun is monomorphic by default. These function-value groups constrain each
+// exported smart constructor/query to its complete nominal signature without
+// calling it at module initialization. The declaration witness above grounds
+// the data schemas; these anchors ground the independently inferred functions.
+
+let astSigPos = T.mkPos(1, 1, 0);
+let astSigSpan = T.mkSpan(astSigPos, astSigPos);
+let astSigExpr = EInt { 0, 0, astSigSpan };
+let astSigStmt = SExpr { 0, astSigExpr, astSigSpan };
+let astSigExprs = [astSigExpr];
+let astSigStmts = [astSigStmt];
+let astSigStrings = [""];
+let astSigMode = StrictList;
+let astSigField = Field { Some { "field" }, astSigExpr };
+let astSigFields = [astSigField];
+let astSigGen = GenClause { "item", astSigExpr };
+let astSigGens = [astSigGen];
+let astSigEntry = DictEntry { astSigExpr, astSigExpr };
+let astSigEntries = [astSigEntry];
+let astSigPattern = PWild;
+let astSigArm = MatchArm {
+	astSigPattern,
+	Some { astSigExpr },
+	astSigExpr
+};
+let astSigArms = [astSigArm];
+let astSigFmtPart = FmtLit { "" };
+let astSigFmts = [astSigFmtPart];
+let astSigFieldDecl = FieldDecl { "field", false };
+let astSigTypeDecl = RecordDecl {
+	"R",
+	[astSigFieldDecl]
+};
+let astSigTypeExpr = TyName { "Int", [] };
+let astSigTypeExprs = [astSigTypeExpr];
+let astSigImportSpec = IStar;
+let astSigFnKind = PureFn { false, false };
+let astSigExternDecl = ExternDecl {
+	ExternFunction,
+	"nativeThing",
+	[
+		TypedParam {
+			"x",
+			astSigTypeExpr
+		}
+	],
+	astSigTypeExpr,
+	"node"
+};
+
+function astSigIntIntSpanExpr(id, n, span) {
+	let ids = [0, id];
+	let nums = [0, n];
+	let spans = [astSigSpan, span];
+	astSigExpr
+}
+let astSigIntIntSpanExprFns = [
+	astSigIntIntSpanExpr,
+	eInt
+];
+
+function astSigIntStrSpanExpr(id, text, span) {
+	let ids = [0, id];
+	let texts = ["", text];
+	let spans = [astSigSpan, span];
+	astSigExpr
+}
+let astSigIntStrSpanExprFns = [
+	astSigIntStrSpanExpr,
+	eFloat,
+	eStr,
+	eVar
+];
+
+function astSigIntBoolSpanExpr(id, value, span) {
+	let ids = [0, id];
+	let values = [false, value];
+	let spans = [astSigSpan, span];
+	astSigExpr
+}
+let astSigIntBoolSpanExprFns = [
+	astSigIntBoolSpanExpr,
+	eBool
+];
+
+function astSigIntCharSpanExpr(id, value, span) {
+	let ids = [0, id];
+	let values = ['x', value];
+	let spans = [astSigSpan, span];
+	astSigExpr
+}
+let astSigIntCharSpanExprFns = [
+	astSigIntCharSpanExpr,
+	eChar
+];
+
+function astSigIntByteSpanExpr(id, value, span) {
+	let ids = [0, id];
+	let values = [0b, value];
+	let spans = [astSigSpan, span];
+	astSigExpr
+}
+let astSigIntByteSpanExprFns = [
+	astSigIntByteSpanExpr,
+	eByte
+];
+
+function astSigUnary(id, op, operand, span) {
+	let ids = [0, id];
+	let ops = ["", op];
+	let operands = [astSigExpr, operand];
+	let spans = [astSigSpan, span];
+	astSigExpr
+}
+let astSigUnaryFns = [
+	astSigUnary,
+	eUnary
+];
+
+function astSigBinary(id, op, lhs, rhs, span) {
+	let ids = [0, id];
+	let ops = ["", op];
+	let lefts = [astSigExpr, lhs];
+	let rights = [astSigExpr, rhs];
+	let spans = [astSigSpan, span];
+	astSigExpr
+}
+let astSigBinaryFns = [
+	astSigBinary,
+	eBinary
+];
+
+function astSigIf(id, cond, thenE, elseE, span) {
+	let ids = [0, id];
+	let conds = [astSigExpr, cond];
+	let thens = [astSigExpr, thenE];
+	let elses = [astSigExpr, elseE];
+	let spans = [astSigSpan, span];
+	astSigExpr
+}
+let astSigIfFns = [
+	astSigIf,
+	eIf
+];
+
+function astSigCall(id, callee, args, span) {
+	let ids = [0, id];
+	let callees = [astSigExpr, callee];
+	let argLists = [astSigExprs, args];
+	let spans = [astSigSpan, span];
+	astSigExpr
+}
+let astSigCallFns = [
+	astSigCall,
+	eCall
+];
+
+function astSigLambda(id, params, body, span) {
+	let ids = [0, id];
+	let paramLists = [astSigStrings, params];
+	let bodies = [astSigExpr, body];
+	let spans = [astSigSpan, span];
+	astSigExpr
+}
+let astSigLambdaFns = [
+	astSigLambda,
+	eLambda
+];
+
+function astSigBlock(id, stmts, span) {
+	let ids = [0, id];
+	let stmtLists = [astSigStmts, stmts];
+	let spans = [astSigSpan, span];
+	astSigExpr
+}
+let astSigBlockFns = [
+	astSigBlock,
+	eBlock
+];
+
+function astSigList(id, elems, mode, span) {
+	let ids = [0, id];
+	let elemLists = [astSigExprs, elems];
+	let modes = [astSigMode, mode];
+	let spans = [astSigSpan, span];
+	astSigExpr
+}
+let astSigListFns = [
+	astSigList,
+	eList
+];
+
+function astSigComp(id, body, gens, guard, mode, span) {
+	let ids = [0, id];
+	let bodies = [astSigExpr, body];
+	let genLists = [astSigGens, gens];
+	let guards = [Some { astSigExpr }, guard];
+	let modes = [astSigMode, mode];
+	let spans = [astSigSpan, span];
+	astSigExpr
+}
+let astSigCompFns = [
+	astSigComp,
+	eComp
+];
+
+function astSigRecord(id, tname, fields, span) {
+	let ids = [0, id];
+	let names = ["", tname];
+	let fieldLists = [astSigFields, fields];
+	let spans = [astSigSpan, span];
+	astSigExpr
+}
+let astSigRecordFns = [
+	astSigRecord,
+	eRecord
+];
+
+function astSigFieldAccess(id, object, fname, span) {
+	let ids = [0, id];
+	let objects = [astSigExpr, object];
+	let names = ["", fname];
+	let spans = [astSigSpan, span];
+	astSigExpr
+}
+let astSigFieldAccessFns = [
+	astSigFieldAccess,
+	eField
+];
+
+function astSigIndex(id, object, index, span) {
+	let ids = [0, id];
+	let objects = [astSigExpr, object];
+	let indexes = [astSigExpr, index];
+	let spans = [astSigSpan, span];
+	astSigExpr
+}
+let astSigIndexFns = [
+	astSigIndex,
+	eIndex
+];
+
+function astSigMatch(id, subject, arms, span) {
+	let ids = [0, id];
+	let subjects = [astSigExpr, subject];
+	let armLists = [astSigArms, arms];
+	let spans = [astSigSpan, span];
+	astSigExpr
+}
+let astSigMatchFns = [
+	astSigMatch,
+	eMatch
+];
+
+function astSigDict(id, entries, span) {
+	let ids = [0, id];
+	let entryLists = [astSigEntries, entries];
+	let spans = [astSigSpan, span];
+	astSigExpr
+}
+let astSigDictFns = [
+	astSigDict,
+	eDict
+];
+
+function astSigArray(id, elems, span) {
+	let ids = [0, id];
+	let elemLists = [astSigExprs, elems];
+	let spans = [astSigSpan, span];
+	astSigExpr
+}
+let astSigArrayFns = [
+	astSigArray,
+	eArray
+];
+
+function astSigAwait(id, value, span) {
+	let ids = [0, id];
+	let values = [astSigExpr, value];
+	let spans = [astSigSpan, span];
+	astSigExpr
+}
+let astSigAwaitFns = [
+	astSigAwait,
+	eAwait
+];
+
+function astSigFmt(id, parts, span) {
+	let ids = [0, id];
+	let partLists = [astSigFmts, parts];
+	let spans = [astSigSpan, span];
+	astSigExpr
+}
+let astSigFmtFns = [
+	astSigFmt,
+	eFmt
+];
+
+function astSigTyName(name, args) {
+	let names = ["", name];
+	let argLists = [astSigTypeExprs, args];
+	astSigTypeExpr
+}
+let astSigTyNameFns = [
+	astSigTyName,
+	tyName
+];
+
+function astSigNamedStmt(id, name, value, span) {
+	let ids = [0, id];
+	let names = ["", name];
+	let values = [astSigExpr, value];
+	let spans = [astSigSpan, span];
+	astSigStmt
+}
+let astSigNamedStmtFns = [
+	astSigNamedStmt,
+	sLet,
+	sVar,
+	sAssign
+];
+
+function astSigIndexAssign(id, object, index, value, span) {
+	let ids = [0, id];
+	let objects = [astSigExpr, object];
+	let indexes = [astSigExpr, index];
+	let values = [astSigExpr, value];
+	let spans = [astSigSpan, span];
+	astSigStmt
+}
+let astSigIndexAssignFns = [
+	astSigIndexAssign,
+	sIndexAssign
+];
+
+function astSigFun(id, name, params, body, kind, span) {
+	let ids = [0, id];
+	let names = ["", name];
+	let paramLists = [astSigStrings, params];
+	let bodies = [astSigStmts, body];
+	let kinds = [astSigFnKind, kind];
+	let spans = [astSigSpan, span];
+	astSigStmt
+}
+let astSigFunFns = [
+	astSigFun,
+	sFun
+];
+
+function astSigTypeStmt(id, decl, isOpaque, span) {
+	let ids = [0, id];
+	let decls = [astSigTypeDecl, decl];
+	let opaqueFlags = [false, isOpaque];
+	let spans = [astSigSpan, span];
+	astSigStmt
+}
+let astSigTypeStmtFns = [
+	astSigTypeStmt,
+	sType
+];
+
+function astSigExprStmt(id, expr, span) {
+	let ids = [0, id];
+	let exprs = [astSigExpr, expr];
+	let spans = [astSigSpan, span];
+	astSigStmt
+}
+let astSigExprStmtFns = [
+	astSigExprStmt,
+	sExpr
+];
+
+function astSigReturn(id, value, span) {
+	let ids = [0, id];
+	let values = [Some { astSigExpr }, value];
+	let spans = [astSigSpan, span];
+	astSigStmt
+}
+let astSigReturnFns = [
+	astSigReturn,
+	sReturn
+];
+
+function astSigStmtIf(id, cond, thenS, elseS, span) {
+	let ids = [0, id];
+	let conds = [astSigExpr, cond];
+	let thenLists = [astSigStmts, thenS];
+	let elseLists = [Some { astSigStmts }, elseS];
+	let spans = [astSigSpan, span];
+	astSigStmt
+}
+let astSigStmtIfFns = [
+	astSigStmtIf,
+	sIf
+];
+
+function astSigWhile(id, cond, body, span) {
+	let ids = [0, id];
+	let conds = [astSigExpr, cond];
+	let bodies = [astSigStmts, body];
+	let spans = [astSigSpan, span];
+	astSigStmt
+}
+let astSigWhileFns = [
+	astSigWhile,
+	sWhile
+];
+
+function astSigImport(id, spec, rawPath, span) {
+	let ids = [0, id];
+	let specs = [astSigImportSpec, spec];
+	let paths = ["", rawPath];
+	let spans = [astSigSpan, span];
+	astSigStmt
+}
+let astSigImportFns = [
+	astSigImport,
+	sImport
+];
+
+function astSigExport(id, inner, span) {
+	let ids = [0, id];
+	let inners = [astSigStmt, inner];
+	let spans = [astSigSpan, span];
+	astSigStmt
+}
+let astSigExportFns = [
+	astSigExport,
+	sExport
+];
+
+function astSigExtern(id, decl, span) {
+	let ids = [0, id];
+	let decls = [astSigExternDecl, decl];
+	let spans = [astSigSpan, span];
+	astSigStmt
+}
+let astSigExternFns = [
+	astSigExtern,
+	sExtern
+];
+
+function astSigExprSpan(expr) {
+	let exprs = [astSigExpr, expr];
+	astSigSpan
+}
+let astSigExprSpanFns = [
+	astSigExprSpan,
+	exprSpan
+];
+
+function astSigStmtSpan(stmt) {
+	let stmts = [astSigStmt, stmt];
+	astSigSpan
+}
+let astSigStmtSpanFns = [
+	astSigStmtSpan,
+	stmtSpan
+];
+
+function astSigSpanJoin(a, b) {
+	let lefts = [astSigSpan, a];
+	let rights = [astSigSpan, b];
+	astSigSpan
+}
+let astSigSpanJoinFns = [
+	astSigSpanJoin,
+	spanJoin
+];
+

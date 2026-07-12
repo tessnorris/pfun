@@ -115,7 +115,7 @@ function optionVariants() {
 function resultVariants() {
 	[
 		A.mkVariantDecl("Ok", [A.mkFieldDecl("value", true)]),
-		A.mkVariantDecl("Err", [A.mkFieldDecl("message", false)])
+		A.mkVariantDecl("Err", [A.mkFieldDecl("message", true)])
 	]
 }
 
@@ -123,7 +123,7 @@ function readResultVariants() {
 	[
 		A.mkVariantDecl("Ok", [A.mkFieldDecl("value", true)]),
 		A.mkVariantDecl("Eof", []),
-		A.mkVariantDecl("Err", [A.mkFieldDecl("message", false)])
+		A.mkVariantDecl("Err", [A.mkFieldDecl("message", true)])
 	]
 }
 
@@ -153,8 +153,8 @@ function dbValueVariants() {
 	]
 }
 
-// Pair is a builtin record, so there is no union variant list to expose through
-// ModIface.unions. Its type scheme is still exported as an ordinary type name.
+// Pair is a builtin record. Its type scheme and field order both travel in
+// ModIface so imported field access can be checked and emitted statically.
 function slotVarIds(slotCount) {
 	if slotCount <= 0 then { [] } else { range(0, slotCount - 1) }
 }
@@ -178,7 +178,15 @@ function coreTypeIface() {
 	let iface0 = I.emptyIface("$builtin/core");
 	let iface1 = putBuiltinUnion(iface0, "Option", optionVariants(), 1);
 	let iface2 = putBuiltinUnion(iface1, "Result", resultVariants(), 2);
-	let iface3 = putBuiltinType(iface2, "Pair", 2);
+	let iface3a = putBuiltinType(iface2, "Pair", 2);
+	let iface3 = I.putRecord(
+		iface3a,
+		"Pair",
+		[
+			A.mkFieldDecl("key", true),
+			A.mkFieldDecl("value", true)
+		]
+	);
 	let iface4 = putBuiltinType(iface3, "NonZero", 0);
 	iface4
 }

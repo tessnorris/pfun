@@ -1,9 +1,13 @@
 export type IMapS = {
 	| MLeaf
-	| MNode: k, v, left, right, height
+	| MNode: k, generic v, left, right, height
 }
 
-export function imsEmpty() {
+// Pin the monomorphic key and height fields before any generic map function
+// is generalized. The value field is a declaration slot and remains generic.
+let imsTypeWitness = MNode { "", 0, MLeaf, MLeaf, 1 };
+
+export generic function imsEmpty() {
 	MLeaf
 }
 
@@ -11,13 +15,13 @@ function imsMax(a, b) {
 	if a > b then { a } else { b }
 }
 
-function imsHeight(m) {
+generic function imsHeight(m) {
 	match m with
 	| MLeaf -> 0
 	| MNode n -> n.height
 }
 
-function imsNode(k, v, left, right) {
+generic function imsNode(k, v, left, right) {
 	MNode {
 		k = k,
 		v = v,
@@ -27,13 +31,13 @@ function imsNode(k, v, left, right) {
 	}
 }
 
-function imsBalanceFactor(m) {
+generic function imsBalanceFactor(m) {
 	match m with
 	| MLeaf -> 0
 	| MNode n -> imsHeight(n.left) - imsHeight(n.right)
 }
 
-function imsRotateRight(m) {
+generic function imsRotateRight(m) {
 	match m with
 	| MLeaf -> MLeaf
 	| MNode y -> {
@@ -47,7 +51,7 @@ function imsRotateRight(m) {
 	}
 }
 
-function imsRotateLeft(m) {
+generic function imsRotateLeft(m) {
 	match m with
 	| MLeaf -> MLeaf
 	| MNode x -> {
@@ -61,7 +65,7 @@ function imsRotateLeft(m) {
 	}
 }
 
-function imsBalance(m) {
+generic function imsBalance(m) {
 	match m with
 	| MLeaf -> MLeaf
 	| MNode n -> {
@@ -102,7 +106,7 @@ function imsBalance(m) {
 	}
 }
 
-export function imsGet(m, k) {
+export generic function imsGet(m, k) {
   match m with
   | MLeaf -> None
   | MNode n -> {
@@ -112,7 +116,7 @@ export function imsGet(m, k) {
     }
 }
 
-export function imsPut(m, k, v) {
+export generic function imsPut(m, k, v) {
 	match m with
 	| MLeaf -> imsNode(k, v, MLeaf, MLeaf)
 	| MNode n -> {
@@ -130,23 +134,23 @@ export function imsPut(m, k, v) {
 	}
 }
 
-export function imsHas(m, k) {
+export generic function imsHas(m, k) {
 	match imsGet(m, k) with
 	| None -> false
 	| Some _ -> true
 }
 
-function imsMinEntry(m) {
+generic function imsMinEntry(m) {
 	match m with
 	| MLeaf -> None
 	| MNode n -> {
 		match n.left with
-		| MLeaf -> Some (Pair { n.k, n.v })
+		| MLeaf -> Some { Pair { n.k, n.v } }
 		| MNode _ -> imsMinEntry(n.left)
 	}
 }
 
-function imsRemoveMin(m) {
+generic function imsRemoveMin(m) {
 	match m with
 	| MLeaf -> MLeaf
 	| MNode n -> {
@@ -159,7 +163,7 @@ function imsRemoveMin(m) {
 	}
 }
 
-export function imsRemove(m, k) {
+export generic function imsRemove(m, k) {
 	match m with
 	| MLeaf -> MLeaf
 	| MNode n -> {
@@ -192,7 +196,7 @@ export function imsRemove(m, k) {
 	}
 }
 
-function imsKeysAcc(m, acc) {
+generic function imsKeysAcc(m, acc) {
 	match m with
 	| MLeaf -> acc
 	| MNode n -> {
@@ -202,11 +206,11 @@ function imsKeysAcc(m, acc) {
 	}
 }
 
-export function imsKeys(m) {
+export generic function imsKeys(m) {
 	imsKeysAcc(m, [])
 }
 
-function imsEntriesAcc(m, acc) {
+generic function imsEntriesAcc(m, acc) {
 	match m with
 	| MLeaf -> acc
 	| MNode n -> {
@@ -217,23 +221,23 @@ function imsEntriesAcc(m, acc) {
 	}
 }
 
-export function imsEntries(m) {
+export generic function imsEntries(m) {
 	imsEntriesAcc(m, [])
 }
 
-function imsPutEntry(acc, entry) {
+generic function imsPutEntry(acc, entry) {
 	imsPut(acc, entry.key, entry.value)
 }
 
-export function imsUnion(a, b) {
+export generic function imsUnion(a, b) {
 	reduce(imsPutEntry, a, imsEntries(b))
 	}
 
-export function imsFromList(pairs) {
+export generic function imsFromList(pairs) {
   reduce(imsPutEntry, imsEmpty(), pairs);
 }
 
-export function imsMap(f, m) {
+export generic function imsMap(f, m) {
 	match m with
 	| MLeaf -> MLeaf
 	| MNode n -> {
@@ -243,8 +247,3 @@ export function imsMap(f, m) {
 	}
 }
 
-// Force the key type to Str without evaluating anything: binding a lambda
-// emits the inference constraint (key = Str) while the value type stays free
-// (pinned by each consumer's first use). A bare expression here would run at
-// module load and fail on the unbound variable.
-let imsKeyTypeWitness = fn v => imsPut(imsEmpty(), "hello", v);

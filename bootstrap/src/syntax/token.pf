@@ -41,6 +41,27 @@ export type Tok = {
 
 export type Token = { tok, span }
 
+// V2 freezes exported interfaces at the module boundary. This private witness
+// pins every non-generic token field before the smart constructors are inferred.
+function tokenTypeWitness() {
+	let p = Pos { 1, 1, 0 };
+	let sp = Span { p, p };
+	[
+		Token { TokInt { 0 }, sp },
+		Token { TokFloat { "0.0" }, sp },
+		Token { TokBool { false }, sp },
+		Token { TokStr { "" }, sp },
+		Token { TokRawStr { "" }, sp },
+		Token { TokFmtStr { "" }, sp },
+		Token { TokChar { 'x' }, sp },
+		Token { TokByte { 0b }, sp },
+		Token { TokIdent { "" }, sp },
+		Token { TokKw { "" }, sp },
+		Token { TokOp { "" }, sp },
+		Token { TokEof, sp }
+	]
+}
+
 export function mkToken(tok, span) {
 	Token { tok, span }
 }
@@ -146,7 +167,7 @@ export function tokPayload(tok) {
 	| TokStr t -> t.s
 	| TokRawStr t -> t.s
 	| TokFmtStr t -> t.s
-	| TokChar t -> t.c
+	| TokChar t -> __str__(t.c)
 	| TokByte t -> __str__(t.b)
 	| TokIdent t -> t.name
 	| TokKw t -> t.word
@@ -166,7 +187,7 @@ export function tokToStr(tok) {
 	| TokStr t -> "TokStr(\"" ++ t.s ++ "\")"
 	| TokRawStr t -> "TokRawStr(@\"" ++ t.s ++ "\")"
 	| TokFmtStr t -> "TokFmtStr($\"" ++ t.s ++ "\")"
-	| TokChar t -> "TokChar('" ++ t.c ++ "')"
+	| TokChar t -> "TokChar('" ++ __str__(t.c) ++ "')"
 	| TokByte t -> "TokByte(" ++ __str__(t.b) ++ ")"
 	| TokIdent t -> "TokIdent(" ++ t.name ++ ")"
 	| TokKw t -> "TokKw(" ++ t.word ++ ")"
@@ -181,3 +202,36 @@ export function tokenToStr(token) {
 	++ ":"
 	++ __str__(token.span.start.col)
 }
+
+// These private uses ground the monomorphic exported accessor signatures.
+// Field access on an otherwise unconstrained parameter creates a deferred
+// HasField constraint; Pfun deliberately has no row polymorphism. A concrete
+// use in the defining module fixes each accessor's subject to Token while
+// keeping the public function itself non-generic.
+let tokenAccessorWitnessPos = Pos { 1, 1, 0 };
+let tokenAccessorWitnessSpan = Span {
+	tokenAccessorWitnessPos,
+	tokenAccessorWitnessPos
+};
+let tokenAccessorWitnessToken = Token {
+	TokEof,
+	tokenAccessorWitnessSpan
+};
+
+let tokenPredicateTypeWitness = [
+	isOp(tokenAccessorWitnessToken, ""),
+	isKw(tokenAccessorWitnessToken, ""),
+	isIdent(tokenAccessorWitnessToken, "")
+];
+
+let tokenPositionTypeWitness = [
+	tokenStart(tokenAccessorWitnessToken),
+	tokenEnd(tokenAccessorWitnessToken)
+];
+
+let tokenTextTypeWitness = [
+	tokenKind(tokenAccessorWitnessToken),
+	tokenPayload(tokenAccessorWitnessToken),
+	tokenToStr(tokenAccessorWitnessToken)
+];
+

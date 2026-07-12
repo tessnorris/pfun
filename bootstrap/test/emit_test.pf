@@ -36,6 +36,18 @@ function singletonOpts() {
 	)
 }
 
+function importedSchemaOpts() {
+	E.emitOptsWithSchemas(
+		"emit-schema-test",
+		IMS.imsEmpty(),
+		false,
+		IMS.imsFromList([
+			Pair { "Foreign", ["left", "right"] },
+			Pair { "Some", ["value"] }
+		])
+	)
+}
+
 function typeTable(entries) {
 	IMI.imiFromList(entries)
 }
@@ -406,6 +418,57 @@ function testComprehensionEmission() {
 			StrX.contains(strictText, "(x, y) => $gtI(y, 0)")
 		),
 		Assert.assertTrue(StrX.contains(strictText, "(x, y) => $addI(x, y)"))
+	])
+}
+
+//![suite("compile/emit imported schemas")]
+
+//![test("lowers imported record and variant fields by positional schema")]
+function testImportedFieldSchemas() {
+	let sp = testSpan();
+	let recordExpr = A.eField(
+		1,
+		A.eVar(2, "foreign", sp),
+		"right",
+		sp
+	);
+	let variantExpr = A.eField(
+		3,
+		A.eVar(4, "some", sp),
+		"value",
+		sp
+	);
+	let types = typeTable([
+		Pair { 2, TY.tNamed("Foreign", []) },
+		Pair {
+			4,
+			TY.tVariant("Some", "Option", [TY.tInt()])
+		}
+	]);
+	let recordText = renderExpr(
+		types,
+		importedSchemaOpts(),
+		recordExpr
+	);
+	let variantText = renderExpr(
+		types,
+		importedSchemaOpts(),
+		variantExpr
+	);
+
+	Assert.assertions([
+		Assert.assertTrue(
+			StrX.contains(recordText, "foreign.f[1]")
+		),
+		Assert.assertTrue(
+			StrX.contains(variantText, "some.f[0]")
+		),
+		Assert.assertFalse(
+			StrX.contains(recordText, "$field")
+		),
+		Assert.assertFalse(
+			StrX.contains(variantText, "$field")
+		)
 	])
 }
 

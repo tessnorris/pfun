@@ -30,12 +30,12 @@ export type IfaceType = {
 	| ITName: name
 }
 
-export type ModIface = { path, kinds, types, unions }
+export type ModIface = { path, kinds, types, records, unions }
 
 // Small input shapes for the two public extractors in the architecture. The
 // eventual checker/builtin manifest may provide richer records with the same
 // fields; these helpers only require the fields they read.
-export type CheckedModule = { path, kinds, types, unions }
+export type CheckedModule = { path, kinds, types, records, unions }
 
 export type BuiltinExport = { name, kind, scheme }
 export type BuiltinUnion = { name, variants }
@@ -50,7 +50,7 @@ export function kMutable() { KMutable }
 export function kType() { KType }
 export function kOpaqueType() { KOpaqueType }
 
-export function mkScheme(vars, constraints, body) {
+export generic function mkScheme(vars, constraints, body) {
 	Scheme { vars, constraints, body }
 }
 
@@ -59,11 +59,31 @@ export function unknownType() { ITUnknown }
 export function nameType(name) { ITName { name } }
 
 export function mkIface(path, kinds, types, unions) {
-	ModIface { path, kinds, types, unions }
+	ModIface {
+		path = path,
+		kinds = kinds,
+		types = types,
+		records = IMS.imsEmpty(),
+		unions = unions
+	}
+}
+
+export function mkIfaceWithRecords(path, kinds, types, records, unions) {
+	ModIface { path, kinds, types, records, unions }
 }
 
 export function mkCheckedModule(path, kinds, types, unions) {
-	CheckedModule { path, kinds, types, unions }
+	CheckedModule {
+		path = path,
+		kinds = kinds,
+		types = types,
+		records = IMS.imsEmpty(),
+		unions = unions
+	}
+}
+
+export function mkCheckedModuleWithRecords(path, kinds, types, records, unions) {
+	CheckedModule { path, kinds, types, records, unions }
 }
 
 export function mkBuiltinExport(name, kind, scheme) {
@@ -92,20 +112,40 @@ export function lookupType(iface, name) {
 	IMS.imsGet(iface.types, name)
 }
 
+export function lookupRecord(iface, name) {
+	IMS.imsGet(iface.records, name)
+}
+
 export function lookupUnion(iface, name) {
 	IMS.imsGet(iface.unions, name)
 }
 
 export function putKind(iface, name, kind) {
-	mkIface(iface.path, IMS.imsPut(iface.kinds, name, kind), iface.types, iface.unions)
+	mkIfaceWithRecords(iface.path, IMS.imsPut(iface.kinds, name, kind), iface.types, iface.records, iface.unions)
 }
 
 export function putType(iface, name, scheme) {
-	mkIface(iface.path, iface.kinds, IMS.imsPut(iface.types, name, scheme), iface.unions)
+	mkIfaceWithRecords(iface.path, iface.kinds, IMS.imsPut(iface.types, name, scheme), iface.records, iface.unions)
+}
+
+export function putRecord(iface, name, fields) {
+	mkIfaceWithRecords(
+		iface.path,
+		iface.kinds,
+		iface.types,
+		IMS.imsPut(iface.records, name, fields),
+		iface.unions
+	)
 }
 
 export function putUnion(iface, name, variants) {
-	mkIface(iface.path, iface.kinds, iface.types, IMS.imsPut(iface.unions, name, variants))
+	mkIfaceWithRecords(
+		iface.path,
+		iface.kinds,
+		iface.types,
+		iface.records,
+		IMS.imsPut(iface.unions, name, variants)
+	)
 }
 
 export function hasExport(iface, name) {
@@ -138,10 +178,10 @@ function typeNameOfDecl(decl) {
 	| UnionDecl u -> u.tname
 }
 
-function variantsOfDecl(decl) {
+function putDeclShape(iface, decl) {
 	match decl with
-	| RecordDecl _ -> []
-	| UnionDecl u -> u.variants
+	| RecordDecl r -> putRecord(iface, r.tname, r.fields)
+	| UnionDecl u -> putUnion(iface, u.tname, u.variants)
 }
 
 function typeKind(isOpaque) {
@@ -161,9 +201,7 @@ function addTypeExport(iface, stmt) {
 		let kind = typeKind(s.isOpaque);
 		let iface1 = putKind(iface, name, kind);
 		let iface2 = putType(iface1, name, mkScheme([], [], nameType(name)));
-		let variants = variantsOfDecl(s.decl);
-		if length(variants) == 0 then { iface2 }
-		else { putUnion(iface2, name, variants) }
+		putDeclShape(iface2, s.decl)
 	}
 	| _ -> iface
 }
@@ -200,7 +238,7 @@ export function ifaceOfAst(ast) {
 // ── extractors required by the architecture ────────────────────────────────
 
 export function ifaceOfChecked(cm) {
-	mkIface(cm.path, cm.kinds, cm.types, cm.unions)
+	mkIfaceWithRecords(cm.path, cm.kinds, cm.types, cm.records, cm.unions)
 }
 
 function builtinExportsLoop(exports, iface) {

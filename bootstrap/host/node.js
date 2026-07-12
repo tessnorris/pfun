@@ -232,6 +232,7 @@
       length: core.$length,
       reverse: core.$reverse,
       cons: core.$cons,
+      nth: core.$nth,
       slice: core.$slice,
       take: core.$take,
       range: core.$range,

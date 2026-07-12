@@ -48,6 +48,9 @@ function testCoreIfaceExposesBuiltinTypesAndFunctions() {
 			Assert.assertTrue(Iface.hasExport(i, "Option")),
 			Assert.assertTrue(Iface.hasExport(i, "Result")),
 			Assert.assertTrue(Iface.hasExport(i, "Pair")),
+			match Iface.lookupRecord(i, "Pair") with
+			| None -> Assert.fail("Missing Pair record declaration.")
+			| Some fields -> Assert.assertEqual(2, length(fields.value)),
 			Assert.assertTrue(Iface.hasExport(i, "length")),
 			Assert.assertTrue(Iface.hasExport(i, "map")),
 			Assert.assertTrue(Iface.hasExport(i, "reduce"))

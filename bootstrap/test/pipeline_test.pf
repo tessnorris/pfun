@@ -64,6 +64,12 @@ function firstEmittedId(modules) {
 	| Some module -> module.value.moduleId
 }
 
+function schemaFieldsText(schemas, name) {
+	match IMS.imsGet(schemas, name) with
+	| None -> "<missing>"
+	| Some fields -> join(fields.value, "|")
+}
+
 function artifactText(artifact) {
 	match artifact with
 	| SingleJs a -> a.text
@@ -143,6 +149,23 @@ function testBuiltinSingletons() {
 		),
 		Assert.assertFalse(
 			IMS.imsHas(singletons, "Some")
+		)
+	])
+}
+
+//![test("derives builtin record and variant field layouts")]
+function testBuiltinSchemaFields() {
+	let schemas = Pipeline.schemaFieldsFromIfaces(
+		Spec.allBuiltinIfaces()
+	);
+	Assert.assertions([
+		Assert.assertEqual(
+			"key|value",
+			schemaFieldsText(schemas, "Pair")
+		),
+		Assert.assertEqual(
+			"value",
+			schemaFieldsText(schemas, "Some")
 		)
 	])
 }
@@ -313,6 +336,55 @@ function testCompileNodeBundle() {
 				),
 				Assert.assertTrue(
 					containsText(text, "$req(\"src/main\")")
+				)
+			])
+		}
+	}
+}
+
+//![test("compiles imported record field access without dynamic field lookup")]
+function testCompileImportedRecordField() {
+	let files = sourceMap([
+		source(
+			"src/main.pf",
+			"import { box } from \"./box\"; "
+			++ "export let answer = box().value + 1;"
+		),
+		source(
+			"src/box.pf",
+			"export type Box = { value }; "
+			++ "export function box() { Box { value = 41 } }"
+		)
+	]);
+
+	match Load.loadGraphMem(files, "src/main.pf", env()) with
+	| LoadErr _ -> Assert.assertions([
+		Assert.fail("Expected imported-record graph to load.")
+	])
+	| LoadOk loaded -> {
+		match Pipeline.compileProgram(
+			loaded.modules,
+			Link.nodeBundle(),
+			host()
+		) with
+		| PipelineCompileErr bad -> Assert.assertions([
+			Assert.fail(
+				"Expected imported-record compilation success, got "
+				++ __str__(length(bad.diags))
+				++ " diagnostics."
+			)
+		])
+		| PipelineCompileOk good -> {
+			let text = artifactText(good.artifact);
+			Assert.assertions([
+				Assert.assertTrue(
+					containsText(text, ".f[0]")
+				),
+				Assert.assertFalse(
+					containsText(
+						text,
+						"$field(box(), \"value\")"
+					)
 				)
 			])
 		}

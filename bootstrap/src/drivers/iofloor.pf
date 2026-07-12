@@ -9,11 +9,11 @@ import * from "file";
 import * from "../data/resultx";
 
 export function okText(text) {
-	BOk { text }
+	BOk { text ++ "" }
 }
 
-export function errText(message) {
-	BErr { message }
+export generic function errText(message) {
+	BErr { message ++ "" }
 }
 
 export proc args() {
@@ -42,12 +42,12 @@ export proc ensureDir(path) {
 	| Err e -> BErr { e.message }
 }
 
-export proc printLines(lines) {
+export generic proc printLines(lines) {
 	println(join(lines, "\n"));
 }
 
 export proc fail(message, code) {
-	println(message);
+	println(message ++ "");
 	exit(code);
 }
 

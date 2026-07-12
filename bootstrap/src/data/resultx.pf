@@ -9,6 +9,9 @@ export type BResult = {
 	| BErr: message
 }
 
+// BErr is intentionally a text diagnostic, not a second generic slot.
+let bResultMessageTypeWitness = BErr { "" };
+
 export generic function ok(value) {
 	BOk { value }
 }

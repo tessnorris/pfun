@@ -127,7 +127,7 @@ export function tVariant(vname, unionName, args) { TVariant { vname, unionName, 
 export function tVar(v) { TVar { v } }
 export function tUnknown() { TUnknown }
 
-export function mkScheme(vars, constraints, body) {
+export generic function mkScheme(vars, constraints, body) {
 	Scheme { vars, constraints, body }
 }
 
@@ -139,7 +139,7 @@ export function mkInferResult(types, exports, diags) {
 	InferResult { types, exports, diags }
 }
 
-function out(st, val) {
+generic function out(st, val) {
 	TcOut { st, val }
 }
 
@@ -393,6 +393,61 @@ function envFreeVarsFromEntries(entries, acc) {
 
 function envFreeVars(env) {
 	envFreeVarsFromEntries(IMS.imsEntries(env), [])
+}
+
+// Non-generic declaration fields are module-owned type variables. Generic
+// functions may quantify call-local variables, but must never quantify these
+// shared declaration variables or importers could instantiate one record field
+// inconsistently with another.
+function fieldShapeFreeVars(st, shape) {
+	match shape with
+	| FieldMono f -> freeVars(apply(st.subst, f.t))
+	| FieldSlot _ -> []
+}
+
+function fieldInfosFreeVars(st, fields, acc) {
+	match Compat.uncons(fields) with
+	| None -> acc
+	| Some cell -> {
+		let p = cell.value;
+		fieldInfosFreeVars(
+			st,
+			p.value,
+			intUnion(acc, fieldShapeFreeVars(st, p.key.shape))
+		)
+	}
+}
+
+function variantInfosFreeVars(st, variants, acc) {
+	match Compat.uncons(variants) with
+	| None -> acc
+	| Some cell -> {
+		let p = cell.value;
+		let withFields = fieldInfosFreeVars(st, p.key.fields, acc);
+		variantInfosFreeVars(st, p.value, withFields)
+	}
+}
+
+function typeInfoFreeVars(st, info) {
+	let fields = fieldInfosFreeVars(st, info.fields, []);
+	variantInfosFreeVars(st, info.variants, fields)
+}
+
+function declarationFreeVarsLoop(st, entries, acc) {
+	match Compat.uncons(entries) with
+	| None -> acc
+	| Some cell -> {
+		let p = cell.value;
+		declarationFreeVarsLoop(
+			st,
+			p.value,
+			intUnion(acc, typeInfoFreeVars(st, p.key.value))
+		)
+	}
+}
+
+function declarationFreeVars(st) {
+	declarationFreeVarsLoop(st, IMS.imsEntries(st.records), [])
 }
 
 function occursIn(v, t, subst) {
@@ -720,7 +775,8 @@ function finalizePending(st, path) {
 
 function generalizeWithEnv(env, st, t) {
 	let solved = apply(st.subst, t);
-	let vars = intRemoveAll(freeVars(solved), envFreeVars(env));
+	let locked = intUnion(envFreeVars(env), declarationFreeVars(st));
+	let vars = intRemoveAll(freeVars(solved), locked);
 	mkScheme(vars, [], solved)
 }
 
@@ -757,7 +813,7 @@ function replaceQuantified(t, m) {
 	| _ -> t
 }
 
-export function instantiate(st, scheme) {
+export generic function instantiate(st, scheme) {
 	let fmap = freshMapForVars(st, scheme.vars, IMI.imiEmpty());
 	Pair { fmap.key, replaceQuantified(scheme.body, fmap.value) }
 }
@@ -835,10 +891,9 @@ function registerRecord(st, env, tname, fieldDecls) {
 	envOut(st1, env1)
 }
 
-// Builtin intrinsic types that are part of the runtime rather than any
-// module's exports. Pair is the runtime's fold/uncons cell. Interfaces
-// currently carry union declarations only, so record-shaped intrinsics are
-// seeded here; if ModIface grows record support, this moves to builtins/spec.
+// Pair remains seeded here for isolated type-checker unit tests that do not
+// provide the builtin interface map. Production checking also receives Pair's
+// declaration through builtins/spec.pf and ModIface.records.
 function registerBuiltinTypes(st, env) {
 	registerRecord(st, env, "Pair", [A.mkFieldDecl("key", true), A.mkFieldDecl("value", true)])
 }
@@ -864,6 +919,16 @@ function registerUnion(st, env, unionName, variantDecls) {
 // imported by name, and variant constructors are program-global in the V1
 // runtime anyway. Aliased entries (the same interface keyed under both its
 // raw and resolved path) are registered once.
+function registerIfaceRecordEntries(st, env, entries) {
+	match Compat.uncons(entries) with
+	| None -> envOut(st, env)
+	| Some cell -> {
+		let p = cell.value;
+		let one = registerRecord(st, env, p.key.key, p.key.value);
+		registerIfaceRecordEntries(one.st, one.env, p.value)
+	}
+}
+
 function registerIfaceUnionEntries(st, env, entries) {
 	match Compat.uncons(entries) with
 	| None -> envOut(st, env)
@@ -890,21 +955,30 @@ function bindAllIfaceExports(st, env, entries) {
 	}
 }
 
-function registerDepUnionsLoop(st, env, entries, seen) {
+function registerDepTypesLoop(st, env, entries, seen) {
 	match Compat.uncons(entries) with
 	| None -> envOut(st, env)
 	| Some cell -> {
 		let p = cell.value;
 		let iface = p.key.value;
 		if strListContains(seen, iface.path) then {
-			registerDepUnionsLoop(st, env, p.value, seen)
+			registerDepTypesLoop(st, env, p.value, seen)
 		} else {
-			let one = registerIfaceUnionEntries(st, env, IMS.imsEntries(iface.unions));
+			let records = registerIfaceRecordEntries(
+				st,
+				env,
+				IMS.imsEntries(iface.records)
+			);
+			let one = registerIfaceUnionEntries(
+				records.st,
+				records.env,
+				IMS.imsEntries(iface.unions)
+			);
 			if isImplicitBuiltinPath(iface.path) then {
 				let env2 = bindAllIfaceExports(one.st, one.env, IMS.imsEntries(iface.types));
-				registerDepUnionsLoop(one.st, env2, p.value, cons(iface.path, seen))
+				registerDepTypesLoop(one.st, env2, p.value, cons(iface.path, seen))
 			} else {
-				registerDepUnionsLoop(one.st, one.env, p.value, cons(iface.path, seen))
+				registerDepTypesLoop(one.st, one.env, p.value, cons(iface.path, seen))
 			}
 		}
 	}
@@ -918,8 +992,8 @@ function strListContains(xs, s) {
 	}
 }
 
-function registerDepUnions(st, env, deps) {
-	registerDepUnionsLoop(st, env, IMS.imsEntries(deps), [])
+function registerDepTypes(st, env, deps) {
+	registerDepTypesLoop(st, env, IMS.imsEntries(deps), [])
 }
 
 function bindVariantCtors(env, variants) {
@@ -1917,7 +1991,10 @@ function exportSchemeFor(st, env, stmt, path) {
 		| None -> Pair { st, Some { Pair { n.value, mkScheme([], [], TNamed { n.value, [] }) } } }
 		| Some entry -> {
 			match entry.value with
-			| TScheme s -> Pair { st, Some { Pair { n.value, mkScheme(s.scheme.vars, s.scheme.constraints, widenVariantsDeep(s.scheme.body)) } } }
+			| TScheme s -> {
+				let solved = widenVariantsDeep(apply(st.subst, s.scheme.body));
+				Pair { st, Some { Pair { n.value, mkScheme(s.scheme.vars, s.scheme.constraints, solved) } } }
+			}
 			| TMono m -> {
 				let solved = widenVariantsDeep(apply(st.subst, m.t));
 				let st1 = checkExportGround(st, stmt, path, n.value, solved);
@@ -1959,7 +2036,7 @@ export function inferModule(ast, deps) {
 	let st0 = emptyState();
 	let env0 = builtinEnv();
 	let intrinsic = registerBuiltinTypes(st0, env0);
-	let seeded = registerDepUnions(intrinsic.st, intrinsic.env, deps);
+	let seeded = registerDepTypes(intrinsic.st, intrinsic.env, deps);
 	let imported = bindImports(seeded.st, seeded.env, ast.stmts, deps);
 	let declared = declareTypes(imported.st, imported.env, ast.stmts);
 	let predeclared = predeclareFunctions(declared.st, declared.env, ast.stmts);

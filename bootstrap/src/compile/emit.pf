@@ -27,7 +27,8 @@ import * as J from "./js";
 export type EmitOpts = {
 	moduleId,
 	singletons,
-	browserSafe
+	browserSafe,
+	schemaFields
 }
 
 export type Require = {
@@ -52,7 +53,21 @@ export type EmittedModule = {
 }
 
 export function emitOpts(moduleId, singletons, browserSafe) {
-	EmitOpts { moduleId, singletons, browserSafe }
+	EmitOpts {
+		moduleId = moduleId,
+		singletons = singletons,
+		browserSafe = browserSafe,
+		schemaFields = IMS.imsEmpty()
+	}
+}
+
+export function emitOptsWithSchemas(
+	moduleId,
+	singletons,
+	browserSafe,
+	schemaFields
+) {
+	EmitOpts { moduleId, singletons, browserSafe, schemaFields }
 }
 
 export function hostReq() {
@@ -181,7 +196,7 @@ function emptyCtx(types, opts) {
 		EmitNoTail,
 		IMS.imsEmpty(),
 		[],
-		IMS.imsEmpty()
+		opts.schemaFields
 	}
 }
 
@@ -507,8 +522,8 @@ function putSchemaFields(acc, schema) {
 	IMS.imsPut(acc, schema.runtimeName, schema.fields)
 }
 
-function schemaFieldMap(schemas) {
-	reduce(putSchemaFields, IMS.imsEmpty(), schemas)
+function schemaFieldMapFrom(base, schemas) {
+	reduce(putSchemaFields, base, schemas)
 }
 
 // ── exports and requires ────────────────────────────────────────────────────
@@ -953,29 +968,42 @@ function stringIndexOf(names, value, index) {
 	}
 }
 
-function emitField(ctx, fieldExpr) {
-	let object = emitExpr(ctx, fieldExpr.object);
-	match typeOfExpr(ctx, fieldExpr.object) with
-	| TNamed named -> {
-		match schemaFieldsFor(ctx, named.tname) with
-		| Some fields -> {
-			match stringIndexOf(fields.value, fieldExpr.fname, 0) with
-			| Some index -> {
-				J.jsIndex(
-					J.jsMember(object, "f"),
-					J.jsNum(__str__(index.value))
-				)
-			}
-			| None -> hostCall(
-				"$field",
-				[object, J.jsStr(fieldExpr.fname)]
+function emitFieldBySchema(ctx, object, schemaName, fieldName) {
+	match schemaFieldsFor(ctx, schemaName) with
+	| Some fields -> {
+		match stringIndexOf(fields.value, fieldName, 0) with
+		| Some index -> {
+			J.jsIndex(
+				J.jsMember(object, "f"),
+				J.jsNum(__str__(index.value))
 			)
 		}
 		| None -> hostCall(
 			"$field",
-			[object, J.jsStr(fieldExpr.fname)]
+			[object, J.jsStr(fieldName)]
 		)
 	}
+	| None -> hostCall(
+		"$field",
+		[object, J.jsStr(fieldName)]
+	)
+}
+
+function emitField(ctx, fieldExpr) {
+	let object = emitExpr(ctx, fieldExpr.object);
+	match typeOfExpr(ctx, fieldExpr.object) with
+	| TNamed named -> emitFieldBySchema(
+		ctx,
+		object,
+		named.tname,
+		fieldExpr.fname
+	)
+	| TVariant variant -> emitFieldBySchema(
+		ctx,
+		object,
+		variant.vname,
+		fieldExpr.fname
+	)
 	| _ -> hostCall(
 		"$field",
 		[object, J.jsStr(fieldExpr.fname)]
@@ -1784,7 +1812,10 @@ export function emitModule(cm, opts) {
 	let ctx0 = emptyCtx(cm.infer.types, opts);
 	let ctx1 = withLocalsMap(ctx0, locals);
 	let ctx2 = withStars(ctx1, starImportsOfStmts(cm.ast.stmts));
-	let ctx = withSchemaFields(ctx2, schemaFieldMap(schemas));
+	let ctx = withSchemaFields(
+		ctx2,
+		schemaFieldMapFrom(opts.schemaFields, schemas)
+	);
 
 	emittedModule(
 		opts.moduleId,

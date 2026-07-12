@@ -102,7 +102,7 @@ function mergeTypedExports(entries, acc) {
 function ifaceFromInfer(ast, infer) {
 	let skeleton = I.ifaceOfAst(ast);
 	let typedExports = mergeTypedExports(IMS.imsEntries(infer.exports), skeleton.types);
-	I.mkIface(ast.path, skeleton.kinds, typedExports, skeleton.unions)
+	I.mkIfaceWithRecords(ast.path, skeleton.kinds, typedExports, skeleton.records, skeleton.unions)
 }
 
 // ── single-module checking ────────────────────────────────────────────────

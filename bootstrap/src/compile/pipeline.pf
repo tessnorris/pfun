@@ -161,6 +161,96 @@ export function singletonsFromIfaces(ifaces) {
 	).values
 }
 
+// ── global field-layout derivation ─────────────────────────────────────────
+
+function fieldNames(fields) {
+	map(fn field => field.fname, fields)
+}
+
+function putRecordSchemaEntries(entries, acc) {
+	match Compat.uncons(entries) with
+	| None -> acc
+	| Some cell -> {
+		let entry = cell.value.key;
+		putRecordSchemaEntries(
+			cell.value.value,
+			IMS.imsPut(
+				acc,
+				entry.key,
+				fieldNames(entry.value)
+			)
+		)
+	}
+}
+
+function putVariantSchemas(variants, acc) {
+	match Compat.uncons(variants) with
+	| None -> acc
+	| Some cell -> {
+		let variant = cell.value.key;
+		putVariantSchemas(
+			cell.value.value,
+			IMS.imsPut(
+				acc,
+				variant.vname,
+				fieldNames(variant.fields)
+			)
+		)
+	}
+}
+
+function putUnionSchemaEntries(entries, acc) {
+	match Compat.uncons(entries) with
+	| None -> acc
+	| Some cell -> {
+		let entry = cell.value.key;
+		putUnionSchemaEntries(
+			cell.value.value,
+			putVariantSchemas(entry.value, acc)
+		)
+	}
+}
+
+function putIfaceSchemas(iface, acc) {
+	let records = putRecordSchemaEntries(
+		IMS.imsEntries(iface.records),
+		acc
+	);
+	putUnionSchemaEntries(
+		IMS.imsEntries(iface.unions),
+		records
+	)
+}
+
+function schemaIfaceEntriesLoop(entries, acc, seen) {
+	match Compat.uncons(entries) with
+	| None -> acc
+	| Some cell -> {
+		let iface = cell.value.key.value;
+		if IMS.imsHas(seen, iface.path) then {
+			schemaIfaceEntriesLoop(
+				cell.value.value,
+				acc,
+				seen
+			)
+		} else {
+			schemaIfaceEntriesLoop(
+				cell.value.value,
+				putIfaceSchemas(iface, acc),
+				IMS.imsPut(seen, iface.path, true)
+			)
+		}
+	}
+}
+
+export function schemaFieldsFromIfaces(ifaces) {
+	schemaIfaceEntriesLoop(
+		IMS.imsEntries(ifaces),
+		IMS.imsEmpty(),
+		IMS.imsEmpty()
+	)
+}
+
 // ── checking ───────────────────────────────────────────────────────────────
 
 // Lower-level entry point for tests and future embedding. `builtinIfaces` must
@@ -192,22 +282,30 @@ export function checkProgram(raws) {
 
 // ── emission ───────────────────────────────────────────────────────────────
 
-function emitCheckedLoop(modules, singletons, browserSafe, acc) {
+function emitCheckedLoop(
+	modules,
+	singletons,
+	schemaFields,
+	browserSafe,
+	acc
+) {
 	match Compat.uncons(modules) with
 	| None -> reverse(acc)
 	| Some cell -> {
 		let checked = cell.value.key;
 		let emitted = Emit.emitModule(
 			checked,
-			Emit.emitOpts(
+			Emit.emitOptsWithSchemas(
 				checked.path,
 				singletons,
-				browserSafe
+				browserSafe,
+				schemaFields
 			)
 		);
 		emitCheckedLoop(
 			cell.value.value,
 			singletons,
+			schemaFields,
 			browserSafe,
 			cons(emitted, acc)
 		)
@@ -219,9 +317,13 @@ export function emitChecked(checked, target) {
 	let singletons = singletonsFromIfaces(
 		checked.ifaces
 	);
+	let schemaFields = schemaFieldsFromIfaces(
+		checked.ifaces
+	);
 	emitCheckedLoop(
 		checked.modules,
 		singletons,
+		schemaFields,
 		browserSafeForTarget(target),
 		[]
 	)

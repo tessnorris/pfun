@@ -54,6 +54,19 @@ function testDependencyInterfaceVisible() {
 	}
 }
 
+//![test("record imported from dependency supports field access")]
+function testImportedRecordFieldAccess() {
+	let libSrc = "export type Box = { value }; export function box() { Box { value = 41 } }";
+	let libUnit = H.checkUnit("boxlib.pf", libSrc);
+	let deps = IMS.imsPut(H.emptyDeps(), "./boxlib", libUnit.iface);
+	let mainSrc = "import { box } from \"./boxlib\"; let answer = box().value + 1;";
+	let unit = H.checkUnitWithDeps("main.pf", mainSrc, deps);
+	Assert.assertions([
+		Assert.assertEqual(0, length(libUnit.diags)),
+		Assert.assertEqual(0, length(unit.diags))
+	])
+}
+
 //![test("dependent of failed module is skipped once")]
 function testDependentOfFailedModuleSkippedOnce() {
 	match H.rawSource("baddep.pf", "export let bad = \"a\" + \"b\";") with

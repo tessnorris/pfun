@@ -5,25 +5,22 @@
 //
 // Span comes from syntax/token.pf: { start, end }, end-exclusive, where each
 // end is a Pos { line, col, offset } (1-based line/col, 0-based offset).
-// diag.pf only *reads* span fields, so it does not import token.pf.
 //
 // Rendering format (a V2 decision, frozen by the golden snapshots — the arch
 // doc specifies behavior, not bytes):
 //
-//   demo.pf:2:9: error[Parse]: Expected ')' after expression.
-//     let b = (2;
-//             ^^
-//     note: opened here
+// demo.pf:2:9: error[Parse]: Expected ')' after expression.
+// let b = (2;
+//          ^^
+// note: opened here
 //
-// path:line:col leads so editors (Emacs compilation-mode, etc.) can jump to
-// the location. The underline covers the span exactly — unlike V1's renderer,
-// whose single caret lands one column past the reported position; that quirk
-// is deliberately not carried forward.
+// path:line:col leads so editors can jump to the location. The underline
+// covers the span exactly.
 //
 // Style-guide notes: `++` only (never `+`); list building via Lx.concat;
-// element access via Compat.listAt (never nth); rendering never fails —
-// missing source or an out-of-range line degrades to a shorter rendering.
+// element access via Compat.listAt (never nth); rendering never fails.
 
+import * as T from "../syntax/token";
 import * as Strx from "../data/strx";
 import * as Lx from "../data/listx";
 import * as Compat from "../compat";
@@ -33,9 +30,6 @@ export type Severity = {
 	| WarnSev
 }
 
-// The diagnostic category. RuntimeD describes only engineering faults and
-// boundary failures (2.8 classes 3 and 4); no pure-language operation
-// produces one.
 export type DiagCode = {
 	| LexD
 	| ParseD
@@ -57,23 +51,31 @@ export type Diag = {
 	notes
 }
 
+// Pin the concrete diagnostic schema before exported functions are inferred.
+function diagTypeWitness() {
+	let p = T.mkPos(1, 1, 0);
+	Diag { ErrSev, ParseD, "", "", T.mkSpan(p, p), [""] }
+}
+
 // ── construction ────────────────────────────────────────────────────────────
 
-// Constructs an error diagnostic.
 export function err(code, message, path, span) {
 	Diag { ErrSev, code, message, path, span, [] }
 }
 
-// Constructs a warning diagnostic.
 export function warn(code, message, path, span) {
 	Diag { WarnSev, code, message, path, span, [] }
 }
 
-// Returns a copy of `diag` with an extra note. (All Pfun data is immutable;
-// the original is untouched by construction.)
 export function note(diag, s) {
-	Diag { diag.severity, diag.code, diag.message, diag.path, diag.span,
-	       Lx.concat([diag.notes, [s]]) }
+	Diag {
+		diag.severity,
+		diag.code,
+		diag.message,
+		diag.path,
+		diag.span,
+		Lx.concat([diag.notes, [s]])
+	}
 }
 
 // ── rendering ───────────────────────────────────────────────────────────────
@@ -84,7 +86,6 @@ function sevWord(severity) {
 	| WarnSev -> "warning"
 }
 
-// One short label per category; these strings are frozen by golden snapshots.
 function codeLabel(code) {
 	match code with
 	| LexD -> "Lex"
@@ -98,77 +99,75 @@ function codeLabel(code) {
 	| RuntimeD -> "Runtime"
 }
 
-// "demo.pf:2:9: error[Parse]: Expected ')' after expression."
 function renderHeader(diag) {
 	diag.path ++ ":" ++ __str__(diag.span.start.line) ++ ":"
-	          ++ __str__(diag.span.start.col)
-	          ++ ": " ++ sevWord(diag.severity)
-	          ++ "[" ++ codeLabel(diag.code) ++ "]: " ++ diag.message
+	++ __str__(diag.span.start.col)
+	++ ": " ++ sevWord(diag.severity)
+	++ "[" ++ codeLabel(diag.code) ++ "]: " ++ diag.message
 }
 
-// The source line under the span's start, plus an underline row covering the
-// span. Returns a list of lines; empty when the line is out of range.
-//
-// Underline rules:
-//  - single-line span: width = end.col - start.col (end-exclusive), min 1 so
-//    zero-width spans (EOF, insertion points) still show one caret
-//  - the underline is clamped to the trimmed line, so a span that reaches
-//    into trailing whitespace can't overrun what was printed
-//  - multi-line span: underline runs from start.col to the end of the first
-//    line, with a continuation marker — this is the "render sanely" contract,
-//    not a faithful multi-line drawing
-function minInt(a, b) { if a < b then { a } else { b } }
-function maxInt(a, b) { if a > b then { a } else { b } }
-// Expression-position selection: `if` doesn't parse as a let initializer and
-// literal match patterns don't exist, so branch through a function. Both
-// arguments must be pure (they are thunks; only the chosen one is forced).
-function pick(cond, a, b) { if cond then { a } else { b } }
+function minInt(a, b) {
+	if a < b then { a } else { b }
+}
+
+function maxInt(a, b) {
+	if a > b then { a } else { b }
+}
+
+// Used at both Int and Str call sites in renderSnippet.
+generic function pick(cond, a, b) {
+	if cond then { a } else { b }
+}
 
 function renderSnippet(span, sourceText) {
 	let startP = span.start;
 	let endP = span.end;
 	let srcLines = split(sourceText, "\n");
+
 	match Compat.listAt(srcLines, startP.line - 1) with
 	| None -> []
 	| Some lt -> {
 		let text = Strx.trimRight(lt.value);
 		let lineLen = length(text);
-		// clamp the pad so a start.col inside trailing whitespace still points
-		// at the end of what we actually printed
 		let padN = minInt(startP.col - 1, lineLen);
 		let multi = endP.line > startP.line;
 		let spanEndCol = pick(multi, lineLen + 1, endP.col);
-		let width = maxInt(1, minInt(spanEndCol, lineLen + 1) - (padN + 1));
+		let width = maxInt(
+			1,
+			minInt(spanEndCol, lineLen + 1) - (padN + 1)
+		);
 		let marks = Strx.strRepeat("^", width);
-		let cont = pick(multi,
-			" (span continues for " ++ __str__(endP.line - startP.line) ++ " more lines)",
-			"");
-		["  " ++ text,
-		 "  " ++ Strx.strRepeat(" ", padN) ++ marks ++ cont]
+		let cont = pick(
+			multi,
+			" (span continues for "
+			++ __str__(endP.line - startP.line)
+			++ " more lines)",
+			""
+		);
+		[
+			"  " ++ text,
+			"  " ++ Strx.strRepeat(" ", padN) ++ marks ++ cont
+		]
 	}
 }
 
 function renderNotes(notes) {
-	Lx.concat([[ ], map(fn s => "  note: " ++ s, notes)])
+	Lx.concat([[], map(fn s => "  note: " ++ s, notes)])
 }
 
-// Renders one diagnostic with file, line, column, message, and caret.
-//
-// `sourceOf` is a function from path to Option<Str> so rendering can lazily
-// request source text. Virtual paths (e.g. "<generated:tea-main>") render
-// exactly like files: sourceOf answers them with the generated module text.
-// If sourceOf returns None, the header and notes still render.
 export function renderDiag(diag, sourceOf) {
 	let headerLine = [renderHeader(diag)];
 	let snippet = match sourceOf(diag.path) with
-		| None -> []
-		| Some src -> renderSnippet(diag.span, src.value);
-	join(Lx.concat([headerLine, snippet, renderNotes(diag.notes)]), "\n")
+	| None -> []
+	| Some src -> renderSnippet(diag.span, src.value);
+	join(
+		Lx.concat([headerLine, snippet, renderNotes(diag.notes)]),
+		"\n"
+	)
 }
 
 // ── batch rendering ─────────────────────────────────────────────────────────
 
-// Three-way comparator: path first (code-unit order), then start offset.
 function diagCmp(a, b) {
 	if a.path < b.path then { 0 - 1 }
 	else if b.path < a.path then { 1 }
@@ -177,10 +176,73 @@ function diagCmp(a, b) {
 	else { 0 }
 }
 
-// Sorts diagnostics by path and offset, then renders all, blank-line
-// separated. (Lx.sortBy is a stable merge sort, so equal-position
-// diagnostics keep their emission order.)
 export function renderAll(diags, sourceOf) {
 	let ordered = Lx.sortBy(diagCmp, diags);
 	join(map(fn d => renderDiag(d, sourceOf), ordered), "\n\n")
 }
+
+// ── private concrete signature anchors ─────────────────────────────────────
+//
+// These unify complete function values and therefore constrain both parameters
+// and results without invoking any exported renderer during module loading.
+
+let diagSigPos = T.mkPos(1, 1, 0);
+let diagSigSpan = T.mkSpan(diagSigPos, diagSigPos);
+let diagSigValue = Diag {
+	ErrSev,
+	ParseD,
+	"",
+	"witness.pf",
+	diagSigSpan,
+	[""]
+};
+let diagSigValues = [diagSigValue];
+
+function diagSigCtor(code, message, path, span) {
+	let codes = [ParseD, code];
+	let messages = ["", message];
+	let paths = ["", path];
+	let spans = [diagSigSpan, span];
+	diagSigValue
+}
+let diagSigCtorFns = [
+	diagSigCtor,
+	err,
+	warn
+];
+
+function diagSigNote(diag, text) {
+	let diags = [diagSigValue, diag];
+	let texts = ["", text];
+	diagSigValue
+}
+let diagSigNoteFns = [
+	diagSigNote,
+	note
+];
+
+function diagSigSource(path) {
+	let paths = ["", path];
+	Some { "" }
+}
+
+function diagSigRenderOne(diag, sourceOf) {
+	let diags = [diagSigValue, diag];
+	let sources = [diagSigSource, sourceOf];
+	""
+}
+let diagSigRenderOneFns = [
+	diagSigRenderOne,
+	renderDiag
+];
+
+function diagSigRenderMany(diags, sourceOf) {
+	let diagLists = [diagSigValues, diags];
+	let sources = [diagSigSource, sourceOf];
+	""
+}
+let diagSigRenderManyFns = [
+	diagSigRenderMany,
+	renderAll
+];
+

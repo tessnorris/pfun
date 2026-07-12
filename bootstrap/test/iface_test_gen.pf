@@ -32,6 +32,12 @@ function hasType(iface, name) {
 	| Some _ -> true
 }
 
+function recordFieldCount(iface, name) {
+	match Iface.lookupRecord(iface, name) with
+	| None -> -1
+	| Some fields -> length(fields.value)
+}
+
 function unionVariantCount(iface, name) {
 	match Iface.lookupUnion(iface, name) with
 	| None -> -1
@@ -96,6 +102,7 @@ function testIfaceOfAstTypeExports() {
 		Assert.assertEqual("<missing>", kindName(iface, "Hidden")),
 		Assert.assertTrue(hasType(iface, "Box")),
 		Assert.assertTrue(hasType(iface, "Choice")),
+		Assert.assertEqual(1, recordFieldCount(iface, "Box")),
 		Assert.assertEqual(2, unionVariantCount(iface, "Choice")),
 		Assert.assertEqual(-1, unionVariantCount(iface, "Box"))
 	])
@@ -106,13 +113,26 @@ function testIfaceOfCheckedPassthrough() {
 	let scheme = Iface.mkScheme([], [], Iface.nameType("Int"));
 	let kinds = IMS.imsFromList([Pair { "answer", Iface.kValue() }]);
 	let types = IMS.imsFromList([Pair { "answer", scheme }]);
+	let records = IMS.imsFromList([
+		Pair {
+			"Box",
+			[A.mkFieldDecl("value", true)]
+		}
+	]);
 	let unions = IMS.imsEmpty();
-	let cm = Iface.mkCheckedModule("checked.pf", kinds, types, unions);
+	let cm = Iface.mkCheckedModuleWithRecords(
+		"checked.pf",
+		kinds,
+		types,
+		records,
+		unions
+	);
 	let iface = Iface.ifaceOfChecked(cm);
 	Assert.assertions([
 		Assert.assertEqual("checked.pf", iface.path),
 		Assert.assertEqual("value", kindName(iface, "answer")),
-		Assert.assertTrue(hasType(iface, "answer"))
+		Assert.assertTrue(hasType(iface, "answer")),
+		Assert.assertEqual(1, recordFieldCount(iface, "Box"))
 	])
 }
 

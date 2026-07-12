@@ -1,9 +1,13 @@
 export type IMapI = {
 	| MLeaf
-	| MNode: k, v, left, right, height
+	| MNode: k, generic v, left, right, height
 }
 
-export function imiEmpty() {
+// Pin the monomorphic key and height fields before any generic map function
+// is generalized. The value field is a declaration slot and remains generic.
+let imiTypeWitness = MNode { 0, 0, MLeaf, MLeaf, 1 };
+
+export generic function imiEmpty() {
 	MLeaf
 }
 
@@ -11,13 +15,13 @@ function imiMax(a, b) {
 	if a > b then { a } else { b }
 }
 
-function imiHeight(m) {
+generic function imiHeight(m) {
 	match m with
 	| MLeaf -> 0
 	| MNode n -> n.height
 }
 
-function imiNode(k, v, left, right) {
+generic function imiNode(k, v, left, right) {
 	MNode {
 		k = k,
 		v = v,
@@ -27,13 +31,13 @@ function imiNode(k, v, left, right) {
 	}
 }
 
-function imiBalanceFactor(m) {
+generic function imiBalanceFactor(m) {
 	match m with
 	| MLeaf -> 0
 	| MNode n -> imiHeight(n.left) - imiHeight(n.right)
 }
 
-function imiRotateRight(m) {
+generic function imiRotateRight(m) {
 	match m with
 	| MLeaf -> MLeaf
 	| MNode y -> {
@@ -47,7 +51,7 @@ function imiRotateRight(m) {
 	}
 }
 
-function imiRotateLeft(m) {
+generic function imiRotateLeft(m) {
 	match m with
 	| MLeaf -> MLeaf
 	| MNode x -> {
@@ -61,7 +65,7 @@ function imiRotateLeft(m) {
 	}
 }
 
-function imiBalance(m) {
+generic function imiBalance(m) {
 	match m with
 	| MLeaf -> MLeaf
 	| MNode n -> {
@@ -102,7 +106,7 @@ function imiBalance(m) {
 	}
 }
 
-export function imiGet(m, k) {
+export generic function imiGet(m, k) {
   match m with
   | MLeaf -> None
   | MNode n -> {
@@ -112,7 +116,7 @@ export function imiGet(m, k) {
     }
 }
 
-export function imiPut(m, k, v) {
+export generic function imiPut(m, k, v) {
 	match m with
 	| MLeaf -> imiNode(k, v, MLeaf, MLeaf)
 	| MNode n -> {
@@ -130,23 +134,23 @@ export function imiPut(m, k, v) {
 	}
 }
 
-export function imiHas(m, k) {
+export generic function imiHas(m, k) {
 	match imiGet(m, k) with
 	| None -> false
 	| Some _ -> true
 }
 
-function imiMinEntry(m) {
+generic function imiMinEntry(m) {
 	match m with
 	| MLeaf -> None
 	| MNode n -> {
 		match n.left with
-		| MLeaf -> Some (Pair { n.k, n.v })
+		| MLeaf -> Some { Pair { n.k, n.v } }
 		| MNode _ -> imiMinEntry(n.left)
 	}
 }
 
-function imiRemoveMin(m) {
+generic function imiRemoveMin(m) {
 	match m with
 	| MLeaf -> MLeaf
 	| MNode n -> {
@@ -159,7 +163,7 @@ function imiRemoveMin(m) {
 	}
 }
 
-export function imiRemove(m, k) {
+export generic function imiRemove(m, k) {
 	match m with
 	| MLeaf -> MLeaf
 	| MNode n -> {
@@ -192,7 +196,7 @@ export function imiRemove(m, k) {
 	}
 }
 
-function imiKeysAcc(m, acc) {
+generic function imiKeysAcc(m, acc) {
 	match m with
 	| MLeaf -> acc
 	| MNode n -> {
@@ -202,11 +206,11 @@ function imiKeysAcc(m, acc) {
 	}
 }
 
-export function imiKeys(m) {
+export generic function imiKeys(m) {
 	imiKeysAcc(m, [])
 }
 
-function imiEntriesAcc(m, acc) {
+generic function imiEntriesAcc(m, acc) {
 	match m with
 	| MLeaf -> acc
 	| MNode n -> {
@@ -217,23 +221,23 @@ function imiEntriesAcc(m, acc) {
 	}
 }
 
-export function imiEntries(m) {
+export generic function imiEntries(m) {
 	imiEntriesAcc(m, [])
 }
 
-function imiPutEntry(acc, entry) {
+generic function imiPutEntry(acc, entry) {
 	imiPut(acc, entry.key, entry.value)
 }
 
-export function imiUnion(a, b) {
+export generic function imiUnion(a, b) {
 	reduce(imiPutEntry, a, imiEntries(b))
 	}
 
-export function imiFromList(pairs) {
+export generic function imiFromList(pairs) {
   reduce(imiPutEntry, imiEmpty(), pairs);
 }
 
-export function imiMap(f, m) {
+export generic function imiMap(f, m) {
 	match m with
 	| MLeaf -> MLeaf
 	| MNode n -> {
@@ -243,5 +247,3 @@ export function imiMap(f, m) {
 	}
 }
 
-// Force the key type to Int without evaluating anything (see imaps.pf note).
-let imiKeyTypeWitness = fn v => imiPut(imiEmpty(), 42, v);

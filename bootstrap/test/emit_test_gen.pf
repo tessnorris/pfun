@@ -38,6 +38,18 @@ function singletonOpts() {
 	)
 }
 
+function importedSchemaOpts() {
+	E.emitOptsWithSchemas(
+		"emit-schema-test",
+		IMS.imsEmpty(),
+		false,
+		IMS.imsFromList([
+			Pair { "Foreign", ["left", "right"] },
+			Pair { "Some", ["value"] }
+		])
+	)
+}
+
 function typeTable(entries) {
 	IMI.imiFromList(entries)
 }
@@ -411,6 +423,57 @@ function testComprehensionEmission() {
 	])
 }
 
+//![suite("compile/emit imported schemas")]
+
+//![test("lowers imported record and variant fields by positional schema")]
+function testImportedFieldSchemas() {
+	let sp = testSpan();
+	let recordExpr = A.eField(
+		1,
+		A.eVar(2, "foreign", sp),
+		"right",
+		sp
+	);
+	let variantExpr = A.eField(
+		3,
+		A.eVar(4, "some", sp),
+		"value",
+		sp
+	);
+	let types = typeTable([
+		Pair { 2, TY.tNamed("Foreign", []) },
+		Pair {
+			4,
+			TY.tVariant("Some", "Option", [TY.tInt()])
+		}
+	]);
+	let recordText = renderExpr(
+		types,
+		importedSchemaOpts(),
+		recordExpr
+	);
+	let variantText = renderExpr(
+		types,
+		importedSchemaOpts(),
+		variantExpr
+	);
+
+	Assert.assertions([
+		Assert.assertTrue(
+			StrX.contains(recordText, "foreign.f[1]")
+		),
+		Assert.assertTrue(
+			StrX.contains(variantText, "some.f[0]")
+		),
+		Assert.assertFalse(
+			StrX.contains(recordText, "$field")
+		),
+		Assert.assertFalse(
+			StrX.contains(variantText, "$field")
+		)
+	])
+}
+
 //![suite("compile/emit control flow")]
 
 //![test("lowers variant and list matches to guarded straight-line checks")]
@@ -746,6 +809,12 @@ function __gen_suite_compile_emit_expressions() {
 	])
 }
 
+function __gen_suite_compile_emit_imported_schemas() {
+	suite("compile/emit imported schemas", [
+		test("lowers imported record and variant fields by positional schema", testImportedFieldSchemas)
+	])
+}
+
 function __gen_suite_compile_emit_control_flow() {
 	suite("compile/emit control flow", [
 		test("lowers variant and list matches to guarded straight-line checks", testMatchLowering),
@@ -764,6 +833,6 @@ function __gen_suite_compile_emit_modules_and_golden_output() {
 }
 
 proc main() {
-	runSuites([__gen_suite_compile_emit_expressions(), __gen_suite_compile_emit_control_flow(), __gen_suite_compile_emit_modules_and_golden_output()]);
+	runSuites([__gen_suite_compile_emit_expressions(), __gen_suite_compile_emit_imported_schemas(), __gen_suite_compile_emit_control_flow(), __gen_suite_compile_emit_modules_and_golden_output()]);
 }
 main();

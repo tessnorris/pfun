@@ -70,6 +70,54 @@ export type JsStmt = {
 	| JsLabel : name, body
 }
 
+// Pin the stable JavaScript AST schema before the exported constructors are
+// inferred. This prevents constructor parameters such as JsProp.value and
+// JArrow.body from leaking open variables into the module interface.
+function jsTypeWitness() {
+	let id = JId { "x" };
+	let prop = JsProp { "p", id };
+	let body = JbExpr { id };
+	let stmt = JsBreak;
+	let expressions = [
+		JNum { "0" },
+		JBig { "0" },
+		JStr { "" },
+		JBool { false },
+		JNull,
+		id,
+		JArr { [id] },
+		JObj { [prop] },
+		JArrow { ["x"], body, false },
+		JCall { id, [id] },
+		JNew { id, [id] },
+		JMember { id, "p" },
+		JIndex { id, id },
+		JBin { "+", id, id },
+		JLogic { "&&", id, id },
+		JUn { "!", id },
+		JCond { id, id, id },
+		JAssignE { id, id },
+		JAwait { id }
+	];
+	let bodies = [body, JbBlock { [stmt] }];
+	[
+		JsExprS { id },
+		JsConst { "x", id },
+		JsLet { "x", id },
+		JsAssign { id, id },
+		JsIf { id, [stmt], [stmt] },
+		JsWhile { id, [stmt] },
+		JsRet { id },
+		JsFun { "f", ["x"], [stmt], false },
+		JsTry { [stmt], "e", [stmt] },
+		JsThrow { id },
+		JsBreak,
+		JsContinue,
+		JsBlock { [stmt] },
+		JsLabel { "label", [stmt] }
+	]
+}
+
 // ── namespaced smart constructors ─────────────────────────────────────────
 //
 // V1 cannot reliably construct an imported record through a module qualifier.
