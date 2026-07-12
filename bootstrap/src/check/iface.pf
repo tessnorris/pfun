@@ -30,16 +30,20 @@ export type IfaceType = {
 	| ITName: name
 }
 
-export type ModIface = { path, kinds, types, records, unions }
+// The map-carrying fields are generic slots: their value types (kinds,
+// schemes, declaration lists) are owned by the modules that populate them,
+// and iface.pf itself never constrains them. `path` stays monomorphic (Str),
+// pinned by the grounding witness below.
+export type ModIface = { path, generic kinds, generic types, generic records, generic unions }
 
 // Small input shapes for the two public extractors in the architecture. The
 // eventual checker/builtin manifest may provide richer records with the same
 // fields; these helpers only require the fields they read.
-export type CheckedModule = { path, kinds, types, records, unions }
+export type CheckedModule = { path, generic kinds, generic types, generic records, generic unions }
 
-export type BuiltinExport = { name, kind, scheme }
-export type BuiltinUnion = { name, variants }
-export type BuiltinModule = { path, exports, unions }
+export type BuiltinExport = { name, kind, generic scheme }
+export type BuiltinUnion = { name, generic variants }
+export type BuiltinModule = { path, generic exports, generic unions }
 
 // ── constructors ───────────────────────────────────────────────────────────
 
@@ -58,7 +62,7 @@ export function unknownType() { ITUnknown }
 
 export function nameType(name) { ITName { name } }
 
-export function mkIface(path, kinds, types, unions) {
+export generic function mkIface(path, kinds, types, unions) {
 	ModIface {
 		path = path,
 		kinds = kinds,
@@ -68,11 +72,11 @@ export function mkIface(path, kinds, types, unions) {
 	}
 }
 
-export function mkIfaceWithRecords(path, kinds, types, records, unions) {
+export generic function mkIfaceWithRecords(path, kinds, types, records, unions) {
 	ModIface { path, kinds, types, records, unions }
 }
 
-export function mkCheckedModule(path, kinds, types, unions) {
+export generic function mkCheckedModule(path, kinds, types, unions) {
 	CheckedModule {
 		path = path,
 		kinds = kinds,
@@ -82,53 +86,63 @@ export function mkCheckedModule(path, kinds, types, unions) {
 	}
 }
 
-export function mkCheckedModuleWithRecords(path, kinds, types, records, unions) {
+export generic function mkCheckedModuleWithRecords(path, kinds, types, records, unions) {
 	CheckedModule { path, kinds, types, records, unions }
 }
 
-export function mkBuiltinExport(name, kind, scheme) {
+export generic function mkBuiltinExport(name, kind, scheme) {
 	BuiltinExport { name, kind, scheme }
 }
 
-export function mkBuiltinUnion(name, variants) {
+export generic function mkBuiltinUnion(name, variants) {
 	BuiltinUnion { name, variants }
 }
 
-export function mkBuiltinModule(path, exports, unions) {
+export generic function mkBuiltinModule(path, exports, unions) {
 	BuiltinModule { path, exports, unions }
+}
+
+// Grounding witness: pins the monomorphic string/kind fields of the plumbing
+// records without executing (see signature_grounding_test.pf for the idiom).
+function ifaceGroundingWitness() {
+	let iface = mkIfaceWithRecords("", IMS.imsEmpty(), IMS.imsEmpty(), IMS.imsEmpty(), IMS.imsEmpty());
+	let cm = mkCheckedModuleWithRecords("", IMS.imsEmpty(), IMS.imsEmpty(), IMS.imsEmpty(), IMS.imsEmpty());
+	let be = mkBuiltinExport("", KFun, mkScheme([], [], ITUnknown));
+	let bu = mkBuiltinUnion("", []);
+	mkBuiltinModule(iface.path ++ cm.path ++ be.name ++ bu.name, [], [])
 }
 
 // ── basic lookup/update API ────────────────────────────────────────────────
 
-export function emptyIface(path) {
+export generic function emptyIface(path) {
 	mkIface(path, IMS.imsEmpty(), IMS.imsEmpty(), IMS.imsEmpty())
 }
 
-export function lookupKind(iface, name) {
+export generic function lookupKind(iface, name) {
 	IMS.imsGet(iface.kinds, name)
 }
 
-export function lookupType(iface, name) {
+export generic function lookupType(iface, name) {
 	IMS.imsGet(iface.types, name)
 }
 
-export function lookupRecord(iface, name) {
+export generic function lookupRecord(iface, name) {
 	IMS.imsGet(iface.records, name)
 }
 
-export function lookupUnion(iface, name) {
+export generic function lookupUnion(iface, name) {
 	IMS.imsGet(iface.unions, name)
 }
 
-export function putKind(iface, name, kind) {
+export generic function putKind(iface, name, kind) {
 	mkIfaceWithRecords(iface.path, IMS.imsPut(iface.kinds, name, kind), iface.types, iface.records, iface.unions)
 }
 
-export function putType(iface, name, scheme) {
+export generic function putType(iface, name, scheme) {
 	mkIfaceWithRecords(iface.path, iface.kinds, IMS.imsPut(iface.types, name, scheme), iface.records, iface.unions)
 }
 
-export function putRecord(iface, name, fields) {
+export generic function putRecord(iface, name, fields) {
 	mkIfaceWithRecords(
 		iface.path,
 		iface.kinds,
@@ -138,7 +152,7 @@ export function putRecord(iface, name, fields) {
 	)
 }
 
-export function putUnion(iface, name, variants) {
+export generic function putUnion(iface, name, variants) {
 	mkIfaceWithRecords(
 		iface.path,
 		iface.kinds,
@@ -148,11 +162,11 @@ export function putUnion(iface, name, variants) {
 	)
 }
 
-export function hasExport(iface, name) {
+export generic function hasExport(iface, name) {
 	IMS.imsHas(iface.kinds, name)
 }
 
-export function exportedNames(iface) {
+export generic function exportedNames(iface) {
 	IMS.imsKeys(iface.kinds)
 }
 
@@ -231,13 +245,13 @@ function ifaceAstLoop(stmts, iface) {
 // A convenience for early bootstrap tests before type inference exists. This is
 // not the final checker interface; it records exported names, declared exported
 // type names, and exported union variant declarations with unknown schemes.
-export function ifaceOfAst(ast) {
+export generic function ifaceOfAst(ast) {
 	ifaceAstLoop(ast.stmts, emptyIface(ast.path))
 }
 
 // ── extractors required by the architecture ────────────────────────────────
 
-export function ifaceOfChecked(cm) {
+export generic function ifaceOfChecked(cm) {
 	mkIfaceWithRecords(cm.path, cm.kinds, cm.types, cm.records, cm.unions)
 }
 
@@ -261,7 +275,7 @@ function builtinUnionsLoop(unions, iface) {
 	}
 }
 
-export function ifaceOfBuiltin(bm) {
+export generic function ifaceOfBuiltin(bm) {
 	let iface0 = emptyIface(bm.path);
 	let iface1 = builtinExportsLoop(bm.exports, iface0);
 	builtinUnionsLoop(bm.unions, iface1)

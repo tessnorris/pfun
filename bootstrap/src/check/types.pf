@@ -47,7 +47,7 @@ export type Type = {
 
 // `constraints` is generic so temporary iface.pf schemes can still flow into
 // this pass before the real constraint representation is frozen everywhere.
-export type Scheme = { vars, generic constraints, body }
+export type InferScheme = { vars, generic constraints, body }
 
 export type Subst = { m }
 
@@ -128,7 +128,7 @@ export function tVar(v) { TVar { v } }
 export function tUnknown() { TUnknown }
 
 export generic function mkScheme(vars, constraints, body) {
-	Scheme { vars, constraints, body }
+	InferScheme { vars, constraints, body }
 }
 
 export function emptySubst() {
@@ -399,38 +399,56 @@ function envFreeVars(env) {
 // functions may quantify call-local variables, but must never quantify these
 // shared declaration variables or importers could instantiate one record field
 // inconsistently with another.
-function fieldShapeFreeVars(st, shape) {
+// A self-recursive container field (a FieldMono whose solved type is headed
+// by its own declaration, e.g. IMapS.left : IMapS<'w>) is exempt from the
+// lock: its embedded variables are the container's element types, and fresh
+// per-use instantiation is exactly the desired semantics. The architecture's
+// rule is that recursive fields recurse at the declaration's own slots; until
+// the checker can express that directly, quantifying these variables in the
+// functions that traverse the container is the sound approximation.
+function isSelfHeaded(st, ownName, t) {
+	match apply(st.subst, t) with
+	| TNamed n -> n.tname == ownName
+	| TVariant v -> v.unionName == ownName
+	| _ -> false
+}
+
+function fieldShapeFreeVars(st, ownName, shape) {
 	match shape with
-	| FieldMono f -> freeVars(apply(st.subst, f.t))
+	| FieldMono f -> {
+		if isSelfHeaded(st, ownName, f.t) then { [] }
+		else { freeVars(apply(st.subst, f.t)) }
+	}
 	| FieldSlot _ -> []
 }
 
-function fieldInfosFreeVars(st, fields, acc) {
+function fieldInfosFreeVars(st, ownName, fields, acc) {
 	match Compat.uncons(fields) with
 	| None -> acc
 	| Some cell -> {
 		let p = cell.value;
 		fieldInfosFreeVars(
 			st,
+			ownName,
 			p.value,
-			intUnion(acc, fieldShapeFreeVars(st, p.key.shape))
+			intUnion(acc, fieldShapeFreeVars(st, ownName, p.key.shape))
 		)
 	}
 }
 
-function variantInfosFreeVars(st, variants, acc) {
+function variantInfosFreeVars(st, ownName, variants, acc) {
 	match Compat.uncons(variants) with
 	| None -> acc
 	| Some cell -> {
 		let p = cell.value;
-		let withFields = fieldInfosFreeVars(st, p.key.fields, acc);
-		variantInfosFreeVars(st, p.value, withFields)
+		let withFields = fieldInfosFreeVars(st, ownName, p.key.fields, acc);
+		variantInfosFreeVars(st, ownName, p.value, withFields)
 	}
 }
 
 function typeInfoFreeVars(st, info) {
-	let fields = fieldInfosFreeVars(st, info.fields, []);
-	variantInfosFreeVars(st, info.variants, fields)
+	let fields = fieldInfosFreeVars(st, info.tname, info.fields, []);
+	variantInfosFreeVars(st, info.tname, info.variants, fields)
 }
 
 function declarationFreeVarsLoop(st, entries, acc) {
@@ -1020,6 +1038,33 @@ function declareTypes(st, env, stmts) {
 			declareTypes(out1.st, out1.env, p.value)
 		}
 	}
+}
+
+// Three-way result for namespace member lookup from an EField object.
+type NsLookup = {
+	| NsNotNamespace
+	| NsMember: entry
+	| NsMissing: alias
+}
+
+// If the field-access object is a bare name bound to an import namespace,
+// resolve the member against the namespace table.
+function namespaceLookup(env, object, fname) {
+	match object with
+	| EVar v -> {
+		match lookupEnv(env, v.name) with
+		| Some entry -> {
+			match entry.value with
+			| TNamespace ns -> {
+				match IMS.imsGet(ns.table, fname) with
+				| Some member -> NsMember { member.value }
+				| None -> NsMissing { v.name }
+			}
+			| _ -> NsNotNamespace
+		}
+		| None -> NsNotNamespace
+	}
+	| _ -> NsNotNamespace
 }
 
 function fieldTypeFromShape(shape, args) {
@@ -1663,9 +1708,28 @@ export function cgenExpr(st, env, e, path) {
 		exprOut(addTypedNode(ro.st, x.id, ro.typ), ro.typ)
 	}
 	| EField x -> {
-		let oo = cgenExpr(st, env, x.object, path);
-		let fo = inferFieldAccess(oo.st, oo.typ, x.fname, x.span, path);
-		exprOut(addTypedNode(fo.st, x.id, fo.typ), fo.typ)
+		// Namespace member access (`Ns.name`) resolves against the import's
+		// table and instantiates the member's scheme, exactly like an EVar
+		// lookup of a star-imported name. Without this, the namespace object
+		// types as TUnknown and every cross-module member silently escapes
+		// checking (which groundedness was the first rule to notice).
+		match namespaceLookup(env, x.object, x.fname) with
+		| NsMember m -> {
+			match m.entry with
+			| TScheme s -> {
+				let inst = instantiate(st, s.scheme);
+				let typ = inst.value;
+				exprOut(addTypedNode(inst.key, x.id, typ), typ)
+			}
+			| TMono mo -> exprOut(addTypedNode(st, x.id, mo.t), mo.t)
+			| _ -> exprOut(addTypedNode(addTypeDiag(st, path, x.span, "Namespace member '" ++ x.fname ++ "' is not a value."), x.id, TUnknown), TUnknown)
+		}
+		| NsMissing ms -> exprOut(addTypedNode(addTypeDiag(st, path, x.span, "Namespace '" ++ ms.alias ++ "' has no export '" ++ x.fname ++ "'."), x.id, TUnknown), TUnknown)
+		| NsNotNamespace -> {
+			let oo = cgenExpr(st, env, x.object, path);
+			let fo = inferFieldAccess(oo.st, oo.typ, x.fname, x.span, path);
+			exprOut(addTypedNode(fo.st, x.id, fo.typ), fo.typ)
+		}
 	}
 	| EIndex x -> {
 		let oo = cgenExpr(st, env, x.object, path);

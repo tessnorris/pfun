@@ -587,20 +587,14 @@ function ctxForFnKind(kind) {
 	| ProcFn p -> CtxProc { p.isAsync }
 }
 
-function checkFunctionBody(st, fnStmt) {
-	match fnStmt.kind with
-	| PureFn _ -> {
-		let oldEnv = st.env;
-		let st1 = bindParams(st, fnStmt.params);
-		let st2 = checkScopedStmtList(st1, CtxPure, fnStmt.body);
-		withEnv(st2, oldEnv)
-	}
-	| ProcFn p -> {
-		let oldEnv = st.env;
-		let st1 = bindParams(st, fnStmt.params);
-		let st2 = checkScopedStmtList(st1, CtxProc { p.isAsync }, fnStmt.body);
-		withEnv(st2, oldEnv)
-	}
+// Takes the payload fields rather than the SFun binder: a variant widens to
+// its union when passed to a helper, so payload access must happen at the
+// match site (see design_variant_binder_widening.md, Rule 2).
+function checkFunctionBody(st, kind, params, body) {
+	let oldEnv = st.env;
+	let st1 = bindParams(st, params);
+	let st2 = checkScopedStmtList(st1, ctxForFnKind(kind), body);
+	withEnv(st2, oldEnv)
 }
 
 function checkStmt(st, ctx, stmt) {
@@ -620,7 +614,7 @@ function checkStmt(st, ctx, stmt) {
 		let st3 = checkExpr(st2, ctx, s.index);
 		checkExpr(st3, ctx, s.value)
 	}
-	| SFun s -> checkFunctionBody(st, s)
+	| SFun s -> checkFunctionBody(st, s.kind, s.params, s.body)
 	| SType _ -> st
 	| SExpr s -> checkExpr(st, ctx, s.expr)
 	| SReturn s -> checkMaybeExpr(st, ctx, s.value)
