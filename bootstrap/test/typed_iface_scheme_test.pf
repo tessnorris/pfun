@@ -11,7 +11,7 @@ function testTypedSchemeBodyImport() {
 	let types = IMS.imsPut(
 		IMS.imsEmpty(),
 		"answer",
-		I.mkScheme([], [], TY.tInt())
+		I.mkScheme([], [], TY.typeToIface(TY.tInt()))
 	);
 	let iface = I.mkIfaceWithRecords(
 		"./dep",

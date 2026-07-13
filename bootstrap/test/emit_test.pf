@@ -43,6 +43,7 @@ function importedSchemaOpts() {
 		false,
 		IMS.imsFromList([
 			Pair { "Foreign", ["left", "right"] },
+			Pair { "Point", ["x", "y"] },
 			Pair { "Some", ["value"] }
 		])
 	)
@@ -171,9 +172,9 @@ function goldenTypes() {
 }
 
 function goldenExpected() {
-	"const None = {$t: \"None\", $u: \"Maybe\", f: []};\n"
+	"const None = $makeVariant(\"None\", \"Maybe\", [], []);\n"
 	++ "function Some(value) {\n"
-	++ "  return {$t: \"Some\", $u: \"Maybe\", f: [value]};\n"
+	++ "  return $makeVariant(\"Some\", \"Maybe\", [\"value\"], [value]);\n"
 	++ "}\n"
 	++ "function add(x, y) {\n"
 	++ "  return $addI(x, y);\n"
@@ -204,7 +205,7 @@ function testScalarAndSingletonEmission() {
 			)
 		),
 		Assert.assertEqual(
-			"({$t: \"None\", $u: \"Option\", f: []});\n",
+			"$makeVariant(\"None\", \"Option\", [], []);\n",
 			renderExpr(
 				noTypes(),
 				singletonOpts(),
@@ -238,12 +239,12 @@ function testRecordAndVariantAbi() {
 
 	Assert.assertions([
 		Assert.assertEqual(
-			"({$t: \"Point\", f: [10, 20]});\n",
-			renderExpr(types, opts(), record)
+			"$makeRecord(\"Point\", [\"x\", \"y\"], [10, 20]);\n",
+			renderExpr(types, importedSchemaOpts(), record)
 		),
 		Assert.assertEqual(
-			"({$t: \"Some\", $u: \"Option\", f: [7]});\n",
-			renderExpr(types, opts(), variant)
+			"$makeVariant(\"Some\", \"Option\", [\"value\"], [7]);\n",
+			renderExpr(types, importedSchemaOpts(), variant)
 		)
 	])
 }

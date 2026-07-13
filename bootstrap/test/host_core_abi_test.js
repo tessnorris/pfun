@@ -1,7 +1,7 @@
 "use strict";
 const assert = require("node:assert/strict");
 const core = require("../host/core.js");
-const REQUIRED = ["$addI", "$arrGet", "$arrSet", "$bitAndI", "$bitNotI", "$bitOrI", "$cmpF", "$compLazy", "$compStrict", "$concatS", "$dictFromEntries", "$dictGet", "$dictSet", "$divI", "$eq", "$eqF", "$eqI", "$extern", "$field", "$geI", "$gtI", "$index", "$indexSet", "$lazyList", "$leI", "$listExactLen", "$listMinLen", "$listRest", "$ltI", "$matchFail", "$memoize", "$modI", "$mulI", "$negI", "$newArray", "$nth", "$nthU", "$shlI", "$shrI", "$starGet", "$str", "$strAt", "$subI", "$toF"];
+const REQUIRED = ["$addI", "$arrGet", "$arrSet", "$bitAndI", "$bitNotI", "$bitOrI", "$cmpF", "$compLazy", "$compStrict", "$concatS", "$dictFromEntries", "$dictGet", "$dictSet", "$divI", "$eq", "$eqF", "$eqI", "$extern", "$field", "$geI", "$gtI", "$index", "$indexSet", "$lazyList", "$leI", "$listExactLen", "$listMinLen", "$listRest", "$ltI", "$makeRecord", "$makeVariant", "$matchFail", "$memoize", "$modI", "$mulI", "$negI", "$newArray", "$nth", "$nthU", "$shlI", "$shrI", "$starGet", "$str", "$strAt", "$subI", "$toF"];
 
 for (const name of REQUIRED) {
   assert.equal(typeof core[name], "function", "missing " + name);
@@ -45,5 +45,23 @@ assert.throws(
   () => core.$starGet([{ x: 1 }, { x: 2 }], "x"),
   /ambiguous star import/
 );
+
+// Record ABI dynamic-field fallback regression.
+const pendingRecord = core.$makeRecord(
+  "LoadPending",
+  ["path", "importer", "span"],
+  ["entry.pf", "entry.pf", null]
+);
+assert.equal(core.$field(pendingRecord, "path"), "entry.pf");
+assert.deepEqual(pendingRecord.f, ["entry.pf", "entry.pf", null]);
+
+const someVariant = core.$makeVariant(
+  "Some",
+  "Option",
+  ["value"],
+  [7]
+);
+assert.equal(core.$field(someVariant, "value"), 7);
+assert.deepEqual(someVariant.f, [7]);
 
 console.log("Phase 13/core ABI conformance passed.");

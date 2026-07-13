@@ -591,19 +591,37 @@ function hostCall(name, args) {
 	J.jsCall(J.jsId(name), args)
 }
 
-function variantObject(vname, unionName, fields) {
-	J.jsObj([
-		J.jsProp("$t", J.jsStr(vname)),
-		J.jsProp("$u", J.jsStr(unionName)),
-		J.jsProp("f", J.jsArr(fields))
-	])
+function schemaFieldNames(ctx, name) {
+  match schemaFieldsFor(ctx, name) with
+  | None -> []
+  | Some fields -> fields.value
 }
 
-function recordObject(tname, fields) {
-	J.jsObj([
-		J.jsProp("$t", J.jsStr(tname)),
-		J.jsProp("f", J.jsArr(fields))
-	])
+function jsStringArray(values) {
+  J.jsArr(map(fn value => J.jsStr(value), values))
+}
+
+function variantObject(vname, unionName, fieldNames, fields) {
+  hostCall(
+    "$makeVariant",
+    [
+      J.jsStr(vname),
+      J.jsStr(unionName),
+      jsStringArray(fieldNames),
+      J.jsArr(fields)
+    ]
+  )
+}
+
+function recordObject(tname, fieldNames, fields) {
+  hostCall(
+    "$makeRecord",
+    [
+      J.jsStr(tname),
+      jsStringArray(fieldNames),
+      J.jsArr(fields)
+    ]
+  )
 }
 
 function singletonOf(ctx, name) {
@@ -614,7 +632,7 @@ function singletonOf(ctx, name) {
 		| None -> None
 		| Some unionName -> {
 			Some {
-				variantObject(name, unionName.value, [])
+				variantObject(name, unionName.value, [], [])
 			}
 		}
 	}
@@ -856,6 +874,7 @@ function emitCall(ctx, id, callee, args) {
 				variantObject(
 					calleeName.value,
 					unionName.value,
+          schemaFieldNames(ctx, calleeName.value),
 					map(fn arg => emitExpr(ctx, arg), args)
 				)
 			} else {
@@ -975,10 +994,11 @@ function emitComp(ctx, gens, guard, body0, mode) {
 }
 
 function emitRecord(ctx, tname, fields) {
-	recordObject(
-		tname,
-		map(fn field => emitExpr(ctx, field.value), fields)
-	)
+  recordObject(
+    tname,
+    schemaFieldNames(ctx, tname),
+    map(fn field => emitExpr(ctx, field.value), fields)
+  )
 }
 
 function stringIndexOf(names, value, index) {
@@ -1395,19 +1415,31 @@ function selfCallArgs(name, expr) {
 	| _ -> None
 }
 
+function tailCallsInArms(name, arms) {
+  match Compat.uncons(arms) with
+  | None -> []
+  | Some cell -> {
+    appendInts(
+      tailCallsInExpr(name, cell.value.key.body),
+      tailCallsInArms(name, cell.value.value)
+    )
+  }
+}
+
 function tailCallsInExpr(name, expr) {
-	match selfCallArgs(name, expr) with
-	| Some _ -> [A.exprId(expr)]
-	| None -> {
-		match expr with
-		| EIf e -> {
-			appendInts(
-				tailCallsInExpr(name, e.thenE),
-				tailCallsInExpr(name, e.elseE)
-			)
-		}
-		| _ -> []
-	}
+  match selfCallArgs(name, expr) with
+  | Some _ -> [A.exprId(expr)]
+  | None -> {
+    match expr with
+    | EIf e -> {
+      appendInts(
+        tailCallsInExpr(name, e.thenE),
+        tailCallsInExpr(name, e.elseE)
+      )
+    }
+    | EMatch e -> tailCallsInArms(name, e.arms)
+    | _ -> []
+  }
 }
 
 function tailCallsInLastStmt(name, stmt) {
@@ -1478,22 +1510,98 @@ function emitTailCall(ctx, params, expr, args) {
 	)
 }
 
+function emitTailArmBody(ctx, name, params, plan, arm) {
+  let result = emitTailExpr(plan.armCtx, name, params, arm.body);
+  match arm.guard with
+  | None -> appendJsStmts(plan.bindings, result)
+  | Some guard -> {
+    appendJsStmts(
+      plan.bindings,
+      [
+        J.jsIf(
+          emitExpr(plan.armCtx, guard.value),
+          result,
+          []
+        )
+      ]
+    )
+  }
+}
+
+function emitTailMatchArms(ctx, name, params, subject, arms) {
+  match Compat.uncons(arms) with
+  | None -> []
+  | Some cell -> {
+    let arm = cell.value.key;
+    let plan = emitArmPlan(ctx, subject, arm.pattern);
+    cons(
+      J.jsIf(
+        plan.condition,
+        emitTailArmBody(ctx, name, params, plan, arm),
+        []
+      ),
+      emitTailMatchArms(
+        ctx,
+        name,
+        params,
+        subject,
+        cell.value.value
+      )
+    )
+  }
+}
+
+function emitTailMatch(ctx, name, params, id, subject0, arms0) {
+  let subjectName = matchSubjectName(id);
+  let subject = J.jsId(subjectName);
+  let arms = emitTailMatchArms(
+    ctx,
+    name,
+    params,
+    subject,
+    arms0
+  );
+  let fail = J.jsThrow(
+    hostCall(
+      "$matchFail",
+      [
+        J.jsStr(ctx.opts.moduleId),
+        J.jsNum(__str__(id))
+      ]
+    )
+  );
+  cons(
+    J.jsConst(subjectName, emitExpr(ctx, subject0)),
+    appendJsStmts(arms, [fail])
+  )
+}
+
 function emitTailExpr(ctx, name, params, expr) {
-	match selfCallArgs(name, expr) with
-	| Some args -> emitTailCall(ctx, params, expr, args.value)
-	| None -> {
-		match expr with
-		| EIf e -> {
-			[
-				J.jsIf(
-					emitExpr(ctx, e.cond),
-					emitTailExpr(ctx, name, params, e.thenE),
-					emitTailExpr(ctx, name, params, e.elseE)
-				)
-			]
-		}
-		| _ -> [J.jsRet(emitExpr(ctx, expr))]
-	}
+  match selfCallArgs(name, expr) with
+  | Some args -> emitTailCall(ctx, params, expr, args.value)
+  | None -> {
+    match expr with
+    | EIf e -> {
+      [
+        J.jsIf(
+          emitExpr(ctx, e.cond),
+          emitTailExpr(ctx, name, params, e.thenE),
+          emitTailExpr(ctx, name, params, e.elseE)
+        )
+      ]
+    }
+    | EMatch e -> {
+      emitTailMatch(
+        ctx,
+        name,
+        params,
+        e.id,
+        e.subject,
+        e.arms
+      )
+    }
+    | _ -> [J.jsRet(emitExpr(ctx, expr))]
+  }
 }
 
 function emitTailLastStmt(ctx, name, params, stmt) {
@@ -1662,7 +1770,8 @@ function emitVariantDecl(unionName, variant) {
 	let value = variantObject(
 		variant.vname,
 		unionName,
-		map(fn fieldName => J.jsId(fieldName), fieldNames)
+		fieldNames,
+    map(fn fieldName => J.jsId(fieldName), fieldNames)
 	);
 	if length(fieldNames) == 0 then {
 		[J.jsConst(variant.vname, value)]
