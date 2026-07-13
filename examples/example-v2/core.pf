@@ -1,0 +1,56 @@
+// Core V2 semantics: strict values, numeric/string operators, mutation at the
+// procedural edge, exact-arity functions, explicit lambdas, composition, and TCO.
+
+import * from "io";
+
+function maximum(a, b) {
+	a > b ? a : b
+}
+
+function clamp(lo, hi, value) {
+	value < lo ? lo : (value > hi ? hi : value)
+}
+
+function double(value) {
+	value * 2
+}
+
+function addOne(value) {
+	value + 1
+}
+
+function factorial(n, acc) {
+	n <= 1 ? acc : factorial(n - 1, n * acc)
+}
+
+proc printCount(n) {
+	var i = 1;
+	print("count:");
+	while (i <= n) {
+		print(" " ++ str(i));
+		i = i + 1;
+	}
+	println("");
+}
+
+export proc runCoreExamples() {
+	println("");
+	println("--- Core values and control flow ---");
+
+	let immutableValue = 100;
+	var mutableValue = 0;
+	mutableValue = 10;
+
+	println("immutable = " ++ str(immutableValue));
+	println("mutable = " ++ str(mutableValue));
+	println("maximum = " ++ str(maximum(10, 20)));
+
+	printCount(5);
+
+	let clamp0to100 = fn value => clamp(0, 100, value);
+	println("clamp(150) = " ++ str(clamp0to100(150)));
+
+	let composed = double(addOne(3));
+	println("composition(3) = " ++ str(composed));
+	println("factorial(10) = " ++ str(factorial(10, 1)));
+}

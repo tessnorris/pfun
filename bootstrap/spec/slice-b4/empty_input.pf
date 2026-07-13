@@ -1,0 +1,22 @@
+// Slice B4: immediate EOF is None, not an empty string/character.
+
+import { println, scanln, scanChar } from "io";
+
+function lineState(value) {
+	match value with
+	| None -> "None"
+	| Some found -> "Some"
+}
+
+function charState(value) {
+	match value with
+	| None -> "None"
+	| Some found -> "Some"
+}
+
+proc main() {
+	println("empty-line=" ++ lineState(scanln()));
+	println("empty-char=" ++ charState(scanChar()));
+}
+
+main();

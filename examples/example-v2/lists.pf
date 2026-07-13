@@ -1,0 +1,79 @@
+// The compact list floor remains ambient: map, filter, reduce, cons, reverse,
+// length, slice, take, range, and list comprehensions.
+//
+// The opt-in "list" module adds the old listutils-style extended operations.
+
+import {
+	sum,
+	product,
+	sort,
+	sortDesc,
+	zip,
+	enumerate,
+	flatMap
+} from "list";
+import * from "io";
+
+generic function renderValues(values) {
+	"[" ++ join(map(fn value => str(value), values), ", ") ++ "]"
+}
+
+generic function renderPairs(pairs) {
+	"["
+	++ join(
+		map(
+			fn pair => str(pair.key) ++ ":" ++ str(pair.value),
+			pairs
+		),
+		", "
+	)
+	++ "]"
+}
+
+generic function firstOrZero(values) {
+	match values with
+	| [] -> 0
+	| [first, ...rest] -> first
+}
+
+generic function recursiveSum(values) {
+	match values with
+	| [] -> 0
+	| [first, ...rest] -> first + recursiveSum(rest)
+}
+
+export proc runListExamples() {
+	println("");
+	println("--- Lists, comprehensions, and the list library ---");
+
+	let values = [1, 2, 3, 4, 5];
+	let evens = filter(fn value => value % 2 == 0, values);
+	let doubled = map(fn value => value * 2, evens);
+
+	println("mapped evens = " ++ renderValues(doubled));
+	println("ambient reduce = " ++ str(reduce(fn acc, value => acc + value, 0, values)));
+	println("pattern sum = " ++ str(recursiveSum(values)));
+
+	println("sum = " ++ str(sum(values)));
+	println("product = " ++ str(product(values)));
+	println("sorted = " ++ renderValues(sort([5, 1, 4, 2, 3])));
+	println("descending = " ++ renderValues(sortDesc([5, 1, 4, 2, 3])));
+
+	let comprehension = [
+		value * 2
+		for value <- values
+		where value % 2 == 0
+	];
+	println("comprehension = " ++ renderValues(comprehension));
+
+	println("firstOrZero = " ++ str(firstOrZero([9, 8])) ++ "/" ++ str(firstOrZero([])));
+
+	let zipped = zip([1, 2], ["a", "b"]);
+	println("zip = " ++ renderPairs(zipped));
+
+	let indexed = enumerate(["alpha", "beta"]);
+	println("enumerate = " ++ renderPairs(indexed));
+
+	let repeated = flatMap(fn value => [value, value], [1, 2, 3]);
+	println("flatMap = " ++ renderValues(repeated));
+}

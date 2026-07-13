@@ -1,0 +1,14 @@
+args-count=1
+env=present
+env-missing=None
+exists-before=false
+mkdir=Ok
+exists-dir=true
+mkdir-again=Ok
+write=Ok
+exists-file=true
+read=Ok:Hello from B2!
+missing-read=Err
+directory-write=Err
+mkdir-over-file=Err
+SLICE B2 FILE EFFECTS OK

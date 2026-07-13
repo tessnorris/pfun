@@ -9,6 +9,22 @@
 
 import * as ListX from "../bootstrap/src/data/listx";
 
+// Total list reads. Empty input is represented as None rather than a
+// sentinel value or a runtime failure.
+
+export generic function head(items) {
+	match items with
+	| [] -> None
+	| [first, ...rest] -> Some { first }
+}
+
+export generic function tail(items) {
+	match items with
+	| [] -> None
+	| [first, ...rest] -> Some { rest }
+}
+
+
 export function sum(xs) { ListX.sum(xs) }
 export function product(xs) { ListX.product(xs) }
 export generic function count(pred, xs) { ListX.count(pred, xs) }

@@ -1375,6 +1375,182 @@ function inferComparison(st, path, span, leftT, rightT) {
 	exprOut(st2, TBool)
 }
 
+// -- NonZero Int divisor checking --------------------------------------------
+//
+// Float division/modulo remains IEEE/host-total. Int `/` and `%` require
+// either:
+//   * a syntactic nonzero integer literal in divisor position;
+//   * a value typed NonZero, normally obtained through nonZero(...);
+//   * or safeDiv/safeMod, which return Option<Int>.
+
+function isZeroIntLiteral(expr) {
+	match expr with
+	| EInt value -> value.n == 0
+	| EUnary unary -> {
+		if unary.op == "-" then {
+			isZeroIntLiteral(unary.operand)
+		} else {
+			false
+		}
+	}
+	| _ -> false
+}
+
+function isNonZeroIntLiteral(expr) {
+	match expr with
+	| EInt value -> value.n != 0
+	| EUnary unary -> {
+		if unary.op == "-" then {
+			isNonZeroIntLiteral(unary.operand)
+		} else {
+			false
+		}
+	}
+	| _ -> false
+}
+
+function isDefinitelyNonDivisionNumericType(t) {
+	match t with
+	| TInt -> false
+	| TFloat -> false
+	| TNonZero -> false
+	| TVar _ -> false
+	| TUnknown -> false
+	| TAny -> false
+	| _ -> true
+}
+
+function safeDivisionName(op) {
+	if op == "/" then {
+		"safeDiv"
+	} else {
+		"safeMod"
+	}
+}
+
+function nonZeroDivisorMessage(op, zeroLiteral) {
+	let intro = zeroLiteral
+		? "Literal 0 is not a valid Int divisor. "
+		: "Int operator '" ++ op ++ "' requires a NonZero divisor. ";
+	let safeName = safeDivisionName(op);
+
+	intro
+	++ "Use `match nonZero(y) with | Some nz -> x "
+	++ op
+	++ " nz.value | None -> ...`, `"
+	++ safeName
+	++ "(x, y)`, or inline a nonzero integer literal."
+}
+
+function inferIntDivision(
+	st,
+	path,
+	span,
+	op,
+	rhsExpr,
+	leftT,
+	rightT
+) {
+	let st1 = unify(st, leftT, TInt, path, span);
+	let right = apply(st1.subst, rightT);
+
+	if isZeroIntLiteral(rhsExpr) then {
+		exprOut(
+			addTypeDiag(
+				st1,
+				path,
+				span,
+				nonZeroDivisorMessage(op, true)
+			),
+			TInt
+		)
+	} else if isNonZeroIntLiteral(rhsExpr) then {
+		let st2 = unify(st1, rightT, TInt, path, span);
+		exprOut(st2, TInt)
+	} else {
+		match right with
+		| TNonZero -> exprOut(st1, TInt)
+		| TVar _ -> {
+			let st2 = unify(st1, rightT, TNonZero, path, span);
+			exprOut(st2, TInt)
+		}
+		| TUnknown -> exprOut(st1, TUnknown)
+		| _ -> {
+			exprOut(
+				addTypeDiag(
+					st1,
+					path,
+					span,
+					nonZeroDivisorMessage(op, false)
+				),
+				TInt
+			)
+		}
+	}
+}
+
+function inferDivisionBinary(
+	st,
+	path,
+	span,
+	op,
+	rhsExpr,
+	leftT,
+	rightT
+) {
+	let left = apply(st.subst, leftT);
+	let right = apply(st.subst, rightT);
+
+	if isDefinitelyNonDivisionNumericType(left)
+		|| isDefinitelyNonDivisionNumericType(right) then {
+		exprOut(
+			addTypeDiag(
+				st,
+				path,
+				span,
+				"Operator '" ++ op ++ "' requires numeric operands."
+			),
+			TUnknown
+		)
+	} else if isFloatType(left) || isFloatType(right) then {
+		inferNumericBinary(st, path, span, leftT, rightT)
+	} else {
+		inferIntDivision(
+			st,
+			path,
+			span,
+			op,
+			rhsExpr,
+			leftT,
+			rightT
+		)
+	}
+}
+
+function inferBinaryExpr(
+	st,
+	path,
+	span,
+	op,
+	rhsExpr,
+	leftT,
+	rightT
+) {
+	if op == "/" || op == "%" then {
+		inferDivisionBinary(
+			st,
+			path,
+			span,
+			op,
+			rhsExpr,
+			leftT,
+			rightT
+		)
+	} else {
+		inferBinaryByOp(st, path, span, op, leftT, rightT)
+	}
+}
+
 function inferBinaryByOp(st, path, span, op, leftT, rightT) {
 	let left = apply(st.subst, leftT);
 	let right = apply(st.subst, rightT);
@@ -1733,7 +1909,7 @@ export function cgenExpr(st, env, e, path) {
 	| EBinary x -> {
 		let lo = cgenExpr(st, env, x.lhs, path);
 		let ro = cgenExpr(lo.st, env, x.rhs, path);
-		let bo = inferBinaryByOp(ro.st, path, x.span, x.op, lo.typ, ro.typ);
+		let bo = inferBinaryExpr(ro.st, path, x.span, x.op, x.rhs, lo.typ, ro.typ);
 		exprOut(addTypedNode(bo.st, x.id, bo.typ), bo.typ)
 	}
 	| EIf x -> {

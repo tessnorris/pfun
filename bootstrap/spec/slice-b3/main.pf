@@ -1,0 +1,200 @@
+// Slice B3: typed JSON serialization and deserialization.
+
+import { jsonSerialize, jsonDeserialize, jsonDeserializeAs } from "json";
+import { readFile, writeFile, mkdirP } from "file";
+import { println, scriptArgs } from "io";
+
+type B3Person = {
+	name,
+	age,
+	tags
+}
+
+type B3Choice = {
+	| B3Text: value
+	| B3Count: value
+}
+
+function optionText(value) {
+	match value with
+	| None -> "None"
+	| Some found -> "Some(" ++ found.value ++ ")"
+}
+
+function personSummary(text) {
+	match jsonDeserializeAs(text, B3Person { "", 0, [] }) with
+	| None -> "None"
+	| Some decoded -> {
+		decoded.value.name
+		++ ":"
+		++ str(decoded.value.age + 0)
+		++ ":"
+		++ join(decoded.value.tags, ",")
+	}
+}
+
+function choiceSummary(text) {
+	match jsonDeserializeAs(text, B3Count { 0 }) with
+	| None -> "None"
+	| Some decoded -> {
+		match decoded.value with
+		| B3Text value -> "Text(" ++ value.value ++ ")"
+		| B3Count value -> "Count(" ++ str(value.value + 0) ++ ")"
+	}
+}
+
+function intListSummary(text) {
+	match jsonDeserialize(text) with
+	| None -> "None"
+	| Some decoded -> {
+		str(reduce(fn total, value => total + value, 0, decoded.value))
+	}
+}
+
+function floatSummary(text) {
+	match jsonDeserialize(text) with
+	| None -> "None"
+	| Some decoded -> str(decoded.value + 0.5)
+}
+
+function callableSummary(text) {
+	match jsonDeserializeAs(text, fn value => value) with
+	| None -> "None"
+	| Some decoded -> str(decoded.value(1))
+}
+
+proc runFileRoundTrip(root, jsonText) {
+	let made = mkdirP(root);
+	match made with
+	| Err error -> println("file-mkdir=Err")
+	| Ok _ -> {
+		let path = root ++ "/person.json";
+		let written = writeFile(path, jsonText);
+		match written with
+		| Err error -> println("file-write=Err")
+		| Ok _ -> {
+			let readBack = readFile(path);
+			match readBack with
+			| Err error -> println("file-read=Err")
+			| Ok loaded -> {
+				println(
+					"file-roundtrip="
+					++ personSummary(loaded.value)
+				);
+			}
+		}
+	}
+}
+
+proc main() {
+	let person = B3Person {
+		"Alice",
+		30,
+		["admin", "writer"]
+	};
+	let choice = B3Count { 7 };
+
+	let personJson = jsonSerialize(person);
+	let choiceJson = jsonSerialize(choice);
+	let listJson = jsonSerialize([1, 2, 3]);
+	let floatJson = jsonSerialize(2.0);
+
+	println(
+		"person-serialize="
+		++ optionText(personJson)
+	);
+	println(
+		"choice-serialize="
+		++ optionText(choiceJson)
+	);
+	println(
+		"list-serialize="
+		++ optionText(listJson)
+	);
+	println(
+		"float-serialize="
+		++ optionText(floatJson)
+	);
+
+	match personJson with
+	| None -> println("person-roundtrip=None")
+	| Some encoded -> {
+		println(
+			"person-roundtrip="
+			++ personSummary(encoded.value)
+		);
+		println(
+			"wrong-nominal="
+			++ choiceSummary(encoded.value)
+		);
+
+		match scriptArgs() with
+		| [] -> println("file-roundtrip=NoRoot")
+		| [root, ...rest] -> {
+			runFileRoundTrip(root, encoded.value);
+		}
+	}
+
+	match choiceJson with
+	| None -> println("choice-roundtrip=None")
+	| Some encoded -> {
+		println(
+			"choice-roundtrip="
+			++ choiceSummary(encoded.value)
+		);
+	}
+
+	match listJson with
+	| None -> println("list-roundtrip=None")
+	| Some encoded -> {
+		println(
+			"list-roundtrip="
+			++ intListSummary(encoded.value)
+		);
+	}
+
+	match floatJson with
+	| None -> println("float-roundtrip=None")
+	| Some encoded -> {
+		println(
+			"float-roundtrip="
+			++ floatSummary(encoded.value)
+		);
+	}
+
+	println(
+		"malformed="
+		++ personSummary("{")
+	);
+	println(
+		"plain-object="
+		++ personSummary("{\"name\":\"Alice\",\"age\":30,\"tags\":[]}")
+	);
+	println(
+		"unknown-type="
+		++ personSummary("{\"__pfun\":\"record\",\"__type\":\"NoSuch\",\"name\":\"Alice\"}")
+	);
+	println(
+		"missing-field="
+		++ personSummary("{\"__pfun\":\"record\",\"__type\":\"B3Person\",\"name\":\"Alice\",\"age\":{\"__pfun\":\"int\",\"v\":\"30\"}}")
+	);
+	println(
+		"extra-field="
+		++ personSummary("{\"__pfun\":\"record\",\"__type\":\"B3Person\",\"name\":\"Alice\",\"age\":{\"__pfun\":\"int\",\"v\":\"30\"},\"tags\":[],\"extra\":true}")
+	);
+
+	let unsupportedFunction = jsonSerialize(fn value => value);
+	println(
+		"serialize-function="
+		++ optionText(unsupportedFunction)
+	);
+
+	println(
+		"deserialize-function="
+		++ callableSummary("{\"__pfun\":\"int\",\"v\":\"4\"}")
+	);
+
+	println("SLICE B3 JSON OK");
+}
+
+main();

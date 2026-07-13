@@ -1,0 +1,35 @@
+// ============================================================================
+// Pfun V2 LANGUAGE EXAMPLES
+// ============================================================================
+//
+// This is the V2-native language tour.  The original V1 example remains at
+// examples/example.pf because the V1 integration tests still use it.
+//
+// The example is deliberately modular.  Each module owns one concern and the
+// entry point only sequences the demonstration procedures.
+//
+// Build and run:
+//
+//   PFUN_HOME="$PWD" node bootstrap-stage2/pfc.js \
+//     build examples/example-V2.pf -o output/example-V2.js
+//   node output/example-V2.js
+// ============================================================================
+
+import { runCoreExamples } from "./example-v2/core";
+import { runStringExamples } from "./example-v2/strings";
+import { runListExamples } from "./example-v2/lists";
+import { runTypeExamples } from "./example-v2/types";
+import * from "io";
+
+proc main() {
+	println("Pfun V2 language examples");
+	println("=========================");
+	runCoreExamples();
+	runStringExamples();
+	runListExamples();
+	runTypeExamples();
+	println("");
+	println("All deterministic V2 examples completed.");
+}
+
+main();

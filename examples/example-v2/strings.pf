@@ -1,0 +1,55 @@
+// V2 strings are scalar Str values.  The ambient core provides split, join,
+// slice, length, asc, and total chr.  The opt-in "string" module provides the
+// larger stringlib-style surface.
+
+import {
+	trim,
+	replaceAll,
+	padLeft,
+	startsWith,
+	endsWith,
+	takeWhile,
+	dropWhile
+} from "string";
+import * from "io";
+
+function charAtCode(code) {
+	match chr(code) with
+	| None -> "<invalid>"
+	| Some value -> str(value.value)
+}
+
+export proc runStringExamples() {
+	println("");
+	println("--- Strings, chars, raw strings, and format strings ---");
+
+	let greeting = "hello" ++ " " ++ "world";
+	println("concat = " ++ greeting);
+
+	let name = "Alice";
+	let age = 30;
+	println($"format = {name} is {age}");
+
+	let path = @"C:\Users\Alice\Documents\notes.txt";
+	println("raw = " ++ path);
+
+	let words = split("one two three", " ");
+	println("split/join = " ++ join(words, "|"));
+
+	println("trim = " ++ trim("  hello  "));
+	println("replaceAll = " ++ replaceAll("a.b.c", ".", "-"));
+	println("padLeft = " ++ padLeft("7", 3, "0"));
+
+	let prefix = startsWith("procedural-functional", "procedural");
+	let suffix = endsWith("procedural-functional", "functional");
+	println("prefix/suffix = " ++ str(prefix) ++ "/" ++ str(suffix));
+
+	println(
+		"take/drop while = "
+		++ takeWhile("123abc", fn c => c >= "0" && c <= "9")
+		++ "/"
+		++ dropWhile("123abc", fn c => c >= "0" && c <= "9")
+	);
+
+	println("chr(65) = " ++ charAtCode(65));
+}

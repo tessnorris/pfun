@@ -1,0 +1,2 @@
+empty-line=None
+empty-char=None

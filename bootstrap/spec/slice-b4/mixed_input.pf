@@ -1,0 +1,27 @@
+// Slice B4: scanln and scanChar share one stdin cursor.
+
+import { println, scanln, scanChar } from "io";
+
+function showLine(value) {
+	match value with
+	| None -> "None"
+	| Some found -> "Some(" ++ found.value ++ ")"
+}
+
+function showChar(value) {
+	match value with
+	| None -> "None"
+	| Some found -> "Some(" ++ str(found.value) ++ ")"
+}
+
+proc main() {
+	let line = scanln();
+	let char = scanChar();
+	let end = scanChar();
+
+	println("mixed-line=" ++ showLine(line));
+	println("mixed-char=" ++ showChar(char));
+	println("mixed-end=" ++ showChar(end));
+}
+
+main();

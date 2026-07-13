@@ -1,0 +1,7 @@
+import { readFile } from "file";
+
+function badRead(path) {
+	readFile(path)
+}
+
+let result = badRead("not-allowed.txt");

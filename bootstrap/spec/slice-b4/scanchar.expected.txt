@@ -1,0 +1,4 @@
+char1=Some(A)
+char2=Some(é)
+char3=Some(🙂)
+char4=None

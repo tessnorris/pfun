@@ -1,0 +1,2 @@
+let values = [10, 20];
+let bad = values[0] + 1;

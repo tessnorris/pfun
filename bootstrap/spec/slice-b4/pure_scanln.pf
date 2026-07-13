@@ -1,0 +1,7 @@
+import { scanln } from "io";
+
+function badInput() {
+	scanln()
+}
+
+let result = badInput();

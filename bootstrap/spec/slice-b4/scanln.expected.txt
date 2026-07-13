@@ -1,0 +1,4 @@
+line1=Some(alpha)
+line2=Some()
+line3=Some(omega)
+line4=None

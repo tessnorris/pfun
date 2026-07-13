@@ -1,0 +1,83 @@
+// Slice B2: basic command-line and whole-file effects.
+
+import {
+	readFile,
+	writeFile,
+	fileExists,
+	mkdirP
+} from "file";
+import {
+	println,
+	scriptArgs,
+	getEnv
+} from "io";
+
+function showEnv(value) {
+	match value with
+	| None -> "None"
+	| Some item -> item.value
+}
+
+proc runFileEffects(root) {
+	let nested = root ++ "/nested";
+	let filePath = nested ++ "/sample.txt";
+	let missingPath = root ++ "/missing.txt";
+	let content = "Hello from B2!";
+
+	println("exists-before=" ++ str(fileExists(nested)));
+
+	let made = mkdirP(nested);
+	match made with
+	| Ok _ -> println("mkdir=Ok")
+	| Err error -> println("mkdir=Err")
+
+	println("exists-dir=" ++ str(fileExists(nested)));
+
+	let madeAgain = mkdirP(nested);
+	match madeAgain with
+	| Ok _ -> println("mkdir-again=Ok")
+	| Err error -> println("mkdir-again=Err")
+
+	let written = writeFile(filePath, content);
+	match written with
+	| Ok _ -> println("write=Ok")
+	| Err error -> println("write=Err")
+
+	println("exists-file=" ++ str(fileExists(filePath)));
+
+	let readBack = readFile(filePath);
+	match readBack with
+	| Ok result -> println("read=Ok:" ++ result.value)
+	| Err error -> println("read=Err")
+
+	let missing = readFile(missingPath);
+	match missing with
+	| Ok result -> println("missing-read=Ok")
+	| Err error -> println("missing-read=Err")
+
+	let writeDirectory = writeFile(nested, "not allowed");
+	match writeDirectory with
+	| Ok _ -> println("directory-write=Ok")
+	| Err error -> println("directory-write=Err")
+
+	let mkdirOverFile = mkdirP(filePath);
+	match mkdirOverFile with
+	| Ok _ -> println("mkdir-over-file=Ok")
+	| Err error -> println("mkdir-over-file=Err")
+}
+
+proc main() {
+	let args = scriptArgs();
+	println("args-count=" ++ str(length(args)));
+	println("env=" ++ showEnv(getEnv("PFUN_SLICE_B2_TOKEN")));
+	println("env-missing=" ++ showEnv(getEnv("PFUN_SLICE_B2_MISSING")));
+
+	match args with
+	| [] -> println("missing-runtime-root")
+	| [root, ...rest] -> {
+		runFileEffects(root);
+		println("SLICE B2 FILE EFFECTS OK");
+	}
+}
+
+main();

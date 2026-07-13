@@ -253,7 +253,7 @@ function fileExports() {
 	let readResult = TY.tNamed("ReadResult", [tv(0), TY.tStr()]);
 	[
 		nodeProc("readFile", sch([], proc1(TY.tStr(), ioResult(TY.tStr()), false)), "$readFile"),
-		nodeProc("writeFile", sch([], proc2(TY.tStr(), TY.tStr(), ioResult(TY.tInt()), false)), "$writeFile"),
+		nodeProc("writeFile", sch([], proc2(TY.tStr(), TY.tStr(), ioResult(TY.tUnit()), false)), "$writeFile"),
 		nodeProc("fileExists", sch([], proc1(TY.tStr(), TY.tBool(), false)), "$fileExists"),
 		nodeProc("mkdirP", sch([], proc1(TY.tStr(), ioResult(TY.tUnit()), false)), "$mkdirP"),
 		nodeProc("fileOpen", sch([], proc2(TY.tStr(), mode, ioResult(handle), false)), "$fileOpen"),
@@ -264,7 +264,12 @@ function fileExports() {
 function jsonExports() {
 	[
 		pure("jsonSerialize", sch([0], fn1(tv(0), optionOf(TY.tStr()))), "$jsonSerialize"),
-		pure("jsonDeserialize", sch([0], fn1(TY.tStr(), optionOf(tv(0)))), "$jsonDeserialize")
+		pure("jsonDeserialize", sch([0], fn1(TY.tStr(), optionOf(tv(0)))), "$jsonDeserialize"),
+		pure(
+			"jsonDeserializeAs",
+			sch([0], fn2(TY.tStr(), tv(0), optionOf(tv(0)))),
+			"$jsonDeserialize"
+		)
 	]
 }
 

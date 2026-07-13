@@ -1,0 +1,7 @@
+import { writeFile } from "file";
+
+proc main() {
+	let result = writeFile("bad.txt", 123);
+}
+
+main();

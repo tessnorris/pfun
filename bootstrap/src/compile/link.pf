@@ -475,6 +475,39 @@ function nodeDependencyProps(reqs, importerId, ids) {
 	}
 }
 
+function optionalSchemaUnionExpr(unionName) {
+	match unionName with
+	| None -> J.jsNull()
+	| Some found -> J.jsStr(found.value)
+}
+
+function schemaDescriptorExpr(schema) {
+	J.jsObj([
+		J.jsProp("name", J.jsStr(schema.runtimeName)),
+		J.jsProp("union", optionalSchemaUnionExpr(schema.unionName)),
+		J.jsProp(
+			"fields",
+			J.jsArr(map(fn field => J.jsStr(field), schema.fields))
+		),
+		J.jsProp("variant", J.jsBool(schema.isVariant))
+	])
+}
+
+function schemaRegistrationStatements(mod) {
+	if length(mod.schemas) == 0 then {
+		[]
+	} else {
+		[
+			J.jsExprStmt(
+				J.jsCall(
+					J.jsId("$registerSchemas"),
+					[J.jsArr(map(schemaDescriptorExpr, mod.schemas))]
+				)
+			)
+		]
+	}
+}
+
 function moduleRegistrationStatements(mod, ids) {
 	let moduleId = normalizeModuleId(mod.moduleId);
 	let depMap = J.jsObj(
@@ -485,25 +518,22 @@ function moduleRegistrationStatements(mod, ids) {
 		J.jsBlockBody(moduleStatements(mod)),
 		false
 	);
-
-	[
+	let registrations = [
 		J.jsAssign(
-			J.jsIndex(
-				J.jsId("$maps"),
-				J.jsStr(moduleId)
-			),
+			J.jsIndex(J.jsId("$maps"), J.jsStr(moduleId)),
 			depMap
 		),
 		J.jsAssign(
-			J.jsIndex(
-				J.jsId("$mods"),
-				J.jsStr(moduleId)
-			),
+			J.jsIndex(J.jsId("$mods"), J.jsStr(moduleId)),
 			factory
 		)
-	]
-}
+	];
 
+	appendJsStmts(
+		schemaRegistrationStatements(mod),
+		registrations
+	)
+}
 function registrationStatements(mods, ids) {
 	match Compat.uncons(mods) with
 	| None -> []
@@ -586,7 +616,7 @@ function embeddedHostText(label, text, levels) {
 
 function hostText(host, levels) {
 	let prefix = StrX.strRepeat(" ", levels * 2);
-	let abiNames = "$addI, $arrGet, $arrSet, $asc, $bitAndI, $bitNotI, $bitOrI, $bytesToChar, $ceil, $charBytes, $chr, $chrU, $cmpF, $compLazy, $compStrict, $concatS, $cons, $dictFromEntries, $dictGet, $dictSet, $divI, $eq, $eqF, $eqI, $extern, $field, $filter, $find, $findSlice, $floor, $geI, $gtI, $index, $indexSet, $isFinite, $isNaN, $join, $lazyList, $leI, $length, $listExactLen, $listMinLen, $listRest, $ltI, $makeRecord, $makeVariant, $map, $matchFail, $memoize, $modI, $mulI, $negI, $newArray, $nonZero, $nth, $nthU, $range, $reduce, $reverse, $round, $safeDiv, $safeMod, $shlI, $shrI, $slice, $split, $starGet, $str, $strAt, $subI, $take, $toF";
+	let abiNames = "$addI, $arrGet, $arrSet, $asc, $bitAndI, $bitNotI, $bitOrI, $bytesToChar, $ceil, $charBytes, $chr, $chrU, $cmpF, $compLazy, $compStrict, $concatS, $cons, $dictFromEntries, $dictGet, $dictSet, $divI, $eq, $eqF, $eqI, $extern, $field, $filter, $find, $findSlice, $floor, $geI, $gtI, $index, $indexSet, $isFinite, $jsonDeserialize, $jsonSerialize, $isNaN, $join, $lazyList, $leI, $length, $listExactLen, $listMinLen, $listRest, $ltI, $makeRecord, $makeVariant, $map, $matchFail, $memoize, $modI, $mulI, $negI, $newArray, $nonZero, $nth, $nthU, $range, $reduce, $registerSchemas, $reverse, $round, $safeDiv, $safeMod, $shlI, $shrI, $slice, $split, $starGet, $str, $strAt, $subI, $take, $toF";
 	embeddedHostText("host core", host.coreText, levels)
 	++ prefix
 	++ "/* PfunCore ABI bindings */\n"

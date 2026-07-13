@@ -1,0 +1,9 @@
+import { println, scriptArgs } from "io";
+
+proc main() {
+	match scriptArgs() with
+	| [] -> println("no-args=Ok")
+	| [first, ...rest] -> println("no-args=Unexpected")
+}
+
+main();

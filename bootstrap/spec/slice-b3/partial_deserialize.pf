@@ -1,0 +1,3 @@
+import { jsonDeserialize } from "json";
+
+let bad = jsonDeserialize("{\"__pfun\":\"int\",\"v\":\"1\"}") + 1;

@@ -1,0 +1,64 @@
+// Nominal records, discriminated unions, exhaustive matching, guarded arms with
+// an unguarded fallback, Option, and generic record fields.
+
+import * from "io";
+
+type V2Point = {
+	x,
+	y
+}
+
+type V2Shape = {
+	| V2Circle: radius
+	| V2Rectangle: width, height
+}
+
+type V2Box = {
+	generic value
+}
+
+function pointText(point) {
+	"(" ++ str(point.x) ++ ", " ++ str(point.y) ++ ")"
+}
+
+function area(shape) {
+	match shape with
+	| V2Circle circle -> circle.radius * circle.radius
+	| V2Rectangle rectangle -> rectangle.width * rectangle.height
+}
+
+function classifyShape(shape) {
+	match shape with
+	| V2Circle circle where circle.radius > 10 -> "large circle"
+	| V2Circle _ -> "small circle"
+	| V2Rectangle _ -> "rectangle"
+}
+
+function optionText(value) {
+	match value with
+	| None -> "not found"
+	| Some found -> "found " ++ str(found.value)
+}
+
+export proc runTypeExamples() {
+	println("");
+	println("--- Records, unions, generic fields, and match ---");
+
+	let point = V2Point { 3, 4 };
+	println("point = " ++ pointText(point));
+
+	let circle = V2Circle { 5 };
+	let rectangle = V2Rectangle { 3, 4 };
+	println("circle area = " ++ str(area(circle)));
+	println("rectangle area = " ++ str(area(rectangle)));
+
+	println("classify small = " ++ classifyShape(circle));
+	println("classify large = " ++ classifyShape(V2Circle { 20 }));
+
+	println("option = " ++ optionText(find([10, 20, 30], 30)));
+	println("missing option = " ++ optionText(find([10, 20, 30], 99)));
+
+	let intBox = V2Box { 42 };
+	let textBox = V2Box { "pfun" };
+	println("generic boxes = " ++ str(intBox.value) ++ "/" ++ textBox.value);
+}

@@ -153,8 +153,7 @@
 
       return resultOf(function writeText() {
         fs.writeFileSync(path, content, "utf8");
-        // Pfun Str length is UTF-16 code units.
-        return core.$canonI(content.length);
+                return null;
       });
     }
 

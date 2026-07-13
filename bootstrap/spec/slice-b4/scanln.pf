@@ -1,0 +1,23 @@
+// Slice B4: line-oriented input. Always run with piped stdin.
+
+import { println, scanln } from "io";
+
+function showLine(label, value) {
+	match value with
+	| None -> label ++ "=None"
+	| Some found -> label ++ "=Some(" ++ found.value ++ ")"
+}
+
+proc main() {
+	let line1 = scanln();
+	let line2 = scanln();
+	let line3 = scanln();
+	let line4 = scanln();
+
+	println(showLine("line1", line1));
+	println(showLine("line2", line2));
+	println(showLine("line3", line3));
+	println(showLine("line4", line4));
+}
+
+main();

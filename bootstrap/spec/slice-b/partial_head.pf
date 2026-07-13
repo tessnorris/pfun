@@ -1,0 +1,3 @@
+import { head } from "list";
+
+let bad = head([10, 20]) + 1;

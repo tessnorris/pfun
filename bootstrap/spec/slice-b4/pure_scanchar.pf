@@ -1,0 +1,7 @@
+import { scanChar } from "io";
+
+function badInput() {
+	scanChar()
+}
+
+let result = badInput();

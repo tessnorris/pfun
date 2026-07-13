@@ -1,0 +1,26 @@
+// Slice B4 also closes the B2 real permission-denied test gap.
+
+import { readFile, writeFile } from "file";
+import { println, scriptArgs } from "io";
+
+proc checkPermission(readPath, writePath) {
+	let readResult = readFile(readPath);
+	match readResult with
+	| Ok value -> println("permission-read=Ok")
+	| Err error -> println("permission-read=" ++ error.message)
+
+	let writeResult = writeFile(writePath, "must not be written");
+	match writeResult with
+	| Ok value -> println("permission-write=Ok")
+	| Err error -> println("permission-write=" ++ error.message)
+}
+
+proc main() {
+	match scriptArgs() with
+	| [readPath, writePath, ...rest] -> {
+		checkPermission(readPath, writePath);
+	}
+	| _ -> println("permission-args=Missing")
+}
+
+main();

@@ -1,0 +1,7 @@
+import { fileExists } from "file";
+
+function badExists(path) {
+	fileExists(path)
+}
+
+let result = badExists("not-allowed.txt");

@@ -1,0 +1,18 @@
+person-serialize=Some({"__pfun":"record","__type":"B3Person","name":"Alice","age":{"__pfun":"int","v":"30"},"tags":["admin","writer"]})
+choice-serialize=Some({"__pfun":"record","__type":"B3Count","__union":"B3Choice","value":{"__pfun":"int","v":"7"}})
+list-serialize=Some([{"__pfun":"int","v":"1"},{"__pfun":"int","v":"2"},{"__pfun":"int","v":"3"}])
+float-serialize=Some({"__pfun":"float","v":"2"})
+person-roundtrip=Alice:30:admin,writer
+wrong-nominal=None
+file-roundtrip=Alice:30:admin,writer
+choice-roundtrip=Count(7)
+list-roundtrip=6
+float-roundtrip=2.5
+malformed=None
+plain-object=None
+unknown-type=None
+missing-field=None
+extra-field=None
+serialize-function=None
+deserialize-function=None
+SLICE B3 JSON OK

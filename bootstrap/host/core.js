@@ -1068,65 +1068,446 @@
     return value;
   }
 
-  // ── JSON helpers ────────────────────────────────────────────────────────
+  // ── JSON helpers ───────────────────────────────────────────────────────────
+//
+// JSON is a typed Pfun boundary, not a raw JavaScript-object escape hatch.
+//
+// The emitter passes a compact descriptor for the static source/target type.
+// The linker registers nominal record/variant schemas before application code
+// runs. Unsupported values and malformed/forged tagged objects return None.
 
-  function $jsonSerialize(value) {
-    try {
-      return $some(JSON.stringify($toTaggedJson(value)));
-    } catch (_) {
-      return $none();
+const $jsonSchemas = new Map();
+const $jsonUnions = new Set();
+
+function $registerSchemas(schemas) {
+  if (!Array.isArray(schemas)) {
+    $runtimeError("registerSchemas expects a schema array");
+  }
+
+  for (const schema of schemas) {
+    if (
+      !schema ||
+      typeof schema.name !== "string" ||
+      !Array.isArray(schema.fields) ||
+      typeof schema.variant !== "boolean"
+    ) {
+      $runtimeError("invalid emitted JSON schema");
+    }
+
+    const normalized = {
+      name: schema.name,
+      union:
+        schema.union === null || schema.union === undefined
+          ? null
+          : String(schema.union),
+      fields: schema.fields.map(String),
+      variant: schema.variant,
+    };
+
+    $jsonSchemas.set(normalized.name, normalized);
+    if (normalized.union !== null) {
+      $jsonUnions.add(normalized.union);
     }
   }
 
-  function $jsonDeserialize(text) {
-    try {
-      return $some($fromTaggedJson(JSON.parse(String(text))));
-    } catch (_) {
-      return $none();
-    }
+  return null;
+}
+
+$registerSchemas([
+  { name: "Pair", union: null, fields: ["key", "value"], variant: false },
+  { name: "None", union: "Option", fields: [], variant: true },
+  { name: "Some", union: "Option", fields: ["value"], variant: true },
+  { name: "Ok", union: "Result", fields: ["value"], variant: true },
+  { name: "Err", union: "Result", fields: ["message"], variant: true },
+]);
+
+function $jsonDescriptorTag(desc) {
+  return Array.isArray(desc) && desc.length > 0 ? desc[0] : "Unsupported";
+}
+
+function $jsonNamedName(desc) {
+  return Array.isArray(desc) && desc.length > 1 ? String(desc[1]) : "";
+}
+
+function $jsonNamedArgs(desc) {
+  return Array.isArray(desc) && Array.isArray(desc[2]) ? desc[2] : [];
+}
+
+function $jsonListElement(desc) {
+  return Array.isArray(desc) && desc.length > 1 ? desc[1] : ["Unsupported"];
+}
+
+function $jsonPublicFieldNames(value) {
+  return Object.keys(value).filter(function jsonPublicFieldName(name) {
+    return (
+      name !== "$t" &&
+      name !== "$u" &&
+      name !== "f" &&
+      !name.startsWith("$")
+    );
+  });
+}
+
+function $jsonSameNames(actual, expected) {
+  if (actual.length !== expected.length) return false;
+  for (const name of expected) {
+    if (!actual.includes(name)) return false;
+  }
+  return true;
+}
+
+function $jsonMatchesType(value, desc) {
+  const tag = $jsonDescriptorTag(desc);
+
+  if (tag === "Int") {
+    return (
+      typeof value === "bigint" ||
+      (typeof value === "number" && Number.isInteger(value))
+    );
   }
 
-  function $toTaggedJson(value) {
-    if (typeof value === "bigint") return { __pfun: "int", v: value.toString() };
-    if (typeof value === "number" && Number.isInteger(value) && Number.isSafeInteger(value)) return { __pfun: "int", v: String(value) };
-    if (typeof value === "string" || typeof value === "boolean" || value === null) return value;
-    if (typeof value === "number") {
-      if (Number.isNaN(value)) return { __pfun: "float", v: "NaN" };
-      if (value === Infinity) return { __pfun: "float", v: "Infinity" };
-      if (value === -Infinity) return { __pfun: "float", v: "-Infinity" };
-      return value;
+  if (tag === "Float") {
+    return typeof value === "number";
+  }
+
+  if (tag === "Bool") {
+    return typeof value === "boolean";
+  }
+
+  if (tag === "Str") {
+    return typeof value === "string";
+  }
+
+  if (tag === "Char") {
+    return typeof value === "string" && Array.from(value).length === 1;
+  }
+
+  if (tag === "Byte") {
+    return (
+      typeof value === "number" &&
+      Number.isInteger(value) &&
+      value >= 0 &&
+      value <= 255
+    );
+  }
+
+  if (tag === "Unit") {
+    return value === null;
+  }
+
+  if (tag === "NonZero") {
+    return (
+      (typeof value === "bigint" && value !== 0n) ||
+      (typeof value === "number" && Number.isInteger(value) && value !== 0)
+    );
+  }
+
+  if (tag === "List") {
+    if (!Array.isArray(value)) return false;
+    const elem = $jsonListElement(desc);
+    return value.every(function jsonListElementMatches(item) {
+      return $jsonMatchesType(item, elem);
+    });
+  }
+
+  if (tag === "Named") {
+    if (!value || typeof value !== "object" || value.$t === undefined) {
+      return false;
     }
-    if (Array.isArray(value) || $isLazyList(value)) return $listToArray(value).map($toTaggedJson);
-    if (value && value.$t !== undefined) {
-      const obj = { __pfun: "record", __type: value.$t };
-      if (value.$u !== undefined) obj.__union = value.$u;
-      const names = Object.keys(value).filter(function fieldName(k) {
-        return k !== "$t" && k !== "$u" && k !== "f" && !k.startsWith("$");
-      });
-      for (const name of names) obj[name] = $toTaggedJson(value[name]);
-      return obj;
+
+    const requestedName = $jsonNamedName(desc);
+    const args = $jsonNamedArgs(desc);
+    void args;
+
+    // The runtime tag identifies the concrete record or variant. The schema
+    // registered under that tag is the single source of truth for both exact
+    // nominal matching and union widening.
+    const schema = $jsonSchemas.get(value.$t);
+    if (!schema) return false;
+
+    if (schema.union === null) {
+      return (
+        requestedName === schema.name &&
+        value.$t === schema.name &&
+        (value.$u === undefined || value.$u === null)
+      );
+    }
+
+    // A variant may be requested either by its exact variant type or by its
+    // containing union type. In both cases the runtime union tag must agree
+    // with the registered schema.
+    return (
+      value.$t === schema.name &&
+      value.$u === schema.union &&
+      (
+        requestedName === schema.name ||
+        requestedName === schema.union
+      )
+    );
+  }
+
+  return false;
+}
+
+function $jsonExpectedChild(desc, index) {
+  const tag = $jsonDescriptorTag(desc);
+  if (tag === "List" && index === 0) return $jsonListElement(desc);
+  return ["Unsupported"];
+}
+
+function $toTaggedJson(value, desc) {
+  const tag = $jsonDescriptorTag(desc);
+
+  if (
+    typeof value === "function" ||
+    typeof value === "symbol" ||
+    value === undefined
+  ) {
+    throw new Error("unsupported JSON value");
+  }
+
+  if (tag === "Int" || tag === "NonZero") {
+    const integer = $canonI(value);
+    return { __pfun: "int", v: integer.toString() };
+  }
+
+  if (tag === "Float") {
+    const number = Number(value);
+    if (Number.isNaN(number)) return { __pfun: "float", v: "NaN" };
+    if (number === Infinity) return { __pfun: "float", v: "Infinity" };
+    if (number === -Infinity) return { __pfun: "float", v: "-Infinity" };
+    return { __pfun: "float", v: String(number) };
+  }
+
+  if (
+    tag === "Str" ||
+    tag === "Char" ||
+    tag === "Bool" ||
+    tag === "Byte" ||
+    tag === "Unit"
+  ) {
+    if (!$jsonMatchesType(value, desc)) {
+      throw new Error("value does not match JSON source type");
     }
     return value;
   }
 
-  function $fromTaggedJson(value) {
-    if (Array.isArray(value)) return value.map($fromTaggedJson);
-    if (!value || typeof value !== "object") return value;
-    if (value.__pfun === "int") return $canonI(BigInt(value.v));
-    if (value.__pfun === "float") return Number(value.v);
-    if (value.__pfun === "record") {
-      const names = Object.keys(value).filter(function fieldName(k) {
-        return k !== "__pfun" && k !== "__type" && k !== "__union";
-      });
-      const vals = names.map(function valOf(n) { return $fromTaggedJson(value[n]); });
-      return value.__union ? $makeVariant(value.__type, value.__union, names, vals) : $makeRecord(value.__type, names, vals);
+  if (tag === "List") {
+    if (!Array.isArray(value)) {
+      throw new Error("only strict lists are JSON serializable");
     }
-    const out = {};
-    for (const k of Object.keys(value)) out[k] = $fromTaggedJson(value[k]);
-    return out;
+    const elem = $jsonExpectedChild(desc, 0);
+    return value.map(function jsonListItem(item) {
+      return $toTaggedJson(item, elem);
+    });
   }
 
-  // ── stringify ───────────────────────────────────────────────────────────
+  if (tag === "Named") {
+    if (!$jsonMatchesType(value, desc)) {
+      throw new Error("value does not match nominal JSON source type");
+    }
+
+    const schema = $jsonSchemas.get(value.$t);
+    if (!schema) {
+      throw new Error("unknown nominal JSON schema");
+    }
+
+    const actualNames = $jsonPublicFieldNames(value);
+    if (!$jsonSameNames(actualNames, schema.fields)) {
+      throw new Error("record fields do not match registered schema");
+    }
+
+    const object = {
+      __pfun: "record",
+      __type: value.$t,
+    };
+
+    if (schema.union !== null) {
+      object.__union = schema.union;
+    }
+
+    for (const name of schema.fields) {
+      // Field type descriptors are not yet stored in linker schemas. Runtime
+      // representation is therefore encoded recursively with conservative
+      // value-directed tagging for nested fields.
+      object[name] = $toTaggedJsonDynamic(value[name]);
+    }
+
+    return object;
+  }
+
+  throw new Error("unsupported JSON source type");
+}
+
+function $toTaggedJsonDynamic(value) {
+  if (
+    typeof value === "function" ||
+    typeof value === "symbol" ||
+    value === undefined ||
+    $isLazyList(value)
+  ) {
+    throw new Error("unsupported nested JSON value");
+  }
+
+  if (typeof value === "bigint") {
+    return { __pfun: "int", v: value.toString() };
+  }
+
+  if (typeof value === "number") {
+    if (Number.isInteger(value)) {
+      return { __pfun: "int", v: $canonI(value).toString() };
+    }
+    if (Number.isNaN(value)) return { __pfun: "float", v: "NaN" };
+    if (value === Infinity) return { __pfun: "float", v: "Infinity" };
+    if (value === -Infinity) return { __pfun: "float", v: "-Infinity" };
+    return { __pfun: "float", v: String(value) };
+  }
+
+  if (
+    typeof value === "string" ||
+    typeof value === "boolean" ||
+    value === null
+  ) {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return value.map($toTaggedJsonDynamic);
+  }
+
+  if (value && value.$t !== undefined) {
+    const schema = $jsonSchemas.get(value.$t);
+    if (!schema) throw new Error("unknown nested nominal JSON schema");
+
+    const actualNames = $jsonPublicFieldNames(value);
+    if (!$jsonSameNames(actualNames, schema.fields)) {
+      throw new Error("nested record fields do not match registered schema");
+    }
+
+    const object = { __pfun: "record", __type: value.$t };
+    if (schema.union !== null) object.__union = schema.union;
+
+    for (const name of schema.fields) {
+      object[name] = $toTaggedJsonDynamic(value[name]);
+    }
+    return object;
+  }
+
+  throw new Error("plain JavaScript objects are not Pfun JSON values");
+}
+
+function $fromTaggedJson(value) {
+  if (Array.isArray(value)) {
+    return value.map($fromTaggedJson);
+  }
+
+  if (
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "boolean" ||
+    typeof value === "number"
+  ) {
+    return value;
+  }
+
+  if (!value || typeof value !== "object") {
+    throw new Error("unsupported parsed JSON value");
+  }
+
+  if (value.__pfun === "int") {
+    const names = Object.keys(value);
+    if (
+      names.length !== 2 ||
+      !Object.prototype.hasOwnProperty.call(value, "v") ||
+      typeof value.v !== "string" ||
+      !/^-?[0-9]+$/.test(value.v)
+    ) {
+      throw new Error("malformed tagged Int");
+    }
+    return $canonI(BigInt(value.v));
+  }
+
+  if (value.__pfun === "float") {
+    const names = Object.keys(value);
+    if (
+      names.length !== 2 ||
+      !Object.prototype.hasOwnProperty.call(value, "v") ||
+      typeof value.v !== "string"
+    ) {
+      throw new Error("malformed tagged Float");
+    }
+
+    const number = Number(value.v);
+    if (
+      value.v !== "NaN" &&
+      value.v !== "Infinity" &&
+      value.v !== "-Infinity" &&
+      !Number.isFinite(number)
+    ) {
+      throw new Error("malformed tagged Float value");
+    }
+    return number;
+  }
+
+  if (value.__pfun === "record") {
+    if (typeof value.__type !== "string") {
+      throw new Error("tagged record has no type name");
+    }
+
+    const schema = $jsonSchemas.get(value.__type);
+    if (!schema) {
+      throw new Error("tagged record names an unknown type");
+    }
+
+    const union =
+      value.__union === undefined ? null : String(value.__union);
+    if (union !== schema.union) {
+      throw new Error("tagged record union does not match schema");
+    }
+
+    const metadata = ["__pfun", "__type"];
+    if (schema.union !== null) metadata.push("__union");
+
+    const actualFields = Object.keys(value).filter(function jsonDataField(name) {
+      return !metadata.includes(name);
+    });
+
+    if (!$jsonSameNames(actualFields, schema.fields)) {
+      throw new Error("tagged record fields do not match schema");
+    }
+
+    const values = schema.fields.map(function jsonFieldValue(name) {
+      return $fromTaggedJson(value[name]);
+    });
+
+    return schema.union === null
+      ? $makeRecord(schema.name, schema.fields, values)
+      : $makeVariant(schema.name, schema.union, schema.fields, values);
+  }
+
+  throw new Error("plain JSON objects require a Pfun nominal tag");
+}
+
+function $jsonSerialize(value, sourceType) {
+  try {
+    if (!$jsonMatchesType(value, sourceType)) return $none();
+    const tagged = $toTaggedJson(value, sourceType);
+    const text = JSON.stringify(tagged);
+    return typeof text === "string" ? $some(text) : $none();
+  } catch (_) {
+    return $none();
+  }
+}
+
+function $jsonDeserialize(text, targetType) {
+  try {
+    const value = $fromTaggedJson(JSON.parse(String(text)));
+    return $jsonMatchesType(value, targetType) ? $some(value) : $none();
+  } catch (_) {
+    return $none();
+  }
+}
+// ── stringify ───────────────────────────────────────────────────────────
 
   function $str(value) {
     if (value === null || value === undefined) return "";
@@ -1348,7 +1729,7 @@
     // functions / json / platform-neutral effects
     $curry,
     $memoize,
-    $jsonSerialize,
+    $registerSchemas, $jsonSerialize,
     $jsonDeserialize,
     $print,
     $println,

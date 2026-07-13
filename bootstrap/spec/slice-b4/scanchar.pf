@@ -1,0 +1,23 @@
+// Slice B4: character-oriented input. Always run with piped stdin.
+
+import { println, scanChar } from "io";
+
+function showChar(label, value) {
+	match value with
+	| None -> label ++ "=None"
+	| Some found -> label ++ "=Some(" ++ str(found.value) ++ ")"
+}
+
+proc main() {
+	let char1 = scanChar();
+	let char2 = scanChar();
+	let char3 = scanChar();
+	let char4 = scanChar();
+
+	println(showChar("char1", char1));
+	println(showChar("char2", char2));
+	println(showChar("char3", char3));
+	println(showChar("char4", char4));
+}
+
+main();

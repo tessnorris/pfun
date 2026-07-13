@@ -1,0 +1,24 @@
+parse=Ok
+emit-begin
+title = "P#fun"
+count = 42
+ratio = 1.5
+enabled = true
+names = ["Ada", "Grace"]
+
+[server]
+host = "localhost"
+ports = [8000, 8001]
+emit-end
+roundtrip=Ok
+file-roundtrip=Ok
+malformed-no-equals=Err
+malformed-string=Err
+malformed-number=Err
+malformed-mixed-array=Err
+malformed-duplicate-key=Err
+malformed-section=Err
+malformed-dotted-key=Err
+malformed-date=Err
+malformed-empty-array-item=Err
+SLICE B5 TOML OK

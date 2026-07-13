@@ -1,385 +1,1006 @@
-// toml.pf — TOML parser and emitter for Pfun.
+// toml.pf — pure, total TOML subset for Pfun V2.
 //
-// Import with: import * from "$PFUN_HOME/lib/toml.pf";
-// Also import: import * from "foreign"; — to match on FOk / FErr.
+// Import with:
 //
-// ─── Data model ───────────────────────────────────────────────────────────────
+//     import * as Toml from "toml";
 //
-//   type SettingValue =
-//     | SStr   { value : Str }       -- quoted string
-//     | SInt   { value : Int }       -- integer
-//     | SFloat { value : Float }     -- floating-point number
-//     | SBool  { value : Bool }      -- true / false
-//     | SList  { items : List<SettingValue> }   -- inline array
+// Public API:
 //
-//   type Setting = { key : Str, value : SettingValue }
+//     tomlParse : Str -> Result<List<SettingGroup>, Str>
+//     tomlEmit  : List<SettingGroup> -> Str
 //
-//   type SettingGroup = { name : Str, settings : List<Setting> }
+// Supported:
 //
-// ─── API ──────────────────────────────────────────────────────────────────────
+//   * top-level keys
+//   * [section] headers
+//   * quoted strings with \", \\, \n, and \t escapes
+//   * signed integers
+//   * signed decimal floats
+//   * booleans
+//   * homogeneous inline scalar arrays
+//   * line and trailing comments
+//   * blank lines
 //
-//   tomlParse(text)    FOk { List<SettingGroup> }  |  FErr { kind, message }
-//     Parse a TOML string into a list of SettingGroups.
-//     Keys before the first section header go into a group named "".
-//     Returns FErr on syntax errors.
-//
-//   tomlEmit(groups)   Str
-//     Serialize a list of SettingGroups back to TOML text.
-//     Groups with name "" are emitted without a section header.
-//     Never fails.
-//
-// ─── Supported TOML subset ────────────────────────────────────────────────────
-//
-//   [section]             section headers
-//   key = "string"        quoted strings (with \" \\ \n escapes)
-//   key = 42              integers (optionally signed)
-//   key = 3.14            floats   (optionally signed)
-//   key = true | false    booleans
-//   key = ["a","b"]       inline arrays of any uniform scalar type
-//   # comment             line comments (also trailing comments after values)
-//   blank lines           ignored
-//
-// Multi-line strings, multi-line arrays, dotted keys, inline tables, dates,
-// and TOML 1.0 features are not supported.
+// Unsupported syntax returns Err. No sentinel values or host exceptions are
+// part of the parser contract.
 
-import * from "foreign";
-import * from "$PFUN_HOME/lib/stringlib.pf";
-
-// ─── Types ────────────────────────────────────────────────────────────────────
+import * as Str from "string";
 
 export type SettingValue = {
-  | SStr   : value
-  | SInt   : value
-  | SFloat : value
-  | SBool  : value
-  | SList  : items
+	| SStr: value
+	| SInt: value
+	| SFloat: value
+	| SBool: value
+	| SList: items
 }
 
-export type Setting = { key, value }
-
-export type SettingGroup = { name, settings }
-
-// ─── Internal: character classification ──────────────────────────────────────
-
-function isDigit(c) {
-  c == "0" || c == "1" || c == "2" || c == "3" || c == "4" ||
-  c == "5" || c == "6" || c == "7" || c == "8" || c == "9";
+export type Setting = {
+	key,
+	value
 }
 
-function isSign(c) { c == "-" || c == "+"; }
-
-// ─── Internal: string unescape ───────────────────────────────────────────────
-
-// unescapeToml(s) — convert TOML escape sequences in s (the raw content
-// between the outer quotes, with leading/trailing quote already stripped).
-function unescapeToml(s) {
-  let chars = split(s, "");
-  unescapeChars(chars, "");
+export type SettingGroup = {
+	name,
+	settings
 }
 
-function unescapeChars(chars, acc) {
-  if length(chars) == 0 then acc
-  else {
-    let c = head(chars);
-    let rest = tail(chars);
-    if c != "\\" then unescapeChars(rest, acc + c)
-    else if length(rest) == 0 then acc + "\\"
-    else {
-      let e = head(rest);
-      let tail2 = tail(rest);
-      if      e == "\"" then unescapeChars(tail2, acc + "\"")
-      else if e == "\\" then unescapeChars(tail2, acc + "\\")
-      else if e == "n"  then unescapeChars(tail2, acc + "\n")
-      else                   unescapeChars(tail2, acc + e);
-    }
-  }
+type ParsedLine = {
+	| LBlank
+	| LSection: name
+	| LSetting: key, raw
 }
 
-// escapeToml(s) — escape a Str for TOML quoted-string output.
-function escapeToml(s) {
-  let chars = split(s, "");
-  escapeChars(chars, "");
+// ── small total helpers ──────────────────────────────────────────────────
+
+function lineError(lineNumber, message) {
+	Err {
+		"line " ++ str(lineNumber) ++ ": " ++ message
+	}
 }
 
-function escapeChars(chars, acc) {
-  if length(chars) == 0 then acc
-  else {
-    let c = head(chars);
-    let rest = tail(chars);
-    if      c == "\"" then escapeChars(rest, acc + "\\\"")
-    else if c == "\\" then escapeChars(rest, acc + "\\\\")
-    else if c == "\n" then escapeChars(rest, acc + "\\n")
-
-    else                   escapeChars(rest, acc + c);
-  }
+function isHorizontalSpace(c) {
+	c == " " || c == "\t"
 }
 
-// ─── Internal: value parsing ─────────────────────────────────────────────────
-
-// stripComment(s) — remove a trailing # comment from a raw value string.
-// Careful: # inside a quoted string must not be stripped.
-function stripComment(s) {
-  let idx = findCommentStart(split(s, ""), 0, false);
-  if idx < 0 then s
-  else trim(join(take(idx, split(s, "")), ""));
+function validBareKeyChar(c) {
+	!isHorizontalSpace(c)
+		&& c != "."
+		&& c != "\""
+		&& c != "'"
+		&& c != "["
+		&& c != "]"
+		&& c != "{"
+		&& c != "}"
+		&& c != "="
+		&& c != ","
 }
 
-function findCommentStart(chars, i, inStr) {
-  if length(chars) == 0 then -1
-  else {
-    let c = head(chars);
-    let rest = tail(chars);
-    if inStr then {
-      if c == "\\" then {
-        // skip escaped character
-        if length(rest) == 0 then -1
-        else findCommentStart(tail(rest), i + 2, true);
-      }
-      else if c == "\"" then findCommentStart(rest, i + 1, false)
-      else findCommentStart(rest, i + 1, true);
-    }
-    else if c == "\"" then findCommentStart(rest, i + 1, true)
-    else if c == "#"  then i
-    else findCommentStart(rest, i + 1, false);
-  }
+function validBareKeyChars(chars) {
+	match chars with
+	| [] -> true
+	| [c, ...rest] -> {
+		validBareKeyChar(c) && validBareKeyChars(rest)
+	}
 }
 
-// parseString(raw) — parse a quoted TOML string.
-// raw is the full raw value like: "hello world"
-// Returns SStr or FErr string.
-function parseString(raw) {
-  let t = trim(raw);
-  if length(t) < 2 then SStr { "ERR:string too short" }
-  else {
-    let first = head(split(t, ""));
-    let last  = nth(split(t, ""), length(t) - 1);
-    if first != "\"" || last != "\"" then SStr { "ERR:missing quotes" }
-    else {
-      let inner = join(take(length(t) - 2, tail(split(t, ""))), "");
-      if true then SStr { unescapeToml(inner) + "" } else SStr { "" }
-    }
-  }
+function validBareKey(key) {
+	length(key) > 0 && validBareKeyChars(split(key, ""))
 }
 
-// parseNumber(raw) — parse an Int or Float from a raw value string.
-// Returns SInt, SFloat, or a sentinel value if parse fails.
-function digitsOf(firstC, rest, chars) {
-  if isSign(firstC) then rest else chars;
+function splitOutsideChars(
+	chars,
+	target,
+	inString,
+	escaped,
+	leftRev
+) {
+	match chars with
+	| [] -> None
+	| [c, ...rest] -> {
+		if escaped then {
+			splitOutsideChars(
+				rest,
+				target,
+				inString,
+				false,
+				cons(c, leftRev)
+			)
+		} else if inString then {
+			if c == "\\" then {
+				splitOutsideChars(
+					rest,
+					target,
+					true,
+					true,
+					cons(c, leftRev)
+				)
+			} else if c == "\"" then {
+				splitOutsideChars(
+					rest,
+					target,
+					false,
+					false,
+					cons(c, leftRev)
+				)
+			} else {
+				splitOutsideChars(
+					rest,
+					target,
+					true,
+					false,
+					cons(c, leftRev)
+				)
+			}
+		} else if c == "\"" then {
+			splitOutsideChars(
+				rest,
+				target,
+				true,
+				false,
+				cons(c, leftRev)
+			)
+		} else if c == target then {
+			Some {
+				Pair {
+					join(reverse(leftRev), ""),
+					join(rest, "")
+				}
+			}
+		} else {
+			splitOutsideChars(
+				rest,
+				target,
+				false,
+				false,
+				cons(c, leftRev)
+			)
+		}
+	}
 }
 
-function parseNumber(raw) {
-  let t = trim(raw);
-  let chars = split(t, "");
-  let hasDot = contains(t, ".");
-  let firstC = head(chars);
-  let rest   = tail(chars);
-  let digits = digitsOf(firstC, rest, chars);
-  let allDigDot = strMatch(join(digits, ""), fn c => isDigit(c) || c == ".");
-  if !allDigDot then SStr { "ERR:notanumber" }
-  else if hasDot then SFloat { toFloat(t) }
-  else SInt { toInt(toFloat(t)) };
+function splitOutside(text, target) {
+	splitOutsideChars(
+		split(text, ""),
+		target,
+		false,
+		false,
+		[]
+	)
 }
 
-// parseValue(raw) — dispatch to the right parser based on the raw value text.
-function parseValue(raw) {
-  let t = trim(raw);
-  if length(t) == 0 then SStr { "" }
-  else {
-    let first = head(split(t, ""));
-    if first == "\"" then parseString(t)
-    else if first == "[" then parseArray(t)
-    else if t == "true"  then SBool { true }
-    else if t == "false" then SBool { false }
-    else parseNumber(t);
-  }
+function stripComment(line) {
+	match splitOutside(line, "#") with
+	| None -> line
+	| Some pair -> pair.value.key
 }
 
-// parseArray(raw) — parse an inline TOML array like ["a","b"] or [1,2,3].
-// Returns SList or SStr containing "ERR:...".
-function parseArray(raw) {
-  let t = trim(raw);
-  // Strip the outer [ ]
-  if length(t) < 2 then SStr { "ERR:array too short" }
-  else {
-    let inner = join(take(length(t) - 2, tail(split(t, ""))), "");
-    let innerT = trim(inner);
-    if length(innerT) == 0 then SList { [] + [] }
-    else {
-      let elems = splitArrayElements(innerT);
-      let parsed = map(fn e => parseValue(trim(e)), elems);
-      let hasErr = strMatch(join(map(fn v =>
-        match v with
-        | SStr sv -> { if startsWith(sv.value, "ERR:") then "E" else "."; }
-        | _ -> ".",
-        parsed), ""), fn c => c == "E");
-      if hasErr then SStr { "ERR:array element error" }
-      else SList { parsed + [] };
-    }
-  }
+// ── basic strings ────────────────────────────────────────────────────────
+
+function decodedEscape(c) {
+	if c == "\"" then {
+		Some { "\"" }
+	} else if c == "\\" then {
+		Some { "\\" }
+	} else if c == "n" then {
+		Some { "\n" }
+	} else if c == "t" then {
+		Some { "\t" }
+	} else {
+		None
+	}
 }
 
-// splitArrayElements(inner) — split comma-separated array elements,
-// respecting quoted strings so commas inside strings are not split on.
-function splitArrayElements(s) {
-  splitElems(split(s, ""), 0, false, "", []);
+function parseStringBody(chars, charsRev, escaped) {
+	match chars with
+	| [] -> Err { "unterminated string" }
+	| [c, ...rest] -> {
+		if escaped then {
+			match decodedEscape(c) with
+			| None -> {
+				Err {
+					"unsupported string escape \\" ++ c
+				}
+			}
+			| Some decoded -> {
+				parseStringBody(
+					rest,
+					cons(decoded.value, charsRev),
+					false
+				)
+			}
+		} else if c == "\\" then {
+			parseStringBody(rest, charsRev, true)
+		} else if c == "\"" then {
+			if length(rest) == 0 then {
+				Ok {
+					SStr {
+						join(reverse(charsRev), "")
+					}
+				}
+			} else {
+				Err {
+					"characters after closing quote"
+				}
+			}
+		} else {
+			parseStringBody(
+				rest,
+				cons(c, charsRev),
+				false
+			)
+		}
+	}
 }
 
-function splitElems(chars, depth, inStr, cur, acc) {
-  if length(chars) == 0 then {
-    let t = trim(cur);
-    if length(t) == 0 then acc else acc + [t];
-  }
-  else {
-    let c = head(chars);
-    let rest = tail(chars);
-    if inStr then {
-      if c == "\\" && length(rest) > 0 then
-        splitElems(tail(rest), depth, true, cur + c + head(rest), acc)
-      else if c == "\"" then splitElems(rest, depth, false, cur + c, acc)
-      else splitElems(rest, depth, true, cur + c, acc);
-    }
-    else if c == "\"" then splitElems(rest, depth, true, cur + c, acc)
-    else if c == "," && depth == 0 then {
-      let t = trim(cur);
-      if length(t) == 0 then splitElems(rest, depth, false, "", acc)
-      else splitElems(rest, depth, false, "", acc + [t]);
-    }
-    else splitElems(rest, depth, false, cur + c, acc);
-  }
+function parseStringValue(text) {
+	match split(text, "") with
+	| [] -> Err { "empty string value" }
+	| [first, ...rest] -> {
+		if first == "\"" then {
+			parseStringBody(rest, [], false)
+		} else {
+			Err { "string must begin with a quote" }
+		}
+	}
 }
 
-// ─── Internal: line parsing ───────────────────────────────────────────────────
+// ── numbers ──────────────────────────────────────────────────────────────
 
-// parseLine(line) — parse one TOML line.
-// Returns one of:
-//   ["blank"]          — blank or comment line
-//   ["section", name]  — [section header]
-//   ["setting", key, rawValue]   — key = value line
-//   ["error", message]  — syntax error
+function digitInt(c) {
+	if c == "0" then {
+		Some { 0 }
+	} else if c == "1" then {
+		Some { 1 }
+	} else if c == "2" then {
+		Some { 2 }
+	} else if c == "3" then {
+		Some { 3 }
+	} else if c == "4" then {
+		Some { 4 }
+	} else if c == "5" then {
+		Some { 5 }
+	} else if c == "6" then {
+		Some { 6 }
+	} else if c == "7" then {
+		Some { 7 }
+	} else if c == "8" then {
+		Some { 8 }
+	} else if c == "9" then {
+		Some { 9 }
+	} else {
+		None
+	}
+}
+
+function digitFloat(c) {
+	if c == "0" then {
+		Some { 0.0 }
+	} else if c == "1" then {
+		Some { 1.0 }
+	} else if c == "2" then {
+		Some { 2.0 }
+	} else if c == "3" then {
+		Some { 3.0 }
+	} else if c == "4" then {
+		Some { 4.0 }
+	} else if c == "5" then {
+		Some { 5.0 }
+	} else if c == "6" then {
+		Some { 6.0 }
+	} else if c == "7" then {
+		Some { 7.0 }
+	} else if c == "8" then {
+		Some { 8.0 }
+	} else if c == "9" then {
+		Some { 9.0 }
+	} else {
+		None
+	}
+}
+
+function parseIntDigits(chars, acc, hasDigit) {
+	match chars with
+	| [] -> {
+		if hasDigit then {
+			Some { acc }
+		} else {
+			None
+		}
+	}
+	| [c, ...rest] -> {
+		match digitInt(c) with
+		| None -> None
+		| Some digit -> {
+			parseIntDigits(
+				rest,
+				acc * 10 + digit.value,
+				true
+			)
+		}
+	}
+}
+
+function parseSignedInt(chars) {
+	match chars with
+	| [] -> None
+	| [first, ...rest] -> {
+		if first == "-" then {
+			match parseIntDigits(rest, 0, false) with
+			| None -> None
+			| Some value -> Some { 0 - value.value }
+		} else if first == "+" then {
+			parseIntDigits(rest, 0, false)
+		} else {
+			parseIntDigits(chars, 0, false)
+		}
+	}
+}
+
+function parseFloatWhole(chars, acc, hasDigit) {
+	match chars with
+	| [] -> {
+		if hasDigit then {
+			Some { acc }
+		} else {
+			None
+		}
+	}
+	| [c, ...rest] -> {
+		match digitFloat(c) with
+		| None -> None
+		| Some digit -> {
+			parseFloatWhole(
+				rest,
+				acc * 10.0 + digit.value,
+				true
+			)
+		}
+	}
+}
+
+function parseFloatFraction(
+	chars,
+	acc,
+	scale,
+	hasDigit
+) {
+	match chars with
+	| [] -> {
+		if hasDigit then {
+			Some { acc }
+		} else {
+			None
+		}
+	}
+	| [c, ...rest] -> {
+		match digitFloat(c) with
+		| None -> None
+		| Some digit -> {
+			parseFloatFraction(
+				rest,
+				acc + digit.value * scale,
+				scale * 0.1,
+				true
+			)
+		}
+	}
+}
+
+function parseUnsignedFloat(chars, sign) {
+	let text = join(chars, "");
+
+	match split(text, ".") with
+	| [wholeText, fractionText] -> {
+		match parseFloatWhole(
+			split(wholeText, ""),
+			0.0,
+			false
+		) with
+		| None -> None
+		| Some whole -> {
+			match parseFloatFraction(
+				split(fractionText, ""),
+				0.0,
+				0.1,
+				false
+			) with
+			| None -> None
+			| Some fraction -> {
+				Some {
+					sign
+						* (
+							whole.value
+							+ fraction.value
+						)
+				}
+			}
+		}
+	}
+	| _ -> None
+}
+
+function parseSignedFloat(chars) {
+	match chars with
+	| [] -> None
+	| [first, ...rest] -> {
+		if first == "-" then {
+			parseUnsignedFloat(rest, -1.0)
+		} else if first == "+" then {
+			parseUnsignedFloat(rest, 1.0)
+		} else {
+			parseUnsignedFloat(chars, 1.0)
+		}
+	}
+}
+
+function parseNumberValue(text) {
+	if Str.contains(text, ".") then {
+		match parseSignedFloat(split(text, "")) with
+		| None -> Err { "invalid float" }
+		| Some value -> Ok { SFloat { value.value } }
+	} else {
+		match parseSignedInt(split(text, "")) with
+		| None -> Err { "invalid integer" }
+		| Some value -> Ok { SInt { value.value } }
+	}
+}
+
+// ── arrays ───────────────────────────────────────────────────────────────
+
+function splitArrayChars(
+	chars,
+	inString,
+	escaped,
+	currentRev,
+	partsRev
+) {
+	match chars with
+	| [] -> {
+		if inString then {
+			Err { "unterminated string in array" }
+		} else {
+			let token = Str.trim(
+				join(reverse(currentRev), "")
+			);
+
+			if length(token) == 0 then {
+				Ok { reverse(partsRev) }
+			} else {
+				Ok {
+					reverse(cons(token, partsRev))
+				}
+			}
+		}
+	}
+	| [c, ...rest] -> {
+		if escaped then {
+			splitArrayChars(
+				rest,
+				inString,
+				false,
+				cons(c, currentRev),
+				partsRev
+			)
+		} else if inString then {
+			if c == "\\" then {
+				splitArrayChars(
+					rest,
+					true,
+					true,
+					cons(c, currentRev),
+					partsRev
+				)
+			} else if c == "\"" then {
+				splitArrayChars(
+					rest,
+					false,
+					false,
+					cons(c, currentRev),
+					partsRev
+				)
+			} else {
+				splitArrayChars(
+					rest,
+					true,
+					false,
+					cons(c, currentRev),
+					partsRev
+				)
+			}
+		} else if c == "\"" then {
+			splitArrayChars(
+				rest,
+				true,
+				false,
+				cons(c, currentRev),
+				partsRev
+			)
+		} else if c == "," then {
+			let token = Str.trim(
+				join(reverse(currentRev), "")
+			);
+
+			if length(token) == 0 then {
+				Err { "empty array element" }
+			} else {
+				splitArrayChars(
+					rest,
+					false,
+					false,
+					[],
+					cons(token, partsRev)
+				)
+			}
+		} else {
+			splitArrayChars(
+				rest,
+				false,
+				false,
+				cons(c, currentRev),
+				partsRev
+			)
+		}
+	}
+}
+
+function splitArrayElements(text) {
+	splitArrayChars(
+		split(text, ""),
+		false,
+		false,
+		[],
+		[]
+	)
+}
+
+function scalarKind(value) {
+	match value with
+	| SStr _ -> "str"
+	| SInt _ -> "int"
+	| SFloat _ -> "float"
+	| SBool _ -> "bool"
+	| SList _ -> "list"
+}
+
+function parseScalarValue(text) {
+	let value = Str.trim(text);
+
+	if length(value) == 0 then {
+		Err { "empty value" }
+	} else if Str.startsWith(value, "\"") then {
+		parseStringValue(value)
+	} else if value == "true" then {
+		Ok { SBool { true } }
+	} else if value == "false" then {
+		Ok { SBool { false } }
+	} else if Str.startsWith(value, "[") then {
+		Err { "nested arrays are not supported" }
+	} else {
+		parseNumberValue(value)
+	}
+}
+
+function parseArrayTokens(
+	tokens,
+	hasKind,
+	kind,
+	valuesRev
+) {
+	match tokens with
+	| [] -> {
+		Ok {
+			SList {
+				reverse(valuesRev)
+			}
+		}
+	}
+	| [token, ...rest] -> {
+		match parseScalarValue(token) with
+		| Err error -> Err { error.message }
+		| Ok parsed -> {
+			let foundKind = scalarKind(
+				parsed.value
+			);
+
+			if hasKind && foundKind != kind then {
+				Err {
+					"array elements must have one type"
+				}
+			} else {
+				parseArrayTokens(
+					rest,
+					true,
+					foundKind,
+					cons(
+						parsed.value,
+						valuesRev
+					)
+				)
+			}
+		}
+	}
+}
+
+function parseArrayValue(text) {
+	if !Str.endsWith(text, "]") then {
+		Err { "array is missing ]" }
+	} else if length(text) < 2 then {
+		Err { "invalid array" }
+	} else {
+		let inner = slice(
+			1,
+			length(text) - 2,
+			text
+		);
+
+		match splitArrayElements(inner) with
+		| Err error -> Err { error.message }
+		| Ok tokens -> {
+			parseArrayTokens(
+				tokens.value,
+				false,
+				"",
+				[]
+			)
+		}
+	}
+}
+
+function parseValue(text) {
+	let value = Str.trim(text);
+
+	if length(value) == 0 then {
+		Err { "missing value" }
+	} else if Str.startsWith(value, "[") then {
+		parseArrayValue(value)
+	} else {
+		parseScalarValue(value)
+	}
+}
+
+// ── lines and groups ─────────────────────────────────────────────────────
+
+function parseSection(clean) {
+	if !Str.endsWith(clean, "]") then {
+		Err { "section header is missing ]" }
+	} else if length(clean) < 3 then {
+		Err { "empty section name" }
+	} else {
+		let name = Str.trim(
+			slice(
+				1,
+				length(clean) - 2,
+				clean
+			)
+		);
+
+		if !validBareKey(name) then {
+			Err {
+				"unsupported section name"
+			}
+		} else {
+			Ok { LSection { name } }
+		}
+	}
+}
+
+function parseSetting(clean) {
+	match splitOutside(clean, "=") with
+	| None -> Err { "expected key = value" }
+	| Some pair -> {
+		let key = Str.trim(pair.value.key);
+		let raw = Str.trim(pair.value.value);
+
+		if !validBareKey(key) then {
+			Err {
+				"unsupported or empty key"
+			}
+		} else if length(raw) == 0 then {
+			Err { "missing value" }
+		} else {
+			Ok { LSetting { key, raw } }
+		}
+	}
+}
+
 function parseLine(line) {
-  let t = trim(line);
-  if length(t) == 0              then ["blank"]
-  else if startsWith(t, "#")     then ["blank"]
-  else if startsWith(t, "[") then {
-    // Section header: [name] or [name.sub] (we treat the whole thing as the name)
-    let last = nth(split(t, ""), length(t) - 1);
-    if last != "]" then ["error", "section header missing ]"]
-    else {
-      let inner = join(take(length(t) - 2, tail(split(t, ""))), "");
-      ["section", trim(inner)];
-    }
-  }
-  else {
-    // key = value
-    match indexOf(t, "=") with
-    | None -> ["error", "no = found in: " + t]
-    | Some eqOpt -> {
-        let eqIdx = eqOpt.value;
-        let tChars = split(t, "");
-        let key = trim(join(take(eqIdx, tChars), ""));
-        let rawVal = trim(join(slice(eqIdx + 1, length(tChars) - eqIdx - 1, tChars), ""));
-        let rawNoComment = stripComment(rawVal);
-        [" setting", key, rawNoComment];
-      };
-  }
+	let clean = Str.trim(stripComment(line));
+
+	if length(clean) == 0 then {
+		Ok { LBlank }
+	} else if Str.startsWith(clean, "[") then {
+		parseSection(clean)
+	} else {
+		parseSetting(clean)
+	}
 }
 
-// ─── Internal: build result ───────────────────────────────────────────────────
-
-// buildGroups(lines, currentName, currentSettings, acc, lineNum) ->
-//   ForeignResult<List<SettingGroup>>
-function buildGroups(lines, currentName, currentSettings, acc, lineNum) {
-  if length(lines) == 0 then {
-    // Flush the last group
-    let finalGroup = SettingGroup { currentName, currentSettings };
-    FOk { acc + [finalGroup] };
-  }
-  else {
-    let line = head(lines);
-    let rest = tail(lines);
-    let parsed = parseLine(line);
-    let tag = head(parsed);
-    if tag == "blank" then
-      buildGroups(rest, currentName, currentSettings, acc, lineNum + 1)
-    else if tag == "section" then {
-      let name = nth(parsed, 1);
-      let finished = SettingGroup { currentName, currentSettings };
-      buildGroups(rest, name, [], acc + [finished], lineNum + 1);
-    }
-    else if tag == " setting" then {
-      let key    = nth(parsed, 1);
-      let rawVal = nth(parsed, 2);
-      let sv = parseValue(rawVal);
-      match sv with
-      | SStr errV -> {
-          if startsWith(errV.value, "ERR:") then
-            FErr { "parse_error", "line " + __str__(lineNum) + ": " + errV.value + " (key=" + key + ")" }
-          else {
-            let setting = Setting { key, SStr { errV.value } };
-            buildGroups(rest, currentName, currentSettings + [setting], acc, lineNum + 1);
-          }
-        }
-      | _ -> {
-          let setting = Setting { key, sv };
-          buildGroups(rest, currentName, currentSettings + [setting], acc, lineNum + 1);
-        }
-    }
-    else {
-      // tag == "error"
-      let msg = nth(parsed, 1);
-      FErr { "parse_error", "line " + __str__(lineNum) + ": " + msg };
-    }
-  }
+function hasSetting(settings, key) {
+	match settings with
+	| [] -> false
+	| [setting, ...rest] -> {
+		setting.key == key
+			|| hasSetting(rest, key)
+	}
 }
 
-// ─── Public API ───────────────────────────────────────────────────────────────
+function hasGroup(groups, name) {
+	match groups with
+	| [] -> false
+	| [group, ...rest] -> {
+		group.name == name
+			|| hasGroup(rest, name)
+	}
+}
 
-// tomlParse(text) — parse TOML text into a list of SettingGroups.
-// Returns FOk { List<SettingGroup> } or FErr { kind, message }.
-// Callers must import * from "foreign" to match on FOk / FErr.
+function flushGroup(
+	currentName,
+	settingsRev,
+	groupsRev
+) {
+	cons(
+		SettingGroup {
+			currentName,
+			reverse(settingsRev)
+		},
+		groupsRev
+	)
+}
+
+function parseLines(
+	lines,
+	lineNumber,
+	currentName,
+	settingsRev,
+	groupsRev
+) {
+	match lines with
+	| [] -> {
+		Ok {
+			reverse(
+				flushGroup(
+					currentName,
+					settingsRev,
+					groupsRev
+				)
+			)
+		}
+	}
+	| [line, ...rest] -> {
+		match parseLine(line) with
+		| Err error -> {
+			lineError(
+				lineNumber,
+				error.message
+			)
+		}
+		| Ok parsed -> {
+			match parsed.value with
+			| LBlank -> {
+				parseLines(
+					rest,
+					lineNumber + 1,
+					currentName,
+					settingsRev,
+					groupsRev
+				)
+			}
+			| LSection section -> {
+				let name = section.name;
+
+				if (
+					(
+						currentName != ""
+						&& name == currentName
+					)
+					|| hasGroup(groupsRev, name)
+				) then {
+					lineError(
+						lineNumber,
+						"duplicate section "
+							++ name
+					)
+				} else {
+					parseLines(
+						rest,
+						lineNumber + 1,
+						name,
+						[],
+						flushGroup(
+							currentName,
+							settingsRev,
+							groupsRev
+						)
+					)
+				}
+			}
+			| LSetting found -> {
+				if hasSetting(
+					settingsRev,
+					found.key
+				) then {
+					lineError(
+						lineNumber,
+						"duplicate key "
+							++ found.key
+					)
+				} else {
+					match parseValue(
+						found.raw
+					) with
+					| Err error -> {
+						lineError(
+							lineNumber,
+							error.message
+						)
+					}
+					| Ok value -> {
+						parseLines(
+							rest,
+							lineNumber + 1,
+							currentName,
+							cons(
+								Setting {
+									found.key,
+									value.value
+								},
+								settingsRev
+							),
+							groupsRev
+						)
+					}
+				}
+			}
+		}
+	}
+}
+
 export function tomlParse(text) {
-  let lines = split(text, "\n");
-  // Start with a synthetic "" group for top-level keys
-  buildGroups(lines, "", [], [], 1);
+	parseLines(
+		split(text, "\n"),
+		1,
+		"",
+		[],
+		[]
+	)
 }
 
-// ─── Emit helpers ─────────────────────────────────────────────────────────────
+// ── emitter ──────────────────────────────────────────────────────────────
 
-// emitValue(sv) — render a SettingValue as a TOML value string.
-function emitValue(sv) {
-  match sv with
-  | SStr   v -> "\"" + escapeToml(v.value) + "\""
-  | SInt   v -> __str__(v.value)
-  | SFloat v -> {
-      let s = __str__(v.value);
-      // Ensure there's a decimal point so it reads as a TOML float
-      if contains(s, ".") then s else s + ".0";
-    }
-  | SBool  v -> { if v.value then "true" else "false"; }
-  | SList  v -> "[" + join(map(fn item => emitValue(item), v.items), ", ") + "]";
+function escapeStringChars(chars, escapedRev) {
+	match chars with
+	| [] -> join(reverse(escapedRev), "")
+	| [c, ...rest] -> {
+		if c == "\"" then {
+			escapeStringChars(
+				rest,
+				cons("\\\"", escapedRev)
+			)
+		} else if c == "\\" then {
+			escapeStringChars(
+				rest,
+				cons("\\\\", escapedRev)
+			)
+		} else if c == "\n" then {
+			escapeStringChars(
+				rest,
+				cons("\\n", escapedRev)
+			)
+		} else if c == "\t" then {
+			escapeStringChars(
+				rest,
+				cons("\\t", escapedRev)
+			)
+		} else {
+			escapeStringChars(
+				rest,
+				cons(c, escapedRev)
+			)
+		}
+	}
 }
 
-// emitSetting(s) — render a Setting as "key = value".
-function emitSetting(s) {
-  s.key + " = " + emitValue(s.value);
+function escapeString(value) {
+	escapeStringChars(split(value, ""), [])
 }
 
-// emitGroup(g) — render a SettingGroup as TOML section text.
-function groupHeader(name) {
-  if length(name) == 0 then "" else "[" + name + "]\n";
+function emitFloat(value) {
+	let text = str(value);
+
+	if (
+		Str.contains(text, ".")
+		|| Str.contains(text, "e")
+		|| Str.contains(text, "E")
+	) then {
+		text
+	} else {
+		text ++ ".0"
+	}
 }
 
-function emitGroup(g) {
-  let header = groupHeader(g.name);
-  let body = join(map(emitSetting, g.settings), "\n");
-  if length(g.settings) == 0 then header
-  else header + body + "\n";
+function emitValue(value) {
+	match value with
+	| SStr found -> {
+		"\"" ++ escapeString(found.value) ++ "\""
+	}
+	| SInt found -> str(found.value)
+	| SFloat found -> emitFloat(found.value)
+	| SBool found -> {
+		if found.value then {
+			"true"
+		} else {
+			"false"
+		}
+	}
+	| SList found -> {
+		"["
+			++ join(
+				map(
+					fn item => emitValue(item),
+					found.items
+				),
+				", "
+			)
+			++ "]"
+	}
 }
 
-// tomlEmit(groups) — serialize a list of SettingGroups to TOML text.
-// Groups with name "" are emitted without a section header.
-// Never fails.
+function emitSetting(setting) {
+	setting.key
+		++ " = "
+		++ emitValue(setting.value)
+}
+
+function emitGroup(group) {
+	let body = join(
+		map(
+			fn setting => emitSetting(setting),
+			group.settings
+		),
+		"\n"
+	);
+
+	if group.name == "" then {
+		body
+	} else if length(body) == 0 then {
+		"[" ++ group.name ++ "]"
+	} else {
+		"["
+			++ group.name
+			++ "]\n"
+			++ body
+	}
+}
+
+function emitGroupParts(groups, partsRev) {
+	match groups with
+	| [] -> reverse(partsRev)
+	| [group, ...rest] -> {
+		let part = emitGroup(group);
+
+		if length(part) == 0 then {
+			emitGroupParts(rest, partsRev)
+		} else {
+			emitGroupParts(
+				rest,
+				cons(part, partsRev)
+			)
+		}
+	}
+}
+
 export function tomlEmit(groups) {
-  let parts = map(emitGroup, groups);
-  join(parts, "\n");
+	let grounded = cons(
+		SettingGroup { "", [] },
+		groups
+	);
+
+	match grounded with
+	| [] -> ""
+	| [witness, ...original] -> {
+		join(
+			emitGroupParts(original, []),
+			"\n\n"
+		)
+	}
 }

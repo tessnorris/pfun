@@ -1,0 +1,82 @@
+// Slice B1: total reads and safe integer division.
+
+import { head, tail } from "list";
+import * from "io";
+
+function showInt(value) {
+	match value with
+	| None -> "None"
+	| Some item -> "Some(" ++ str(item.value + 0) ++ ")"
+}
+
+function showIntList(value) {
+	match value with
+	| None -> "None"
+	| Some item -> {
+		"Some(["
+		++ join(map(fn number => str(number + 0), item.value), ",")
+		++ "])"
+	}
+}
+
+function showChar(value) {
+	match value with
+	| None -> "None"
+	| Some item -> {
+		let code = asc(item.value);
+		"Some(" ++ str(item.value) ++ ":" ++ str(code) ++ ")"
+	}
+}
+
+function divideWithProof(a, b) {
+	match nonZero(b) with
+	| None -> None
+	| Some nz -> Some { a / nz.value }
+}
+
+function moduloWithProof(a, b) {
+	match nonZero(b) with
+	| None -> None
+	| Some nz -> Some { a % nz.value }
+}
+
+proc main() {
+	let values = [10, 20, 30];
+
+	println("head=" ++ showInt(head(values)));
+	println("head-empty=" ++ showInt(head([])));
+
+	println("tail=" ++ showIntList(tail(values)));
+	println("tail-empty=" ++ showIntList(tail([])));
+
+	println("nth=" ++ showInt(nth(values, 1)));
+	println("nth-oob=" ++ showInt(nth(values, 99)));
+
+	println("index=" ++ showInt(values[2]));
+	println("index-oob=" ++ showInt(values[99]));
+
+	println("string-index=" ++ showChar("abc"[1]));
+	println("string-index-oob=" ++ showChar("abc"[99]));
+
+	println("chr=" ++ showChar(chr(65)));
+	println("chr-invalid=" ++ showChar(chr(1114112)));
+
+	println("literal-div=" ++ str(21 / 3));
+	println("literal-negative-div=" ++ str(21 / -3));
+	println("literal-mod=" ++ str(22 % 5));
+
+	println("proof-div=" ++ showInt(divideWithProof(20, 4)));
+	println("proof-div-zero=" ++ showInt(divideWithProof(20, 0)));
+	println("proof-mod=" ++ showInt(moduloWithProof(22, 5)));
+
+	println("safe-div=" ++ showInt(safeDiv(20, 4)));
+	println("safe-div-zero=" ++ showInt(safeDiv(20, 0)));
+	println("safe-mod=" ++ showInt(safeMod(22, 5)));
+	println("safe-mod-zero=" ++ showInt(safeMod(22, 0)));
+
+	println("float-zero-finite=" ++ str(isFinite(1.0 / 0)));
+
+	println("SLICE B TOTALITY OK");
+}
+
+main();

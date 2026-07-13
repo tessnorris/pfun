@@ -853,6 +853,117 @@ function emitUnary(ctx, op, operand) {
 	}
 }
 
+// ── JSON type descriptors ─────────────────────────────────────────────────
+//
+// JSON intrinsics receive the checked source/target type. This prevents
+// jsonDeserialize from acting as an unchecked generic cast.
+
+function jsonTypeDescriptor(t) {
+	match t with
+	| TInt -> J.jsArr([J.jsStr("Int")])
+	| TFloat -> J.jsArr([J.jsStr("Float")])
+	| TBool -> J.jsArr([J.jsStr("Bool")])
+	| TStr -> J.jsArr([J.jsStr("Str")])
+	| TChar -> J.jsArr([J.jsStr("Char")])
+	| TByte -> J.jsArr([J.jsStr("Byte")])
+	| TUnit -> J.jsArr([J.jsStr("Unit")])
+	| TNonZero -> J.jsArr([J.jsStr("NonZero")])
+	| TList listType -> {
+		J.jsArr([
+			J.jsStr("List"),
+			jsonTypeDescriptor(listType.elem)
+		])
+	}
+	| TNamed named -> {
+		J.jsArr([
+			J.jsStr("Named"),
+			J.jsStr(named.tname),
+			J.jsArr(map(jsonTypeDescriptor, named.args))
+		])
+	}
+	| TVariant variant -> {
+		J.jsArr([
+			J.jsStr("Named"),
+			J.jsStr(variant.unionName),
+			J.jsArr(map(jsonTypeDescriptor, variant.args))
+		])
+	}
+	| _ -> J.jsArr([J.jsStr("Unsupported")])
+}
+
+function jsonDeserializeTarget(t) {
+	match t with
+	| TNamed named -> {
+		if named.tname == "Option" then {
+			match named.args with
+			| [inner] -> inner
+			| _ -> TUnknown
+		} else {
+			TUnknown
+		}
+	}
+	| _ -> TUnknown
+}
+
+function emitJsonSerializeCall(ctx, args) {
+	match args with
+	| [value] -> {
+		hostCall(
+			"$jsonSerialize",
+			[
+				emitExpr(ctx, value),
+				jsonTypeDescriptor(typeOfExpr(ctx, value))
+			]
+		)
+	}
+	| _ -> {
+		hostCall(
+			"$jsonSerialize",
+			map(fn arg => emitExpr(ctx, arg), args)
+		)
+	}
+}
+
+function emitJsonDeserializeCall(ctx, id, args) {
+	match args with
+	| [text] -> {
+		hostCall(
+			"$jsonDeserialize",
+			[
+				emitExpr(ctx, text),
+				jsonTypeDescriptor(
+					jsonDeserializeTarget(typeOfId(ctx, id))
+				)
+			]
+		)
+	}
+	| _ -> {
+		hostCall(
+			"$jsonDeserialize",
+			map(fn arg => emitExpr(ctx, arg), args)
+		)
+	}
+}
+
+function emitJsonDeserializeAsCall(ctx, args) {
+	match args with
+	| [text, witness] -> {
+		hostCall(
+			"$jsonDeserialize",
+			[
+				emitExpr(ctx, text),
+				jsonTypeDescriptor(typeOfExpr(ctx, witness))
+			]
+		)
+	}
+	| _ -> {
+		hostCall(
+			"$jsonDeserialize",
+			map(fn arg => emitExpr(ctx, arg), args)
+		)
+	}
+}
+
 function namedCallParts(callee) {
 	match callee with
 	| EVar v -> Some { v.name }
@@ -868,27 +979,35 @@ function namedResultUnion(ctx, callId) {
 function emitCall(ctx, id, callee, args) {
 	match namedCallParts(callee) with
 	| Some calleeName -> {
-		match namedResultUnion(ctx, id) with
-		| Some unionName -> {
-			if startsUpper(calleeName.value) then {
-				variantObject(
-					calleeName.value,
-					unionName.value,
-          schemaFieldNames(ctx, calleeName.value),
-					map(fn arg => emitExpr(ctx, arg), args)
-				)
-			} else {
+		if calleeName.value == "jsonSerialize" then {
+			emitJsonSerializeCall(ctx, args)
+		} else if calleeName.value == "jsonDeserialize" then {
+			emitJsonDeserializeCall(ctx, id, args)
+		} else if calleeName.value == "jsonDeserializeAs" then {
+			emitJsonDeserializeAsCall(ctx, args)
+		} else {
+			match namedResultUnion(ctx, id) with
+			| Some unionName -> {
+				if startsUpper(calleeName.value) then {
+					variantObject(
+						calleeName.value,
+						unionName.value,
+						schemaFieldNames(ctx, calleeName.value),
+						map(fn arg => emitExpr(ctx, arg), args)
+					)
+				} else {
+					J.jsCall(
+						emitExpr(ctx, callee),
+						map(fn arg => emitExpr(ctx, arg), args)
+					)
+				}
+			}
+			| None -> {
 				J.jsCall(
 					emitExpr(ctx, callee),
 					map(fn arg => emitExpr(ctx, arg), args)
 				)
 			}
-		}
-		| None -> {
-			J.jsCall(
-				emitExpr(ctx, callee),
-				map(fn arg => emitExpr(ctx, arg), args)
-			)
 		}
 	}
 	| None -> {
@@ -898,7 +1017,6 @@ function emitCall(ctx, id, callee, args) {
 		)
 	}
 }
-
 function emitLambda(ctx, params, body0) {
 	let lambdaCtx = addLocals(ctx, params);
 	J.jsArrow(
@@ -993,12 +1111,25 @@ function emitComp(ctx, gens, guard, body0, mode) {
 	)
 }
 
-function emitRecord(ctx, tname, fields) {
-  recordObject(
-    tname,
-    schemaFieldNames(ctx, tname),
-    map(fn field => emitExpr(ctx, field.value), fields)
-  )
+function emitRecord(ctx, id, tname, fields) {
+	let values = map(fn field => emitExpr(ctx, field.value), fields);
+
+	match typeOfId(ctx, id) with
+	| TVariant variant -> {
+		variantObject(
+			variant.vname,
+			variant.unionName,
+			schemaFieldNames(ctx, variant.vname),
+			values
+		)
+	}
+	| _ -> {
+		recordObject(
+			tname,
+			schemaFieldNames(ctx, tname),
+			values
+		)
+	}
 }
 
 function stringIndexOf(names, value, index) {
@@ -1391,7 +1522,7 @@ function emitExpr(ctx, expr) {
 	| EBlock e -> emitBlockExpr(ctx, e.stmts)
 	| EList e -> emitList(ctx, e.mode, e.elems)
 	| EComp e -> emitComp(ctx, e.gens, e.guard, e.body, e.mode)
-	| ERecord e -> emitRecord(ctx, e.tname, e.fields)
+	| ERecord e -> emitRecord(ctx, e.id, e.tname, e.fields)
 	| EField e -> emitField(ctx, e.object, e.fname)
 	| EIndex e -> emitIndex(ctx, e.object, e.index)
 	| EMatch e -> emitMatch(ctx, e.id, e.subject, e.arms)

@@ -1,0 +1,24 @@
+head=Some(10)
+head-empty=None
+tail=Some([20,30])
+tail-empty=None
+nth=Some(20)
+nth-oob=None
+index=Some(30)
+index-oob=None
+string-index=Some(b:98)
+string-index-oob=None
+chr=Some(A:65)
+chr-invalid=None
+literal-div=7
+literal-negative-div=-7
+literal-mod=2
+proof-div=Some(5)
+proof-div-zero=None
+proof-mod=Some(2)
+safe-div=Some(5)
+safe-div-zero=None
+safe-mod=Some(2)
+safe-mod-zero=None
+float-zero-finite=false
+SLICE B TOTALITY OK

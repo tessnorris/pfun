@@ -1,0 +1,161 @@
+// Slice B5: TOML parse, emit, malformed input, and file round trip.
+
+import * as Toml from "toml";
+import { readFile, writeFile, mkdirP } from "file";
+import { print, println, scriptArgs } from "io";
+
+function malformedState(label, text) {
+	match Toml.tomlParse(text) with
+	| Ok value -> label ++ "=Ok"
+	| Err error -> label ++ "=Err"
+}
+
+function parseRoundTrip(groups, emitted) {
+	match Toml.tomlParse(emitted) with
+	| Err error -> "Err"
+	| Ok reparsed -> {
+		if reparsed.value == groups then {
+			"Ok"
+		} else {
+			"Mismatch"
+		}
+	}
+}
+
+proc fileRoundTrip(root, emitted, groups) {
+	let made = mkdirP(root);
+
+	match made with
+	| Err error -> println("file-roundtrip=mkdir-Err")
+	| Ok _ -> {
+		let path = root ++ "/config.toml";
+		let written = writeFile(path, emitted);
+
+		match written with
+		| Err error -> println("file-roundtrip=write-Err")
+		| Ok _ -> {
+			let loaded = readFile(path);
+
+			match loaded with
+			| Err error -> println("file-roundtrip=read-Err")
+			| Ok text -> {
+				match Toml.tomlParse(
+					text.value
+				) with
+				| Err error -> {
+					println(
+						"file-roundtrip=parse-Err"
+					)
+				}
+				| Ok parsed -> {
+					if parsed.value == groups then {
+						println(
+							"file-roundtrip=Ok"
+						)
+					} else {
+						println(
+							"file-roundtrip=Mismatch"
+						)
+					}
+				}
+			}
+		}
+	}
+}
+
+proc main() {
+	let input =
+		"title = \"P#fun\" # trailing comment\n"
+		++ "count = 42\n"
+		++ "ratio = 1.5\n"
+		++ "enabled = true\n"
+		++ "names = [\"Ada\", \"Grace\"]\n"
+		++ "\n"
+		++ "[server]\n"
+		++ "host = \"localhost\"\n"
+		++ "ports = [8000, 8001]";
+
+	match Toml.tomlParse(input) with
+	| Err error -> {
+		println("parse=Err");
+		println(error.message);
+	}
+	| Ok parsed -> {
+		let groups = parsed.value;
+		let emitted = Toml.tomlEmit(groups);
+
+		println("parse=Ok");
+		println("emit-begin");
+		println(emitted);
+		println("emit-end");
+		println(
+			"roundtrip="
+			++ parseRoundTrip(groups, emitted)
+		);
+
+		match scriptArgs() with
+		| [] -> println("file-roundtrip=NoRoot")
+		| [root, ...rest] -> {
+			fileRoundTrip(root, emitted, groups);
+		}
+	}
+
+	println(
+		malformedState(
+			"malformed-no-equals",
+			"broken"
+		)
+	);
+	println(
+		malformedState(
+			"malformed-string",
+			"name = \"unterminated"
+		)
+	);
+	println(
+		malformedState(
+			"malformed-number",
+			"count = 12x"
+		)
+	);
+	println(
+		malformedState(
+			"malformed-mixed-array",
+			"items = [1, \"two\"]"
+		)
+	);
+	println(
+		malformedState(
+			"malformed-duplicate-key",
+			"x = 1\nx = 2"
+		)
+	);
+	println(
+		malformedState(
+			"malformed-section",
+			"[broken\nx = 1"
+		)
+	);
+	println(
+		malformedState(
+			"malformed-dotted-key",
+			"a.b = 1"
+		)
+	);
+	println(
+		malformedState(
+			"malformed-date",
+			"when = 2026-07-13"
+		)
+	);
+	println(
+		malformedState(
+			"malformed-empty-array-item",
+			"items = [1,,2]"
+		)
+	);
+
+	println("SLICE B5 TOML OK");
+}
+
+main();
