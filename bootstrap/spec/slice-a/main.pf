@@ -1,0 +1,109 @@
+// Slice A: ordinary strict application code.
+
+import {
+	importedAdd,
+	importedApply,
+	importedMark,
+	importedAnnounce
+} from "./helper";
+import * from "io";
+
+type SlicePoint = {
+	x,
+	y
+}
+
+type SliceShape = {
+	| SliceCircle: radius
+	| SliceRect: width, height
+}
+
+type SlicePerson = {
+	name,
+	age
+}
+
+function trailingSign(value) {
+	if value < 0 then {
+		"negative"
+	} else if value == 0 then {
+		"zero"
+	} else {
+		"positive"
+	}
+}
+
+function parity(value) {
+	value % 2 == 0 ? "even" : "odd"
+}
+
+function describeShape(shape) {
+	match shape with
+	| SliceCircle circle where circle.radius > 10 -> {
+		$"large circle:{circle.radius}"
+	}
+	| SliceCircle circle -> {
+		$"circle:{circle.radius}"
+	}
+	| SliceRect rectangle -> {
+		$"rect:{rectangle.width}x{rectangle.height}"
+	}
+}
+
+proc main() {
+	let strictA = importedMark("A", 10);
+	let strictB = importedMark("B", 20);
+
+	let integerValue = 42;
+	let floatValue = 2.5;
+	let boolValue = true;
+	let charValue = 'Z';
+	let byteValue = 0x2A_b;
+
+	println(
+		$"scalars={integerValue},{floatValue},{boolValue},{charValue},{byteValue}"
+	);
+
+	let operatorValue = (5 << 1) | 1;
+	println($"operators={operatorValue},{parity(operatorValue)}");
+	println($"strict total={strictA + strictB}");
+
+	var index = 1;
+	var total = 0;
+	while (index <= 5) {
+		total = total + index;
+		index = index + 1;
+	}
+	println($"while total={total}");
+
+	println(
+		$"trailing={trailingSign(-1)}/{trailingSign(0)}/{trailingSign(1)}"
+	);
+
+	let triple = fn value => value * 3;
+	println($"lambda={importedApply(triple, 7)}");
+	println($"exact arity={importedAdd(4, 5)}");
+
+	let point = SlicePoint { 3, 4 };
+	println($"point={point.x},{point.y}");
+
+	let small = SliceCircle { 5 };
+	let large = SliceCircle { 20 };
+	let rectangle = SliceRect { 3, 4 };
+	println(
+		$"match={describeShape(small)}/{describeShape(large)}/{describeShape(rectangle)}"
+	);
+
+	let person = SlicePerson { "Alice", 30 };
+	let formatted = $"format={person.name}:{importedAdd(person.age, 1)}:{point.x}:{join(["a", "b"], "-")}";
+	println(formatted);
+
+	let rawPath = @"C:\slice\a";
+	println("raw=" ++ rawPath);
+	println($"escaped=\{literal\}");
+
+	importedAnnounce("direct call");
+	println("SLICE A OK");
+}
+
+main();

@@ -1,4 +1,4 @@
-// stringlib.pf — compatibility name for the V2 extended string library.
+// string.pf — opt-in extended string library for Pfun V2.
 //
 // Import with:
 //

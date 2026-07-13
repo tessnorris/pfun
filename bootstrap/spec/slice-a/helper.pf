@@ -1,0 +1,20 @@
+// Slice A helper module: imported pure functions and direct procedures.
+
+import * from "io";
+
+export function importedAdd(a, b) {
+	a + b
+}
+
+export generic function importedApply(f, value) {
+	f(value)
+}
+
+export generic proc importedMark(label, value) {
+	println("strict:" ++ label);
+	value
+}
+
+export proc importedAnnounce(text) {
+	println("proc:" ++ text);
+}

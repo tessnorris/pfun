@@ -1,0 +1,8 @@
+import { importedAnnounce } from "./helper";
+
+function badPureFunction() {
+	importedAnnounce("not allowed");
+	0
+}
+
+let result = badPureFunction();

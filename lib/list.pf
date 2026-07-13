@@ -1,4 +1,4 @@
-// listutils.pf — compatibility name for the V2 extended list library.
+// list.pf — opt-in extended list library for Pfun V2.
 //
 // Import with:
 //

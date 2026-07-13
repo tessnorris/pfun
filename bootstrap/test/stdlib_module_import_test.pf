@@ -1,0 +1,18 @@
+// Verifies the public V2 source-library spellings.
+// The ambient list floor remains available without either import.
+
+import * from "list";
+import * from "string";
+import * as Assert from "$PFUN_HOME/lib/testing/assertions";
+
+//![suite("standard list/string module imports")]
+//![test("bare imports expose the extended APIs")]
+function testBareImports() {
+	Assert.assertions([
+		Assert.assertEqual(6, sum([1, 2, 3])),
+		Assert.assertEqual("1,2,3", join(sort([3, 1, 2]), ",")),
+		Assert.assertEqual("hello", trim("  hello  ")),
+		Assert.assertEqual("007", padLeft("7", 3, "0")),
+		Assert.assertEqual("a-b-c", replaceAll("a.b.c", ".", "-"))
+	])
+}

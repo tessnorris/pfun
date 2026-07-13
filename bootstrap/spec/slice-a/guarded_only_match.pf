@@ -1,0 +1,12 @@
+type SliceGuarded = {
+	| SliceGuardA: value
+	| SliceGuardB
+}
+
+function classify(value) {
+	match value with
+	| SliceGuardA item where item.value > 0 -> "positive A"
+	| SliceGuardB -> "B"
+}
+
+let result = classify(SliceGuardA { 1 });

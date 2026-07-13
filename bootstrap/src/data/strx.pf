@@ -1,15 +1,16 @@
-// data/strx.pf — bootstrap-safe string helpers for compiler code.
+// data/strx.pf — bootstrap-safe extended string helpers.
 //
-// Uses `++` only. Character-by-character helpers operate on split(s, "") so
-// callers never need head/tail/nth.
+// The language prelude still owns split, join, slice, length, and conversion.
+// This module owns the opt-in extended string API exposed publicly as "string".
+//
+// Uses `++` only. Character helpers operate on split(s, "") and Compat.uncons,
+// so callers never depend on V1/V2 head/tail/nth differences.
 
 import * as Compat from "../compat";
 import * as ListX from "./listx";
 
-let crStr = "";
-
-function isWs(c) {
-	c == " " || c == "\t" || c == crStr || c == "\n"
+export function isWhitespace(c) {
+	c == " " || c == "\t" || c == "\n"
 }
 
 export function strRepeat(s, n) {
@@ -19,18 +20,34 @@ export function strRepeat(s, n) {
 		s
 	} else {
 		let half = strRepeat(s, n / 2);
-		if n % 2 == 0 then { half ++ half } else { half ++ half ++ s }
+		if n % 2 == 0 then {
+			half ++ half
+		} else {
+			half ++ half ++ s
+		}
 	}
 }
 
 function trimRightStep(st, c) {
-	if isWs(c) then { Pair { st.key + 1, st.value } } else { Pair { st.key + 1, st.key } }
+	if isWhitespace(c) then {
+		Pair { st.key + 1, st.value }
+	} else {
+		Pair { st.key + 1, st.key }
+	}
 }
 
 export function trimRight(s) {
 	let cs = split(s, "");
-	let fin = reduce(fn st, c => trimRightStep(st, c), Pair { 0, 0 - 1 }, cs);
-	if fin.value < 0 then { "" } else { slice(0, fin.value + 1, s) }
+	let fin = reduce(
+		fn st, c => trimRightStep(st, c),
+		Pair { 0, 0 - 1 },
+		cs
+	);
+	if fin.value < 0 then {
+		""
+	} else {
+		slice(0, fin.value + 1, s)
+	}
 }
 
 function trimLeftLoop(chars) {
@@ -38,7 +55,11 @@ function trimLeftLoop(chars) {
 	| None -> ""
 	| Some cell -> {
 		let p = cell.value;
-		if isWs(p.key) then { trimLeftLoop(p.value) } else { join(chars, "") }
+		if isWhitespace(p.key) then {
+			trimLeftLoop(p.value)
+		} else {
+			join(chars, "")
+		}
 	}
 }
 
@@ -51,13 +72,21 @@ export function trim(s) {
 }
 
 export function startsWith(s, prefix) {
-	if length(prefix) > length(s) then { false } else { slice(0, length(prefix), s) == prefix }
+	if length(prefix) > length(s) then {
+		false
+	} else {
+		slice(0, length(prefix), s) == prefix
+	}
 }
 
 export function endsWith(s, suffix) {
 	let ls = length(s);
 	let lx = length(suffix);
-	if lx > ls then { false } else { slice(ls - lx, lx, s) == suffix }
+	if lx > ls then {
+		false
+	} else {
+		slice(ls - lx, lx, s) == suffix
+	}
 }
 
 export function contains(s, needle) {
@@ -65,6 +94,93 @@ export function contains(s, needle) {
 	| None -> false
 	| Some _ -> true
 }
+
+export function indexOf(s, needle) {
+	findSlice(s, needle)
+}
+
+export function replace(s, old, newText) {
+	if length(old) == 0 then {
+		s
+	} else {
+		match findSlice(s, old) with
+		| None -> s
+		| Some found -> {
+			let index = found.value;
+			let after = index + length(old);
+			let tailCount = length(s) - after;
+			slice(0, index, s)
+				++ newText
+				++ slice(after, tailCount, s)
+		}
+	}
+}
+
+export function replaceAll(s, old, newText) {
+	if length(old) == 0 then {
+		s
+	} else {
+		join(split(s, old), newText)
+	}
+}
+
+export generic function strMatch(s, matchFn) {
+	ListX.any(matchFn, split(s, ""))
+}
+
+function replaceCharIf(c, matchFn, replaceFn) {
+	if matchFn(c) then { replaceFn(c) } else { c }
+}
+
+export generic function replaceMatch(s, matchFn, replaceFn) {
+	join(
+		map(
+			fn c => replaceCharIf(c, matchFn, replaceFn),
+			split(s, "")
+		),
+		""
+	)
+}
+
+function takeWhileStep(pred, st, c) {
+	if st.key then {
+		if pred(c) then {
+			Pair { true, cons(c, st.value) }
+		} else {
+			Pair { false, st.value }
+		}
+	} else {
+		st
+	}
+}
+
+export generic function takeWhile(s, pred) {
+	let fin = reduce(
+		fn st, c => takeWhileStep(pred, st, c),
+		Pair { true, [] },
+		split(s, "")
+	);
+	join(reverse(fin.value), "")
+}
+
+function dropWhileLoop(chars, pred) {
+	match Compat.uncons(chars) with
+	| None -> ""
+	| Some cell -> {
+		let p = cell.value;
+		if pred(p.key) then {
+			dropWhileLoop(p.value, pred)
+		} else {
+			join(chars, "")
+		}
+	}
+}
+
+export generic function dropWhile(s, pred) {
+	dropWhileLoop(split(s, ""), pred)
+}
+
+// ── compiler-oriented conveniences retained from the original strx ───────
 
 export function nullOrEmpty(s) {
 	length(s) == 0
@@ -79,7 +195,10 @@ export function indentLine(spaces, line) {
 }
 
 export function indent(spaces, text) {
-	join(map(fn line => indentLine(spaces, line), split(text, "\n")), "\n")
+	join(
+		map(fn line => indentLine(spaces, line), split(text, "\n")),
+		"\n"
+	)
 }
 
 export generic function joinLines(lines) {
@@ -90,18 +209,24 @@ export function splitLines(text) {
 	split(text, "\n")
 }
 
-export function replaceAll(s, old, newText) {
-	join(split(s, old), newText)
-}
-
+// Internal/bootstrap order: width, fill, string.
+// The public "string" facade preserves V1's string, width, fill order.
 export function padLeft(width, fill, s) {
 	let missing = width - length(s);
-	if missing <= 0 then { s } else { strRepeat(fill, missing) ++ s }
+	if missing <= 0 then {
+		s
+	} else {
+		strRepeat(fill, missing) ++ s
+	}
 }
 
 export function padRight(width, fill, s) {
 	let missing = width - length(s);
-	if missing <= 0 then { s } else { s ++ strRepeat(fill, missing) }
+	if missing <= 0 then {
+		s
+	} else {
+		s ++ strRepeat(fill, missing)
+	}
 }
 
 export generic function commaList(items) {

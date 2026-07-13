@@ -1,0 +1,16 @@
+strict:A
+strict:B
+scalars=42,2.5,true,Z,42
+operators=11,odd
+strict total=30
+while total=15
+trailing=negative/zero/positive
+lambda=21
+exact arity=9
+point=3,4
+match=circle:5/large circle:20/rect:3x4
+format=Alice:31:3:a-b
+raw=C:\slice\a
+escaped={literal}
+proc:direct call
+SLICE A OK

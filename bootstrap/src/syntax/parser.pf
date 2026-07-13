@@ -7,6 +7,7 @@
 
 import * as A from "./ast";
 import * as T from "./token";
+import * as Lex from "./lexer";
 import * as D from "../check/diag";
 import * as Compat from "../compat";
 
@@ -231,6 +232,237 @@ function decValAt(text, i, acc) {
 
 function parseCanonicalInt(text) {
 	decValAt(text, 0, 0)
+}
+
+// ── format-string interpolation parsing ─────────────────────────────────────
+//
+// The lexer deliberately returns one TokFmtStr carrying its complete raw body.
+// This parser layer splits that body into literal and interpolation pieces.
+// Every interpolation is lexed with the ordinary scanner and parsed with the
+// ordinary Pratt expression parser, so the language has one expression grammar
+// rather than a weaker format-hole grammar.
+
+type FmtHole = {
+	text,
+	nextIndex
+}
+
+type FmtHoleResult = {
+	| FmtHoleOk: hole
+	| FmtHoleErr: message
+}
+
+function fmtCharAt(body, index) {
+	if index < 0 then {
+		""
+	} else if index >= length(body) then {
+		""
+	} else {
+		slice(index, 1, body)
+	}
+}
+
+function fmtEscapeValue(c) {
+	if c == "n" then {
+		Some { "\n" }
+	} else if c == "t" then {
+		Some { "\t" }
+	} else if c == "\\" then {
+		Some { "\\" }
+	} else if c == "\"" then {
+		Some { "\"" }
+	} else if c == "'" then {
+		Some { "'" }
+	} else if c == "{" then {
+		Some { "{" }
+	} else if c == "}" then {
+		Some { "}" }
+	} else {
+		None
+	}
+}
+
+function appendFmtLiteral(parts, text) {
+	if length(text) == 0 then {
+		parts
+	} else {
+		cons(A.fmtLit(text), parts)
+	}
+}
+
+// mode:
+//   0 = ordinary interpolation expression
+//   1 = inside a normal string
+//   2 = inside a char literal
+//   3 = inside a raw string
+function scanFmtHole(body, start, index, depth, mode, escaped) {
+	if index >= length(body) then {
+		FmtHoleErr { "Unterminated interpolation in format string." }
+	} else {
+		let c = fmtCharAt(body, index);
+
+		if mode == 0 then {
+			if c == "@" && fmtCharAt(body, index + 1) == "\"" then {
+				scanFmtHole(body, start, index + 2, depth, 3, false)
+			} else if c == "\"" then {
+				scanFmtHole(body, start, index + 1, depth, 1, false)
+			} else if c == "'" then {
+				scanFmtHole(body, start, index + 1, depth, 2, false)
+			} else if c == "{" then {
+				scanFmtHole(body, start, index + 1, depth + 1, 0, false)
+			} else if c == "}" then {
+				if depth == 1 then {
+					FmtHoleOk {
+						FmtHole {
+							slice(start, index - start, body),
+							index + 1
+						}
+					}
+				} else {
+					scanFmtHole(
+						body,
+						start,
+						index + 1,
+						depth - 1,
+						0,
+						false
+					)
+				}
+			} else {
+				scanFmtHole(body, start, index + 1, depth, 0, false)
+			}
+		} else if mode == 3 then {
+			if c == "\"" then {
+				scanFmtHole(body, start, index + 1, depth, 0, false)
+			} else {
+				scanFmtHole(body, start, index + 1, depth, 3, false)
+			}
+		} else if escaped then {
+			scanFmtHole(body, start, index + 1, depth, mode, false)
+		} else if c == "\\" then {
+			scanFmtHole(body, start, index + 1, depth, mode, true)
+		} else if mode == 1 && c == "\"" then {
+			scanFmtHole(body, start, index + 1, depth, 0, false)
+		} else if mode == 2 && c == "'" then {
+			scanFmtHole(body, start, index + 1, depth, 0, false)
+		} else {
+			scanFmtHole(body, start, index + 1, depth, mode, false)
+		}
+	}
+}
+
+function parseFmtExpr(outerSt, text) {
+	if length(text) == 0 then {
+		failAt(
+			outerSt,
+			currentSpan(outerSt),
+			"Format interpolation cannot be empty."
+		)
+	} else {
+		match Lex.lex(outerSt.path, text) with
+		| LexErr e -> PErr { e.diags }
+		| LexOk l -> {
+			let innerSt = PSt {
+				outerSt.path,
+				l.tokens,
+				0,
+				outerSt.nextId,
+				false
+			};
+
+			match pExpr(innerSt, 1) with
+			| PErr e -> PErr { e.diags }
+			| POk parsed -> {
+				if isEof(parsed.st) then {
+					ok(
+						withNextId(outerSt, parsed.st.nextId),
+						parsed.node
+					)
+				} else {
+					failAt(
+						outerSt,
+						currentSpan(outerSt),
+						"Format interpolation must contain exactly one expression."
+					)
+				}
+			}
+		}
+	}
+}
+
+function parseFmtParts(st, body, index, literal, parts) {
+	if index >= length(body) then {
+		ok(st, reverse(appendFmtLiteral(parts, literal)))
+	} else {
+		let c = fmtCharAt(body, index);
+
+		if c == "\\" then {
+			let next = fmtCharAt(body, index + 1);
+			match fmtEscapeValue(next) with
+			| None -> {
+				failAt(
+					st,
+					currentSpan(st),
+					"Unknown format string escape."
+				)
+			}
+			| Some escaped -> {
+				parseFmtParts(
+					st,
+					body,
+					index + 2,
+					literal ++ escaped.value,
+					parts
+				)
+			}
+		} else if c == "{" then {
+			let withLiteral = appendFmtLiteral(parts, literal);
+
+			match scanFmtHole(body, index + 1, index + 1, 1, 0, false) with
+			| FmtHoleErr e -> {
+				failAt(st, currentSpan(st), e.message)
+			}
+			| FmtHoleOk found -> {
+				let hole = found.hole;
+
+				match parseFmtExpr(st, hole.text) with
+				| PErr e -> PErr { e.diags }
+				| POk parsed -> {
+					parseFmtParts(
+						parsed.st,
+						body,
+						hole.nextIndex,
+						"",
+						cons(A.fmtExpr(parsed.node), withLiteral)
+					)
+				}
+			}
+		} else if c == "}" then {
+			failAt(
+				st,
+				currentSpan(st),
+				"Unmatched '}' in format string."
+			)
+		} else {
+			parseFmtParts(
+				st,
+				body,
+				index + 1,
+				literal ++ c,
+				parts
+			)
+		}
+	}
+}
+
+function pFormatToken(st0, id, start, body) {
+	let afterToken = advance(st0);
+
+	match parseFmtParts(afterToken, body, 0, "", []) with
+	| PErr e -> PErr { e.diags }
+	| POk parsed -> {
+		ok(parsed.st, A.eFmt(id, parsed.node, start))
+	}
 }
 
 // ── public entry ────────────────────────────────────────────────────────────
@@ -875,10 +1107,7 @@ function pPrefix(st) {
 	} else if atKind(st, "TokRawStr") then {
 		ok(advance(st0), A.eStr(id, tokText(st), start))
 	} else if atKind(st, "TokFmtStr") then {
-		// The lexer preserves the raw format-string body. Full interpolation
-		// parsing will split this into FmtLit/FmtExpr after parser↔lexer
-		// recursion is settled; for now the AST still preserves the token.
-		ok(advance(st0), A.eFmt(id, [A.fmtLit(tokText(st))], start))
+		pFormatToken(st0, id, start, tokText(st))
 	} else if atKind(st, "TokChar") then {
 		ok(advance(st0), A.eChar(id, tokText(st), start))
 	} else if atKind(st, "TokByte") then {
