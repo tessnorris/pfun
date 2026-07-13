@@ -308,6 +308,12 @@
     return $canonI(c.codePointAt(0));
   }
 
+  // Unchecked total code-point constructor for bootstrap sources whose
+  // arguments are literal, valid code points. chr() remains Option-returning.
+  function $chrU(n) {
+    return String.fromCodePoint(Number($canonI(n)));
+  }
+
   function $chr(n) {
     n = Number($canonI(n));
     if (n < 0 || n > 0x10ffff) return $none();
@@ -1125,6 +1131,7 @@
     $newArray,
     $nth,
     $nthU,
+    $chrU,
     $shlI,
     $shrI,
     $starGet,

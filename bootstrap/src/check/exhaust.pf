@@ -39,7 +39,7 @@ export function mkExhaustResult(diags) {
 	ExhaustResult { diags }
 }
 
-export function subjectUnion(tname, variants) {
+export generic function subjectUnion(tname, variants) {
 	SubjectUnion { tname, variants }
 }
 
@@ -271,7 +271,7 @@ function unionCoverageLoop(st, variants, arms, cov) {
 	}
 }
 
-function checkUnionCoverage(st, matchExpr, tname, variants, arms) {
+function checkUnionCoverage(st, span, tname, variants, arms) {
 	let out = unionCoverageLoop(st, variants, arms, unionCov([], false));
 	let st1 = out.key;
 	let cov = out.value;
@@ -280,7 +280,7 @@ function checkUnionCoverage(st, matchExpr, tname, variants, arms) {
 		let missing = missingVariantNames(variants, cov.seen);
 		if length(missing) == 0 then { st1 }
 		else {
-			addDiag(st1, matchExpr.span, "Non-exhaustive match on '" ++ tname ++ "': missing unguarded arm(s) for " ++ quotedNames(missing) ++ ".")
+			addDiag(st1, span, "Non-exhaustive match on '" ++ tname ++ "': missing unguarded arm(s) for " ++ quotedNames(missing) ++ ".")
 		}
 	}
 }
@@ -333,7 +333,7 @@ function smallestMissingLengthFrom(n, exact, restStart) {
 	else { Some { n } }
 }
 
-function checkListCoverage(st, matchExpr, arms) {
+function checkListCoverage(st, span, arms) {
 	let out = listCoverageLoop(st, arms, listCov([], None, false));
 	let st1 = out.key;
 	let cov = out.value;
@@ -341,7 +341,7 @@ function checkListCoverage(st, matchExpr, arms) {
 	else {
 		match smallestMissingLengthFrom(0, cov.exact, cov.restStart) with
 		| None -> st1
-		| Some n -> addDiag(st1, matchExpr.span, "Non-exhaustive match on list: missing unguarded coverage for length " ++ __str__(n.value) ++ ".")
+		| Some n -> addDiag(st1, span, "Non-exhaustive match on list: missing unguarded coverage for length " ++ __str__(n.value) ++ ".")
 	}
 }
 
@@ -372,26 +372,26 @@ function hasUnguardedFallback(arms) {
 	}
 }
 
-function checkOtherCoverage(st, matchExpr, arms) {
+function checkOtherCoverage(st, span, arms) {
 	if hasUnguardedFallback(arms) then { st }
 	else {
-		addDiag(st, matchExpr.span, "Non-exhaustive match: add an unguarded fallback wildcard or binding arm.")
+		addDiag(st, span, "Non-exhaustive match: add an unguarded fallback wildcard or binding arm.")
 	}
 }
 
-function checkUnknownCoverage(st, matchExpr, arms) {
+function checkUnknownCoverage(st, span, arms) {
 	// Unknown subjects happen when this pass runs before, or despite failure in,
 	// type inference. Keep the rule conservative but useful: a final unguarded
 	// fallback is enough; otherwise ask for one rather than guessing a union.
-	checkOtherCoverage(st, matchExpr, arms)
+	checkOtherCoverage(st, span, arms)
 }
 
-function checkMatchCoverage(st, infer, matchExpr) {
-	match subjectKindOf(st, infer, matchExpr.subject) with
-	| SubjectUnion s -> checkUnionCoverage(st, matchExpr, s.tname, s.variants, matchExpr.arms)
-	| SubjectList -> checkListCoverage(st, matchExpr, matchExpr.arms)
-	| SubjectOther -> checkOtherCoverage(st, matchExpr, matchExpr.arms)
-	| SubjectUnknown -> checkUnknownCoverage(st, matchExpr, matchExpr.arms)
+function checkMatchCoverage(st, infer, subject, arms, span) {
+	match subjectKindOf(st, infer, subject) with
+	| SubjectUnion s -> checkUnionCoverage(st, span, s.tname, s.variants, arms)
+	| SubjectList -> checkListCoverage(st, span, arms)
+	| SubjectOther -> checkOtherCoverage(st, span, arms)
+	| SubjectUnknown -> checkUnknownCoverage(st, span, arms)
 }
 
 // ── AST traversal ─────────────────────────────────────────────────────────
@@ -497,7 +497,7 @@ function checkExpr(st, infer, expr) {
 	| EMatch e -> {
 		let st1 = checkExpr(st, infer, e.subject);
 		let st2 = checkArms(st1, infer, e.arms);
-		checkMatchCoverage(st2, infer, e)
+		checkMatchCoverage(st2, infer, e.subject, e.arms, e.span)
 	}
 	| EDict e -> checkDictEntries(st, infer, e.entries)
 	| EArray e -> checkExprList(st, infer, e.elems)
@@ -553,19 +553,19 @@ function checkMaybeStmtList(st, infer, stmts) {
 
 // ── public entry points ───────────────────────────────────────────────────
 
-export function checkModule(ast, infer, deps) {
+export generic function checkModule(ast, infer, deps) {
 	let st0 = initialState(ast, deps);
 	let st1 = checkStmtList(st0, infer, ast.stmts);
 	mkExhaustResult(reverse(st1.diags))
 }
 
-export function checkExhaustiveness(ast, infer, deps) {
+export generic function checkExhaustiveness(ast, infer, deps) {
 	checkModule(ast, infer, deps)
 }
 
 // Useful for early parser/AST tests before type inference exists. It returns no
 // diagnostics because real exhaustiveness needs subject types.
-export function checkSyntaxOnly(ast, deps) {
+export generic function checkSyntaxOnly(ast, deps) {
 	let st0 = initialState(ast, deps);
 	mkExhaustResult(reverse(st0.diags))
 }

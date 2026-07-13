@@ -157,7 +157,7 @@ function astTypeWitness() {
 		"nativeThing",
 		[typedParam],
 		typeExpr,
-		"node"
+		Some { "node" }
 	};
 
 	let supporting = [
@@ -175,8 +175,8 @@ function astTypeWitness() {
 		EFloat { 0, "0.0", sp },
 		EBool { 0, false, sp },
 		EStr { 0, "", sp },
-		EChar { 0, 'x', sp },
-		EByte { 0, 0b, sp },
+		EChar { 0, "x", sp },
+		EByte { 0, 0, sp },
 		EVar { 0, "x", sp },
 		EUnary { 0, "-", baseExpr, sp },
 		EBinary { 0, "+", baseExpr, baseExpr, sp },
@@ -644,7 +644,7 @@ let astSigExternDecl = ExternDecl {
 		}
 	],
 	astSigTypeExpr,
-	"node"
+	Some { "node" }
 };
 
 function astSigIntIntSpanExpr(id, n, span) {
@@ -684,7 +684,7 @@ let astSigIntBoolSpanExprFns = [
 
 function astSigIntCharSpanExpr(id, value, span) {
 	let ids = [0, id];
-	let values = ['x', value];
+	let values = ["x", value];
 	let spans = [astSigSpan, span];
 	astSigExpr
 }
@@ -695,7 +695,7 @@ let astSigIntCharSpanExprFns = [
 
 function astSigIntByteSpanExpr(id, value, span) {
 	let ids = [0, id];
-	let values = [0b, value];
+	let values = [0, value];
 	let spans = [astSigSpan, span];
 	astSigExpr
 }

@@ -371,3 +371,17 @@ export function toposort(mods) {
 	let st = topoState(byPath, IMS.imsEmpty(), [], []);
 	topoLoop(mods, st)
 }
+
+// Grounding witness: pins the concrete record fields and closes the exported
+// resolver/edge functions without executing. Placed at end of module: a
+// forward call would constrain only the orphaned predeclaration signature.
+function graphGroundingWitness() {
+	let sf = mkSourceFile("", "");
+	let env = mkSearchEnv("", "", [""]);
+	let m = A.mkModule("", [], 0);
+	let raw = mkRawModule("", m, [mkImportEdge(A.iStar(), "", userPath(""), fallbackSpan())]);
+	let b = isBuiltinImport("", env);
+	let r = resolveImport("", "", env);
+	let e = edgesOf(m, env);
+	sf.path ++ raw.path
+}

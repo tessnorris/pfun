@@ -28,7 +28,9 @@ export type EmitOpts = {
 	moduleId,
 	singletons,
 	browserSafe,
-	schemaFields
+	schemaFields,
+	// Ambient core name -> host ABI intrinsic (e.g. "__str__" -> "$str").
+	intrinsics
 }
 
 export type Require = {
@@ -52,22 +54,33 @@ export type EmittedModule = {
 	schemas
 }
 
-export function emitOpts(moduleId, singletons, browserSafe) {
+export generic function emitOpts(moduleId, singletons, browserSafe) {
 	EmitOpts {
 		moduleId = moduleId,
 		singletons = singletons,
 		browserSafe = browserSafe,
-		schemaFields = IMS.imsEmpty()
+		schemaFields = IMS.imsEmpty(),
+		intrinsics = IMS.imsEmpty()
 	}
 }
 
-export function emitOptsWithSchemas(
+export generic function withIntrinsics(opts, intrinsics) {
+	EmitOpts {
+		opts.moduleId,
+		opts.singletons,
+		opts.browserSafe,
+		opts.schemaFields,
+		intrinsics
+	}
+}
+
+export generic function emitOptsWithSchemas(
 	moduleId,
 	singletons,
 	browserSafe,
 	schemaFields
 ) {
-	EmitOpts { moduleId, singletons, browserSafe, schemaFields }
+	EmitOpts { moduleId, singletons, browserSafe, schemaFields, IMS.imsEmpty() }
 }
 
 export function hostReq() {
@@ -91,7 +104,7 @@ export function emitSchema(runtimeName, unionName, fields, isVariant) {
 	}
 }
 
-export function emittedModule(
+export generic function emittedModule(
 	moduleId,
 	body,
 	exportNames,
@@ -611,7 +624,19 @@ function emitVar(ctx, name) {
 	match singletonOf(ctx, name) with
 	| Some singleton -> singleton.value
 	| None -> {
-		if !hasLocal(ctx, name) && length(ctx.starImports) > 0 then {
+		if !hasLocal(ctx, name) then {
+			match IMS.imsGet(ctx.opts.intrinsics, name) with
+			| Some intr -> J.jsId(intr.value)
+			| None -> emitVarNonAmbient(ctx, name)
+		} else {
+			J.jsId(name)
+		}
+	}
+}
+
+function emitVarNonAmbient(ctx, name) {
+	{
+		if length(ctx.starImports) > 0 then {
 			hostCall(
 				"$starGet",
 				[
@@ -822,52 +847,52 @@ function namedResultUnion(ctx, callId) {
 	| _ -> None
 }
 
-function emitCall(ctx, call) {
-	match namedCallParts(call.callee) with
+function emitCall(ctx, id, callee, args) {
+	match namedCallParts(callee) with
 	| Some calleeName -> {
-		match namedResultUnion(ctx, call.id) with
+		match namedResultUnion(ctx, id) with
 		| Some unionName -> {
 			if startsUpper(calleeName.value) then {
 				variantObject(
 					calleeName.value,
 					unionName.value,
-					map(fn arg => emitExpr(ctx, arg), call.args)
+					map(fn arg => emitExpr(ctx, arg), args)
 				)
 			} else {
 				J.jsCall(
-					emitExpr(ctx, call.callee),
-					map(fn arg => emitExpr(ctx, arg), call.args)
+					emitExpr(ctx, callee),
+					map(fn arg => emitExpr(ctx, arg), args)
 				)
 			}
 		}
 		| None -> {
 			J.jsCall(
-				emitExpr(ctx, call.callee),
-				map(fn arg => emitExpr(ctx, arg), call.args)
+				emitExpr(ctx, callee),
+				map(fn arg => emitExpr(ctx, arg), args)
 			)
 		}
 	}
 	| None -> {
 		J.jsCall(
-			emitExpr(ctx, call.callee),
-			map(fn arg => emitExpr(ctx, arg), call.args)
+			emitExpr(ctx, callee),
+			map(fn arg => emitExpr(ctx, arg), args)
 		)
 	}
 }
 
-function emitLambda(ctx, lambda) {
-	let lambdaCtx = addLocals(ctx, lambda.params);
+function emitLambda(ctx, params, body0) {
+	let lambdaCtx = addLocals(ctx, params);
 	J.jsArrow(
-		lambda.params,
-		J.jsExprBody(emitExpr(lambdaCtx, lambda.body)),
+		params,
+		J.jsExprBody(emitExpr(lambdaCtx, body0)),
 		false
 	)
 }
 
-function emitList(ctx, listExpr) {
-	match listExpr.mode with
+function emitList(ctx, mode, elems) {
+	match mode with
 	| StrictList -> {
-		J.jsArr(map(fn elem => emitExpr(ctx, elem), listExpr.elems))
+		J.jsArr(map(fn elem => emitExpr(ctx, elem), elems))
 	}
 	| LazyList -> {
 		hostCall(
@@ -882,7 +907,7 @@ function emitList(ctx, listExpr) {
 								false
 							)
 						},
-						listExpr.elems
+						elems
 					)
 				)
 			]
@@ -922,11 +947,11 @@ function compGuardExpr(ctx, guard) {
 	| Some found -> emitExpr(ctx, found.value)
 }
 
-function emitComp(ctx, comp) {
-	let names = compVarNames(comp.gens);
+function emitComp(ctx, gens, guard, body0, mode) {
+	let names = compVarNames(gens);
 	let bodyCtx = addLocals(ctx, names);
-	let sources = emitCompSources(ctx, comp.gens, []);
-	let intrinsic = match comp.mode with
+	let sources = emitCompSources(ctx, gens, []);
+	let intrinsic = match mode with
 	| StrictList -> "$compStrict"
 	| LazyList -> "$compLazy";
 
@@ -937,22 +962,22 @@ function emitComp(ctx, comp) {
 			J.jsArr(map(fn name => J.jsStr(name), names)),
 			J.jsArrow(
 				names,
-				J.jsExprBody(compGuardExpr(bodyCtx, comp.guard)),
+				J.jsExprBody(compGuardExpr(bodyCtx, guard)),
 				false
 			),
 			J.jsArrow(
 				names,
-				J.jsExprBody(emitExpr(bodyCtx, comp.body)),
+				J.jsExprBody(emitExpr(bodyCtx, body0)),
 				false
 			)
 		]
 	)
 }
 
-function emitRecord(ctx, recordExpr) {
+function emitRecord(ctx, tname, fields) {
 	recordObject(
-		recordExpr.tname,
-		map(fn field => emitExpr(ctx, field.value), recordExpr.fields)
+		tname,
+		map(fn field => emitExpr(ctx, field.value), fields)
 	)
 }
 
@@ -989,31 +1014,31 @@ function emitFieldBySchema(ctx, object, schemaName, fieldName) {
 	)
 }
 
-function emitField(ctx, fieldExpr) {
-	let object = emitExpr(ctx, fieldExpr.object);
-	match typeOfExpr(ctx, fieldExpr.object) with
+function emitField(ctx, object0, fname) {
+	let object = emitExpr(ctx, object0);
+	match typeOfExpr(ctx, object0) with
 	| TNamed named -> emitFieldBySchema(
 		ctx,
 		object,
 		named.tname,
-		fieldExpr.fname
+		fname
 	)
 	| TVariant variant -> emitFieldBySchema(
 		ctx,
 		object,
 		variant.vname,
-		fieldExpr.fname
+		fname
 	)
 	| _ -> hostCall(
 		"$field",
-		[object, J.jsStr(fieldExpr.fname)]
+		[object, J.jsStr(fname)]
 	)
 }
 
-function emitIndex(ctx, indexExpr) {
-	let object = emitExpr(ctx, indexExpr.object);
-	let index = emitExpr(ctx, indexExpr.index);
-	match typeOfExpr(ctx, indexExpr.object) with
+function emitIndex(ctx, object0, index0) {
+	let object = emitExpr(ctx, object0);
+	let index = emitExpr(ctx, index0);
+	match typeOfExpr(ctx, object0) with
 	| TArray _ -> hostCall("$arrGet", [object, index])
 	| TDict _ -> hostCall("$dictGet", [object, index])
 	| TList _ -> hostCall("$nth", [object, index])
@@ -1021,7 +1046,7 @@ function emitIndex(ctx, indexExpr) {
 	| _ -> hostCall("$index", [object, index])
 }
 
-function emitDict(ctx, dictExpr) {
+function emitDict(ctx, entries) {
 	hostCall(
 		"$dictFromEntries",
 		[
@@ -1033,19 +1058,19 @@ function emitDict(ctx, dictExpr) {
 							emitExpr(ctx, entry.value)
 						])
 					},
-					dictExpr.entries
+					entries
 				)
 			)
 		]
 	)
 }
 
-function emitArray(ctx, arrayExpr) {
+function emitArray(ctx, elems) {
 	hostCall(
 		"$newArray",
 		[
 			J.jsArr(
-				map(fn elem => emitExpr(ctx, elem), arrayExpr.elems)
+				map(fn elem => emitExpr(ctx, elem), elems)
 			)
 		]
 	)
@@ -1071,8 +1096,8 @@ function concatStringExprs(parts) {
 	}
 }
 
-function emitFmt(ctx, fmt) {
-	concatStringExprs(map(fn part => emitFmtPart(ctx, part), fmt.parts))
+function emitFmt(ctx, parts) {
+	concatStringExprs(map(fn part => emitFmtPart(ctx, part), parts))
 }
 
 function patternBoundNames(pattern) {
@@ -1242,16 +1267,16 @@ function emitMatchArms(ctx, subject, arms) {
 	}
 }
 
-function emitMatch(ctx, matchExpr) {
-	let subjectName = matchSubjectName(matchExpr.id);
+function emitMatch(ctx, id, subject0, arms0) {
+	let subjectName = matchSubjectName(id);
 	let subject = J.jsId(subjectName);
-	let arms = emitMatchArms(ctx, subject, matchExpr.arms);
+	let arms = emitMatchArms(ctx, subject, arms0);
 	let fail = J.jsThrow(
 		hostCall(
 			"$matchFail",
 			[
 				J.jsStr(ctx.opts.moduleId),
-				J.jsNum(__str__(matchExpr.id))
+				J.jsNum(__str__(id))
 			]
 		)
 	);
@@ -1262,7 +1287,7 @@ function emitMatch(ctx, matchExpr) {
 			J.jsBlockBody(appendJsStmts(arms, [fail])),
 			false
 		),
-		[emitExpr(ctx, matchExpr.subject)]
+		[emitExpr(ctx, subject0)]
 	)
 }
 
@@ -1281,6 +1306,22 @@ function emitBlockResult(ctx, stmts) {
 				[J.jsRet(emitExpr(blockCtx, s.expr))]
 			)
 		}
+		| SIf s -> {
+			// Same trailing-if-as-value rule as emitResultStmtList.
+			let elseJs = match s.elseS with
+				| None -> [J.jsRet(J.jsNull())]
+				| Some e -> emitBlockResult(blockCtx, e.value);
+			appendJsStmts(
+				prefix,
+				[
+					J.jsIf(
+						emitExpr(blockCtx, s.cond),
+						emitBlockResult(blockCtx, s.thenS),
+						elseJs
+					)
+				]
+			)
+		}
 		| SReturn _ -> {
 			appendJsStmts(prefix, emitStmt(blockCtx, last.value))
 		}
@@ -1296,11 +1337,11 @@ function emitBlockResult(ctx, stmts) {
 	}
 }
 
-function emitBlockExpr(ctx, blockExpr) {
+function emitBlockExpr(ctx, stmts) {
 	J.jsCall(
 		J.jsArrow(
 			[],
-			J.jsBlockBody(emitBlockResult(ctx, blockExpr.stmts)),
+			J.jsBlockBody(emitBlockResult(ctx, stmts)),
 			false
 		),
 		[]
@@ -1325,19 +1366,19 @@ function emitExpr(ctx, expr) {
 			emitExpr(ctx, e.elseE)
 		)
 	}
-	| ECall e -> emitCall(ctx, e)
-	| ELambda e -> emitLambda(ctx, e)
-	| EBlock e -> emitBlockExpr(ctx, e)
-	| EList e -> emitList(ctx, e)
-	| EComp e -> emitComp(ctx, e)
-	| ERecord e -> emitRecord(ctx, e)
-	| EField e -> emitField(ctx, e)
-	| EIndex e -> emitIndex(ctx, e)
-	| EMatch e -> emitMatch(ctx, e)
-	| EDict e -> emitDict(ctx, e)
-	| EArray e -> emitArray(ctx, e)
+	| ECall e -> emitCall(ctx, e.id, e.callee, e.args)
+	| ELambda e -> emitLambda(ctx, e.params, e.body)
+	| EBlock e -> emitBlockExpr(ctx, e.stmts)
+	| EList e -> emitList(ctx, e.mode, e.elems)
+	| EComp e -> emitComp(ctx, e.gens, e.guard, e.body, e.mode)
+	| ERecord e -> emitRecord(ctx, e.tname, e.fields)
+	| EField e -> emitField(ctx, e.object, e.fname)
+	| EIndex e -> emitIndex(ctx, e.object, e.index)
+	| EMatch e -> emitMatch(ctx, e.id, e.subject, e.arms)
+	| EDict e -> emitDict(ctx, e.entries)
+	| EArray e -> emitArray(ctx, e.elems)
 	| EAwait e -> J.jsAwait(emitExpr(ctx, e.value))
-	| EFmt e -> emitFmt(ctx, e)
+	| EFmt e -> emitFmt(ctx, e.parts)
 }
 
 // ── tail-call discovery and lowering ────────────────────────────────────────
@@ -1374,16 +1415,16 @@ function tailCallsInLastStmt(name, stmt) {
 	| SReturn s -> tailCallsInExpr(name, s.value)
 	| SExpr s -> tailCallsInExpr(name, s.expr)
 	| SIf s -> {
-		appendInts(
-			tailCallsOf(name, s.thenS),
-			tailCallsOf(name, s.elseS)
-		)
+		let elseCalls = match s.elseS with
+			| None -> []
+			| Some e -> tailCallsOf(name, e.value);
+		appendInts(tailCallsOf(name, s.thenS), elseCalls)
 	}
 	| SExport s -> tailCallsInLastStmt(name, s.inner)
 	| _ -> []
 }
 
-export function tailCallsOf(name, body) {
+export generic function tailCallsOf(name, body) {
 	let split = splitLastStmt(body);
 	match split.last with
 	| None -> []
@@ -1460,11 +1501,14 @@ function emitTailLastStmt(ctx, name, params, stmt) {
 	| SReturn s -> emitTailExpr(ctx, name, params, s.value)
 	| SExpr s -> emitTailExpr(ctx, name, params, s.expr)
 	| SIf s -> {
+		let elseJs = match s.elseS with
+			| None -> []
+			| Some e -> emitTailStmtList(ctx, name, params, e.value);
 		[
 			J.jsIf(
 				emitExpr(ctx, s.cond),
 				emitTailStmtList(ctx, name, params, s.thenS),
-				emitTailStmtList(ctx, name, params, s.elseS)
+				elseJs
 			)
 		]
 	}
@@ -1498,11 +1542,11 @@ function emitTailStmtList(ctx, name, params, stmts) {
 
 // ── statement and declaration emission ──────────────────────────────────────
 
-function emitIndexAssign(ctx, stmt) {
-	let object = emitExpr(ctx, stmt.object);
-	let index = emitExpr(ctx, stmt.index);
-	let value = emitExpr(ctx, stmt.value);
-	let call = match typeOfExpr(ctx, stmt.object) with
+function emitIndexAssign(ctx, object1, index1, value1) {
+	let object = emitExpr(ctx, object1);
+	let index = emitExpr(ctx, index1);
+	let value = emitExpr(ctx, value1);
+	let call = match typeOfExpr(ctx, object1) with
 	| TArray _ -> hostCall("$arrSet", [object, index, value])
 	| TDict _ -> hostCall("$dictSet", [object, index, value])
 	| _ -> hostCall("$indexSet", [object, index, value]);
@@ -1521,6 +1565,23 @@ function emitResultStmtList(ctx, stmts) {
 			appendJsStmts(
 				prefix,
 				[J.jsRet(emitExpr(bodyCtx, s.expr))]
+			)
+		}
+		| SIf s -> {
+			// A trailing statement-if is the value of the body: each branch
+			// returns its own result (else-if chains recurse through elseS).
+			let elseJs = match s.elseS with
+				| None -> [J.jsRet(J.jsNull())]
+				| Some e -> emitResultStmtList(bodyCtx, e.value);
+			appendJsStmts(
+				prefix,
+				[
+					J.jsIf(
+						emitExpr(bodyCtx, s.cond),
+						emitResultStmtList(bodyCtx, s.thenS),
+						elseJs
+					)
+				]
 			)
 		}
 		| SReturn _ -> {
@@ -1550,45 +1611,45 @@ function asyncFlag(kind) {
 	| ProcFn k -> k.isAsync
 }
 
-function emitFn(ctx, fnStmt) {
-	let fnCtx0 = addLocals(ctx, fnStmt.params);
+function emitFn(ctx, name, params, body0, kind) {
+	let fnCtx0 = addLocals(ctx, params);
 	let fnCtx = withAsyncDepth(
 		withTailCtx(
 			fnCtx0,
 			EmitTailOf {
-				fnStmt.name,
-				fnStmt.params
+				name,
+				params
 			}
 		),
-		ctx.asyncDepth + (asyncFlag(fnStmt.kind) ? 1 : 0)
+		ctx.asyncDepth + (asyncFlag(kind) ? 1 : 0)
 	);
-	let hasTail = length(tailCallsOf(fnStmt.name, fnStmt.body)) > 0;
+	let hasTail = length(tailCallsOf(name, body0)) > 0;
 	let body = hasTail
 		? [
 			J.jsWhile(
 				J.jsBool(true),
 				emitTailStmtList(
 					fnCtx,
-					fnStmt.name,
-					fnStmt.params,
-					fnStmt.body
+					name,
+					params,
+					body0
 				)
 			)
 		]
-		: emitResultStmtList(fnCtx, fnStmt.body);
+		: emitResultStmtList(fnCtx, body0);
 	let declaration = J.jsFun(
-		fnStmt.name,
-		fnStmt.params,
+		name,
+		params,
 		body,
-		asyncFlag(fnStmt.kind)
+		asyncFlag(kind)
 	);
 
-	if memoFlag(fnStmt.kind) then {
+	if memoFlag(kind) then {
 		[
 			declaration,
 			J.jsAssign(
-				J.jsId(fnStmt.name),
-				hostCall("$memoize", [J.jsId(fnStmt.name)])
+				J.jsId(name),
+				hostCall("$memoize", [J.jsId(name)])
 			)
 		]
 	} else {
@@ -1659,37 +1720,44 @@ function emitNamedImports(temp, names) {
 	}
 }
 
-function emitImport(stmt) {
-	match stmt.spec with
+function emitImport(id, spec0, rawPath) {
+	match spec0 with
 	| INamespace spec -> {
 		[
 			J.jsConst(
 				spec.alias,
-				requireExpr(stmt.rawPath)
+				requireExpr(rawPath)
 			)
 		]
 	}
 	| INames spec -> {
-		let temp = importTemp(stmt.id);
+		let temp = importTemp(id);
 		cons(
-			J.jsConst(temp, requireExpr(stmt.rawPath)),
+			J.jsConst(temp, requireExpr(rawPath)),
 			emitNamedImports(temp, spec.names)
 		)
 	}
 	| IStar -> {
 		[
 			J.jsConst(
-				starTemp(stmt.id),
-				requireExpr(stmt.rawPath)
+				starTemp(id),
+				requireExpr(rawPath)
 			)
 		]
 	}
 }
 
+function platformLabel(platform) {
+	match platform with
+	| Some s -> s.value
+	| None -> ""
+}
+
 function isNodePlatform(platform) {
-	platform == "node"
-	|| platform == "NodeOnly"
-	|| platform == "node-only"
+	let label = platformLabel(platform);
+	label == "node"
+	|| label == "NodeOnly"
+	|| label == "node-only"
 }
 
 function browserExternBody(decl) {
@@ -1709,8 +1777,7 @@ function browserExternBody(decl) {
 	]
 }
 
-function emitExternDecl(ctx, stmt) {
-	let decl = stmt.decl;
+function emitExternDecl(ctx, decl) {
 	let params = map(fn param => param.name, decl.params);
 	if ctx.opts.browserSafe && isNodePlatform(decl.platform) then {
 		[
@@ -1730,7 +1797,7 @@ function emitExternDecl(ctx, stmt) {
 				hostCall(
 					"$extern",
 					[
-						J.jsStr(decl.platform),
+						J.jsStr(platformLabel(decl.platform)),
 						J.jsStr(decl.name)
 					]
 				)
@@ -1746,12 +1813,18 @@ function emitStmt(ctx, stmt) {
 	| SAssign s -> {
 		[J.jsAssign(J.jsId(s.name), emitExpr(ctx, s.value))]
 	}
-	| SIndexAssign s -> emitIndexAssign(ctx, s)
-	| SFun s -> emitFn(ctx, s)
+	| SIndexAssign s -> emitIndexAssign(ctx, s.object, s.index, s.value)
+	| SFun s -> emitFn(ctx, s.name, s.params, s.body, s.kind)
 	| SType s -> emitTypeDecl(s.decl)
 	| SExpr s -> [J.jsExprStmt(emitExpr(ctx, s.expr))]
 	| SReturn s -> [J.jsRet(emitExpr(ctx, s.value))]
 	| SIf s -> {
+		let elseJs = match s.elseS with
+			| None -> []
+			| Some e -> emitStmtList(
+				addLocals(ctx, boundNamesOfStmts(e.value)),
+				e.value
+			);
 		[
 			J.jsIf(
 				emitExpr(ctx, s.cond),
@@ -1759,10 +1832,7 @@ function emitStmt(ctx, stmt) {
 					addLocals(ctx, boundNamesOfStmts(s.thenS)),
 					s.thenS
 				),
-				emitStmtList(
-					addLocals(ctx, boundNamesOfStmts(s.elseS)),
-					s.elseS
-				)
+				elseJs
 			)
 		]
 	}
@@ -1777,9 +1847,9 @@ function emitStmt(ctx, stmt) {
 			)
 		]
 	}
-	| SImport s -> emitImport(s)
+	| SImport s -> emitImport(s.id, s.spec, s.rawPath)
 	| SExport s -> emitStmt(ctx, s.inner)
-	| SExtern s -> emitExternDecl(ctx, s)
+	| SExtern s -> emitExternDecl(ctx, s.decl)
 }
 
 function emitStmtList(ctx, stmts) {
@@ -1795,15 +1865,15 @@ function emitStmtList(ctx, stmts) {
 
 // ── public entry points ─────────────────────────────────────────────────────
 
-export function emitExprForTest(types, opts, expr) {
+export generic function emitExprForTest(types, opts, expr) {
 	emitExpr(emptyCtx(types, opts), expr)
 }
 
-export function emitStmtForTest(types, opts, stmt) {
+export generic function emitStmtForTest(types, opts, stmt) {
 	emitStmt(emptyCtx(types, opts), stmt)
 }
 
-export function emitModule(cm, opts) {
+export generic function emitModule(cm, opts) {
 	let schemas = schemasOfStmts(cm.ast.stmts);
 	let locals = putLocals(
 		IMS.imsEmpty(),

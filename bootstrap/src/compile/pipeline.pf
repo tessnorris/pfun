@@ -295,11 +295,14 @@ function emitCheckedLoop(
 		let checked = cell.value.key;
 		let emitted = Emit.emitModule(
 			checked,
-			Emit.emitOptsWithSchemas(
-				checked.path,
-				singletons,
-				browserSafe,
-				schemaFields
+			Emit.withIntrinsics(
+				Emit.emitOptsWithSchemas(
+					checked.path,
+					singletons,
+					browserSafe,
+					schemaFields
+				),
+				Spec.ambientIntrinsics()
 			)
 		);
 		emitCheckedLoop(

@@ -24,15 +24,17 @@ import * as Compat from "../compat";
 
 // ── public result model ───────────────────────────────────────────────────
 
-export type CheckedUnit = { path, ast, infer, iface, diags }
+// ast/infer/iface are slots: their types embed per-module variables that must
+// not lock into shared field variables (see design_dep_type_registration.md).
+export type CheckedUnit = { path, generic ast, generic infer, generic iface, diags }
 
-export type CheckGraphResult = { modules, ifaces, diags }
+export type CheckGraphResult = { generic modules, generic ifaces, diags }
 
-export function mkCheckedUnit(path, ast, infer, iface, diags) {
+export generic function mkCheckedUnit(path, ast, infer, iface, diags) {
 	CheckedUnit { path = path, ast = ast, infer = infer, iface = iface, diags = diags }
 }
 
-export function mkCheckGraphResult(modules, ifaces, diags) {
+export generic function mkCheckGraphResult(modules, ifaces, diags) {
 	CheckGraphResult { modules = modules, ifaces = ifaces, diags = diags }
 }
 
@@ -72,25 +74,25 @@ function importDiag(path, span, message) {
 	D.err(ImportD, message, path, span)
 }
 
-function emptyInfer(diags) {
+generic function emptyInfer(diags) {
 	TY.mkInferResult(IMI.imiEmpty(), IMS.imsEmpty(), diags)
 }
 
-function emptyCheckedUnit(path, ast, diags) {
+generic function emptyCheckedUnit(path, ast, diags) {
 	mkCheckedUnit(path, ast, emptyInfer(diags), I.emptyIface(path), diags)
 }
 
 // ── interface construction from type inference ────────────────────────────
 
-function ifaceSchemeFromTypeScheme(s) {
-	I.mkScheme(s.vars, s.constraints, s.body)
+generic function ifaceSchemeFromTypeScheme(s) {
+	I.mkScheme(s.vars, s.constraints, TY.typeToIface(s.body))
 }
 
-function putTypedExport(acc, pair) {
+generic function putTypedExport(acc, pair) {
 	IMS.imsPut(acc, pair.key, ifaceSchemeFromTypeScheme(pair.value))
 }
 
-function mergeTypedExports(entries, acc) {
+generic function mergeTypedExports(entries, acc) {
 	match Compat.uncons(entries) with
 	| None -> acc
 	| Some cell -> {
@@ -99,7 +101,7 @@ function mergeTypedExports(entries, acc) {
 	}
 }
 
-function ifaceFromInfer(ast, infer) {
+generic function ifaceFromInfer(ast, infer) {
 	let skeleton = I.ifaceOfAst(ast);
 	let typedExports = mergeTypedExports(IMS.imsEntries(infer.exports), skeleton.types);
 	I.mkIfaceWithRecords(ast.path, skeleton.kinds, typedExports, skeleton.records, skeleton.unions)
@@ -107,14 +109,14 @@ function ifaceFromInfer(ast, infer) {
 
 // ── single-module checking ────────────────────────────────────────────────
 
-function runExhaust(ast, infer, deps) {
+generic function runExhaust(ast, infer, deps) {
 	// Exhaustiveness is deliberately run even when inference produced
 	// diagnostics. The pass handles unknown subject types conservatively, and
 	// checkModule batches diagnostics from every pass.
 	X.checkModule(ast, infer, deps)
 }
 
-export function checkModule(ast, deps) {
+export generic function checkModule(ast, deps) {
 	let infer = TY.inferModule(ast, deps);
 	let purity = P.checkModule(ast, deps);
 	let exhaust = runExhaust(ast, infer, deps);
@@ -125,17 +127,17 @@ export function checkModule(ast, deps) {
 }
 
 // Alias for tests and callers that prefer the phase name.
-export function checkOneModule(ast, deps) {
+export generic function checkOneModule(ast, deps) {
 	checkModule(ast, deps)
 }
 
 // ── dependency map shaping for graph checks ───────────────────────────────
 
-function tryIfaceKey(ifaces, key) {
+generic function tryIfaceKey(ifaces, key) {
 	IMS.imsGet(ifaces, key)
 }
 
-function ifaceForBuiltin(ifaces, name, rawPath) {
+generic function ifaceForBuiltin(ifaces, name, rawPath) {
 	match tryIfaceKey(ifaces, name) with
 	| Some iface -> Some { iface.value }
 	| None -> {
@@ -149,7 +151,7 @@ function ifaceForBuiltin(ifaces, name, rawPath) {
 	}
 }
 
-function ifaceForUserPath(ifaces, path, rawPath) {
+generic function ifaceForUserPath(ifaces, path, rawPath) {
 	match tryIfaceKey(ifaces, path) with
 	| Some iface -> Some { iface.value }
 	| None -> {
@@ -159,18 +161,18 @@ function ifaceForUserPath(ifaces, path, rawPath) {
 	}
 }
 
-function ifaceForEdge(ifaces, edge) {
+generic function ifaceForEdge(ifaces, edge) {
 	match edge.resolved with
 	| BuiltinPath b -> ifaceForBuiltin(ifaces, b.name, edge.rawPath)
 	| UserPath u -> ifaceForUserPath(ifaces, u.p, edge.rawPath)
 }
 
-function putDepAlias(deps, edge, iface) {
+generic function putDepAlias(deps, edge, iface) {
 	let deps1 = IMS.imsPut(deps, edge.rawPath, iface);
 	IMS.imsPut(deps1, M.resolvedPathToStr(edge.resolved), iface)
 }
 
-function depsForEdges(globalIfaces, edges, acc) {
+generic function depsForEdges(globalIfaces, edges, acc) {
 	match Compat.uncons(edges) with
 	| None -> acc
 	| Some cell -> {
@@ -182,11 +184,11 @@ function depsForEdges(globalIfaces, edges, acc) {
 	}
 }
 
-function depsForRawModule(globalIfaces, raw) {
+generic function depsForRawModule(globalIfaces, raw) {
 	depsForEdges(globalIfaces, raw.edges, globalIfaces)
 }
 
-function putCheckedIface(ifaces, raw, unit) {
+generic function putCheckedIface(ifaces, raw, unit) {
 	let ifaces1 = IMS.imsPut(ifaces, unit.iface.path, unit.iface);
 	let ifaces2 = IMS.imsPut(ifaces1, raw.path, unit.iface);
 	IMS.imsPut(ifaces2, raw.ast.path, unit.iface)
@@ -194,13 +196,13 @@ function putCheckedIface(ifaces, raw, unit) {
 
 // ── skip logic for failed or unavailable dependencies ─────────────────────
 
-function resolvedUserFailed(edge, failedPaths) {
+generic function resolvedUserFailed(edge, failedPaths) {
 	match edge.resolved with
 	| BuiltinPath _ -> false
 	| UserPath u -> strListContains(failedPaths, u.p) || strListContains(failedPaths, edge.rawPath)
 }
 
-function firstFailedDependency(edges, failedPaths) {
+generic function firstFailedDependency(edges, failedPaths) {
 	match Compat.uncons(edges) with
 	| None -> None
 	| Some cell -> {
@@ -221,7 +223,7 @@ function firstMissingInterface(edges, ifaces) {
 	}
 }
 
-function failedDependencyDiag(raw, edge) {
+generic function failedDependencyDiag(raw, edge) {
 	importDiag(
 		raw.path,
 		edge.span,
@@ -229,7 +231,7 @@ function failedDependencyDiag(raw, edge) {
 	)
 }
 
-function missingInterfaceDiag(raw, edge) {
+generic function missingInterfaceDiag(raw, edge) {
 	importDiag(
 		raw.path,
 		edge.span,
@@ -237,18 +239,18 @@ function missingInterfaceDiag(raw, edge) {
 	)
 }
 
-function skipUnit(raw, diag) {
+generic function skipUnit(raw, diag) {
 	emptyCheckedUnit(raw.path, raw.ast, [diag])
 }
 
-function addFailedRawPaths(failedPaths, raw) {
+generic function addFailedRawPaths(failedPaths, raw) {
 	let f1 = addUniqueStr(failedPaths, raw.path);
 	addUniqueStr(f1, raw.ast.path)
 }
 
 // ── graph checking ────────────────────────────────────────────────────────
 
-function checkedGraphLoop(mods, ifaces, checkedAcc, diagAcc, failedPaths) {
+generic function checkedGraphLoop(mods, ifaces, checkedAcc, diagAcc, failedPaths) {
 	match Compat.uncons(mods) with
 	| None -> mkCheckGraphResult(reverse(checkedAcc), ifaces, diagAcc)
 	| Some cell -> {
@@ -288,16 +290,16 @@ function checkedGraphLoop(mods, ifaces, checkedAcc, diagAcc, failedPaths) {
 // `mods` must already be dependency-first, normally from graph/modgraph.pf's
 // `TopoOk.modules`. `builtinIfaces` is an imaps map from builtin module names
 // and/or `$builtin/<name>` paths to ModIface values.
-export function checkGraph(mods, builtinIfaces) {
+export generic function checkGraph(mods, builtinIfaces) {
 	checkedGraphLoop(mods, builtinIfaces, [], [], [])
 }
 
-export function checkGraphNoBuiltins(mods) {
+export generic function checkGraphNoBuiltins(mods) {
 	checkGraph(mods, IMS.imsEmpty())
 }
 
 // Convenience for callers that have a `TopoResult` from graph/modgraph.pf.
-export function checkTopo(topo, builtinIfaces) {
+export generic function checkTopo(topo, builtinIfaces) {
 	match topo with
 	| TopoOk ok -> checkGraph(ok.modules, builtinIfaces)
 	| TopoErr bad -> mkCheckGraphResult([], builtinIfaces, bad.diags)

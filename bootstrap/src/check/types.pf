@@ -47,7 +47,7 @@ export type Type = {
 
 // `constraints` is generic so temporary iface.pf schemes can still flow into
 // this pass before the real constraint representation is frozen everywhere.
-export type InferScheme = { vars, generic constraints, body }
+export type InferScheme = { vars, generic constraints, generic body }
 
 export type Subst = { m }
 
@@ -69,7 +69,9 @@ export type TcSt = {
 
 export type TcOut = { st, generic val }
 
-export type InferResult = { types, exports, diags }
+// `exports` is a slot: its scheme values embed per-module type variables that
+// must never lock into (or leak from) one shared field variable.
+export type InferResult = { types, generic exports, diags }
 
 // ── checker-private metadata ───────────────────────────────────────────────
 
@@ -121,7 +123,7 @@ export function tList(elem) { TList { elem } }
 export function tArray(elem) { TArray { elem } }
 export function tDict(keyT, valT) { TDict { keyT, valT } }
 export function tFun(params, ret) { TFun { params, ret } }
-export function tProc(params, ret, isAsync) { TProc { params, ret, isAsync } }
+export generic function tProc(params, ret, isAsync) { TProc { params, ret, isAsync } }
 export function tNamed(tname, args) { TNamed { tname, args } }
 export function tVariant(vname, unionName, args) { TVariant { vname, unionName, args } }
 export function tVar(v) { TVar { v } }
@@ -135,7 +137,7 @@ export function emptySubst() {
 	Subst { IMI.imiEmpty() }
 }
 
-export function mkInferResult(types, exports, diags) {
+export generic function mkInferResult(types, exports, diags) {
 	InferResult { types, exports, diags }
 }
 
@@ -540,6 +542,42 @@ function builtinTyName(nm, argTs) {
 	else { TNamed { nm, argTs } }
 }
 
+// Variables reachable without passing through a named type's slot arguments.
+function varsOutsideSlots(t) {
+	match t with
+	| TVar v -> [v.v]
+	| TList x -> varsOutsideSlots(x.elem)
+	| TArray x -> varsOutsideSlots(x.elem)
+	| TDict x -> intUnion(varsOutsideSlots(x.keyT), varsOutsideSlots(x.valT))
+	| TFun f -> intUnion(varsOutsideSlotsList(f.params), varsOutsideSlots(f.ret))
+	| TProc pr -> intUnion(varsOutsideSlotsList(pr.params), varsOutsideSlots(pr.ret))
+	| _ -> []
+}
+
+function varsOutsideSlotsList(ts) {
+	match Compat.uncons(ts) with
+	| None -> []
+	| Some cell -> intUnion(varsOutsideSlots(cell.value.key), varsOutsideSlotsList(cell.value.value))
+}
+
+function defaultSlotVar(t, v) {
+	applyType(Subst { IMI.imiPut(IMI.imiEmpty(), v, TUnit) }, t)
+}
+
+function defaultSlotVarsLoop(t, vs) {
+	match Compat.uncons(vs) with
+	| None -> t
+	| Some cell -> defaultSlotVarsLoop(defaultSlotVar(t, cell.value.key), cell.value.value)
+}
+
+// Slot defaulting (T2): residual variables that occur only inside named-type
+// slot arguments belong to payloads this module never constructs; any type
+// is admissible there, so they default to Unit rather than blocking export.
+function defaultResidualSlots(t) {
+	let residual = intRemoveAll(freeVars(t), varsOutsideSlots(t));
+	defaultSlotVarsLoop(t, residual)
+}
+
 function checkExportGround(st, stmt, path, bname, solved) {
 	if stmtIsGenericExport(stmt) then { st }
 	else if typeHasFreeVars(solved) then { addTypeDiag(st, path, A.stmtSpan(stmt), "Exported non-generic binding '" ++ bname ++ "' is not ground; add a constraining use, or declare it generic.") }
@@ -569,11 +607,13 @@ function unifyTypeListsLoop(st, aTys, bTys, path, span) {
 	}
 }
 
-function unifyNamed(st, a, b, path, span) {
-	if a.tname != b.tname then {
-		addTypeDiag(st, path, span, "Cannot unify " ++ formatType(TNamed { a.tname, a.args }) ++ " with " ++ formatType(TNamed { b.tname, b.args }) ++ ".")
+// Takes payload fields, not TNamed binders: a variant passed to a helper
+// widens to its union (design_variant_binder_widening.md, Rule 2).
+function unifyNamed(st, aName, aArgs, bName, bArgs, path, span) {
+	if aName != bName then {
+		addTypeDiag(st, path, span, "Cannot unify " ++ formatType(TNamed { aName, aArgs }) ++ " with " ++ formatType(TNamed { bName, bArgs }) ++ ".")
 	} else {
-		unifyTypeLists(st, a.args, b.args, path, span)
+		unifyTypeLists(st, aArgs, bArgs, path, span)
 	}
 }
 
@@ -637,7 +677,7 @@ export function unify(st, a, b, path, span) {
 	}
 	| TNamed an -> {
 		match b1 with
-		| TNamed bn -> unifyNamed(st, an, bn, path, span)
+		| TNamed bn -> unifyNamed(st, an.tname, an.args, bn.tname, bn.args, path, span)
 		| TVariant bv -> {
 			if an.tname == bv.unionName then { unifyTypeLists(st, an.args, bv.args, path, span) }
 			else { addTypeDiag(st, path, span, "Expected " ++ formatType(a1) ++ ", got " ++ formatType(b1) ++ ".") }
@@ -798,7 +838,7 @@ function generalizeWithEnv(env, st, t) {
 	mkScheme(vars, [], solved)
 }
 
-export function generalize(envFree, st, t) {
+export generic function generalize(envFree, st, t) {
 	let solved = apply(st.subst, t);
 	let vars = intRemoveAll(freeVars(solved), envFree);
 	mkScheme(vars, [], solved)
@@ -836,11 +876,51 @@ export generic function instantiate(st, scheme) {
 	Pair { fmap.key, replaceQuantified(scheme.body, fmap.value) }
 }
 
+// Converters between the checker's Type and the interface's structural
+// IfaceType grammar. Variants are widened before export, so TVariant never
+// crosses the boundary.
+export function typeToIface(t) {
+	match t with
+	| TInt -> ITInt
+	| TFloat -> ITFloat
+	| TBool -> ITBool
+	| TStr -> ITStr
+	| TChar -> ITChar
+	| TByte -> ITByte
+	| TUnit -> ITUnit
+	| TNonZero -> ITNonZero
+	| TAny -> ITAny
+	| TList x -> ITList { typeToIface(x.elem) }
+	| TArray x -> ITArray { typeToIface(x.elem) }
+	| TDict x -> ITDict { typeToIface(x.keyT), typeToIface(x.valT) }
+	| TFun f -> ITFun { map(typeToIface, f.params), typeToIface(f.ret) }
+	| TProc p -> ITProc { map(typeToIface, p.params), typeToIface(p.ret), p.isAsync }
+	| TNamed n -> ITNamed { n.tname, map(typeToIface, n.args) }
+	| TVariant v -> ITNamed { v.unionName, map(typeToIface, v.args) }
+	| TVar v -> ITVar { v.v }
+	| TUnknown -> ITUnknown
+}
+
 function ifaceBodyToType(body) {
 	match body with
 	| ITUnknown -> TUnknown
 	| ITName n -> TNamed { n.name, [] }
-	| _ -> body
+	| ITInt -> TInt
+	| ITFloat -> TFloat
+	| ITBool -> TBool
+	| ITStr -> TStr
+	| ITChar -> TChar
+	| ITByte -> TByte
+	| ITUnit -> TUnit
+	| ITNonZero -> TNonZero
+	| ITAny -> TAny
+	| ITList x -> TList { ifaceBodyToType(x.elem) }
+	| ITArray x -> TArray { ifaceBodyToType(x.elem) }
+	| ITDict x -> TDict { ifaceBodyToType(x.keyT), ifaceBodyToType(x.valT) }
+	| ITFun f -> TFun { map(ifaceBodyToType, f.params), ifaceBodyToType(f.ret) }
+	| ITProc p -> TProc { map(ifaceBodyToType, p.params), ifaceBodyToType(p.ret), p.isAsync }
+	| ITNamed n -> TNamed { n.tname, map(ifaceBodyToType, n.args) }
+	| ITVar v -> TVar { v.v }
 }
 
 function schemeFromIface(s) {
@@ -1872,15 +1952,16 @@ function rawFunctionType(kind, params, ret) {
 	| ProcFn k -> TProc { params, ret, k.isAsync }
 }
 
-function inferFunctionDecl(st, env, s, path) {
-	let ps = freshTypeList(st, length(s.params));
-	let env1 = bindParams(env, s.params, ps.types);
-	let bo = inferBody(ps.st, env1, s.body, path);
-	let typ = rawFunctionType(s.kind, ps.types, bo.typ);
+// Takes SFun payload fields, not the binder (Rule 2 widening).
+function inferFunctionDecl(st, env, id, name, params, body, kind, path) {
+	let ps = freshTypeList(st, length(params));
+	let env1 = bindParams(env, params, ps.types);
+	let bo = inferBody(ps.st, env1, body, path);
+	let typ = rawFunctionType(kind, ps.types, bo.typ);
 	let solved = apply(bo.st.subst, typ);
-	let st1 = addTypedNode(bo.st, s.id, solved);
-	let entry = schemeOrMono(isGenericKind(s.kind), env, st1, solved);
-	envOut(st1, putEnv(env, s.name, entry))
+	let st1 = addTypedNode(bo.st, id, solved);
+	let entry = schemeOrMono(isGenericKind(kind), env, st1, solved);
+	envOut(st1, putEnv(env, name, entry))
 }
 
 function inferTypeExpr(st, te) {
@@ -1917,13 +1998,14 @@ function typedParamsTypes(st, params, acc) {
 	}
 }
 
-function inferExtern(st, env, s, path) {
-	let params = typedParamsTypes(st, s.decl.params, []);
-	let ret = inferTypeExpr(params.key, s.decl.ret);
-	let typ = match s.decl.kind with
+// Takes SExtern payload fields, not the binder (Rule 2 widening).
+function inferExtern(st, env, id, decl, path) {
+	let params = typedParamsTypes(st, decl.params, []);
+	let ret = inferTypeExpr(params.key, decl.ret);
+	let typ = match decl.kind with
 		| ExternFunction -> TFun { params.value, ret.value }
 		| ExternProc k -> TProc { params.value, ret.value, k.isAsync };
-	envOut(addTypedNode(ret.key, s.id, typ), putEnv(env, s.decl.name, TMono { typ }))
+	envOut(addTypedNode(ret.key, id, typ), putEnv(env, decl.name, TMono { typ }))
 }
 
 export function cgenStmt(st, env, s, path) {
@@ -1958,7 +2040,7 @@ export function cgenStmt(st, env, s, path) {
 		let st2 = unify(rhs.st, expected, rhs.typ, path, A.exprSpan(x.value));
 		envOut(addTypedNode(st2, x.id, TUnit), env)
 	}
-	| SFun x -> inferFunctionDecl(st, env, x, path)
+	| SFun x -> inferFunctionDecl(st, env, x.id, x.name, x.params, x.body, x.kind, path)
 	| SType x -> envOut(addTypedNode(st, x.id, TUnit), env)
 	| SExpr x -> {
 		let eo = cgenExpr(st, env, x.expr, path);
@@ -1995,7 +2077,7 @@ export function cgenStmt(st, env, s, path) {
 		let inner = cgenStmt(st, env, x.inner, path);
 		envOut(addTypedNode(inner.st, x.id, TUnit), inner.env)
 	}
-	| SExtern x -> inferExtern(st, env, x, path)
+	| SExtern x -> inferExtern(st, env, x.id, x.decl, path)
 }
 
 function inferStmts(st, env, stmts, path) {
@@ -2060,7 +2142,7 @@ function exportSchemeFor(st, env, stmt, path) {
 				Pair { st, Some { Pair { n.value, mkScheme(s.scheme.vars, s.scheme.constraints, solved) } } }
 			}
 			| TMono m -> {
-				let solved = widenVariantsDeep(apply(st.subst, m.t));
+				let solved = defaultResidualSlots(widenVariantsDeep(apply(st.subst, m.t)));
 				let st1 = checkExportGround(st, stmt, path, n.value, solved);
 				Pair { st1, Some { Pair { n.value, mkScheme([], [], solved) } } }
 			}
@@ -2096,7 +2178,7 @@ function applyTypesMap(types, subst) {
 
 // ── public entry point ─────────────────────────────────────────────────────
 
-export function inferModule(ast, deps) {
+export generic function inferModule(ast, deps) {
 	let st0 = emptyState();
 	let env0 = builtinEnv();
 	let intrinsic = registerBuiltinTypes(st0, env0);

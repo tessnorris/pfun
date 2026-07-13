@@ -6,7 +6,7 @@
 import * as Compat from "../compat";
 import * as ListX from "./listx";
 
-let crStr = __str__(chr(13));
+let crStr = "";
 
 function isWs(c) {
 	c == " " || c == "\t" || c == crStr || c == "\n"

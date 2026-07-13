@@ -656,13 +656,13 @@ function bindModuleNames(ast, deps) {
 	prebindLocalDecls(st1, ast.stmts)
 }
 
-export function checkModule(ast, deps) {
+export generic function checkModule(ast, deps) {
 	let st0 = bindModuleNames(ast, deps);
 	let st1 = checkStmtListLoop(st0, CtxTop, ast.stmts);
 	mkPurityResult(reverse(st1.diags))
 }
 
 // Alias matching the phase name; useful in tests and later check/check.pf glue.
-export function checkPurity(ast, deps) {
+export generic function checkPurity(ast, deps) {
 	checkModule(ast, deps)
 }

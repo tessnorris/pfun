@@ -22,12 +22,30 @@ export type ExportKind = {
 
 export type Scheme = { vars, generic constraints, generic body }
 
-// Temporary type atom used by `ifaceOfAst` before type inference exists. The
-// real checker can store its own Type values in Scheme.body because the field is
-// generic.
+// The interface's own structural type language. Interfaces are frozen data:
+// checked export types are converted into this grammar (types.pf owns the
+// converters), never smuggled as raw checker Type values — a raw Type in a
+// scheme slot would force every export in a homogeneous types map to unify.
+// ITUnknown/ITName remain the pre-inference skeleton atoms.
 export type IfaceType = {
 	| ITUnknown
 	| ITName: name
+	| ITInt
+	| ITFloat
+	| ITBool
+	| ITStr
+	| ITChar
+	| ITByte
+	| ITUnit
+	| ITNonZero
+	| ITAny
+	| ITList: elem
+	| ITArray: elem
+	| ITDict: keyT, valT
+	| ITFun: params, ret
+	| ITProc: params, ret, isAsync
+	| ITNamed: tname, args
+	| ITVar: v
 }
 
 // The map-carrying fields are generic slots: their value types (kinds,
@@ -58,9 +76,11 @@ export generic function mkScheme(vars, constraints, body) {
 	Scheme { vars, constraints, body }
 }
 
-export function unknownType() { ITUnknown }
+export generic function unknownType() { ITUnknown }
 
-export function nameType(name) { ITName { name } }
+export generic function nameType(name) { ITName { name } }
+
+
 
 export generic function mkIface(path, kinds, types, unions) {
 	ModIface {

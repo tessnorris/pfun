@@ -225,7 +225,7 @@ function testBuiltinOptionMatchSucceeds() {
 
 //![test("builtin core exports are ambient")]
 function testBuiltinCoreExportsAmbient() {
-	let src = "let n = nth([1, 2], 0) + 1;\nlet c = __str__(chr(13));";
+	let src = "let n = nthU([1, 2], 0) + 1;\nlet c = __str__(chrU(13));\nlet o = nth([1, 2], 0);";
 	H.assertOkDiags(H.typeDiagsWithBuiltins("builtin_ambient.pf", src))
 }
 

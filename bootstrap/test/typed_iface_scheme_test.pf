@@ -1,0 +1,35 @@
+// typed_iface_scheme_test.pf — regression for typed ModIface scheme bodies.
+
+import * as H from "./check_helpers";
+import * as I from "../src/check/iface";
+import * as TY from "../src/check/types";
+import * as IMS from "../src/data/imaps";
+
+//![suite("typed dependency interface schemes")]
+//![test("typed scheme body imports without IfaceType conversion")]
+function testTypedSchemeBodyImport() {
+	let types = IMS.imsPut(
+		IMS.imsEmpty(),
+		"answer",
+		I.mkScheme([], [], TY.tInt())
+	);
+	let iface = I.mkIfaceWithRecords(
+		"./dep",
+		IMS.imsEmpty(),
+		types,
+		IMS.imsEmpty(),
+		IMS.imsEmpty()
+	);
+	let deps = IMS.imsPut(
+		IMS.imsEmpty(),
+		"./dep",
+		iface
+	);
+	let unit = H.checkUnitWithDeps(
+		"typed_iface_main.pf",
+		"import { answer } from \"./dep\";\n"
+		++ "let n = answer + 1;",
+		deps
+	);
+	H.assertOkDiags(unit.diags)
+}

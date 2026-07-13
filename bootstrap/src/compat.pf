@@ -5,7 +5,7 @@
 export generic function listAt(xs, i) {
 	if i < 0 then { None }
 	else if i >= length(xs) then { None }
-	else { Some { nth(xs, i) } }
+	else { Some { nthU(xs, i) } }
 }
 
 // Head/tail replacement with a dialect-stable shape: None on empty,
@@ -13,5 +13,5 @@ export generic function listAt(xs, i) {
 export generic function uncons(xs) {
 	if length(xs) == 0 then { None }
 	// no `drop` builtin exists — slice(start, count, list) is the primitive
-	else { Some { Pair { nth(xs, 0), slice(1, length(xs) - 1, xs) } } }
+	else { Some { Pair { nthU(xs, 0), slice(1, length(xs) - 1, xs) } } }
 }

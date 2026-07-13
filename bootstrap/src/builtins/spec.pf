@@ -44,15 +44,15 @@ export function platformAll() { PlatformAll }
 export function platformNode() { PlatformNode }
 export function platformBrowser() { PlatformBrowser }
 
-export function builtinEntry(name, kind, scheme, platform, intrinsic) {
+export generic function builtinEntry(name, kind, scheme, platform, intrinsic) {
 	BuiltinEntry { name, kind, scheme, platform, intrinsic }
 }
 
-export function builtinUnion(name, variants) {
+export generic function builtinUnion(name, variants) {
 	BuiltinUnion { name, variants }
 }
 
-export function builtinModule(path, exports, unions) {
+export generic function builtinModule(path, exports, unions) {
 	BuiltinModuleSpec { path, exports, unions }
 }
 
@@ -67,27 +67,27 @@ function resultOf(v, e) { TY.tNamed("Result", [v, e]) }
 function pairOf(k, v) { TY.tNamed("Pair", [k, v]) }
 function ioResult(t) { resultOf(t, TY.tStr()) }
 
-function sch(vars, body) {
-	TY.mkScheme(vars, [], body)
+generic function sch(vars, body) {
+	I.mkScheme(vars, [], TY.typeToIface(body))
 }
 
-function pure(name, scheme, intrinsic) {
+generic function pure(name, scheme, intrinsic) {
 	builtinEntry(name, I.kFun(), scheme, PlatformAll, intrinsic)
 }
 
-function nodePure(name, scheme, intrinsic) {
+generic function nodePure(name, scheme, intrinsic) {
 	builtinEntry(name, I.kFun(), scheme, PlatformNode, intrinsic)
 }
 
-function browserPure(name, scheme, intrinsic) {
+generic function browserPure(name, scheme, intrinsic) {
 	builtinEntry(name, I.kFun(), scheme, PlatformBrowser, intrinsic)
 }
 
-function procEntry(name, scheme, intrinsic) {
+generic function procEntry(name, scheme, intrinsic) {
 	builtinEntry(name, I.kProc(), scheme, PlatformAll, intrinsic)
 }
 
-function nodeProc(name, scheme, intrinsic) {
+generic function nodeProc(name, scheme, intrinsic) {
 	builtinEntry(name, I.kProc(), scheme, PlatformNode, intrinsic)
 }
 
@@ -204,7 +204,8 @@ function coreExports() {
 		pure("length", sch([], fn1(TY.tAny(), TY.tInt())), "$length"),
 		pure("reverse", sch([0], fn1(listOf(a), listOf(a))), "$reverse"),
 		pure("cons", sch([0], fn2(a, listOf(a), listOf(a))), "$cons"),
-		pure("nth", sch([0], fn2(listOf(a), TY.tInt(), a)), "$nth"),
+		pure("nth", sch([0], fn2(listOf(a), TY.tInt(), optionOf(a))), "$nth"),
+		pure("nthU", sch([0], fn2(listOf(a), TY.tInt(), a)), "$nthU"),
 		pure("slice", sch([], fn3(TY.tInt(), TY.tInt(), TY.tAny(), TY.tAny())), "$slice"),
 		pure("take", sch([0], fn2(TY.tInt(), listOf(a), listOf(a))), "$take"),
 		pure("range", sch([], fn2(TY.tInt(), TY.tInt(), listOf(TY.tInt()))), "$range"),
@@ -217,7 +218,8 @@ function coreExports() {
 		pure("split", sch([], fn2(TY.tStr(), TY.tStr(), listOf(TY.tStr()))), "$split"),
 		pure("join", sch([0], fn2(listOf(a), TY.tStr(), TY.tStr())), "$join"),
 		pure("asc", sch([], fn1(TY.tChar(), TY.tInt())), "$asc"),
-		pure("chr", sch([], fn1(TY.tInt(), TY.tChar())), "$chr"),
+		pure("chr", sch([], fn1(TY.tInt(), optionOf(TY.tChar()))), "$chr"),
+		pure("chrU", sch([], fn1(TY.tInt(), TY.tChar())), "$chrU"),
 		pure("charBytes", sch([], fn1(TY.tChar(), listOf(TY.tByte()))), "$charBytes"),
 		pure("bytesToChar", sch([], fn1(listOf(TY.tByte()), optionOf(TY.tChar()))), "$bytesToChar"),
 
@@ -336,11 +338,11 @@ function addEntriesToIface(entries, iface) {
 	}
 }
 
-function addUnionToIface(iface, uni) {
+generic function addUnionToIface(iface, uni) {
 	I.putUnion(I.putKind(iface, uni.name, I.kType()), uni.name, uni.variants)
 }
 
-function addUnionsToIface(unions, iface) {
+generic function addUnionsToIface(unions, iface) {
 	match Compat.uncons(unions) with
 	| None -> iface
 	| Some cell -> {
@@ -349,7 +351,7 @@ function addUnionsToIface(unions, iface) {
 	}
 }
 
-export function ifaceOfSpec(spec) {
+export generic function ifaceOfSpec(spec) {
 	let iface0 = spec.path == "$builtin/core" ? coreTypeIface() : I.emptyIface(spec.path);
 	let iface1 = addEntriesToIface(spec.exports, iface0);
 	addUnionsToIface(spec.unions, iface1)
@@ -374,7 +376,24 @@ export function lookupBuiltinIface(name) {
 	IMS.imsGet(allBuiltinIfaces(), name)
 }
 
-export function intrinsicName(moduleName, exportName) {
+// Name -> $intrinsic map for the ambient core surface, consumed by the
+// emitter so bare ambient names route to the host ABI.
+export generic function ambientIntrinsics() {
+	match findModuleSpec("$builtin/core") with
+	| None -> IMS.imsEmpty()
+	| Some spec -> intrinsicsOfExports(spec.value.exports, IMS.imsEmpty())
+}
+
+generic function intrinsicsOfExports(exports, acc) {
+	match Compat.uncons(exports) with
+	| None -> acc
+	| Some cell -> {
+		let e = cell.value.key;
+		intrinsicsOfExports(cell.value.value, IMS.imsPut(acc, e.name, e.intrinsic))
+	}
+}
+
+export generic function intrinsicName(moduleName, exportName) {
 	match findModuleSpec(moduleName) with
 	| None -> None
 	| Some spec -> findIntrinsic(spec.value.exports, exportName)

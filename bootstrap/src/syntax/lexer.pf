@@ -133,7 +133,7 @@ function isHexDigit(c) {
 }
 
 function isWs(c) {
-	c == " " || c == "\t" || c == "\n" || c == __str__(chr(13))
+	c == " " || c == "\t" || c == "\n" || c == ""
 }
 
 function digitVal(c) {

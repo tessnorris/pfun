@@ -77,11 +77,11 @@ export function playgroundRunner() {
 	PlaygroundRunner
 }
 
-export function hostSrc(coreText, platformText) {
+export generic function hostSrc(coreText, platformText) {
 	HostSrc { coreText, platformText }
 }
 
-export function outFile(relPath, text) {
+export generic function outFile(relPath, text) {
 	OutFile { relPath, text }
 }
 
@@ -586,7 +586,7 @@ function embeddedHostText(label, text, levels) {
 
 function hostText(host, levels) {
 	let prefix = StrX.strRepeat(" ", levels * 2);
-	let abiNames = "$addI, $arrGet, $arrSet, $bitAndI, $bitNotI, $bitOrI, $cmpF, $compLazy, $compStrict, $concatS, $dictFromEntries, $dictGet, $dictSet, $divI, $eq, $eqF, $eqI, $extern, $field, $geI, $gtI, $index, $indexSet, $lazyList, $leI, $listExactLen, $listMinLen, $listRest, $ltI, $matchFail, $memoize, $modI, $mulI, $negI, $newArray, $nth, $nthU, $shlI, $shrI, $starGet, $str, $strAt, $subI, $toF";
+	let abiNames = "$addI, $arrGet, $arrSet, $asc, $bitAndI, $bitNotI, $bitOrI, $bytesToChar, $ceil, $charBytes, $chr, $chrU, $cmpF, $compLazy, $compStrict, $concatS, $cons, $dictFromEntries, $dictGet, $dictSet, $divI, $eq, $eqF, $eqI, $extern, $field, $filter, $find, $findSlice, $floor, $geI, $gtI, $index, $indexSet, $isFinite, $isNaN, $join, $lazyList, $leI, $length, $listExactLen, $listMinLen, $listRest, $ltI, $map, $matchFail, $memoize, $modI, $mulI, $negI, $newArray, $nonZero, $nth, $nthU, $range, $reduce, $reverse, $round, $safeDiv, $safeMod, $shlI, $shrI, $slice, $split, $starGet, $str, $strAt, $subI, $take, $toF";
 	embeddedHostText("host core", host.coreText, levels)
 	++ prefix
 	++ "/* PfunCore ABI bindings */\n"
@@ -966,7 +966,7 @@ function nodeFileSet(mods, outDirRel, host) {
 
 // ── public linker ───────────────────────────────────────────────────────────
 
-export function link(mods, target, host) {
+export generic function link(mods, target, host) {
 	match target with
 	| NodeFiles t -> nodeFileSet(mods, t.outDirRel, host)
 	| NodeBundle -> SingleJs {
@@ -987,4 +987,14 @@ export function link(mods, target, host) {
 			)
 		}
 	}
+}
+
+// Grounding witness (end of module — forward calls constrain only the
+// orphaned predeclaration): pins `host` to HostSrc through the link entry
+// points so no constraint-carrying stray variable leaks into the interface.
+function linkGroundingWitness() {
+	let host = hostSrc("", "");
+	let bundled = link([], nodeBundle(), host);
+	let f = outFile("", "");
+	f.relPath
 }

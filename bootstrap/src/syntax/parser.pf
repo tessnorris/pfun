@@ -36,7 +36,7 @@ function errAt(span, path, message) {
 	D.err(ParseD, message, path, span)
 }
 
-function failAt(st, span, message) {
+generic function failAt(st, span, message) {
 	PErr { [errAt(span, st.path, message)] }
 }
 
@@ -143,7 +143,7 @@ function eatOp(st, op) {
 	if atOp(st, op) then { advance(st) } else { st }
 }
 
-function failHere(st, message) {
+generic function failHere(st, message) {
 	failAt(st, currentSpan(st), message)
 }
 
@@ -235,7 +235,7 @@ function parseCanonicalInt(text) {
 
 // ── public entry ────────────────────────────────────────────────────────────
 
-export function parseModule(path, tokens) {
+export generic function parseModule(path, tokens) {
 	let st = PSt { path, tokens, 0, 1, false };
 	match pModuleLoop(st, []) with
 	| PErr e -> ParseErr { e.diags }

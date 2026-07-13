@@ -574,7 +574,7 @@ function testTailCallLowering() {
 			12,
 			cond,
 			[A.sReturn(13, A.eVar(14, "acc", sp), sp)],
-			[A.sReturn(15, recur, sp)],
+			Some { [A.sReturn(15, recur, sp)] },
 			sp
 		)
 	];
@@ -617,7 +617,7 @@ function testExternEmission() {
 		"readSecret",
 		[A.mkTypedParam("path", A.tyName("Str", []))],
 		A.tyName("Str", []),
-		"node"
+		Some { "node" }
 	);
 	let stmt = A.sExtern(1, decl, sp);
 	let normal = J.printJs(E.emitStmtForTest(noTypes(), opts(), stmt));

@@ -149,6 +149,13 @@ export const stdlibFunctions: RegistryFunction[] = [
 
   { name: 'isInfinite', fn: (args, interp) => interp.force(args[0]) instanceof LazyList },
 
+  { name: 'nthU', arity: 2, fn: (args, interp) => {
+    const list = interp.force(args[0]);
+    const n    = interp.force(args[1]);
+    if (typeof n !== 'bigint') throw new Error("nthU() requires an integer as second argument.");
+    if (!Array.isArray(list)) throw new Error("nthU() requires a list as first argument.");
+    return list[Number(n)];
+  }},
   { name: 'nth', arity: 2, fn: (args, interp) => {
     const list = interp.force(args[0]);
     const n    = interp.force(args[1]);
@@ -188,6 +195,11 @@ export const stdlibFunctions: RegistryFunction[] = [
     return BigInt(c.value.charCodeAt(0));
   }},
 
+  { name: 'chrU', fn: (args, interp) => {
+    const n = interp.force(args[0]);
+    if (typeof n !== 'bigint') throw new Error("chrU() requires an integer argument.");
+    return new PfunChar(String.fromCharCode(Number(n)));
+  }},
   { name: 'chr', fn: (args, interp) => {
     const n = interp.force(args[0]);
     if (typeof n !== 'bigint') throw new Error("chr() requires an integer argument.");

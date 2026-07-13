@@ -491,6 +491,10 @@ const _lambdaParamTypes = new Map<string, PfunType>();
 let _inAsyncContext = false;
 
 const STDLIB_MAP: Record<string, string> = {
+  // Unchecked total index for bootstrap sources whose bounds are proven;
+  // V1's nth is already total, so it is a straight alias here.
+  nthU:          '$nth',
+  chrU:          '$chr',
   // Output — print does NOT add a newline; println does
   println:       '$println',
   print:         '$print',

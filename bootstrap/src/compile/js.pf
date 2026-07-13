@@ -370,7 +370,7 @@ function jsIsReserved(name) {
 function jsFindCharCode(c, code, last) {
 	if code > last then {
 		-1
-	} else if c == __str__(chr(code)) then {
+	} else if c == __str__(chrU(code)) then {
 		code
 	} else {
 		jsFindCharCode(c, code + 1, last)
@@ -441,7 +441,7 @@ function jsControlCode(c) {
 	let code = jsFindCharCode(c, 0, 31);
 	if code >= 0 then {
 		code
-	} else if c == __str__(chr(127)) then {
+	} else if c == __str__(chrU(127)) then {
 		127
 	} else {
 		-1
@@ -457,19 +457,19 @@ function jsEscapeChar(c) {
 		"\\n"
 	} else if c == "\t" then {
 		"\\t"
-	} else if c == __str__(chr(13)) then {
+	} else if c == __str__(chrU(13)) then {
 		"\\r"
-	} else if c == __str__(chr(8)) then {
+	} else if c == __str__(chrU(8)) then {
 		"\\b"
-	} else if c == __str__(chr(12)) then {
+	} else if c == __str__(chrU(12)) then {
 		"\\f"
 	} else {
 		let control = jsControlCode(c);
 		if control >= 0 then {
 			"\\u" ++ jsHex4(control)
-		} else if c == __str__(chr(8232)) then {
+		} else if c == __str__(chrU(8232)) then {
 			"\\u2028"
-		} else if c == __str__(chr(8233)) then {
+		} else if c == __str__(chrU(8233)) then {
 			"\\u2029"
 		} else {
 			c
