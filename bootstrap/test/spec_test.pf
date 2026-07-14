@@ -1,6 +1,6 @@
 // test/floor/spec_test.pf — tests for builtins/spec.pf.
 
-import * as Assert from "$PFUN_HOME/lib/testing/assertions";
+import * as Assert from "testing/assertions";
 import * from "../src/builtins/spec";
 import * as Iface from "../src/check/iface";
 import * as ListX from "../src/data/listx";

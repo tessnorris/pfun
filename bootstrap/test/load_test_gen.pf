@@ -1,16 +1,16 @@
 // test/load_test.pf — Phase 16 graph-loader tests.
 
-import * as Assert from "$PFUN_HOME/lib/testing/assertions";
+import * as Assert from "testing/assertions";
 import * as Load from "../src/drivers/load";
 import * as MG from "../src/graph/modgraph";
 import * as Compat from "../src/compat";
 import * from "io"; // added by gen-test-harness
-import * from "$PFUN_HOME/lib/testing/runner"; // added by gen-test-harness
+import * from "testing/runner"; // added by gen-test-harness
 
 function env() {
 	MG.mkSearchEnv(
-		"lib",
-		"/pfun",
+		"bootstrap/src/stdlib",
+		".",
 		["io", "file", "json", "math"]
 	)
 }
@@ -234,11 +234,18 @@ function testLoadMemLibraryImport() {
 	let files = sourceMap([
 		source(
 			"src/main.pf",
-			"import * as W from \"widgets\"; let x = 1;"
+			"import * as W from \"widgets\"; "
+			++ "import * as A from "
+			++ "\"testing/assertions\"; "
+			++ "let x = 1;"
 		),
 		source(
-			"lib/widgets.pf",
+			"bootstrap/src/stdlib/widgets.pf",
 			"export function widget() { 1 }"
+		),
+		source(
+			"bootstrap/src/testing/assertions.pf",
+			"export function assertion() { 2 }"
 		)
 	]);
 
@@ -248,12 +255,24 @@ function testLoadMemLibraryImport() {
 		env()
 	) with
 	| LoadErr _ -> Assert.assertions([
-		Assert.fail("Expected library import to load.")
+		Assert.fail(
+			"Expected stdlib and public namespace "
+			++ "imports to load."
+		)
 	])
 	| LoadOk ok -> Assert.assertions([
-		Assert.assertEqual(2, length(ok.modules)),
+		Assert.assertEqual(3, length(ok.modules)),
 		Assert.assertTrue(
-			containsModule(ok.modules, "lib/widgets.pf")
+			containsModule(
+				ok.modules,
+				"bootstrap/src/stdlib/widgets.pf"
+			)
+		),
+		Assert.assertTrue(
+			containsModule(
+				ok.modules,
+				"bootstrap/src/testing/assertions.pf"
+			)
 		)
 	])
 }

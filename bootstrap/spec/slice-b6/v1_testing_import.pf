@@ -1,0 +1,13 @@
+// V1 compiler smoke: namespaced testing imports resolve outside lib/.
+
+import * as Assert from "testing/assertions";
+import { println } from "io";
+
+proc main() {
+	let result = Assert.assertions([
+		Assert.assertEqual(1, 1)
+	]);
+	println(length(result.failures));
+}
+
+main();

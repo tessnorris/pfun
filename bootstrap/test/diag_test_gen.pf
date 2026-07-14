@@ -11,13 +11,13 @@
 // the implementation, so these snapshots are what pin the bytes. Regenerate
 // them deliberately, never by loosening an assertion.
 
-import * from "$PFUN_HOME/lib/testing/testing";
-import * from "$PFUN_HOME/lib/testing/assertions";
+import * from "testing/testing";
+import * from "testing/assertions";
 import * as T from "../src/syntax/token";
 import * as D from "../src/check/diag";
 import * as Compat from "../src/compat";
 import * from "io"; // added by gen-test-harness
-import * from "$PFUN_HOME/lib/testing/runner"; // added by gen-test-harness
+import * from "testing/runner"; // added by gen-test-harness
 
 // ── source fixtures ─────────────────────────────────────────────────────────
 

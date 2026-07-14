@@ -1,0 +1,24 @@
+// Slice B6: V2 public-library layout and namespaces.
+
+import * as Str from "string";
+import * as Toml from "toml";
+import * as Assert from "testing/assertions";
+import { println } from "io";
+
+proc main() {
+	let checks = Assert.assertions([
+		Assert.assertEqual("v2", Str.trim("  v2  ")),
+		Assert.assertTrue(Str.startsWith("stdlib", "std"))
+	]);
+
+	println("string=" ++ Str.trim("  ok  "));
+	println("testing-failures=" ++ str(length(checks.failures)));
+
+	match Toml.tomlParse("name = \"Pfun\"") with
+	| Err error -> println("toml=Err")
+	| Ok groups -> println("toml=Ok")
+
+	println("SLICE B6 V2 LIBRARY LAYOUT OK");
+}
+
+main();

@@ -3,7 +3,7 @@
 // These tests cover union coverage, the unguarded-arm guard rule, list length
 // algebra, wildcard fallback, and non-union catch-all behavior.
 
-import * as Assert from "$PFUN_HOME/lib/testing/assertions";
+import * as Assert from "testing/assertions";
 import * as H from "./check_helpers";
 
 //![suite("check/exhaust")]

@@ -4,7 +4,7 @@
 // lowered into the function's while(true) loop rather than emitted as
 // ordinary JavaScript recursion.
 
-import * as Assert from "$PFUN_HOME/lib/testing/assertions";
+import * as Assert from "testing/assertions";
 import * as A from "../src/syntax/ast";
 import * as T from "../src/syntax/token";
 import * as IMI from "../src/data/imapi";

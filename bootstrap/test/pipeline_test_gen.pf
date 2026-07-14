@@ -1,6 +1,6 @@
 // test/pipeline_test.pf — pure production-pipeline tests.
 
-import * as Assert from "$PFUN_HOME/lib/testing/assertions";
+import * as Assert from "testing/assertions";
 import * as A from "../src/syntax/ast";
 import * as I from "../src/check/iface";
 import * as IMS from "../src/data/imaps";
@@ -11,12 +11,10 @@ import * as Load from "../src/drivers/load";
 import * as Pipeline from "../src/compile/pipeline";
 import * as Link from "../src/compile/link";
 import * from "io"; // added by gen-test-harness
-import * from "$PFUN_HOME/lib/testing/runner"; // added by gen-test-harness
+import * from "testing/runner"; // added by gen-test-harness
 
 function env() {
-	MG.mkSearchEnv(
-		"lib",
-		"/pfun",
+	MG.mkSearchEnv("bootstrap/src/stdlib", ".",
 		Spec.builtinNames()
 	)
 }

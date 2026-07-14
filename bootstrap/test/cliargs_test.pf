@@ -1,6 +1,6 @@
 // bootstrap/test/cliargs_test.pf — pure minimal CLI policy tests.
 
-import * as Assert from "$PFUN_HOME/lib/testing/assertions";
+import * as Assert from "testing/assertions";
 import * as Cli from "../src/drivers/cliargs";
 
 function containsText(text, needle) {

@@ -1,0 +1,4 @@
+string=ok
+testing-failures=0
+toml=Ok
+SLICE B6 V2 LIBRARY LAYOUT OK

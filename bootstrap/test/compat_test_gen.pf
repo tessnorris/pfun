@@ -6,11 +6,11 @@
 // its behavior across the port: they must pass unchanged, before and after,
 // on both dialects. Treat a failure here as a port defect, not a test defect.
 
-import * from "$PFUN_HOME/lib/testing/testing";
-import * from "$PFUN_HOME/lib/testing/assertions";
+import * from "testing/testing";
+import * from "testing/assertions";
 import * as Compat from "../src/compat";
 import * from "io"; // added by gen-test-harness
-import * from "$PFUN_HOME/lib/testing/runner"; // added by gen-test-harness
+import * from "testing/runner"; // added by gen-test-harness
 
 // ── helpers ─────────────────────────────────────────────────────────────────
 

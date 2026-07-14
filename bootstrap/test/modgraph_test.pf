@@ -1,6 +1,6 @@
 // test/graph/modgraph_test.pf — tests for graph/modgraph.pf.
 
-import * as Assert from "$PFUN_HOME/lib/testing/assertions";
+import * as Assert from "testing/assertions";
 import * as H from "./check_helpers";
 import * as ModGraph from "../src/graph/modgraph";
 import * as A from "../src/syntax/ast";
@@ -14,7 +14,7 @@ function span() {
 }
 
 function env() {
-	ModGraph.mkSearchEnv("lib", "/pfun", ["io", "file", "math", "db/postgresql"])
+	ModGraph.mkSearchEnv("bootstrap/src/stdlib", ".", ["io", "file", "math", "db/postgresql"])
 }
 
 function emptyAst(path) {
@@ -82,10 +82,36 @@ function firstEdgeResolved(path, source) {
 //![test("resolves relative builtin and library imports")]
 function testResolveImportKinds() {
 	Assert.assertions([
-		Assert.assertEqual("src/lib/foo.pf", resolvedString("./lib/foo", "src")),
-		Assert.assertEqual("src/common/util.pf", resolvedString("../common/util", "src/app")),
-		Assert.assertEqual("$builtin/io", resolvedString("io", "src")),
-		Assert.assertEqual("lib/widgets.pf", resolvedString("widgets", "src")),
+		Assert.assertEqual(
+			"src/lib/foo.pf",
+			resolvedString("./lib/foo", "src")
+		),
+		Assert.assertEqual(
+			"src/common/util.pf",
+			resolvedString(
+				"../common/util",
+				"src/app"
+			)
+		),
+		Assert.assertEqual(
+			"$builtin/io",
+			resolvedString("io", "src")
+		),
+		Assert.assertEqual(
+			"bootstrap/src/stdlib/widgets.pf",
+			resolvedString("widgets", "src")
+		),
+		Assert.assertEqual(
+			"bootstrap/src/testing/assertions.pf",
+			resolvedString(
+				"testing/assertions",
+				"src"
+			)
+		),
+		Assert.assertEqual(
+			"bootstrap/src/browser/tea.pf",
+			resolvedString("browser/tea", "src")
+		),
 		Assert.assertTrue(resolveFails("unknown"))
 	])
 }

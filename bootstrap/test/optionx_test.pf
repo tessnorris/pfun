@@ -1,6 +1,6 @@
 // bootstrap/test/optionx_test.pf — tests for bootstrap/src/data/optionx.pf.
 
-import * as Assert from "$PFUN_HOME/lib/testing/assertions";
+import * as Assert from "testing/assertions";
 import * as OptionX from "../src/data/optionx";
 
 function optionIntIs(opt, expected) {

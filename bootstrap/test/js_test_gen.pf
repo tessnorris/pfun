@@ -1,10 +1,10 @@
 // bootstrap/test/js_test.pf — Phase 12 JavaScript AST/printer tests.
 
-import * as Assert from "$PFUN_HOME/lib/testing/assertions";
+import * as Assert from "testing/assertions";
 import * as J from "../src/compile/js";
 import * as StrX from "../src/data/strx";
 import * from "io"; // added by gen-test-harness
-import * from "$PFUN_HOME/lib/testing/runner"; // added by gen-test-harness
+import * from "testing/runner"; // added by gen-test-harness
 
 function renderExpr(e) {
 	J.printJs([J.jsExprStmt(e)])

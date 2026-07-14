@@ -1,6 +1,6 @@
 # Slice B5 — pure TOML subset
 
-B5 replaces the old V1-era `lib/toml.pf` implementation with an ordinary,
+B5 replaces the old V1-era `bootstrap/src/stdbootstrap/src/stdlib/toml.pf` implementation with an ordinary,
 pure Pfun V2 library.
 
 ## API

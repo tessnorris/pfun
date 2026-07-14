@@ -1,9 +1,9 @@
 // bootstrap/test/cliargs_test.pf — pure minimal CLI policy tests.
 
-import * as Assert from "$PFUN_HOME/lib/testing/assertions";
+import * as Assert from "testing/assertions";
 import * as Cli from "../src/drivers/cliargs";
 import * from "io"; // added by gen-test-harness
-import * from "$PFUN_HOME/lib/testing/runner"; // added by gen-test-harness
+import * from "testing/runner"; // added by gen-test-harness
 
 function containsText(text, needle) {
 	match findSlice(text, needle) with

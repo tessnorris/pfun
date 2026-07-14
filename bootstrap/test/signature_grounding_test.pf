@@ -4,7 +4,7 @@
 // constructors. The concrete function-value anchor must close the exported
 // binding without executing either function.
 
-import * as Assert from "$PFUN_HOME/lib/testing/assertions";
+import * as Assert from "testing/assertions";
 import * as H from "./check_helpers";
 
 //![suite("check/types signature grounding")]

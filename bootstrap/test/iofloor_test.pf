@@ -3,7 +3,7 @@
 // The suite builder proc performs effects once. Test bodies remain pure and
 // inspect captured BResult values.
 
-import * as Assert from "$PFUN_HOME/lib/testing/assertions";
+import * as Assert from "testing/assertions";
 import * as IO from "../src/drivers/iofloor";
 import * from "../src/data/resultx";
 

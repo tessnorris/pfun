@@ -1,9 +1,9 @@
 // bootstrap/test/strx_test.pf — tests for bootstrap/src/data/strx.pf.
 
-import * as Assert from "$PFUN_HOME/lib/testing/assertions";
+import * as Assert from "testing/assertions";
 import * as StrX from "../src/data/strx";
 import * from "io"; // added by gen-test-harness
-import * from "$PFUN_HOME/lib/testing/runner"; // added by gen-test-harness
+import * from "testing/runner"; // added by gen-test-harness
 
 //![suite("data/strx")]
 

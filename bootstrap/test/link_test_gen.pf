@@ -1,13 +1,13 @@
 // bootstrap/test/link_test.pf — Phase 14 linker tests.
 
-import * as Assert from "$PFUN_HOME/lib/testing/assertions";
+import * as Assert from "testing/assertions";
 import * as Compat from "../src/compat";
 import * as StrX from "../src/data/strx";
 import * as J from "../src/compile/js";
 import * as E from "../src/compile/emit";
 import * as L from "../src/compile/link";
 import * from "io"; // added by gen-test-harness
-import * from "$PFUN_HOME/lib/testing/runner"; // added by gen-test-harness
+import * from "testing/runner"; // added by gen-test-harness
 
 function testHost() {
 	L.hostSrc(
@@ -137,7 +137,14 @@ function testModuleIdNormalization() {
 
 //![test("resolves user and builtin requirements without source rewriting")]
 function testRequireResolution() {
-	let ids = ["src/main", "src/util", "stdlib/list"];
+	let ids = [
+		"src/main",
+		"src/util",
+		"workspace/pfun/bootstrap/src/stdlib/list",
+		"workspace/pfun/bootstrap/src/testing/assertions",
+		"workspace/pfun/bootstrap/src/browser/tea"
+	];
+
 	Assert.assertions([
 		Assert.assertEqual(
 			"src/util",
@@ -148,10 +155,26 @@ function testRequireResolution() {
 			)
 		),
 		Assert.assertEqual(
-			"stdlib/list",
+			"workspace/pfun/bootstrap/src/stdlib/list",
 			L.resolveRequireForTest(
 				"src/main",
 				E.builtinReq("list"),
+				ids
+			)
+		),
+		Assert.assertEqual(
+			"testing/assertions",
+			L.resolveRequireForTest(
+				"src/main",
+				E.builtinReq("testing/assertions"),
+				ids
+			)
+		),
+		Assert.assertEqual(
+			"browser/tea",
+			L.resolveRequireForTest(
+				"src/main",
+				E.builtinReq("browser/tea"),
 				ids
 			)
 		),
@@ -161,6 +184,38 @@ function testRequireResolution() {
 				"src/app/main",
 				E.userReq("../shared/value.pf"),
 				ids
+			)
+		),
+		Assert.assertEqual(
+			"list",
+			L.publicAliasForTest(
+				"workspace/pfun/bootstrap/src/stdlib/list",
+				ids
+			)
+		),
+		Assert.assertEqual(
+			"testing/assertions",
+			L.publicAliasForTest(
+				"workspace/pfun/bootstrap/src/testing/assertions",
+				ids
+			)
+		),
+		Assert.assertEqual(
+			"browser/tea",
+			L.publicAliasForTest(
+				"workspace/pfun/bootstrap/src/browser/tea",
+				ids
+			)
+		),
+		Assert.assertEqual(
+			"",
+			L.publicAliasForTest("src/main", ids)
+		),
+		Assert.assertEqual(
+			"",
+			L.publicAliasForTest(
+				"workspace/pfun/bootstrap/src/stdlib/list",
+				cons("list", ids)
 			)
 		)
 	])
@@ -293,19 +348,45 @@ function testNodeBundleStructure() {
 
 //![test("bundle wrappers append explicit exports")]
 function testBundleExports() {
+	let mod = E.emittedModule(
+		"main",
+		[J.jsConst("value", J.jsNum("7"))],
+		["value"],
+		[E.hostReq()],
+		[
+			E.emitSchema(
+				"Thing",
+				None,
+				["value"],
+				false
+			)
+		]
+	);
 	let text = singleText(
-		L.link([simpleModule("main", "7")], L.nodeBundle(), testHost())
+		L.link([mod], L.nodeBundle(), testHost())
 	);
 
 	Assert.assertions([
 		Assert.assertTrue(
-			StrX.contains(text, "exports[\"value\"] = value;")
+			StrX.contains(
+				text,
+				"exports[\"value\"] = value;"
+			)
 		),
 		Assert.assertTrue(
 			StrX.contains(text, "$mods[\"main\"]")
 		),
 		Assert.assertTrue(
 			StrX.contains(text, "$maps[\"main\"] = {}")
+		),
+		Assert.assertTrue(
+			StrX.contains(
+				text,
+				"$registerSchemas([{name: "
+				++ "\"Thing\", union: null, "
+				++ "fields: [\"value\"], "
+				++ "variant: false}]);"
+			)
 		)
 	])
 }

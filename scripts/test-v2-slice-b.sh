@@ -21,8 +21,8 @@ if [[ ! -f "$BASE_COMPILER" ]]; then
 	exit 1
 fi
 
-if [[ ! -f lib/list.pf ]]; then
-	echo "error: lib/list.pf is missing; install the V2 list facade first" >&2
+if [[ ! -f bootstrap/src/stdlib/list.pf ]]; then
+	echo "error: bootstrap/src/stdlib/list.pf is missing; install the V2 list facade first" >&2
 	exit 1
 fi
 

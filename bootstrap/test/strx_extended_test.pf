@@ -1,6 +1,6 @@
 // Tests for stringlib-compatible additions to data/strx.pf.
 
-import * as Assert from "$PFUN_HOME/lib/testing/assertions";
+import * as Assert from "testing/assertions";
 import * as StrX from "../src/data/strx";
 
 function optionIntIs(value, expected) {

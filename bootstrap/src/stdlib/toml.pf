@@ -1,0 +1,1006 @@
+// toml.pf — pure, total TOML subset for Pfun V2.
+//
+// Import with:
+//
+//     import * as Toml from "toml";
+//
+// Public API:
+//
+//     tomlParse : Str -> Result<List<SettingGroup>, Str>
+//     tomlEmit  : List<SettingGroup> -> Str
+//
+// Supported:
+//
+//   * top-level keys
+//   * [section] headers
+//   * quoted strings with \", \\, \n, and \t escapes
+//   * signed integers
+//   * signed decimal floats
+//   * booleans
+//   * homogeneous inline scalar arrays
+//   * line and trailing comments
+//   * blank lines
+//
+// Unsupported syntax returns Err. No sentinel values or host exceptions are
+// part of the parser contract.
+
+import * as Str from "string";
+
+export type SettingValue = {
+	| SStr: value
+	| SInt: value
+	| SFloat: value
+	| SBool: value
+	| SList: items
+}
+
+export type Setting = {
+	key,
+	value
+}
+
+export type SettingGroup = {
+	name,
+	settings
+}
+
+type ParsedLine = {
+	| LBlank
+	| LSection: name
+	| LSetting: key, raw
+}
+
+// ── small total helpers ──────────────────────────────────────────────────
+
+function lineError(lineNumber, message) {
+	Err {
+		"line " ++ str(lineNumber) ++ ": " ++ message
+	}
+}
+
+function isHorizontalSpace(c) {
+	c == " " || c == "\t"
+}
+
+function validBareKeyChar(c) {
+	!isHorizontalSpace(c)
+		&& c != "."
+		&& c != "\""
+		&& c != "'"
+		&& c != "["
+		&& c != "]"
+		&& c != "{"
+		&& c != "}"
+		&& c != "="
+		&& c != ","
+}
+
+function validBareKeyChars(chars) {
+	match chars with
+	| [] -> true
+	| [c, ...rest] -> {
+		validBareKeyChar(c) && validBareKeyChars(rest)
+	}
+}
+
+function validBareKey(key) {
+	length(key) > 0 && validBareKeyChars(split(key, ""))
+}
+
+function splitOutsideChars(
+	chars,
+	target,
+	inString,
+	escaped,
+	leftRev
+) {
+	match chars with
+	| [] -> None
+	| [c, ...rest] -> {
+		if escaped then {
+			splitOutsideChars(
+				rest,
+				target,
+				inString,
+				false,
+				cons(c, leftRev)
+			)
+		} else if inString then {
+			if c == "\\" then {
+				splitOutsideChars(
+					rest,
+					target,
+					true,
+					true,
+					cons(c, leftRev)
+				)
+			} else if c == "\"" then {
+				splitOutsideChars(
+					rest,
+					target,
+					false,
+					false,
+					cons(c, leftRev)
+				)
+			} else {
+				splitOutsideChars(
+					rest,
+					target,
+					true,
+					false,
+					cons(c, leftRev)
+				)
+			}
+		} else if c == "\"" then {
+			splitOutsideChars(
+				rest,
+				target,
+				true,
+				false,
+				cons(c, leftRev)
+			)
+		} else if c == target then {
+			Some {
+				Pair {
+					join(reverse(leftRev), ""),
+					join(rest, "")
+				}
+			}
+		} else {
+			splitOutsideChars(
+				rest,
+				target,
+				false,
+				false,
+				cons(c, leftRev)
+			)
+		}
+	}
+}
+
+function splitOutside(text, target) {
+	splitOutsideChars(
+		split(text, ""),
+		target,
+		false,
+		false,
+		[]
+	)
+}
+
+function stripComment(line) {
+	match splitOutside(line, "#") with
+	| None -> line
+	| Some pair -> pair.value.key
+}
+
+// ── basic strings ────────────────────────────────────────────────────────
+
+function decodedEscape(c) {
+	if c == "\"" then {
+		Some { "\"" }
+	} else if c == "\\" then {
+		Some { "\\" }
+	} else if c == "n" then {
+		Some { "\n" }
+	} else if c == "t" then {
+		Some { "\t" }
+	} else {
+		None
+	}
+}
+
+function parseStringBody(chars, charsRev, escaped) {
+	match chars with
+	| [] -> Err { "unterminated string" }
+	| [c, ...rest] -> {
+		if escaped then {
+			match decodedEscape(c) with
+			| None -> {
+				Err {
+					"unsupported string escape \\" ++ c
+				}
+			}
+			| Some decoded -> {
+				parseStringBody(
+					rest,
+					cons(decoded.value, charsRev),
+					false
+				)
+			}
+		} else if c == "\\" then {
+			parseStringBody(rest, charsRev, true)
+		} else if c == "\"" then {
+			if length(rest) == 0 then {
+				Ok {
+					SStr {
+						join(reverse(charsRev), "")
+					}
+				}
+			} else {
+				Err {
+					"characters after closing quote"
+				}
+			}
+		} else {
+			parseStringBody(
+				rest,
+				cons(c, charsRev),
+				false
+			)
+		}
+	}
+}
+
+function parseStringValue(text) {
+	match split(text, "") with
+	| [] -> Err { "empty string value" }
+	| [first, ...rest] -> {
+		if first == "\"" then {
+			parseStringBody(rest, [], false)
+		} else {
+			Err { "string must begin with a quote" }
+		}
+	}
+}
+
+// ── numbers ──────────────────────────────────────────────────────────────
+
+function digitInt(c) {
+	if c == "0" then {
+		Some { 0 }
+	} else if c == "1" then {
+		Some { 1 }
+	} else if c == "2" then {
+		Some { 2 }
+	} else if c == "3" then {
+		Some { 3 }
+	} else if c == "4" then {
+		Some { 4 }
+	} else if c == "5" then {
+		Some { 5 }
+	} else if c == "6" then {
+		Some { 6 }
+	} else if c == "7" then {
+		Some { 7 }
+	} else if c == "8" then {
+		Some { 8 }
+	} else if c == "9" then {
+		Some { 9 }
+	} else {
+		None
+	}
+}
+
+function digitFloat(c) {
+	if c == "0" then {
+		Some { 0.0 }
+	} else if c == "1" then {
+		Some { 1.0 }
+	} else if c == "2" then {
+		Some { 2.0 }
+	} else if c == "3" then {
+		Some { 3.0 }
+	} else if c == "4" then {
+		Some { 4.0 }
+	} else if c == "5" then {
+		Some { 5.0 }
+	} else if c == "6" then {
+		Some { 6.0 }
+	} else if c == "7" then {
+		Some { 7.0 }
+	} else if c == "8" then {
+		Some { 8.0 }
+	} else if c == "9" then {
+		Some { 9.0 }
+	} else {
+		None
+	}
+}
+
+function parseIntDigits(chars, acc, hasDigit) {
+	match chars with
+	| [] -> {
+		if hasDigit then {
+			Some { acc }
+		} else {
+			None
+		}
+	}
+	| [c, ...rest] -> {
+		match digitInt(c) with
+		| None -> None
+		| Some digit -> {
+			parseIntDigits(
+				rest,
+				acc * 10 + digit.value,
+				true
+			)
+		}
+	}
+}
+
+function parseSignedInt(chars) {
+	match chars with
+	| [] -> None
+	| [first, ...rest] -> {
+		if first == "-" then {
+			match parseIntDigits(rest, 0, false) with
+			| None -> None
+			| Some value -> Some { 0 - value.value }
+		} else if first == "+" then {
+			parseIntDigits(rest, 0, false)
+		} else {
+			parseIntDigits(chars, 0, false)
+		}
+	}
+}
+
+function parseFloatWhole(chars, acc, hasDigit) {
+	match chars with
+	| [] -> {
+		if hasDigit then {
+			Some { acc }
+		} else {
+			None
+		}
+	}
+	| [c, ...rest] -> {
+		match digitFloat(c) with
+		| None -> None
+		| Some digit -> {
+			parseFloatWhole(
+				rest,
+				acc * 10.0 + digit.value,
+				true
+			)
+		}
+	}
+}
+
+function parseFloatFraction(
+	chars,
+	acc,
+	scale,
+	hasDigit
+) {
+	match chars with
+	| [] -> {
+		if hasDigit then {
+			Some { acc }
+		} else {
+			None
+		}
+	}
+	| [c, ...rest] -> {
+		match digitFloat(c) with
+		| None -> None
+		| Some digit -> {
+			parseFloatFraction(
+				rest,
+				acc + digit.value * scale,
+				scale * 0.1,
+				true
+			)
+		}
+	}
+}
+
+function parseUnsignedFloat(chars, sign) {
+	let text = join(chars, "");
+
+	match split(text, ".") with
+	| [wholeText, fractionText] -> {
+		match parseFloatWhole(
+			split(wholeText, ""),
+			0.0,
+			false
+		) with
+		| None -> None
+		| Some whole -> {
+			match parseFloatFraction(
+				split(fractionText, ""),
+				0.0,
+				0.1,
+				false
+			) with
+			| None -> None
+			| Some fraction -> {
+				Some {
+					sign
+						* (
+							whole.value
+							+ fraction.value
+						)
+				}
+			}
+		}
+	}
+	| _ -> None
+}
+
+function parseSignedFloat(chars) {
+	match chars with
+	| [] -> None
+	| [first, ...rest] -> {
+		if first == "-" then {
+			parseUnsignedFloat(rest, -1.0)
+		} else if first == "+" then {
+			parseUnsignedFloat(rest, 1.0)
+		} else {
+			parseUnsignedFloat(chars, 1.0)
+		}
+	}
+}
+
+function parseNumberValue(text) {
+	if Str.contains(text, ".") then {
+		match parseSignedFloat(split(text, "")) with
+		| None -> Err { "invalid float" }
+		| Some value -> Ok { SFloat { value.value } }
+	} else {
+		match parseSignedInt(split(text, "")) with
+		| None -> Err { "invalid integer" }
+		| Some value -> Ok { SInt { value.value } }
+	}
+}
+
+// ── arrays ───────────────────────────────────────────────────────────────
+
+function splitArrayChars(
+	chars,
+	inString,
+	escaped,
+	currentRev,
+	partsRev
+) {
+	match chars with
+	| [] -> {
+		if inString then {
+			Err { "unterminated string in array" }
+		} else {
+			let token = Str.trim(
+				join(reverse(currentRev), "")
+			);
+
+			if length(token) == 0 then {
+				Ok { reverse(partsRev) }
+			} else {
+				Ok {
+					reverse(cons(token, partsRev))
+				}
+			}
+		}
+	}
+	| [c, ...rest] -> {
+		if escaped then {
+			splitArrayChars(
+				rest,
+				inString,
+				false,
+				cons(c, currentRev),
+				partsRev
+			)
+		} else if inString then {
+			if c == "\\" then {
+				splitArrayChars(
+					rest,
+					true,
+					true,
+					cons(c, currentRev),
+					partsRev
+				)
+			} else if c == "\"" then {
+				splitArrayChars(
+					rest,
+					false,
+					false,
+					cons(c, currentRev),
+					partsRev
+				)
+			} else {
+				splitArrayChars(
+					rest,
+					true,
+					false,
+					cons(c, currentRev),
+					partsRev
+				)
+			}
+		} else if c == "\"" then {
+			splitArrayChars(
+				rest,
+				true,
+				false,
+				cons(c, currentRev),
+				partsRev
+			)
+		} else if c == "," then {
+			let token = Str.trim(
+				join(reverse(currentRev), "")
+			);
+
+			if length(token) == 0 then {
+				Err { "empty array element" }
+			} else {
+				splitArrayChars(
+					rest,
+					false,
+					false,
+					[],
+					cons(token, partsRev)
+				)
+			}
+		} else {
+			splitArrayChars(
+				rest,
+				false,
+				false,
+				cons(c, currentRev),
+				partsRev
+			)
+		}
+	}
+}
+
+function splitArrayElements(text) {
+	splitArrayChars(
+		split(text, ""),
+		false,
+		false,
+		[],
+		[]
+	)
+}
+
+function scalarKind(value) {
+	match value with
+	| SStr _ -> "str"
+	| SInt _ -> "int"
+	| SFloat _ -> "float"
+	| SBool _ -> "bool"
+	| SList _ -> "list"
+}
+
+function parseScalarValue(text) {
+	let value = Str.trim(text);
+
+	if length(value) == 0 then {
+		Err { "empty value" }
+	} else if Str.startsWith(value, "\"") then {
+		parseStringValue(value)
+	} else if value == "true" then {
+		Ok { SBool { true } }
+	} else if value == "false" then {
+		Ok { SBool { false } }
+	} else if Str.startsWith(value, "[") then {
+		Err { "nested arrays are not supported" }
+	} else {
+		parseNumberValue(value)
+	}
+}
+
+function parseArrayTokens(
+	tokens,
+	hasKind,
+	kind,
+	valuesRev
+) {
+	match tokens with
+	| [] -> {
+		Ok {
+			SList {
+				reverse(valuesRev)
+			}
+		}
+	}
+	| [token, ...rest] -> {
+		match parseScalarValue(token) with
+		| Err error -> Err { error.message }
+		| Ok parsed -> {
+			let foundKind = scalarKind(
+				parsed.value
+			);
+
+			if hasKind && foundKind != kind then {
+				Err {
+					"array elements must have one type"
+				}
+			} else {
+				parseArrayTokens(
+					rest,
+					true,
+					foundKind,
+					cons(
+						parsed.value,
+						valuesRev
+					)
+				)
+			}
+		}
+	}
+}
+
+function parseArrayValue(text) {
+	if !Str.endsWith(text, "]") then {
+		Err { "array is missing ]" }
+	} else if length(text) < 2 then {
+		Err { "invalid array" }
+	} else {
+		let inner = slice(
+			1,
+			length(text) - 2,
+			text
+		);
+
+		match splitArrayElements(inner) with
+		| Err error -> Err { error.message }
+		| Ok tokens -> {
+			parseArrayTokens(
+				tokens.value,
+				false,
+				"",
+				[]
+			)
+		}
+	}
+}
+
+function parseValue(text) {
+	let value = Str.trim(text);
+
+	if length(value) == 0 then {
+		Err { "missing value" }
+	} else if Str.startsWith(value, "[") then {
+		parseArrayValue(value)
+	} else {
+		parseScalarValue(value)
+	}
+}
+
+// ── lines and groups ─────────────────────────────────────────────────────
+
+function parseSection(clean) {
+	if !Str.endsWith(clean, "]") then {
+		Err { "section header is missing ]" }
+	} else if length(clean) < 3 then {
+		Err { "empty section name" }
+	} else {
+		let name = Str.trim(
+			slice(
+				1,
+				length(clean) - 2,
+				clean
+			)
+		);
+
+		if !validBareKey(name) then {
+			Err {
+				"unsupported section name"
+			}
+		} else {
+			Ok { LSection { name } }
+		}
+	}
+}
+
+function parseSetting(clean) {
+	match splitOutside(clean, "=") with
+	| None -> Err { "expected key = value" }
+	| Some pair -> {
+		let key = Str.trim(pair.value.key);
+		let raw = Str.trim(pair.value.value);
+
+		if !validBareKey(key) then {
+			Err {
+				"unsupported or empty key"
+			}
+		} else if length(raw) == 0 then {
+			Err { "missing value" }
+		} else {
+			Ok { LSetting { key, raw } }
+		}
+	}
+}
+
+function parseLine(line) {
+	let clean = Str.trim(stripComment(line));
+
+	if length(clean) == 0 then {
+		Ok { LBlank }
+	} else if Str.startsWith(clean, "[") then {
+		parseSection(clean)
+	} else {
+		parseSetting(clean)
+	}
+}
+
+function hasSetting(settings, key) {
+	match settings with
+	| [] -> false
+	| [setting, ...rest] -> {
+		setting.key == key
+			|| hasSetting(rest, key)
+	}
+}
+
+function hasGroup(groups, name) {
+	match groups with
+	| [] -> false
+	| [group, ...rest] -> {
+		group.name == name
+			|| hasGroup(rest, name)
+	}
+}
+
+function flushGroup(
+	currentName,
+	settingsRev,
+	groupsRev
+) {
+	cons(
+		SettingGroup {
+			currentName,
+			reverse(settingsRev)
+		},
+		groupsRev
+	)
+}
+
+function parseLines(
+	lines,
+	lineNumber,
+	currentName,
+	settingsRev,
+	groupsRev
+) {
+	match lines with
+	| [] -> {
+		Ok {
+			reverse(
+				flushGroup(
+					currentName,
+					settingsRev,
+					groupsRev
+				)
+			)
+		}
+	}
+	| [line, ...rest] -> {
+		match parseLine(line) with
+		| Err error -> {
+			lineError(
+				lineNumber,
+				error.message
+			)
+		}
+		| Ok parsed -> {
+			match parsed.value with
+			| LBlank -> {
+				parseLines(
+					rest,
+					lineNumber + 1,
+					currentName,
+					settingsRev,
+					groupsRev
+				)
+			}
+			| LSection section -> {
+				let name = section.name;
+
+				if (
+					(
+						currentName != ""
+						&& name == currentName
+					)
+					|| hasGroup(groupsRev, name)
+				) then {
+					lineError(
+						lineNumber,
+						"duplicate section "
+							++ name
+					)
+				} else {
+					parseLines(
+						rest,
+						lineNumber + 1,
+						name,
+						[],
+						flushGroup(
+							currentName,
+							settingsRev,
+							groupsRev
+						)
+					)
+				}
+			}
+			| LSetting found -> {
+				if hasSetting(
+					settingsRev,
+					found.key
+				) then {
+					lineError(
+						lineNumber,
+						"duplicate key "
+							++ found.key
+					)
+				} else {
+					match parseValue(
+						found.raw
+					) with
+					| Err error -> {
+						lineError(
+							lineNumber,
+							error.message
+						)
+					}
+					| Ok value -> {
+						parseLines(
+							rest,
+							lineNumber + 1,
+							currentName,
+							cons(
+								Setting {
+									found.key,
+									value.value
+								},
+								settingsRev
+							),
+							groupsRev
+						)
+					}
+				}
+			}
+		}
+	}
+}
+
+export function tomlParse(text) {
+	parseLines(
+		split(text, "\n"),
+		1,
+		"",
+		[],
+		[]
+	)
+}
+
+// ── emitter ──────────────────────────────────────────────────────────────
+
+function escapeStringChars(chars, escapedRev) {
+	match chars with
+	| [] -> join(reverse(escapedRev), "")
+	| [c, ...rest] -> {
+		if c == "\"" then {
+			escapeStringChars(
+				rest,
+				cons("\\\"", escapedRev)
+			)
+		} else if c == "\\" then {
+			escapeStringChars(
+				rest,
+				cons("\\\\", escapedRev)
+			)
+		} else if c == "\n" then {
+			escapeStringChars(
+				rest,
+				cons("\\n", escapedRev)
+			)
+		} else if c == "\t" then {
+			escapeStringChars(
+				rest,
+				cons("\\t", escapedRev)
+			)
+		} else {
+			escapeStringChars(
+				rest,
+				cons(c, escapedRev)
+			)
+		}
+	}
+}
+
+function escapeString(value) {
+	escapeStringChars(split(value, ""), [])
+}
+
+function emitFloat(value) {
+	let text = str(value);
+
+	if (
+		Str.contains(text, ".")
+		|| Str.contains(text, "e")
+		|| Str.contains(text, "E")
+	) then {
+		text
+	} else {
+		text ++ ".0"
+	}
+}
+
+function emitValue(value) {
+	match value with
+	| SStr found -> {
+		"\"" ++ escapeString(found.value) ++ "\""
+	}
+	| SInt found -> str(found.value)
+	| SFloat found -> emitFloat(found.value)
+	| SBool found -> {
+		if found.value then {
+			"true"
+		} else {
+			"false"
+		}
+	}
+	| SList found -> {
+		"["
+			++ join(
+				map(
+					fn item => emitValue(item),
+					found.items
+				),
+				", "
+			)
+			++ "]"
+	}
+}
+
+function emitSetting(setting) {
+	setting.key
+		++ " = "
+		++ emitValue(setting.value)
+}
+
+function emitGroup(group) {
+	let body = join(
+		map(
+			fn setting => emitSetting(setting),
+			group.settings
+		),
+		"\n"
+	);
+
+	if group.name == "" then {
+		body
+	} else if length(body) == 0 then {
+		"[" ++ group.name ++ "]"
+	} else {
+		"["
+			++ group.name
+			++ "]\n"
+			++ body
+	}
+}
+
+function emitGroupParts(groups, partsRev) {
+	match groups with
+	| [] -> reverse(partsRev)
+	| [group, ...rest] -> {
+		let part = emitGroup(group);
+
+		if length(part) == 0 then {
+			emitGroupParts(rest, partsRev)
+		} else {
+			emitGroupParts(
+				rest,
+				cons(part, partsRev)
+			)
+		}
+	}
+}
+
+export function tomlEmit(groups) {
+	let grounded = cons(
+		SettingGroup { "", [] },
+		groups
+	);
+
+	match grounded with
+	| [] -> ""
+	| [witness, ...original] -> {
+		join(
+			emitGroupParts(original, []),
+			"\n\n"
+		)
+	}
+}

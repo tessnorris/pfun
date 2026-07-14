@@ -1,6 +1,6 @@
 // bootstrap/test/resultx_test.pf — tests for bootstrap/src/data/resultx.pf.
 
-import * as Assert from "$PFUN_HOME/lib/testing/assertions";
+import * as Assert from "testing/assertions";
 import * from "../src/data/resultx";
 
 function bOkIntIs(result, expected) {

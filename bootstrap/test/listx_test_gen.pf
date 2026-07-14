@@ -1,9 +1,9 @@
 // bootstrap/test/listx_test.pf — tests for bootstrap/src/data/listx.pf.
 
-import * as Assert from "$PFUN_HOME/lib/testing/assertions";
+import * as Assert from "testing/assertions";
 import * as ListX from "../src/data/listx";
 import * from "io"; // added by gen-test-harness
-import * from "$PFUN_HOME/lib/testing/runner"; // added by gen-test-harness
+import * from "testing/runner"; // added by gen-test-harness
 
 function intListText(xs) {
 	join(map(fn x => __str__(x), xs), ",")

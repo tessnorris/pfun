@@ -5,8 +5,8 @@
 // Both suites are pure, so tests take zero parameters. Randomized cases use a
 // deterministic LCG so every run is reproducible.
 
-import * from "$PFUN_HOME/lib/testing/testing";
-import * from "$PFUN_HOME/lib/testing/assertions";
+import * from "testing/testing";
+import * from "testing/assertions";
 import * from "../src/data/imapi";
 import * as Compat from "../src/compat";
 

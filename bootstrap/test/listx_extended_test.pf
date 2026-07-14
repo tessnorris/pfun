@@ -1,6 +1,6 @@
 // Tests for listutils-compatible additions to data/listx.pf.
 
-import * as Assert from "$PFUN_HOME/lib/testing/assertions";
+import * as Assert from "testing/assertions";
 import * as ListX from "../src/data/listx";
 
 function intListText(xs) {

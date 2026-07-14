@@ -3,7 +3,7 @@
 
 import * from "list";
 import * from "string";
-import * as Assert from "$PFUN_HOME/lib/testing/assertions";
+import * as Assert from "testing/assertions";
 
 //![suite("standard list/string module imports")]
 //![test("bare imports expose the extended APIs")]

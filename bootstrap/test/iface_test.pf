@@ -1,6 +1,6 @@
 // test/check/iface_test.pf — tests for check/iface.pf.
 
-import * as Assert from "$PFUN_HOME/lib/testing/assertions";
+import * as Assert from "testing/assertions";
 import * as H from "./check_helpers";
 import * as Iface from "../src/check/iface";
 import * as A from "../src/syntax/ast";

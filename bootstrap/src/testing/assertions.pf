@@ -1,0 +1,117 @@
+// -----------------------------------------------------------------------------
+// testing/assertions.pf
+//
+// Public assertion library for Pfun V2.
+//
+// Assertion functions are pure. Each assertion returns Check.
+// Test bodies collect checks with assertions() and return TestResult.
+// -----------------------------------------------------------------------------
+
+export type Failure = {
+	message,
+	expected,
+	actual
+}
+
+export type Check = {
+	| Pass
+	| Fail: failure
+}
+
+export type TestResult = {
+	failures
+}
+
+generic function failure(message, expected, actual) {
+	Fail {
+		Failure {
+			message,
+			__str__(expected),
+			__str__(actual)
+		}
+	}
+}
+
+export generic function assertEqual(expected, actual) {
+	if expected == actual then {
+		Pass
+	} else {
+		failure(
+			"Expected values to be equal.",
+			expected,
+			actual
+		)
+	}
+}
+
+export generic function assertNotEqual(expected, actual) {
+	if expected != actual then {
+		Pass
+	} else {
+		failure(
+			"Expected values to be different.",
+			"<different value>",
+			actual
+		)
+	}
+}
+
+export function assertTrue(value) {
+	if value then {
+		Pass
+	} else {
+		failure("Expected true.", true, value)
+	}
+}
+
+export function assertFalse(value) {
+	if value then {
+		failure("Expected false.", false, value)
+	} else {
+		Pass
+	}
+}
+
+export generic function assertSome(value) {
+	match value with
+	| Some _ -> Pass
+	| None -> failure(
+		"Expected Some, got None.",
+		"Some",
+		"None"
+	)
+}
+
+export generic function assertNone(value) {
+	match value with
+	| None -> Pass
+	| Some _ -> failure(
+		"Expected None, got Some.",
+		"None",
+		"Some"
+	)
+}
+
+export function check(condition, message) {
+	if condition then {
+		Pass
+	} else {
+		failure(message, "true", "false")
+	}
+}
+
+export function fail(message) {
+	failure(message, "", "")
+}
+
+function isFailure(assertion) {
+	match assertion with
+	| Fail _ -> true
+	| Pass -> false
+}
+
+export function assertions(checks) {
+	TestResult {
+		filter(isFailure, checks)
+	}
+}

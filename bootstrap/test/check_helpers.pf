@@ -4,7 +4,7 @@
 // the architecture examples. This helper keeps lexer/parser plumbing in one
 // place and returns diagnostic lists instead of throwing.
 
-import * as Assert from "$PFUN_HOME/lib/testing/assertions";
+import * as Assert from "testing/assertions";
 import * as Lex from "../src/syntax/lexer";
 import * as Parser from "../src/syntax/parser";
 import * as A from "../src/syntax/ast";

@@ -39,7 +39,10 @@ export type CliBuildResult = {
 
 function searchEnv(home) {
 	MG.mkSearchEnv(
-		CliArgs.joinPath(home, "lib"),
+		CliArgs.joinPath(
+			home,
+			"bootstrap/src/stdlib"
+		),
 		home,
 		Spec.builtinNames()
 	)

@@ -4,10 +4,10 @@
 // mutation, await placement, fire-and-forget async calls, and lazy-comprehension
 // purity.
 
-import * as Assert from "$PFUN_HOME/lib/testing/assertions";
+import * as Assert from "testing/assertions";
 import * as H from "./check_helpers";
 import * from "io"; // added by gen-test-harness
-import * from "$PFUN_HOME/lib/testing/runner"; // added by gen-test-harness
+import * from "testing/runner"; // added by gen-test-harness
 
 //![suite("check/purity")]
 

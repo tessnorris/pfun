@@ -1,6 +1,6 @@
 // bootstrap/test/emit_test.pf — Phase 13 emitter tests.
 
-import * as Assert from "$PFUN_HOME/lib/testing/assertions";
+import * as Assert from "testing/assertions";
 import * as A from "../src/syntax/ast";
 import * as T from "../src/syntax/token";
 import * as TY from "../src/check/types";
@@ -13,7 +13,7 @@ import * as StrX from "../src/data/strx";
 import * as J from "../src/compile/js";
 import * as E from "../src/compile/emit";
 import * from "io"; // added by gen-test-harness
-import * from "$PFUN_HOME/lib/testing/runner"; // added by gen-test-harness
+import * from "testing/runner"; // added by gen-test-harness
 
 function testSpan() {
 	let p = T.mkPos(1, 1, 0);

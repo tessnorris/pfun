@@ -210,18 +210,52 @@ export function isRelativeImport(rawPath) {
 	startsWith(rawPath, "./") || startsWith(rawPath, "../")
 }
 
-// Resolves a raw import string into either a user path or a builtin name. This
-// does not read the filesystem. Missing user modules are diagnosed by
-// `toposort`, which has the full set of already-loaded RawModule values.
+export function isPublicNamespaceImport(rawPath) {
+	startsWith(rawPath, "testing/")
+	|| startsWith(rawPath, "browser/")
+}
+
+function publicNamespacePath(rawPath, env) {
+	canonicalUserPath(
+		joinPath(
+			env.pfunHome,
+			"bootstrap/src/" ++ rawPath
+		)
+	)
+}
+
+// Public namespaces are ordinary file-backed Pfun modules. This branch must
+// run before builtin recognition because the loader intentionally does not
+// enqueue BuiltinPath edges.
 export function resolveImport(rawPath, fromDir, env) {
 	if isRelativeImport(rawPath) then {
-		ResolveOk { userPath(canonicalUserPath(joinPath(fromDir, rawPath))) }
+		ResolveOk {
+			userPath(
+				canonicalUserPath(
+					joinPath(fromDir, rawPath)
+				)
+			)
+		}
+	} else if isPublicNamespaceImport(rawPath) then {
+		ResolveOk {
+			userPath(
+				publicNamespacePath(rawPath, env)
+			)
+		}
 	} else if isBuiltinImport(rawPath, env) then {
 		ResolveOk { builtinPath(rawPath) }
 	} else if env.libDir != "" then {
-		ResolveOk { userPath(canonicalUserPath(joinPath(env.libDir, rawPath))) }
+		ResolveOk {
+			userPath(
+				canonicalUserPath(
+					joinPath(env.libDir, rawPath)
+				)
+			)
+		}
 	} else {
-		ResolveErr { diagForResolve(fromDir, rawPath) }
+		ResolveErr {
+			diagForResolve(fromDir, rawPath)
+		}
 	}
 }
 

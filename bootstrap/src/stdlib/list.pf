@@ -7,7 +7,7 @@
 // The small list prelude remains ambient: map, filter, reduce, cons, reverse,
 // length, slice, take, range, and the other language-core operations.
 
-import * as ListX from "../bootstrap/src/data/listx";
+import * as ListX from "../data/listx";
 
 // Total list reads. Empty input is represented as None rather than a
 // sentinel value or a runtime failure.

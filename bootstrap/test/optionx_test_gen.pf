@@ -1,9 +1,9 @@
 // bootstrap/test/optionx_test.pf — tests for bootstrap/src/data/optionx.pf.
 
-import * as Assert from "$PFUN_HOME/lib/testing/assertions";
+import * as Assert from "testing/assertions";
 import * as OptionX from "../src/data/optionx";
 import * from "io"; // added by gen-test-harness
-import * from "$PFUN_HOME/lib/testing/runner"; // added by gen-test-harness
+import * from "testing/runner"; // added by gen-test-harness
 
 function optionIntIs(opt, expected) {
 	match opt with

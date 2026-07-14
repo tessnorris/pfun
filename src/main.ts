@@ -641,14 +641,32 @@ if (require.main === module) {
   // Mirrors expandPfunHome() in interpreter.ts (used by the runtime and
   // wholeProgramCheck); this copy covers the compile-only paths in -c,
   // --serve, and --validate that bypass resolveModulePath entirely.
-  function expandPfunHome(importPath: string): string {
-    if (!importPath.startsWith('$PFUN_HOME/')) return importPath;
+  function expandPfunNamespace(importPath: string): string {
+  if (
+    !importPath.startsWith('testing/') &&
+    !importPath.startsWith('browser/')
+  ) {
+    return importPath;
+  }
+
+  const pfunHome = process.env.PFUN_HOME;
+  if (!pfunHome) return importPath;
+
+  return path.join(pfunHome, 'bootstrap', 'src', importPath);
+}
+
+function expandPfunHome(importPath: string): string {
+  if (importPath.startsWith('$PFUN_HOME/')) {
     const pfunHome = process.env.PFUN_HOME;
     if (!pfunHome) return importPath;
+
     return pfunHome + importPath.slice('$PFUN_HOME'.length);
   }
 
-  // ── Builtin module union table ────────────────────────────────────────────
+  return expandPfunNamespace(importPath);
+}
+
+// ── Builtin module union table ────────────────────────────────────────────
   // Used by both -c and --serve to tell the type inferencer which union types
   // each builtin module exports — mirrors loader.builtinUnionTypes().
   const BUILTIN_UNION_TABLE: Record<string, Array<{
@@ -936,8 +954,7 @@ if (require.main === module) {
         if (builtin) return new Map(builtin.map((u: any) => [u.name, u.variants]));
         // User modules — resolve the path and look up its declarations
         const srcDir = path.dirname(forFile);
-        const depPf   = importPath.endsWith('.pf') ? importPath : importPath + '.pf';
-        const depPath = path.resolve(srcDir, depPf);
+        const expanded = expandPfunHome(importPath); const depPf = expanded.endsWith('.pf') ? expanded : expanded + '.pf'; const depPath = path.resolve(srcDir, depPf);
         const unions  = userModuleUnions.get(depPath);
         if (!unions || unions.length === 0) return null;
         return new Map(unions.map(u => [u.name, u.variants]));

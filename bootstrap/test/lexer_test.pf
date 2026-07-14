@@ -1,7 +1,7 @@
 // bootstrap/test/lexer_test.pf — tests for bootstrap/src/syntax/lexer.pf
 // and bootstrap/src/syntax/token.pf.
 
-import * as Assert from "$PFUN_HOME/lib/testing/assertions";
+import * as Assert from "testing/assertions";
 import * as Lex from "../src/syntax/lexer";
 import * as T from "../src/syntax/token";
 import * as Compat from "../src/compat";

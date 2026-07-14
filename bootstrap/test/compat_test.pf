@@ -6,8 +6,8 @@
 // its behavior across the port: they must pass unchanged, before and after,
 // on both dialects. Treat a failure here as a port defect, not a test defect.
 
-import * from "$PFUN_HOME/lib/testing/testing";
-import * from "$PFUN_HOME/lib/testing/assertions";
+import * from "testing/testing";
+import * from "testing/assertions";
 import * as Compat from "../src/compat";
 
 // ── helpers ─────────────────────────────────────────────────────────────────

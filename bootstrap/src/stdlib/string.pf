@@ -8,7 +8,7 @@
 // This facade preserves stringlib's public argument order where it differed
 // from the compiler-internal strx helpers.
 
-import * as StrX from "../bootstrap/src/data/strx";
+import * as StrX from "../data/strx";
 
 export function isWhitespace(c) { StrX.isWhitespace(c) }
 export function trim(s) { StrX.trim(s) }

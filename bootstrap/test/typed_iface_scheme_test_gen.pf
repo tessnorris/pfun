@@ -5,7 +5,7 @@ import * as I from "../src/check/iface";
 import * as TY from "../src/check/types";
 import * as IMS from "../src/data/imaps";
 import * from "io"; // added by gen-test-harness
-import * from "$PFUN_HOME/lib/testing/runner"; // added by gen-test-harness
+import * from "testing/runner"; // added by gen-test-harness
 
 //![suite("typed dependency interface schemes")]
 //![test("typed scheme body imports without IfaceType conversion")]

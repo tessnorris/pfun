@@ -1,6 +1,6 @@
 // bootstrap/test/assertions_test.pf — tests for bootstrap/src/test/assertions.pf.
 
-import * as Assert from "$PFUN_HOME/lib/testing/assertions";
+import * as Assert from "testing/assertions";
 import {
 	assertions as subjectAssertions,
 	assertTrue as subjectAssertTrue,
@@ -18,7 +18,7 @@ import {
 } from "../src/test/assertions";
 import * from "../src/data/resultx";
 import * from "io"; // added by gen-test-harness
-import * from "$PFUN_HOME/lib/testing/runner"; // added by gen-test-harness
+import * from "testing/runner"; // added by gen-test-harness
 
 function subjectFailureCount(items) {
 	length(subjectResultMessages(subjectAssertions(items)))

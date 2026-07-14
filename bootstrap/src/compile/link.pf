@@ -300,25 +300,47 @@ function findIdByTail(ids, tailName) {
 
 function resolveBuiltinId(name, ids) {
 	let normalized = normalizeModuleId(name);
-	let configId = "<generated:config>";
+	let configId = "";
 
 	if (name == "config" || name == configId)
-		&& containsString(ids, configId)
-	then {
+		&& containsString(ids, configId) then {
 		configId
 	} else {
 		match findExactId(ids, normalized) with
 		| Some exact -> exact.value
 		| None -> {
-			match findExactId(ids, "stdlib/" ++ normalized) with
-			| Some stdlib -> stdlib.value
+			match findExactId(
+				ids,
+				"bootstrap/src/" ++ normalized
+			) with
+			| Some publicModule -> publicModule.value
 			| None -> {
-				match findExactId(ids, "builtins/" ++ normalized) with
-				| Some builtin -> builtin.value
+				match findExactId(
+					ids,
+					"bootstrap/src/stdlib/" ++ normalized
+				) with
+				| Some publicStdlib -> publicStdlib.value
 				| None -> {
-					match findIdByTail(ids, normalized) with
-					| Some tail -> tail.value
-					| None -> normalized
+					match findExactId(
+						ids,
+						"stdlib/" ++ normalized
+					) with
+					| Some stdlib -> stdlib.value
+					| None -> {
+						match findExactId(
+							ids,
+							"builtins/" ++ normalized
+						) with
+						| Some builtin -> builtin.value
+						| None -> {
+							match findIdByTail(
+								ids,
+								normalized
+							) with
+							| Some tail -> tail.value
+							| None -> normalized
+						}
+					}
 				}
 			}
 		}
@@ -508,32 +530,126 @@ function schemaRegistrationStatements(mod) {
 	}
 }
 
+function suffixAfterMarker(moduleId, marker) {
+	match findSlice(moduleId, marker) with
+	| None -> None
+	| Some found -> {
+		let start = found.value + length(marker);
+		if start >= length(moduleId) then {
+			None
+		} else {
+			Some {
+				slice(
+					start,
+					length(moduleId) - start,
+					moduleId
+				)
+			}
+		}
+	}
+}
+
+function publicAliasFromId(moduleId) {
+	let normalized = normalizeModuleId(moduleId);
+
+	match suffixAfterMarker(
+		normalized,
+		"bootstrap/src/testing/"
+	) with
+	| Some rest -> Some { "testing/" ++ rest.value }
+	| None -> {
+		match suffixAfterMarker(
+			normalized,
+			"bootstrap/src/browser/"
+		) with
+		| Some rest -> Some { "browser/" ++ rest.value }
+		| None -> {
+			suffixAfterMarker(
+				normalized,
+				"bootstrap/src/stdlib/"
+			)
+		}
+	}
+}
+
+function availablePublicAlias(moduleId, ids) {
+	match publicAliasFromId(moduleId) with
+	| None -> None
+	| Some alias -> {
+		if containsString(ids, alias.value) then {
+			None
+		} else {
+			alias
+		}
+	}
+}
+
+export function publicAliasForTest(moduleId, ids) {
+	match availablePublicAlias(moduleId, ids) with
+	| None -> ""
+	| Some alias -> alias.value
+}
+
+function registrationForId(moduleId, depMap, factory) {
+	[
+		J.jsAssign(
+			J.jsIndex(
+				J.jsId("$maps"),
+				J.jsStr(moduleId)
+			),
+			depMap
+		),
+		J.jsAssign(
+			J.jsIndex(
+				J.jsId("$mods"),
+				J.jsStr(moduleId)
+			),
+			factory
+		)
+	]
+}
+
 function moduleRegistrationStatements(mod, ids) {
 	let moduleId = normalizeModuleId(mod.moduleId);
 	let depMap = J.jsObj(
-		bundleDependencyProps(mod.requires, moduleId, ids)
+		bundleDependencyProps(
+			mod.requires,
+			moduleId,
+			ids
+		)
 	);
 	let factory = J.jsArrow(
 		["exports", "$require"],
 		J.jsBlockBody(moduleStatements(mod)),
 		false
 	);
-	let registrations = [
-		J.jsAssign(
-			J.jsIndex(J.jsId("$maps"), J.jsStr(moduleId)),
-			depMap
-		),
-		J.jsAssign(
-			J.jsIndex(J.jsId("$mods"), J.jsStr(moduleId)),
-			factory
+	let base = registrationForId(
+		moduleId,
+		depMap,
+		factory
+	);
+	let registrations = match availablePublicAlias(
+		moduleId,
+		ids
+	) with
+	| None -> base
+	| Some alias -> {
+		appendJsStmts(
+			base,
+			registrationForId(
+				alias.value,
+				depMap,
+				factory
+			)
 		)
-	];
+	};
 
 	appendJsStmts(
 		schemaRegistrationStatements(mod),
 		registrations
 	)
 }
+
 function registrationStatements(mods, ids) {
 	match Compat.uncons(mods) with
 	| None -> []

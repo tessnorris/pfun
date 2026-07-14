@@ -1,6 +1,6 @@
 // bootstrap/test/assertions_test.pf — tests for bootstrap/src/test/assertions.pf.
 
-import * as Assert from "$PFUN_HOME/lib/testing/assertions";
+import * as Assert from "testing/assertions";
 import {
 	assertions as subjectAssertions,
 	assertTrue as subjectAssertTrue,

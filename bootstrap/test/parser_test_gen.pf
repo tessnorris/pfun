@@ -1,13 +1,13 @@
 // bootstrap/test/parser_test.pf — tests for bootstrap/src/syntax/parser.pf
 // and bootstrap/src/syntax/ast.pf.
 
-import * as Assert from "$PFUN_HOME/lib/testing/assertions";
+import * as Assert from "testing/assertions";
 import * as Lex from "../src/syntax/lexer";
 import * as Parser from "../src/syntax/parser";
 import * as A from "../src/syntax/ast";
 import * as Compat from "../src/compat";
 import * from "io"; // added by gen-test-harness
-import * from "$PFUN_HOME/lib/testing/runner"; // added by gen-test-harness
+import * from "testing/runner"; // added by gen-test-harness
 
 function parseSource(source) {
 	match Lex.lex("parser-test.pf", source) with

@@ -648,11 +648,29 @@ export class StdinBuffer {
  * Only a leading `$PFUN_HOME/` is expanded (not mid-path occurrences),
  * matching how shell variable expansion works for path prefixes.
  */
-export function expandPfunHome(importPath: string): string {
-  if (!importPath.startsWith('$PFUN_HOME/')) return importPath;
+function expandPfunNamespace(importPath: string): string {
+  if (
+    !importPath.startsWith('testing/') &&
+    !importPath.startsWith('browser/')
+  ) {
+    return importPath;
+  }
+
   const pfunHome = process.env.PFUN_HOME;
-  if (!pfunHome) return importPath; // leave unexpanded; resolution will report a clear error
-  return pfunHome + importPath.slice('$PFUN_HOME'.length);
+  if (!pfunHome) return importPath;
+
+  return path.join(pfunHome, 'bootstrap', 'src', importPath);
+}
+
+export function expandPfunHome(importPath: string): string {
+  if (importPath.startsWith('$PFUN_HOME/')) {
+    const pfunHome = process.env.PFUN_HOME;
+    if (!pfunHome) return importPath;
+
+    return pfunHome + importPath.slice('$PFUN_HOME'.length);
+  }
+
+  return expandPfunNamespace(importPath);
 }
 
 export function resolveModulePath(

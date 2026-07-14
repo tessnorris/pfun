@@ -1,12 +1,12 @@
 // bootstrap/test/lexer_test.pf — tests for bootstrap/src/syntax/lexer.pf
 // and bootstrap/src/syntax/token.pf.
 
-import * as Assert from "$PFUN_HOME/lib/testing/assertions";
+import * as Assert from "testing/assertions";
 import * as Lex from "../src/syntax/lexer";
 import * as T from "../src/syntax/token";
 import * as Compat from "../src/compat";
 import * from "io"; // added by gen-test-harness
-import * from "$PFUN_HOME/lib/testing/runner"; // added by gen-test-harness
+import * from "testing/runner"; // added by gen-test-harness
 
 function lexTokens(source) {
 	match Lex.lex("lexer-test.pf", source) with

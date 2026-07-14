@@ -895,9 +895,13 @@ function jsonDeserializeTarget(t) {
 	match t with
 	| TNamed named -> {
 		if named.tname == "Option" then {
-			match named.args with
-			| [inner] -> inner
-			| _ -> TUnknown
+			match Compat.uncons(named.args) with
+			| None -> TUnknown
+			| Some first -> {
+				match Compat.uncons(first.value.value) with
+				| None -> first.value.key
+				| Some _ -> TUnknown
+			}
 		} else {
 			TUnknown
 		}
@@ -906,61 +910,97 @@ function jsonDeserializeTarget(t) {
 }
 
 function emitJsonSerializeCall(ctx, args) {
-	match args with
-	| [value] -> {
-		hostCall(
-			"$jsonSerialize",
-			[
-				emitExpr(ctx, value),
-				jsonTypeDescriptor(typeOfExpr(ctx, value))
-			]
-		)
-	}
-	| _ -> {
+	match Compat.uncons(args) with
+	| None -> {
 		hostCall(
 			"$jsonSerialize",
 			map(fn arg => emitExpr(ctx, arg), args)
 		)
+	}
+	| Some cell -> {
+		let first = cell.value;
+		match Compat.uncons(first.value) with
+		| None -> {
+			let value = first.key;
+			hostCall(
+				"$jsonSerialize",
+				[
+					emitExpr(ctx, value),
+					jsonTypeDescriptor(typeOfExpr(ctx, value))
+				]
+			)
+		}
+		| Some _ -> {
+			hostCall(
+				"$jsonSerialize",
+				map(fn arg => emitExpr(ctx, arg), args)
+			)
+		}
 	}
 }
 
 function emitJsonDeserializeCall(ctx, id, args) {
-	match args with
-	| [text] -> {
-		hostCall(
-			"$jsonDeserialize",
-			[
-				emitExpr(ctx, text),
-				jsonTypeDescriptor(
-					jsonDeserializeTarget(typeOfId(ctx, id))
-				)
-			]
-		)
-	}
-	| _ -> {
+	match Compat.uncons(args) with
+	| None -> {
 		hostCall(
 			"$jsonDeserialize",
 			map(fn arg => emitExpr(ctx, arg), args)
 		)
+	}
+	| Some cell -> {
+		let first = cell.value;
+		match Compat.uncons(first.value) with
+		| None -> {
+			let text = first.key;
+			hostCall(
+				"$jsonDeserialize",
+				[
+					emitExpr(ctx, text),
+					jsonTypeDescriptor(
+						jsonDeserializeTarget(typeOfId(ctx, id))
+					)
+				]
+			)
+		}
+		| Some _ -> {
+			hostCall(
+				"$jsonDeserialize",
+				map(fn arg => emitExpr(ctx, arg), args)
+			)
+		}
 	}
 }
 
+function emitJsonDeserializeAsFallback(ctx, args) {
+	hostCall(
+		"$jsonDeserialize",
+		map(fn arg => emitExpr(ctx, arg), args)
+	)
+}
+
 function emitJsonDeserializeAsCall(ctx, args) {
-	match args with
-	| [text, witness] -> {
-		hostCall(
-			"$jsonDeserialize",
-			[
-				emitExpr(ctx, text),
-				jsonTypeDescriptor(typeOfExpr(ctx, witness))
-			]
-		)
-	}
-	| _ -> {
-		hostCall(
-			"$jsonDeserialize",
-			map(fn arg => emitExpr(ctx, arg), args)
-		)
+	match Compat.uncons(args) with
+	| None -> emitJsonDeserializeAsFallback(ctx, args)
+	| Some first -> {
+		let text = first.value.key;
+		match Compat.uncons(first.value.value) with
+		| None -> emitJsonDeserializeAsFallback(ctx, args)
+		| Some second -> {
+			let witness = second.value.key;
+			match Compat.uncons(second.value.value) with
+			| None -> {
+				hostCall(
+					"$jsonDeserialize",
+					[
+						emitExpr(ctx, text),
+						jsonTypeDescriptor(
+							typeOfExpr(ctx, witness)
+						)
+					]
+				)
+			}
+			| Some _ -> emitJsonDeserializeAsFallback(ctx, args)
+		}
 	}
 }
 
