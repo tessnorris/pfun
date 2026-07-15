@@ -1,0 +1,11 @@
+// Slice C3 stdin forwarding probe.
+
+import * from "io";
+
+proc main() {
+	match scanln() with
+	| None -> println("stdin:eof")
+	| Some line -> println("stdin:" ++ line.value)
+}
+
+main();

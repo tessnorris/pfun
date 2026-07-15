@@ -1,0 +1,20 @@
+// Slice C1 negative program.
+//
+// A pure function may not call a procedure.
+
+import * from "io";
+
+proc effect() {
+	println("not executed");
+}
+
+function bad() {
+	effect();
+	0
+}
+
+proc main() {
+	println(str(bad()));
+}
+
+main();

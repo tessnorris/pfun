@@ -42,12 +42,26 @@ export proc ensureDir(path) {
 	| Err e -> BErr { e.message }
 }
 
+export proc executeNodeBundle(source, args) {
+	match runNodeBundle(source, args) with
+	| Ok result -> BOk { result.value }
+	| Err failure -> BErr { failure.message }
+}
+
 export generic proc printLines(lines) {
 	println(join(lines, "\n"));
 }
 
+export generic proc errorLines(lines) {
+	eprintln(join(lines, "\n"));
+}
+
 export proc fail(message, code) {
-	println(message ++ "");
+	errorLines([message ++ ""]);
+	exit(code);
+}
+
+export proc exitWith(code) {
 	exit(code);
 }
 

@@ -1,0 +1,12 @@
+// Slice C2 stream-separation probe.
+
+import * from "io";
+
+proc main() {
+	print("out:");
+	println(42);
+	eprint("err:");
+	eprintln(7);
+}
+
+main();

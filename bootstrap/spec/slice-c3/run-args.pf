@@ -1,0 +1,12 @@
+// Slice C3 argument and stream forwarding probe.
+
+import * from "io";
+
+proc main() {
+	let values = scriptArgs();
+	let rendered = join(values, "|");
+	println("stdout:" ++ rendered);
+	eprintln("stderr:" ++ rendered);
+}
+
+main();

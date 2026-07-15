@@ -236,14 +236,69 @@ function coreExports() {
 
 function ioExports() {
 	[
-		procEntry("print", sch([0], proc1(tv(0), TY.tUnit(), false)), "$print"),
-		procEntry("println", sch([0], proc1(tv(0), TY.tUnit(), false)), "$println"),
-		procEntry("flushStdout", sch([], proc0(TY.tUnit(), false)), "$flushStdout"),
-		nodeProc("scanln", sch([], proc0(optionOf(TY.tStr()), false)), "$scanln"),
-		nodeProc("scanChar", sch([], proc0(optionOf(TY.tChar()), false)), "$scanChar"),
-		nodeProc("scriptArgs", sch([], proc0(listOf(TY.tStr()), false)), "$scriptArgs"),
-		nodeProc("getEnv", sch([], proc1(TY.tStr(), optionOf(TY.tStr()), false)), "$getEnv"),
-		nodeProc("exit", sch([], proc1(TY.tInt(), TY.tUnit(), false)), "$exit")
+		procEntry(
+			"print",
+			sch([0], proc1(tv(0), TY.tUnit(), false)),
+			"$print"
+		),
+		procEntry(
+			"println",
+			sch([0], proc1(tv(0), TY.tUnit(), false)),
+			"$println"
+		),
+		nodeProc(
+			"eprint",
+			sch([0], proc1(tv(0), TY.tUnit(), false)),
+			"$eprint"
+		),
+		nodeProc(
+			"eprintln",
+			sch([0], proc1(tv(0), TY.tUnit(), false)),
+			"$eprintln"
+		),
+		procEntry(
+			"flushStdout",
+			sch([], proc0(TY.tUnit(), false)),
+			"$flushStdout"
+		),
+		nodeProc(
+			"scanln",
+			sch([], proc0(optionOf(TY.tStr()), false)),
+			"$scanln"
+		),
+		nodeProc(
+			"scanChar",
+			sch([], proc0(optionOf(TY.tChar()), false)),
+			"$scanChar"
+		),
+		nodeProc(
+			"scriptArgs",
+			sch([], proc0(listOf(TY.tStr()), false)),
+			"$scriptArgs"
+		),
+		nodeProc(
+			"getEnv",
+			sch([], proc1(TY.tStr(), optionOf(TY.tStr()), false)),
+			"$getEnv"
+		),
+		nodeProc(
+			"runNodeBundle",
+			sch(
+				[],
+				proc2(
+					TY.tStr(),
+					listOf(TY.tStr()),
+					ioResult(TY.tInt()),
+					false
+				)
+			),
+			"$runNodeBundle"
+		),
+		nodeProc(
+			"exit",
+			sch([], proc1(TY.tInt(), TY.tUnit(), false)),
+			"$exit"
+		)
 	]
 }
 

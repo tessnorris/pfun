@@ -6,12 +6,24 @@
 import * as Compat from "../compat";
 
 export type CliPlan = {
-	| CliBuild: entry, output
+	| CliCheck: entry
+	| CliBuild: entry, target, output, page
+	| CliRun: entry, args
 	| CliUsage: message
 }
 
+type BuildFlagsResult = {
+	| BuildFlagsOk: target, output, page
+	| BuildFlagsErr: message
+}
+
 export function usageText() {
-	"Usage: pfc build <entry.pf> [-o <output.js>]"
+	"Usage:\n"
+	++ "  pfc check <entry.pf>\n"
+	++ "  pfc build <entry.pf>"
+	++ " [--target node|node-bundle|browser]"
+	++ " [-o <path>] [--page <title>]\n"
+	++ "  pfc run <entry.pf> [args...]"
 }
 
 function argAt(args, index) {
@@ -24,74 +36,170 @@ function validText(value) {
 	length(value) > 0
 }
 
-function parseDefaultBuild(args) {
-	let command = argAt(args, 0);
+function usage(message) {
+	CliUsage {
+		message ++ "\n" ++ usageText()
+	}
+}
+
+function parseCheck(args) {
 	let entry = argAt(args, 1);
 
-	if command != "build" then {
-		CliUsage {
-			"Unknown command '" ++ command ++ "'.\n"
-			++ usageText()
-		}
+	if length(args) != 2 then {
+		usage("Check requires exactly one entry file.")
 	} else if !validText(entry) then {
-		CliUsage {
-			"Build requires an entry file.\n"
-			++ usageText()
+		usage("Check requires an entry file.")
+	} else {
+		CliCheck { entry = entry }
+	}
+}
+
+function validBuildTarget(target) {
+	target == "node"
+		|| target == "node-bundle"
+		|| target == "browser"
+}
+
+function defaultBuildOutput(target) {
+	if target == "node" then {
+		"build"
+	} else if target == "browser" then {
+		"index.html"
+	} else {
+		"pfc.js"
+	}
+}
+
+function finishBuildFlags(target, output, page) {
+	if !validBuildTarget(target) then {
+		BuildFlagsErr {
+			"Unknown build target '" ++ target ++ "'."
+		}
+	} else if length(page) > 0 && target != "browser" then {
+		BuildFlagsErr {
+			"--page is only valid with --target browser."
 		}
 	} else {
-		CliBuild {
-			entry = entry,
-			output = "pfc.js"
+		let finalOutput = length(output) == 0
+			? defaultBuildOutput(target)
+			: output;
+		let finalPage = length(page) == 0
+			? "Pfun Application"
+			: page;
+
+		BuildFlagsOk {
+			target = target,
+			output = finalOutput,
+			page = finalPage
 		}
 	}
 }
 
-function outputFlagOk(flag) {
-	flag == "-o" || flag == "--output"
+function parseBuildFlags(args, target, output, page) {
+	match Compat.uncons(args) with
+	| None -> finishBuildFlags(target, output, page)
+	| Some flagCell -> {
+		let flag = flagCell.value.key;
+		let afterFlag = flagCell.value.value;
+
+		match Compat.uncons(afterFlag) with
+		| None -> {
+			BuildFlagsErr {
+				"Option '" ++ flag ++ "' requires a value."
+			}
+		}
+		| Some valueCell -> {
+			let value = valueCell.value.key;
+			let rest = valueCell.value.value;
+
+			if !validText(value) then {
+				BuildFlagsErr {
+					"Option '" ++ flag ++ "' requires a value."
+				}
+			} else if flag == "--target" then {
+				parseBuildFlags(rest, value, output, page)
+			} else if flag == "-o" || flag == "--output" then {
+				parseBuildFlags(rest, target, value, page)
+			} else if flag == "--page" then {
+				parseBuildFlags(rest, target, output, value)
+			} else {
+				BuildFlagsErr {
+					"Unknown build option '" ++ flag ++ "'."
+				}
+			}
+		}
+	}
 }
 
-function parseOutputBuild(args) {
-	let command = argAt(args, 0);
+function parseBuild(args) {
 	let entry = argAt(args, 1);
-	let flag = argAt(args, 2);
-	let output = argAt(args, 3);
+	let count = length(args);
 
-	if command != "build" then {
-		CliUsage {
-			"Unknown command '" ++ command ++ "'.\n"
-			++ usageText()
-		}
-	} else if !validText(entry) then {
-		CliUsage {
-			"Build requires an entry file.\n"
-			++ usageText()
-		}
-	} else if !outputFlagOk(flag) then {
-		CliUsage {
-			"Expected -o or --output after the entry file.\n"
-			++ usageText()
-		}
-	} else if !validText(output) then {
-		CliUsage {
-			"Output path may not be empty.\n"
-			++ usageText()
-		}
+	if count < 2 || !validText(entry) then {
+		CliUsage { usageText() }
 	} else {
-		CliBuild {
+		let flags = count == 2
+			? []
+			: slice(2, count - 2, args);
+
+		match parseBuildFlags(
+			flags,
+			"node-bundle",
+			"",
+			""
+		) with
+		| BuildFlagsErr failed -> usage(failed.message)
+		| BuildFlagsOk parsed -> {
+			CliBuild {
+				entry = entry,
+				target = parsed.target,
+				output = parsed.output,
+				page = parsed.page
+			}
+		}
+	}
+}
+
+function runArgs(args) {
+	let count = length(args);
+
+	if count <= 2 then {
+		[]
+	} else {
+		slice(2, count - 2, args)
+	}
+}
+
+function parseRun(args) {
+	let entry = argAt(args, 1);
+
+	if length(args) < 2 then {
+		usage("Run requires an entry file.")
+	} else if !validText(entry) then {
+		usage("Run requires an entry file.")
+	} else {
+		CliRun {
 			entry = entry,
-			output = output
+			args = runArgs(args)
 		}
 	}
 }
 
 export function parseArgs(args) {
-	if length(args) == 2 then {
-		parseDefaultBuild(args)
-	} else if length(args) == 4 then {
-		parseOutputBuild(args)
+	let count = length(args);
+	let command = argAt(args, 0);
+
+	if count == 0 then {
+		CliUsage { usageText() }
+	} else if command == "check" then {
+		parseCheck(args)
+	} else if command == "build" then {
+		parseBuild(args)
+	} else if command == "run" then {
+		parseRun(args)
 	} else {
 		CliUsage {
-			usageText()
+			"Unknown command '" ++ command ++ "'.\n" ++ usageText()
 		}
 	}
 }
@@ -110,12 +218,12 @@ export function homeFromEnv(value) {
 
 function endsWithSlash(path) {
 	length(path) > 0
-	&& slice(length(path) - 1, 1, path) == "/"
+		&& slice(length(path) - 1, 1, path) == "/"
 }
 
 function startsWithSlash(path) {
 	length(path) > 0
-	&& slice(0, 1, path) == "/"
+		&& slice(0, 1, path) == "/"
 }
 
 function stripLeadingSlash(path) {
@@ -150,6 +258,7 @@ function lastSlashLoop(path, index, found) {
 
 export function outputDir(path) {
 	let slash = lastSlashLoop(path, 0, 0 - 1);
+
 	if slash < 0 then {
 		"."
 	} else if slash == 0 then {

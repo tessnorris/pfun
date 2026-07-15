@@ -7,7 +7,7 @@ import * as A from "../src/syntax/ast";
 import * as T from "../src/syntax/token";
 import * as Compat from "../src/compat";
 import * from "io"; // added by gen-test-harness
-import * from "testing/runner"; // added by gen-test-harness
+import * from "$PFUN_HOME/bootstrap/src/testing/runner"; // added by gen-test-harness
 
 
 function span() {
@@ -128,6 +128,27 @@ function testNormalizeAndDir() {
 	])
 }
 
+
+//![test("preserves repeated leading parent components")]
+function testLeadingParentNormalization() {
+	Assert.assertions([
+		Assert.assertEqual(
+			"../../../bootstrap/spec/slice-c1/good.pf",
+			ModGraph.normalizePath(
+				"../../../bootstrap/spec/slice-c1/good.pf"
+			)
+		),
+		Assert.assertEqual(
+			"../b.pf",
+			ModGraph.normalizePath("a/../../b.pf")
+		),
+		Assert.assertEqual(
+			"/b.pf",
+			ModGraph.normalizePath("/a/../../b.pf")
+		)
+	])
+}
+
 //![test("extracts import edges from parsed modules")]
 function testEdgesOfParsedModule() {
 	let source = "import { foo as bar, baz } from \"./dep\"; import * as IO from \"io\"; import * from \"math\"; let x = 1;";
@@ -192,6 +213,7 @@ function __gen_suite_graph_modgraph() {
 	suite("graph/modgraph", [
 		test("resolves relative builtin and library imports", testResolveImportKinds),
 		test("normalizes paths and directories", testNormalizeAndDir),
+		test("preserves repeated leading parent components", testLeadingParentNormalization),
 		test("extracts import edges from parsed modules", testEdgesOfParsedModule),
 		test("toposort orders dependencies before dependents", testTopoDependencyOrder),
 		test("toposort ignores builtin imports", testTopoIgnoresBuiltins),

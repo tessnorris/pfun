@@ -67,6 +67,38 @@ function testIoIfaceMarksPrintlnAsProc() {
 	}
 }
 
+
+//![test("io iface exposes stderr procedures")]
+function testIoIfaceExposesStderrProcedures() {
+	match lookupBuiltinIface("io") with
+	| None -> {
+		Assert.assertions([
+			Assert.fail("Missing io builtin iface.")
+		])
+	}
+	| Some iface -> {
+		let i = iface.value;
+		Assert.assertions([
+			match Iface.lookupKind(i, "eprint") with
+			| None -> Assert.fail("Missing eprint export.")
+			| Some kind -> {
+				Assert.assertEqual("proc", Iface.kindToStr(kind.value))
+			},
+			match Iface.lookupKind(i, "eprintln") with
+			| None -> Assert.fail("Missing eprintln export.")
+			| Some kind -> {
+				Assert.assertEqual("proc", Iface.kindToStr(kind.value))
+			},
+			match intrinsicName("io", "eprint") with
+			| None -> Assert.fail("Missing eprint intrinsic.")
+			| Some intrinsic -> Assert.assertEqual("$eprint", intrinsic.value),
+			match intrinsicName("io", "eprintln") with
+			| None -> Assert.fail("Missing eprintln intrinsic.")
+			| Some intrinsic -> Assert.assertEqual("$eprintln", intrinsic.value)
+		])
+	}
+}
+
 //![test("intrinsic lookup returns host names")]
 function testIntrinsicLookupReturnsHostNames() {
 	Assert.assertions([

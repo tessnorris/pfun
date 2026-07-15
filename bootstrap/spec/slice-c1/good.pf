@@ -1,0 +1,13 @@
+// Slice C1 positive program.
+
+import * from "io";
+
+function twice(value) {
+	value * 2
+}
+
+proc main() {
+	println(str(twice(21)));
+}
+
+main();

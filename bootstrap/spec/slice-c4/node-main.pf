@@ -1,0 +1,9 @@
+// Slice C4 Node target probe.
+
+import * from "io";
+
+proc main() {
+	println(42);
+}
+
+main();

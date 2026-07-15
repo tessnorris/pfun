@@ -1,16 +1,17 @@
 // drivers/cli.pf — minimal self-hosting compiler command line.
 //
-// Supported command:
+// Supported commands:
 //
 //   pfc build <entry.pf> [-o <output.js>]
 //
-// This first driver deliberately produces only a NodeBundle. Check, run,
-// serve, browser, and playground commands are later Phase 16/17 work.
+// Check stops after the shared checking pipeline. Build continues through
+// NodeBundle emission and linking. Run and browser targets remain later work.
 //
 // Effects stay in this module and drivers/iofloor.pf. Argument parsing,
 // checking, emission, and linking are pure modules.
 
 import * as CliArgs from "./cliargs";
+import * as Compat from "../compat";
 import * as IO from "./iofloor";
 import * as Load from "./load";
 import * as Pipeline from "../compile/pipeline";
@@ -28,6 +29,16 @@ type HostReadResult = {
 type ArtifactWriteResult = {
 	| ArtifactWriteOk
 	| ArtifactWriteErr: message
+}
+
+export type CliCheckResult = {
+	| CliCheckOk: entry
+	| CliCheckErr: message
+}
+
+export type CliRunResult = {
+	| CliRunOk: code
+	| CliRunErr: message
 }
 
 export type CliBuildResult = {
@@ -75,6 +86,13 @@ function hostNodePath(home) {
 	)
 }
 
+function hostBrowserPath(home) {
+	CliArgs.joinPath(
+		home,
+		"bootstrap/host/browser.js"
+	)
+}
+
 // ── effectful host/artifact boundary ───────────────────────────────────────
 
 proc readHostSources(home) {
@@ -98,47 +116,235 @@ proc readHostSources(home) {
 	}
 }
 
+proc readBrowserHostSources(home) {
+	match IO.readTextFile(hostCorePath(home)) with
+	| BErr coreErr -> {
+		HostReadErr {
+			"Could not read browser host core: "
+				++ coreErr.message
+		}
+	}
+	| BOk core -> {
+		match IO.readTextFile(hostBrowserPath(home)) with
+		| BErr browserErr -> {
+			HostReadErr {
+				"Could not read browser platform host: "
+					++ browserErr.message
+			}
+		}
+		| BOk browser -> {
+			HostReadOk {
+				Link.hostSrc(
+					core.value,
+					browser.value
+				)
+			}
+		}
+	}
+}
+
 proc writeSingleJs(output, text) {
 	let dir = CliArgs.outputDir(output);
+
 	match IO.ensureDir(dir) with
-	| BErr mkdirErr -> ArtifactWriteErr {
-		"Could not create output directory '"
-		++ dir ++ "': " ++ mkdirErr.message
+	| BErr mkdirErr -> {
+		ArtifactWriteErr {
+			"Could not create output directory '"
+				++ dir
+				++ "': "
+				++ mkdirErr.message
+		}
 	}
 	| BOk _ -> {
 		match IO.writeTextFile(output, text) with
-		| BErr writeErr -> ArtifactWriteErr {
-			"Could not write output file '"
-			++ output ++ "': " ++ writeErr.message
+		| BErr writeErr -> {
+			ArtifactWriteErr {
+				"Could not write output file '"
+					++ output
+					++ "': "
+					++ writeErr.message
+			}
 		}
 		| BOk _ -> ArtifactWriteOk
 	}
 }
 
+proc writeOutFile(file) {
+	let dir = CliArgs.outputDir(file.relPath);
+
+	match IO.ensureDir(dir) with
+	| BErr mkdirErr -> {
+		ArtifactWriteErr {
+			"Could not create output directory '"
+				++ dir
+				++ "': "
+				++ mkdirErr.message
+		}
+	}
+	| BOk _ -> {
+		match IO.writeTextFile(file.relPath, file.text) with
+		| BErr writeErr -> {
+			ArtifactWriteErr {
+				"Could not write output file '"
+					++ file.relPath
+					++ "': "
+					++ writeErr.message
+			}
+		}
+		| BOk _ -> ArtifactWriteOk
+	}
+}
+
+proc writeOutFiles(files) {
+	match Compat.uncons(files) with
+	| None -> ArtifactWriteOk
+	| Some cell -> {
+		match writeOutFile(cell.value.key) with
+		| ArtifactWriteErr failed -> {
+			ArtifactWriteErr { failed.message }
+		}
+		| ArtifactWriteOk -> {
+			writeOutFiles(cell.value.value)
+		}
+	}
+}
+
 proc writeArtifact(artifact, output) {
 	match artifact with
-	| SingleJs js -> writeSingleJs(
-		output,
-		js.text
-	)
-	| FileSet _ -> ArtifactWriteErr {
-		"Internal compiler error: build expected a "
-		++ "single JavaScript artifact, but the linker "
-		++ "returned a file set."
+	| SingleJs js -> {
+		writeSingleJs(output, js.text)
 	}
-	| HtmlPage _ -> ArtifactWriteErr {
-		"Internal compiler error: build expected a "
-		++ "single JavaScript artifact, but the linker "
-		++ "returned an HTML page."
+	| FileSet files -> {
+		writeOutFiles(files.files)
+	}
+	| HtmlPage html -> {
+		writeSingleJs(output, html.text)
+	}
+}
+
+// ── check command ──────────────────────────────────────────────────────────
+
+export proc check(entry, home) {
+	let env = searchEnv(home);
+
+	match Load.loadGraph(entry, env) with
+	| LoadErr failed -> {
+		CliCheckErr {
+			renderDiags(failed.diags)
+		}
+	}
+	| LoadOk loaded -> {
+		match Pipeline.checkProgram(loaded.modules) with
+		| PipelineCheckErr failed -> {
+			CliCheckErr {
+				renderDiags(failed.diags)
+			}
+		}
+		| PipelineCheckOk _ -> {
+			CliCheckOk { entry }
+		}
 	}
 }
 
 // ── build command ──────────────────────────────────────────────────────────
 
-proc compileLoaded(raws, output, home) {
+function buildTarget(targetName, output, page) {
+	if targetName == "node" then {
+		Link.nodeFiles(output)
+	} else if targetName == "browser" then {
+		Link.browserBundle(
+			Link.barePage(page)
+		)
+	} else {
+		Link.nodeBundle()
+	}
+}
+
+proc readBuildHostSources(targetName, home) {
+	if targetName == "browser" then {
+		readBrowserHostSources(home)
+	} else {
+		readHostSources(home)
+	}
+}
+
+proc compileLoaded(
+	raws,
+	targetName,
+	output,
+	page,
+	home
+) {
+	let target = buildTarget(
+		targetName,
+		output,
+		page
+	);
+
+	match readBuildHostSources(targetName, home) with
+	| HostReadErr hostErr -> {
+		CliBuildErr { hostErr.message }
+	}
+	| HostReadOk hostOk -> {
+		match Pipeline.compileProgram(
+			raws,
+			target,
+			hostOk.host
+		) with
+		| PipelineCompileErr failed -> {
+			CliBuildErr {
+				renderDiags(failed.diags)
+			}
+		}
+		| PipelineCompileOk compiled -> {
+			match writeArtifact(
+				compiled.artifact,
+				output
+			) with
+			| ArtifactWriteErr writeErr -> {
+				CliBuildErr {
+					writeErr.message
+				}
+			}
+			| ArtifactWriteOk -> {
+				CliBuildOk { output }
+			}
+		}
+	}
+}
+
+export proc build(
+	entry,
+	targetName,
+	output,
+	page,
+	home
+) {
+	let env = searchEnv(home);
+
+	match Load.loadGraph(entry, env) with
+	| LoadErr failed -> {
+		CliBuildErr {
+			renderDiags(failed.diags)
+		}
+	}
+	| LoadOk loaded -> {
+		compileLoaded(
+			loaded.modules,
+			targetName,
+			output,
+			page,
+			home
+		)
+	}
+}
+
+// ── run command ────────────────────────────────────────────────────────────
+
+proc runLoaded(raws, args, home) {
 	match readHostSources(home) with
-	| HostReadErr hostErr -> CliBuildErr {
-		hostErr.message
+	| HostReadErr hostErr -> {
+		CliRunErr { hostErr.message }
 	}
 	| HostReadOk hostOk -> {
 		match Pipeline.compileProgram(
@@ -146,35 +352,52 @@ proc compileLoaded(raws, output, home) {
 			Link.nodeBundle(),
 			hostOk.host
 		) with
-		| PipelineCompileErr failed -> CliBuildErr {
-			renderDiags(failed.diags)
+		| PipelineCompileErr failed -> {
+			CliRunErr {
+				renderDiags(failed.diags)
+			}
 		}
 		| PipelineCompileOk compiled -> {
-			match writeArtifact(
-				compiled.artifact,
-				output
-			) with
-			| ArtifactWriteErr writeErr -> CliBuildErr {
-				writeErr.message
+			match compiled.artifact with
+			| SingleJs js -> {
+				match IO.executeNodeBundle(js.text, args) with
+				| BErr failure -> {
+					CliRunErr { failure.message }
+				}
+				| BOk completed -> {
+					CliRunOk { code = completed.value }
+				}
 			}
-			| ArtifactWriteOk -> CliBuildOk {
-				output
+			| FileSet _ -> {
+				CliRunErr {
+					"Internal compiler error: run expected a "
+					++ "single JavaScript artifact, but the linker "
+					++ "returned a file set."
+				}
+			}
+			| HtmlPage _ -> {
+				CliRunErr {
+					"Internal compiler error: run expected a "
+					++ "single JavaScript artifact, but the linker "
+					++ "returned an HTML page."
+				}
 			}
 		}
 	}
 }
 
-export proc build(entry, output, home) {
+export proc run(entry, args, home) {
 	let env = searchEnv(home);
+
 	match Load.loadGraph(entry, env) with
-	| LoadErr failed -> CliBuildErr {
-		renderDiags(failed.diags)
+	| LoadErr failed -> {
+		CliRunErr {
+			renderDiags(failed.diags)
+		}
 	}
-	| LoadOk loaded -> compileLoaded(
-		loaded.modules,
-		output,
-		home
-	)
+	| LoadOk loaded -> {
+		runLoaded(loaded.modules, args, home)
+	}
 }
 
 // ── executable entry ───────────────────────────────────────────────────────
@@ -185,16 +408,51 @@ proc runPlan(plan, home) {
 		usage.message,
 		2
 	)
+	| CliCheck command -> {
+		match check(
+			command.entry,
+			home
+		) with
+		| CliCheckErr failed -> {
+			IO.fail(
+				failed.message,
+				1
+			)
+		}
+		| CliCheckOk checked -> {
+			IO.printLines([
+				"Checked " ++ checked.entry
+			]);
+			IO.exitOk();
+		}
+	}
+	| CliRun command -> {
+		match run(
+			command.entry,
+			command.args,
+			home
+		) with
+		| CliRunErr failed -> {
+			IO.fail(failed.message, 1)
+		}
+		| CliRunOk completed -> {
+			IO.exitWith(completed.code)
+		}
+	}
 	| CliBuild command -> {
 		match build(
 			command.entry,
+			command.target,
 			command.output,
+			command.page,
 			home
 		) with
-		| CliBuildErr failed -> IO.fail(
-			failed.message,
-			1
-		)
+		| CliBuildErr failed -> {
+			IO.fail(
+				failed.message,
+				1
+			)
+		}
 		| CliBuildOk built -> {
 			IO.printLines([
 				"Built " ++ built.output

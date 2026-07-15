@@ -1,0 +1,10 @@
+// Slice C3 exit-status forwarding probe.
+
+import * from "io";
+
+proc main() {
+	println("before-exit");
+	exit(7);
+}
+
+main();

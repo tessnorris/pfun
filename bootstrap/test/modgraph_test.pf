@@ -126,6 +126,27 @@ function testNormalizeAndDir() {
 	])
 }
 
+
+//![test("preserves repeated leading parent components")]
+function testLeadingParentNormalization() {
+	Assert.assertions([
+		Assert.assertEqual(
+			"../../../bootstrap/spec/slice-c1/good.pf",
+			ModGraph.normalizePath(
+				"../../../bootstrap/spec/slice-c1/good.pf"
+			)
+		),
+		Assert.assertEqual(
+			"../b.pf",
+			ModGraph.normalizePath("a/../../b.pf")
+		),
+		Assert.assertEqual(
+			"/b.pf",
+			ModGraph.normalizePath("/a/../../b.pf")
+		)
+	])
+}
+
 //![test("extracts import edges from parsed modules")]
 function testEdgesOfParsedModule() {
 	let source = "import { foo as bar, baz } from \"./dep\"; import * as IO from \"io\"; import * from \"math\"; let x = 1;";

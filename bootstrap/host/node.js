@@ -39,6 +39,9 @@
     }
 
     const fs = nodeRequire("node:fs");
+	const os = nodeRequire("node:os");
+	const nodePath = nodeRequire("node:path");
+	const childProcess = nodeRequire("node:child_process");
 
     function own(object, key) {
       return Object.prototype.hasOwnProperty.call(object, key);
@@ -78,9 +81,68 @@
       }
     }
 
-    // ── stdin / process ──────────────────────────────────────────────────
+    
+	function nodeArgs(values) {
+		if (!Array.isArray(values)) {
+			throw new Error("runNodeBundle arguments must be a List<Str>.");
+		}
+		return values.map(function nodeArg(value) {
+			return pathText(value, "runNodeBundle argument");
+		});
+	}
 
-    let stdinText = null;
+	function $runNodeBundle(source, args) {
+		source = pathText(source, "runNodeBundle source");
+		const childArgs = nodeArgs(args);
+
+		return resultOf(function executeNodeBundle() {
+			const tempDir = fs.mkdtempSync(
+				nodePath.join(os.tmpdir(), "pfun-run-")
+			);
+			const scriptPath = nodePath.join(tempDir, "main.js");
+
+			try {
+				fs.writeFileSync(scriptPath, source, "utf8");
+				const child = childProcess.spawnSync(
+					process.execPath,
+					[scriptPath, ...childArgs],
+					{
+						cwd: process.cwd(),
+						env: process.env,
+						stdio: "inherit"
+					}
+				);
+
+				if (child.error) {
+					throw child.error;
+				}
+				if (typeof child.status === "number") {
+					return core.$canonI(child.status);
+				}
+				if (child.signal) {
+					throw new Error(
+						"Node child terminated by signal " + child.signal + "."
+					);
+				}
+				throw new Error("Node child did not report an exit status.");
+			} finally {
+				fs.rmSync(tempDir, { recursive: true, force: true });
+			}
+		});
+	}
+// ── stdin / process ──────────────────────────────────────────────────
+
+    	function $eprint(value) {
+		process.stderr.write(core.$str(value));
+		return null;
+	}
+
+	function $eprintln(value) {
+		process.stderr.write(core.$str(value) + "\n");
+		return null;
+	}
+
+	let stdinText = null;
     let stdinOffset = 0;
 
     function ensureStdin() {
@@ -261,12 +323,15 @@
     const ioModule = Object.freeze({
       print: core.$print,
       println: core.$println,
+      eprint: $eprint,
+      eprintln: $eprintln,
       flushStdout: core.$flushStdout,
       scanln: $scanln,
       scanChar: $scanChar,
       scriptArgs: $scriptArgs,
       getEnv: $getEnv,
-      exit: $exit
+      exit: $exit,
+		runNodeBundle: $runNodeBundle
     });
 
     const fileModule = Object.freeze({
@@ -281,7 +346,8 @@
     const jsonModule = Object.freeze({
       jsonSerialize: core.$jsonSerialize,
       jsonDeserialize: core.$jsonDeserialize
-    });
+    ,
+      jsonDeserializeAs: core.$jsonDeserialize});
 
     const asyncModule = Object.freeze({
       sleep: core.$sleep
@@ -309,6 +375,8 @@
     });
 
     return Object.freeze({
+		$eprint,
+		$eprintln,
       $scanln,
       $scanChar,
       $scriptArgs,
@@ -320,7 +388,8 @@
       $mkdirP,
       $fileOpen,
       $fileClose,
-      $builtins
+      $builtins,
+		$runNodeBundle,
     });
   }
 );

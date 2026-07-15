@@ -1,0 +1,5 @@
+// Slice C4 browser target probe.
+
+export function answer() {
+	42
+}

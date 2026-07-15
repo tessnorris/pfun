@@ -160,9 +160,19 @@ function joinPath(dir, rawPath) {
 function popComponent(stack, absolute) {
 	match Compat.uncons(stack) with
 	| None -> {
-		if absolute then { [] } else { [".."] }
+		if absolute then {
+			[]
+		} else {
+			[".."]
+		}
 	}
-	| Some cell -> cell.value.value
+	| Some cell -> {
+		if !absolute && cell.value.key == ".." then {
+			cons("..", stack)
+		} else {
+			cell.value.value
+		}
+	}
 }
 
 function normalizeParts(parts, stack, absolute) {

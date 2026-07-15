@@ -6,7 +6,7 @@ import * as Iface from "../src/check/iface";
 import * as ListX from "../src/data/listx";
 import * as StrX from "../src/data/strx";
 import * from "io"; // added by gen-test-harness
-import * from "testing/runner"; // added by gen-test-harness
+import * from "$PFUN_HOME/bootstrap/src/testing/runner"; // added by gen-test-harness
 
 
 function assertSomeValue(opt, message) {
@@ -69,6 +69,38 @@ function testIoIfaceMarksPrintlnAsProc() {
 	}
 }
 
+
+//![test("io iface exposes stderr procedures")]
+function testIoIfaceExposesStderrProcedures() {
+	match lookupBuiltinIface("io") with
+	| None -> {
+		Assert.assertions([
+			Assert.fail("Missing io builtin iface.")
+		])
+	}
+	| Some iface -> {
+		let i = iface.value;
+		Assert.assertions([
+			match Iface.lookupKind(i, "eprint") with
+			| None -> Assert.fail("Missing eprint export.")
+			| Some kind -> {
+				Assert.assertEqual("proc", Iface.kindToStr(kind.value))
+			},
+			match Iface.lookupKind(i, "eprintln") with
+			| None -> Assert.fail("Missing eprintln export.")
+			| Some kind -> {
+				Assert.assertEqual("proc", Iface.kindToStr(kind.value))
+			},
+			match intrinsicName("io", "eprint") with
+			| None -> Assert.fail("Missing eprint intrinsic.")
+			| Some intrinsic -> Assert.assertEqual("$eprint", intrinsic.value),
+			match intrinsicName("io", "eprintln") with
+			| None -> Assert.fail("Missing eprintln intrinsic.")
+			| Some intrinsic -> Assert.assertEqual("$eprintln", intrinsic.value)
+		])
+	}
+}
+
 //![test("intrinsic lookup returns host names")]
 function testIntrinsicLookupReturnsHostNames() {
 	Assert.assertions([
@@ -114,6 +146,7 @@ function __gen_suite_builtins_spec() {
 		test("all module specs include the bootstrap floor", testAllModuleSpecsIncludeFloor),
 		test("core iface exposes builtin types and functions", testCoreIfaceExposesBuiltinTypesAndFunctions),
 		test("io iface marks println as a proc", testIoIfaceMarksPrintlnAsProc),
+		test("io iface exposes stderr procedures", testIoIfaceExposesStderrProcedures),
 		test("intrinsic lookup returns host names", testIntrinsicLookupReturnsHostNames),
 		test("file iface includes FileMode and ReadResult unions", testFileIfaceIncludesUnions),
 		test("builtin iface map supports direct and core aliases", testBuiltinIfaceMapAliases)

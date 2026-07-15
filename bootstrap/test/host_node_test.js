@@ -153,7 +153,7 @@ try {
   const source = "let β = 1;\n";
   const written = nodeHost.$writeFile(file, source);
   assert.equal(written.$t, "Ok");
-  assert.equal(written.value, source.length);
+  assert.equal(written.value, null);
   assert.equal(nodeHost.$fileExists(file), true);
 
   const read = nodeHost.$readFile(file);
@@ -200,6 +200,61 @@ const scanned = childProcess.spawnSync(
 );
 assert.equal(scanned.status, 0, scanned.stderr);
 assert.deepEqual(JSON.parse(scanned.stdout), ["alpha", "β", "z", null]);
+
+
+// stderr output is separate from stdout and uses Pfun stringification.
+const stderrProbe = `
+	const host = require(${JSON.stringify(nodePath)});
+	host.$eprint("error:");
+	host.$eprintln(42);
+	process.stdout.write("output");
+`;
+const stderrResult = childProcess.spawnSync(
+	process.execPath,
+	["-e", stderrProbe],
+	{ encoding: "utf8" }
+);
+assert.equal(stderrResult.status, 0, stderrResult.stderr);
+assert.equal(stderrResult.stdout, "output");
+assert.equal(stderrResult.stderr, "error:42\n");
+
+
+// NodeBundle execution forwards arguments, streams, exit status, and cleanup.
+const runDirsBefore = fs.readdirSync(os.tmpdir())
+	.filter((name) => name.startsWith("pfun-run-"))
+	.sort();
+const runBundleSource = [
+	'process.stdout.write("child-out:" + process.argv.slice(2).join(",") + "\\n");',
+	'process.stderr.write("child-err\\n");',
+	'process.exit(7);'
+].join("\n");
+const runBundleProbe = `
+	const host = require(${JSON.stringify(nodePath)});
+	const result = host.$runNodeBundle(
+		${JSON.stringify(runBundleSource)},
+		["alpha", "beta gamma"]
+	);
+	if (result.$t !== "Ok") {
+		process.stderr.write("probe-error:" + result.message + "\\n");
+		process.exit(1);
+	}
+	process.stdout.write("result:" + String(result.value) + "\\n");
+`;
+const runBundleResult = childProcess.spawnSync(
+	process.execPath,
+	["-e", runBundleProbe],
+	{ encoding: "utf8" }
+);
+assert.equal(runBundleResult.status, 0, runBundleResult.stderr);
+assert.equal(
+	runBundleResult.stdout,
+	"child-out:alpha,beta gamma\nresult:7\n"
+);
+assert.equal(runBundleResult.stderr, "child-err\n");
+const runDirsAfter = fs.readdirSync(os.tmpdir())
+	.filter((name) => name.startsWith("pfun-run-"))
+	.sort();
+assert.deepEqual(runDirsAfter, runDirsBefore);
 
 // Exit status is delegated exactly.
 const exitProbe = `
