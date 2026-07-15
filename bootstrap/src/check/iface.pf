@@ -1,9 +1,8 @@
 // check/iface.pf — Phase 6 module interface data for the bootstrap compiler.
 //
-// The full V2 checker will build concrete type schemes in check/types.pf. That
-// file does not exist yet, so this module keeps `Scheme.body` and
-// `Scheme.constraints` generic. Later passes can store the real Type/Constraint
-// values without changing ModIface's map shape.
+// The full V2 checker builds concrete type schemes in check/types.pf. This
+// module keeps `Scheme.body` and `Scheme.constraints` generic so passes can
+// store the real Type/Constraint values without changing ModIface's map shape.
 
 import * as A from "../syntax/ast";
 import * as IMS from "../data/imaps";

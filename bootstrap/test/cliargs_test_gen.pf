@@ -3,7 +3,7 @@
 import * as Assert from "testing/assertions";
 import * as Cli from "../src/drivers/cliargs";
 import * from "io"; // added by gen-test-harness
-import * from "$PFUN_HOME/bootstrap/src/testing/runner"; // added by gen-test-harness
+import * from "testing/runner"; // added by gen-test-harness
 
 function containsText(text, needle) {
 	match findSlice(text, needle) with

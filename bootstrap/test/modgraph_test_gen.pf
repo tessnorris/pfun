@@ -7,7 +7,7 @@ import * as A from "../src/syntax/ast";
 import * as T from "../src/syntax/token";
 import * as Compat from "../src/compat";
 import * from "io"; // added by gen-test-harness
-import * from "$PFUN_HOME/bootstrap/src/testing/runner"; // added by gen-test-harness
+import * from "testing/runner"; // added by gen-test-harness
 
 
 function span() {

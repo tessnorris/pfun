@@ -404,6 +404,27 @@ function testParseErrors() {
 	])
 }
 
+// ── format string interpolation ─────────────────────────────────────────────
+
+//![test("parses interpolations containing embedded literals with braces")]
+function testFmtEmbeddedBraces() {
+	Assert.assertions([
+		parseOkAssertion("let a = $\"x {join(xs, \"}\")} y\";"),
+		parseOkAssertion("let b = $\"n {f(\"{\")} m\";"),
+		parseOkAssertion("let c = $\"p {g('}')} q\";"),
+		parseOkAssertion("let d = $\"t {n > 2 ? \"big\" : \"small\"}\";")
+	])
+}
+
+//![test("rejects malformed format string interpolations")]
+function testFmtInterpolationErrors() {
+	Assert.assertions([
+		parseErrAssertion("let a = $\"bad {} interp\";"),
+		parseErrAssertion("let b = $\"junk {1 2}\";"),
+		parseErrAssertion("let c = $\"esc \\q\";")
+	])
+}
+
 // ─────────────────────────────────────────────────────────────────
 // GENERATED TEST HARNESS (gen-test-harness.js) — do not edit.
 // Lambda-closing lives in pure functions; the generated main has no
@@ -419,7 +440,9 @@ function __gen_suite_syntax_parser() {
 		test("parses statement if blocks", testIfStatementBlocks),
 		test("parses imports exported opaque types and extern signatures", testImportTypeExternExport),
 		test("parses record dict array call field and index forms", testCompositeAndPostfixForms),
-		test("rejects unsupported or malformed parser inputs", testParseErrors)
+		test("rejects unsupported or malformed parser inputs", testParseErrors),
+		test("parses interpolations containing embedded literals with braces", testFmtEmbeddedBraces),
+		test("rejects malformed format string interpolations", testFmtInterpolationErrors)
 	])
 }
 

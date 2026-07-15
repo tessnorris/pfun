@@ -133,7 +133,11 @@ function isHexDigit(c) {
 }
 
 function isWs(c) {
-  c == " " || c == "\t" || c == "\n" || c == " "
+	// Carriage return is matched via chrU(13). A raw CR byte in a string
+	// literal here does not survive editors or git newline normalization
+	// (it was silently rewritten to a space once already), and \r is not a
+	// recognized escape in either dialect.
+	c == " " || c == "\t" || c == "\n" || c == __str__(chrU(13))
 }
 
 function digitVal(c) {
@@ -492,8 +496,89 @@ function scanCharLiteral(st) {
 	| _ -> LexFail { lexDiagAt(st, start, "Invalid character literal.") }
 }
 
-// Minimal but brace-aware format string scanner. It preserves the raw body text
-// inside `$"..."` so the parser can split literal/interpolation pieces later.
+// Format string scanner. It preserves the raw body text inside `$"..."` so the
+// parser can split literal/interpolation pieces later, and tracks brace depth
+// to find the closing quote.
+//
+// Inside an interpolation, embedded "...", @"...", and '.' literals are copied
+// verbatim by the fmtSkip* helpers so that quotes and braces within them never
+// reach the depth counter. Without this the body is truncated at the first
+// unbalanced brace in an embedded string: $"x {join(xs, "}")} y" would end the
+// token at the quote after "}". The parser's own scanFmtHole draws the same
+// distinction; both layers need it, because the lexer decides where the token
+// ends and the parser decides where each hole ends.
+
+// Threads (state, copied-text) through the embedded-literal skippers.
+type FmtSkip = {
+	| FmtSkipOk: st, text
+	| FmtSkipFail: diag
+}
+
+// Copies an embedded "..." string (opening quote already consumed) through its
+// closing quote, escape pairs kept raw for the parser's re-lex.
+function fmtSkipString(startPos, st, acc) {
+	match current(st) with
+	| None -> FmtSkipFail { lexDiagAt(st, startPos, "Unterminated string literal in interpolation.") }
+	| Some c -> {
+		if c.value == "\"" then {
+			FmtSkipOk { advanceOne(st), acc ++ c.value }
+		} else if c.value == "\n" then {
+			FmtSkipFail { lexDiagAt(st, startPos, "Unterminated string literal in interpolation.") }
+		} else if c.value == "\\" then {
+			let escSt = advanceOne(st);
+			match current(escSt) with
+			| None -> FmtSkipFail { lexDiagAt(escSt, startPos, "Unterminated string escape in interpolation.") }
+			| Some esc -> fmtSkipString(startPos, advanceOne(escSt), acc ++ "\\" ++ esc.value)
+		} else {
+			fmtSkipString(startPos, advanceOne(st), acc ++ c.value)
+		}
+	}
+}
+
+// Copies an embedded @"..." raw string (both opening characters already
+// consumed) through its closing quote. Raw strings have no escapes.
+function fmtSkipRawString(startPos, st, acc) {
+	match current(st) with
+	| None -> FmtSkipFail { lexDiagAt(st, startPos, "Unterminated raw string literal in interpolation.") }
+	| Some c -> {
+		if c.value == "\"" then {
+			FmtSkipOk { advanceOne(st), acc ++ c.value }
+		} else {
+			fmtSkipRawString(startPos, advanceOne(st), acc ++ c.value)
+		}
+	}
+}
+
+// Copies an embedded char literal (opening quote already consumed): one escape
+// pair or one character, then the closing quote. A malformed literal is copied
+// as far as it goes and left for the parser's re-lex to diagnose.
+function fmtSkipChar(startPos, st, acc) {
+	match current(st) with
+	| None -> FmtSkipFail { lexDiagAt(st, startPos, "Unterminated character literal in interpolation.") }
+	| Some c -> {
+		if c.value == "\\" then {
+			let escSt = advanceOne(st);
+			match current(escSt) with
+			| None -> FmtSkipFail { lexDiagAt(escSt, startPos, "Unterminated character escape in interpolation.") }
+			| Some esc -> fmtSkipCharClose(advanceOne(escSt), acc ++ "\\" ++ esc.value)
+		} else {
+			fmtSkipCharClose(advanceOne(st), acc ++ c.value)
+		}
+	}
+}
+
+function fmtSkipCharClose(st, acc) {
+	match current(st) with
+	| None -> FmtSkipOk { st, acc }
+	| Some c -> {
+		if c.value == "'" then {
+			FmtSkipOk { advanceOne(st), acc ++ c.value }
+		} else {
+			FmtSkipOk { st, acc }
+		}
+	}
+}
+
 function fmtLoop(startPos, st, acc, depth) {
 	match current(st) with
 	| None -> LexFail { lexDiagAt(st, startPos, "Unterminated format string literal.") }
@@ -508,6 +593,18 @@ function fmtLoop(startPos, st, acc, depth) {
 			| Some esc -> fmtLoop(startPos, advanceOne(escSt), acc ++ "\\" ++ esc.value, depth)
 		} else if depth > 0 && startsWith(st, "$\"") then {
 			LexFail { lexDiagAt(advanceN(st, 2), posOf(st), "Nested format strings inside interpolation are not allowed.") }
+		} else if depth > 0 && startsWith(st, "@\"") then {
+			match fmtSkipRawString(startPos, advanceN(st, 2), "@\"") with
+			| FmtSkipFail f -> LexFail { f.diag }
+			| FmtSkipOk skip -> fmtLoop(startPos, skip.st, acc ++ skip.text, depth)
+		} else if depth > 0 && c.value == "\"" then {
+			match fmtSkipString(startPos, advanceOne(st), "\"") with
+			| FmtSkipFail f -> LexFail { f.diag }
+			| FmtSkipOk skip -> fmtLoop(startPos, skip.st, acc ++ skip.text, depth)
+		} else if depth > 0 && c.value == "'" then {
+			match fmtSkipChar(startPos, advanceOne(st), "'") with
+			| FmtSkipFail f -> LexFail { f.diag }
+			| FmtSkipOk skip -> fmtLoop(startPos, skip.st, acc ++ skip.text, depth)
 		} else if c.value == "{" then {
 			fmtLoop(startPos, advanceOne(st), acc ++ c.value, depth + 1)
 		} else if c.value == "}" then {

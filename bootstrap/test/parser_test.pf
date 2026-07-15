@@ -401,3 +401,24 @@ function testParseErrors() {
 		parseErrAssertion("let x = match xs with | [...rest] -> 0;")
 	])
 }
+
+// ── format string interpolation ─────────────────────────────────────────────
+
+//![test("parses interpolations containing embedded literals with braces")]
+function testFmtEmbeddedBraces() {
+	Assert.assertions([
+		parseOkAssertion("let a = $\"x {join(xs, \"}\")} y\";"),
+		parseOkAssertion("let b = $\"n {f(\"{\")} m\";"),
+		parseOkAssertion("let c = $\"p {g('}')} q\";"),
+		parseOkAssertion("let d = $\"t {n > 2 ? \"big\" : \"small\"}\";")
+	])
+}
+
+//![test("rejects malformed format string interpolations")]
+function testFmtInterpolationErrors() {
+	Assert.assertions([
+		parseErrAssertion("let a = $\"bad {} interp\";"),
+		parseErrAssertion("let b = $\"junk {1 2}\";"),
+		parseErrAssertion("let c = $\"esc \\q\";")
+	])
+}

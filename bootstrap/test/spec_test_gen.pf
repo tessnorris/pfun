@@ -6,7 +6,7 @@ import * as Iface from "../src/check/iface";
 import * as ListX from "../src/data/listx";
 import * as StrX from "../src/data/strx";
 import * from "io"; // added by gen-test-harness
-import * from "$PFUN_HOME/bootstrap/src/testing/runner"; // added by gen-test-harness
+import * from "testing/runner"; // added by gen-test-harness
 
 
 function assertSomeValue(opt, message) {

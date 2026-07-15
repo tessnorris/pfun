@@ -152,3 +152,33 @@ function testLexErrors() {
 		Assert.assertTrue(lexDiagCount("#") > 0)
 	])
 }
+
+// ── format string bodies ─────────────────────────────────────────────────────
+
+function fmtBodyOf(source) {
+	match Compat.listAt(lexTokens(source), 0) with
+	| Some tok -> T.tokenPayload(tok.value)
+	| None -> ""
+}
+
+//![test("format string bodies keep embedded literals out of the depth count")]
+function testFmtEmbeddedLiterals() {
+	Assert.assertions([
+		Assert.assertEqual("x {join(xs, \"}\")} y", fmtBodyOf("$\"x {join(xs, \"}\")} y\"")),
+		Assert.assertEqual("a {f(\"{\")} b", fmtBodyOf("$\"a {f(\"{\")} b\"")),
+		Assert.assertEqual("c {g('}')} d", fmtBodyOf("$\"c {g('}')} d\"")),
+		Assert.assertEqual("e {h(@\"}\")} f", fmtBodyOf("$\"e {h(@\"}\")} f\""))
+	])
+}
+
+//![test("carriage return is whitespace")]
+function testCarriageReturnIsWhitespace() {
+	let cr = __str__(chrU(13));
+	let tokens = lexTokens("let" ++ cr ++ "x" ++ cr ++ "= 1;");
+	Assert.assertions([
+		Assert.assertEqual(6, length(tokens)),
+		tokenCheck(tokens, 0, "TokKw", "let"),
+		tokenCheck(tokens, 1, "TokIdent", "x"),
+		Assert.assertEqual(0, lexDiagCount("let" ++ cr ++ "x = 1;"))
+	])
+}

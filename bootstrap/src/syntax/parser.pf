@@ -252,6 +252,55 @@ type FmtHoleResult = {
 	| FmtHoleErr: message
 }
 
+// Interpolations are lexed as standalone fragments, so their spans come back
+// relative to the fragment (line 1, col 1). These helpers shift them into file
+// coordinates before the tokens reach pExpr, so that diagnostics from the
+// inner lex, the inner parse, and every later pass (types, purity, exhaust)
+// that reads the resulting node spans all point at the real source text.
+//
+// The lexer preserves the format body verbatim, so body index i sits at file
+// offset base.offset + i, where base is the position of the body's first
+// character. fmtPosAt walks the prefix to recover line and column; it runs
+// once per interpolation.
+
+function fmtPosAt(body, target, index, line, col, offset) {
+	if index >= target then {
+		T.mkPos(line, col, offset)
+	} else if fmtCharAt(body, index) == "\n" then {
+		fmtPosAt(body, target, index + 1, line + 1, 1, offset + 1)
+	} else {
+		fmtPosAt(body, target, index + 1, line, col + 1, offset + 1)
+	}
+}
+
+// Position of body index `target`, given the span of the whole $"..." token.
+// The body begins two characters after the token start, past the `$"`.
+function fmtBasePos(start, body, target) {
+	fmtPosAt(body, target, 0, start.start.line, start.start.col + 2, start.start.offset + 2)
+}
+
+function remapFmtPos(base, p) {
+	if p.line == 1 then {
+		T.mkPos(base.line, base.col + p.col - 1, base.offset + p.offset)
+	} else {
+		T.mkPos(base.line + p.line - 1, p.col, base.offset + p.offset)
+	}
+}
+
+function remapFmtSpan(base, span) {
+	T.mkSpan(remapFmtPos(base, span.start), remapFmtPos(base, span.end))
+}
+
+function remapFmtToken(base, token) {
+	T.mkToken(token.tok, remapFmtSpan(base, token.span))
+}
+
+// Sub-lex diagnostics are freshly built errors without notes, so rebuilding
+// through D.err loses nothing.
+function remapFmtDiag(base, d) {
+	D.err(d.code, d.message, d.path, remapFmtSpan(base, d.span))
+}
+
 function fmtCharAt(body, index) {
 	if index < 0 then {
 		""
@@ -351,20 +400,20 @@ function scanFmtHole(body, start, index, depth, mode, escaped) {
 	}
 }
 
-function parseFmtExpr(outerSt, text) {
+function parseFmtExpr(outerSt, text, base) {
 	if length(text) == 0 then {
 		failAt(
 			outerSt,
-			currentSpan(outerSt),
+			T.pointSpan(base),
 			"Format interpolation cannot be empty."
 		)
 	} else {
 		match Lex.lex(outerSt.path, text) with
-		| LexErr e -> PErr { e.diags }
+		| LexErr e -> PErr { map(fn d => remapFmtDiag(base, d), e.diags) }
 		| LexOk l -> {
 			let innerSt = PSt {
 				outerSt.path,
-				l.tokens,
+				map(fn t => remapFmtToken(base, t), l.tokens),
 				0,
 				outerSt.nextId,
 				false
@@ -380,8 +429,8 @@ function parseFmtExpr(outerSt, text) {
 					)
 				} else {
 					failAt(
-						outerSt,
-						currentSpan(outerSt),
+						parsed.st,
+						currentSpan(parsed.st),
 						"Format interpolation must contain exactly one expression."
 					)
 				}
@@ -390,7 +439,7 @@ function parseFmtExpr(outerSt, text) {
 	}
 }
 
-function parseFmtParts(st, body, index, literal, parts) {
+function parseFmtParts(st, start, body, index, literal, parts) {
 	if index >= length(body) then {
 		ok(st, reverse(appendFmtLiteral(parts, literal)))
 	} else {
@@ -402,13 +451,14 @@ function parseFmtParts(st, body, index, literal, parts) {
 			| None -> {
 				failAt(
 					st,
-					currentSpan(st),
+					T.pointSpan(fmtBasePos(start, body, index)),
 					"Unknown format string escape."
 				)
 			}
 			| Some escaped -> {
 				parseFmtParts(
 					st,
+					start,
 					body,
 					index + 2,
 					literal ++ escaped.value,
@@ -420,16 +470,17 @@ function parseFmtParts(st, body, index, literal, parts) {
 
 			match scanFmtHole(body, index + 1, index + 1, 1, 0, false) with
 			| FmtHoleErr e -> {
-				failAt(st, currentSpan(st), e.message)
+				failAt(st, T.pointSpan(fmtBasePos(start, body, index)), e.message)
 			}
 			| FmtHoleOk found -> {
 				let hole = found.hole;
 
-				match parseFmtExpr(st, hole.text) with
+				match parseFmtExpr(st, hole.text, fmtBasePos(start, body, index + 1)) with
 				| PErr e -> PErr { e.diags }
 				| POk parsed -> {
 					parseFmtParts(
 						parsed.st,
+						start,
 						body,
 						hole.nextIndex,
 						"",
@@ -440,12 +491,13 @@ function parseFmtParts(st, body, index, literal, parts) {
 		} else if c == "}" then {
 			failAt(
 				st,
-				currentSpan(st),
+				T.pointSpan(fmtBasePos(start, body, index)),
 				"Unmatched '}' in format string."
 			)
 		} else {
 			parseFmtParts(
 				st,
+				start,
 				body,
 				index + 1,
 				literal ++ c,
@@ -458,7 +510,7 @@ function parseFmtParts(st, body, index, literal, parts) {
 function pFormatToken(st0, id, start, body) {
 	let afterToken = advance(st0);
 
-	match parseFmtParts(afterToken, body, 0, "", []) with
+	match parseFmtParts(afterToken, start, body, 0, "", []) with
 	| PErr e -> PErr { e.diags }
 	| POk parsed -> {
 		ok(parsed.st, A.eFmt(id, parsed.node, start))
