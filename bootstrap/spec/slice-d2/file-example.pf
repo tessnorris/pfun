@@ -1,0 +1,102 @@
+// Slice D2 example-facing text-file probe.
+
+import * from "file";
+import * from "io";
+
+let dir = "output/slice-d2/program";
+let path = dir ++ "/sample.txt";
+
+proc main() {
+	match mkdirP(dir) with
+	| Ok _ -> println("mkdir:ok")
+	| Err _ -> println("mkdir:err");
+
+	match writeFile(path, "seed") with
+	| Ok _ -> println("writeFile:ok")
+	| Err _ -> println("writeFile:err");
+
+	match readFile(path) with
+	| Ok value -> println("whole:" ++ value.value)
+	| Err _ -> println("whole:err");
+
+	println("exists:" ++ str(fileExists(path)));
+
+	match fileOpen(path, Write) with
+	| Err _ -> println("openWrite:err")
+	| Ok opened -> {
+		match writeLine(opened.value, "alpha") with
+		| Ok _ -> println("writeLine1:ok")
+		| Err _ -> println("writeLine1:err");
+
+		match writeChar(opened.value, 'β') with
+		| Ok _ -> println("writeChar:ok")
+		| Err _ -> println("writeChar:err");
+
+		match writeLine(opened.value, "eta") with
+		| Ok _ -> println("writeLine2:ok")
+		| Err _ -> println("writeLine2:err");
+
+		match fileClose(opened.value) with
+		| Ok _ -> println("closeWrite:ok")
+		| Err _ -> println("closeWrite:err");
+	};
+
+	match fileOpen(path, Append) with
+	| Err _ -> println("openAppend:err")
+	| Ok opened -> {
+		match writeLine(opened.value, "tail") with
+		| Ok _ -> println("append:ok")
+		| Err _ -> println("append:err");
+
+		match fileClose(opened.value) with
+		| Ok _ -> println("closeAppend:ok")
+		| Err _ -> println("closeAppend:err");
+	};
+
+	match fileOpen(path, Read) with
+	| Err _ -> println("openRead:err")
+	| Ok opened -> {
+		match readChar(opened.value) with
+		| Ok value -> {
+			println("char:" ++ str(value.value))
+		}
+		| Eof _ -> println("char:eof")
+		| Err _ -> println("char:err");
+
+		match readLine(opened.value) with
+		| Ok value -> println("line1:" ++ value.value)
+		| Eof _ -> println("line1:eof")
+		| Err _ -> println("line1:err");
+
+		match readLine(opened.value) with
+		| Ok value -> println("line2:" ++ value.value)
+		| Eof _ -> println("line2:eof")
+		| Err _ -> println("line2:err");
+
+		match readLine(opened.value) with
+		| Ok value -> println("line3:" ++ value.value)
+		| Eof _ -> println("line3:eof")
+		| Err _ -> println("line3:err");
+
+		match readLine(opened.value) with
+		| Ok value -> println("line4:" ++ value.value)
+		| Eof _ -> println("line4:eof")
+		| Err _ -> println("line4:err");
+
+		match fileClose(opened.value) with
+		| Ok _ -> println("closeRead:ok")
+		| Err _ -> println("closeRead:err");
+	};
+
+	match removeFile(path) with
+	| Ok _ -> println("remove:ok")
+	| Err _ -> println("remove:err");
+
+	println("existsAfter:" ++ str(fileExists(path)));
+
+	match readFile(path) with
+	| Ok _ -> println("missing:unexpected")
+	| Err _ -> println("missing:err");
+}
+
+main();

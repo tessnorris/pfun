@@ -1,0 +1,10 @@
+// Slice D1 exact exit-status probe.
+
+import * from "io";
+
+proc main() {
+	exit(23);
+	println("unreachable");
+}
+
+main();

@@ -1,0 +1,35 @@
+// Slice D1 example-style console I/O probe.
+
+import * from "io";
+
+proc showLine(label) {
+	match scanln() with
+	| None -> println(label ++ ":eof")
+	| Some line -> println(label ++ ":" ++ line.value)
+}
+
+proc main() {
+	print("prompt>");
+	flushStdout();
+
+	match scanChar() with
+	| None -> println("char:eof")
+	| Some character -> {
+		println("char:" ++ str(character.value))
+	}
+
+	showLine("line1");
+	showLine("line2");
+
+	match scanChar() with
+	| None -> println("char2:eof")
+	| Some character -> {
+		println("char2:" ++ str(character.value))
+	}
+
+	println([1, 2, 3]);
+	eprint("stderr:");
+	eprintln("done");
+}
+
+main();

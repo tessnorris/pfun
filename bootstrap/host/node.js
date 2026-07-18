@@ -143,46 +143,75 @@
 	}
 
 	let stdinText = null;
-    let stdinOffset = 0;
+	let stdinOffset = 0;
 
-    function ensureStdin() {
-      if (stdinText === null) {
-        stdinText = fs.readFileSync(0, "utf8");
-      }
-      return stdinText;
-    }
+	function ensureStdin() {
+		if (stdinText === null) {
+			stdinText = fs.readFileSync(0, "utf8");
+		}
+		return stdinText;
+	}
 
-    function $scanln() {
-      const text = ensureStdin();
-      if (stdinOffset >= text.length) {
-        return core.$none();
-      }
+	function nextLineBreak(text, start) {
+		for (let index = start; index < text.length; index += 1) {
+			const code = text.charCodeAt(index);
+			if (code === 0x0a || code === 0x0d) {
+				return index;
+			}
+		}
+		return -1;
+	}
 
-      const newline = text.indexOf("\n", stdinOffset);
-      const end = newline < 0 ? text.length : newline;
-      let line = text.slice(stdinOffset, end);
+	function afterLineBreak(text, index) {
+		if (
+			text.charCodeAt(index) === 0x0d
+				&& text.charCodeAt(index + 1) === 0x0a
+		) {
+			return index + 2;
+		}
+		return index + 1;
+	}
 
-      if (line.endsWith("\r")) {
-        line = line.slice(0, -1);
-      }
+	function $scanln() {
+		const text = ensureStdin();
 
-      stdinOffset = newline < 0 ? text.length : newline + 1;
-      return core.$some(line);
-    }
+		if (stdinOffset >= text.length) {
+			return core.$none();
+		}
 
-    function $scanChar() {
-      const text = ensureStdin();
-      if (stdinOffset >= text.length) {
-        return core.$none();
-      }
+		const boundary = nextLineBreak(text, stdinOffset);
 
-      const codePoint = text.codePointAt(stdinOffset);
-      const value = String.fromCodePoint(codePoint);
-      stdinOffset += value.length;
-      return core.$some(value);
-    }
+		if (boundary < 0) {
+			const line = text.slice(stdinOffset);
+			stdinOffset = text.length;
+			return core.$some(line);
+		}
 
-    function $scriptArgs() {
+		const line = text.slice(stdinOffset, boundary);
+		stdinOffset = afterLineBreak(text, boundary);
+		return core.$some(line);
+	}
+
+	function $scanChar() {
+		const text = ensureStdin();
+
+		if (stdinOffset >= text.length) {
+			return core.$none();
+		}
+
+		const codePoint = text.codePointAt(stdinOffset);
+
+		if (codePoint === undefined) {
+			stdinOffset = text.length;
+			return core.$none();
+		}
+
+		const value = String.fromCodePoint(codePoint);
+		stdinOffset += value.length;
+		return core.$some(value);
+	}
+
+	    function $scriptArgs() {
       return process.argv.slice(2);
     }
 
@@ -194,98 +223,618 @@
       return core.$some(String(process.env[name]));
     }
 
+	function $envVars() {
+		const snapshot = core.$newDict();
+
+		for (const name of Object.keys(process.env)) {
+			const value = process.env[name];
+
+			if (value !== undefined) {
+				core.$dictSet(
+					snapshot,
+					String(name),
+					String(value)
+				);
+			}
+		}
+
+		return snapshot;
+	}
+
     function $exit(code) {
       process.exit(intToNumber(code, "exit code"));
     }
 
     // ── filesystem ───────────────────────────────────────────────────────
 
-    function $readFile(path) {
-      path = pathText(path, "readFile path");
-      return resultOf(function readText() {
-        return fs.readFileSync(path, "utf8");
-      });
-    }
+	function $readFile(path) {
+		path = pathText(path, "readFile path");
+		return resultOf(function readText() {
+			return fs.readFileSync(path, "utf8");
+		});
+	}
 
-    function $writeFile(path, content) {
-      path = pathText(path, "writeFile path");
-      if (typeof content !== "string") {
-        throw new Error("writeFile content must be a Str.");
-      }
+	function $writeFile(path, content) {
+		path = pathText(path, "writeFile path");
 
-      return resultOf(function writeText() {
-        fs.writeFileSync(path, content, "utf8");
-                return null;
-      });
-    }
+		if (typeof content !== "string") {
+			throw new Error("writeFile content must be a Str.");
+		}
 
-    function $fileExists(path) {
-      path = pathText(path, "fileExists path");
-      try {
-        return fs.existsSync(path);
-      } catch (_error) {
-        return false;
-      }
-    }
+		return resultOf(function writeText() {
+			fs.writeFileSync(path, content, "utf8");
+			return null;
+		});
+	}
 
-    function $mkdirP(path) {
-      path = pathText(path, "mkdirP path");
-      return resultOf(function makeDirectory() {
-        fs.mkdirSync(path, { recursive: true });
-        return null;
-      });
-    }
+	function $fileExists(path) {
+		path = pathText(path, "fileExists path");
 
-    function fileModeName(mode) {
-      if (mode && typeof mode.$t === "string") {
-        return mode.$t;
-      }
-      if (typeof mode === "string") {
-        return mode;
-      }
-      throw new Error("fileOpen mode must be Read, Write, or Append.");
-    }
+		try {
+			return fs.existsSync(path);
+		} catch (_error) {
+			return false;
+		}
+	}
 
-    function openFlags(modeName) {
-      if (modeName === "Read") return "r";
-      if (modeName === "Write") return "w";
-      if (modeName === "Append") return "a";
-      throw new Error("unknown file mode: " + modeName);
-    }
+	function $mkdirP(path) {
+		path = pathText(path, "mkdirP path");
 
-    function $fileOpen(path, mode) {
-      path = pathText(path, "fileOpen path");
-      return resultOf(function openFile() {
-        const modeName = fileModeName(mode);
-        return {
-          $file: true,
-          fd: fs.openSync(path, openFlags(modeName)),
-          mode: modeName,
-          closed: false
-        };
-      });
-    }
+		return resultOf(function makeDirectory() {
+			fs.mkdirSync(path, { recursive: true });
+			return null;
+		});
+	}
 
-    function $fileClose(handle) {
-      return resultOf(function closeFile() {
-        if (
-          !handle ||
-          handle.$file !== true ||
-          !Number.isInteger(handle.fd)
-        ) {
-          throw new Error("fileClose expects a FileHandle.");
-        }
-        if (handle.closed) {
-          throw new Error("file handle is already closed.");
-        }
+	function $removeFile(path) {
+		path = pathText(path, "removeFile path");
 
-        fs.closeSync(handle.fd);
-        handle.closed = true;
-        return null;
-      });
-    }
+		return resultOf(function removePath() {
+			fs.unlinkSync(path);
+			return null;
+		});
+	}
 
-    // ── builtin module registry ──────────────────────────────────────────
+	function fileModeName(mode) {
+		if (mode && typeof mode.$t === "string") {
+			return mode.$t;
+		}
+
+		if (typeof mode === "string") {
+			return mode;
+		}
+
+		throw new Error(
+			"fileOpen mode must be Read, Write, or Append."
+		);
+	}
+
+	function openFlags(modeName) {
+		if (modeName === "Read") return "r";
+		if (modeName === "Write") return "w";
+		if (modeName === "Append") return "a";
+		throw new Error("unknown file mode: " + modeName);
+	}
+
+	function requireFileHandle(handle, operation, modes) {
+		if (
+			!handle
+				|| handle.$file !== true
+				|| !Number.isInteger(handle.fd)
+		) {
+			throw new Error(operation + " expects a FileHandle.");
+		}
+
+		if (handle.closed) {
+			throw new Error("file handle is already closed.");
+		}
+
+		if (modes && !modes.includes(handle.mode)) {
+			throw new Error(
+				operation
+					+ " requires "
+					+ modes.join(" or ")
+					+ " mode."
+			);
+		}
+
+		return handle;
+	}
+
+	function readOk(value) {
+		return core.$makeVariant(
+			"Ok",
+			"ReadResult",
+			["value"],
+			[value]
+		);
+	}
+
+	function readEof() {
+		return core.$makeVariant(
+			"Eof",
+			"ReadResult",
+			[],
+			[]
+		);
+	}
+
+	function readErr(error) {
+		return core.$makeVariant(
+			"Err",
+			"ReadResult",
+			["message"],
+			[errorMessage(error)]
+		);
+	}
+
+	function readHandleByte(handle) {
+		if (handle.pending.length > 0) {
+			return handle.pending.shift();
+		}
+
+		const one = Buffer.allocUnsafe(1);
+		const count = fs.readSync(
+			handle.fd,
+			one,
+			0,
+			1,
+			null
+		);
+
+		return count === 0 ? null : one[0];
+	}
+
+	function unreadHandleByte(handle, byte) {
+		handle.pending.unshift(byte);
+	}
+
+	function utf8Width(first) {
+		if (first <= 0x7f) return 1;
+		if (first >= 0xc2 && first <= 0xdf) return 2;
+		if (first >= 0xe0 && first <= 0xef) return 3;
+		if (first >= 0xf0 && first <= 0xf4) return 4;
+		throw new Error("invalid UTF-8 leading byte.");
+	}
+
+	function readUtf8Char(handle) {
+		const first = readHandleByte(handle);
+
+		if (first === null) {
+			return null;
+		}
+
+		const width = utf8Width(first);
+		const bytes = [first];
+
+		while (bytes.length < width) {
+			const next = readHandleByte(handle);
+
+			if (next === null) {
+				throw new Error(
+					"truncated UTF-8 character at end of file."
+				);
+			}
+
+			if (next < 0x80 || next > 0xbf) {
+				throw new Error(
+					"invalid UTF-8 continuation byte."
+				);
+			}
+
+			bytes.push(next);
+		}
+
+		const value = Buffer.from(bytes).toString("utf8");
+
+		if (
+			value.length === 0
+				|| value.codePointAt(0) === 0xfffd
+		) {
+			throw new Error("invalid UTF-8 character.");
+		}
+
+		return value;
+	}
+
+	function writeHandleText(handle, text) {
+		const bytes = Buffer.from(text, "utf8");
+		let offset = 0;
+
+		while (offset < bytes.length) {
+			offset += fs.writeSync(
+				handle.fd,
+				bytes,
+				offset,
+				bytes.length - offset,
+				null
+			);
+		}
+	}
+
+	function $fileOpen(path, mode) {
+		path = pathText(path, "fileOpen path");
+
+		return resultOf(function openFile() {
+			const modeName = fileModeName(mode);
+
+			return {
+				$file: true,
+				fd: fs.openSync(path, openFlags(modeName)),
+				mode: modeName,
+				closed: false,
+				pending: []
+			};
+		});
+	}
+
+	function $fileClose(handle) {
+		return resultOf(function closeFile() {
+			requireFileHandle(
+				handle,
+				"fileClose",
+				null
+			);
+			fs.closeSync(handle.fd);
+			handle.closed = true;
+			handle.pending = [];
+			return null;
+		});
+	}
+
+	function $readChar(handle) {
+		try {
+			requireFileHandle(
+				handle,
+				"readChar",
+				["Read"]
+			);
+
+			const value = readUtf8Char(handle);
+			return value === null
+				? readEof()
+				: readOk(value);
+		} catch (error) {
+			return readErr(error);
+		}
+	}
+
+	function $readLine(handle) {
+		try {
+			requireFileHandle(
+				handle,
+				"readLine",
+				["Read"]
+			);
+
+			const bytes = [];
+
+			while (true) {
+				const byte = readHandleByte(handle);
+
+				if (byte === null) {
+					return bytes.length === 0
+						? readEof()
+						: readOk(
+							Buffer.from(bytes).toString("utf8")
+						);
+				}
+
+				if (byte === 0x0a) {
+					return readOk(
+						Buffer.from(bytes).toString("utf8")
+					);
+				}
+
+				if (byte === 0x0d) {
+					const next = readHandleByte(handle);
+
+					if (next !== null && next !== 0x0a) {
+						unreadHandleByte(handle, next);
+					}
+
+					return readOk(
+						Buffer.from(bytes).toString("utf8")
+					);
+				}
+
+				bytes.push(byte);
+			}
+		} catch (error) {
+			return readErr(error);
+		}
+	}
+
+	function $writeChar(handle, value) {
+		if (
+			typeof value !== "string"
+				|| Array.from(value).length !== 1
+		) {
+			return core.$err(
+				"writeChar value must be a Char."
+			);
+		}
+
+		return resultOf(function writeCharacter() {
+			requireFileHandle(
+				handle,
+				"writeChar",
+				["Write", "Append"]
+			);
+			writeHandleText(handle, value);
+			return null;
+		});
+	}
+
+	function $writeLine(handle, value) {
+		if (typeof value !== "string") {
+			return core.$err(
+				"writeLine value must be a Str."
+			);
+		}
+
+		return resultOf(function writeTextLine() {
+			requireFileHandle(
+				handle,
+				"writeLine",
+				["Write", "Append"]
+			);
+			writeHandleText(handle, value + "\n");
+			return null;
+		});
+	}
+
+	// ── binary file I/O and buffers ──────────────────────────────────────
+
+	function byteNumber(value, what) {
+		const number = Number(value);
+
+		if (
+			!Number.isInteger(number)
+				|| number < 0
+				|| number > 255
+		) {
+			throw new Error(what + " must be a Byte (0..255).");
+		}
+
+		return number;
+	}
+
+	function byteList(value, what) {
+		return core.$listToArray(value).map(
+			function validateByte(byte, index) {
+				return byteNumber(
+					byte,
+					what + "[" + index + "]"
+				);
+			}
+		);
+	}
+
+	function readCount(value, what) {
+		const count = intToNumber(value, what);
+
+		if (count < 0) {
+			throw new Error(what + " must not be negative.");
+		}
+
+		return count;
+	}
+
+	function readHandleBytes(handle, count) {
+		const out = [];
+
+		while (out.length < count) {
+			const byte = readHandleByte(handle);
+
+			if (byte === null) {
+				break;
+			}
+
+			out.push(byte);
+		}
+
+		return out;
+	}
+
+	function writeHandleBytes(handle, bytes) {
+		const data = Buffer.from(bytes);
+		let offset = 0;
+
+		while (offset < data.length) {
+			offset += fs.writeSync(
+				handle.fd,
+				data,
+				offset,
+				data.length - offset,
+				null
+			);
+		}
+	}
+
+	function bufferModeName(mode) {
+		const name = mode && typeof mode.$t === "string"
+			? mode.$t
+			: String(mode);
+
+		if (name !== "ByteMode" && name !== "CharMode") {
+			throw new Error(
+				"buffer mode must be ByteMode or CharMode."
+			);
+		}
+
+		return name;
+	}
+
+	function requireBuffer(buffer, operation, expectedMode) {
+		if (!buffer || !Array.isArray(buffer.$buf)) {
+			throw new Error(operation + " expects a Buffer.");
+		}
+
+		if (
+			expectedMode !== null
+				&& buffer.$mode !== expectedMode
+		) {
+			throw new Error(
+				operation
+					+ " requires a "
+					+ expectedMode
+					+ " buffer."
+			);
+		}
+
+		return buffer;
+	}
+
+	function $readByte(handle) {
+		try {
+			requireFileHandle(handle, "readByte", ["Read"]);
+			const byte = readHandleByte(handle);
+			return byte === null ? readEof() : readOk(byte);
+		} catch (error) {
+			return readErr(error);
+		}
+	}
+
+	function $readBytes(handle, count) {
+		try {
+			requireFileHandle(handle, "readBytes", ["Read"]);
+			const wanted = readCount(count, "readBytes count");
+
+			if (wanted === 0) {
+				return readOk([]);
+			}
+
+			const bytes = readHandleBytes(handle, wanted);
+			return bytes.length === 0
+				? readEof()
+				: readOk(bytes);
+		} catch (error) {
+			return readErr(error);
+		}
+	}
+
+	function $writeByte(handle, byte) {
+		return resultOf(function writeOneByte() {
+			requireFileHandle(
+				handle,
+				"writeByte",
+				["Write", "Append"]
+			);
+			writeHandleBytes(
+				handle,
+				[byteNumber(byte, "writeByte value")]
+			);
+			return null;
+		});
+	}
+
+	function $writeBytes(handle, bytes) {
+		return resultOf(function writeManyBytes() {
+			requireFileHandle(
+				handle,
+				"writeBytes",
+				["Write", "Append"]
+			);
+			writeHandleBytes(
+				handle,
+				byteList(bytes, "writeBytes value")
+			);
+			return null;
+		});
+	}
+
+	function $readBuffer(handle, count, mode) {
+		return resultOf(function readIntoNewBuffer() {
+			requireFileHandle(
+				handle,
+				"readBuffer",
+				["Read"]
+			);
+			const wanted = readCount(count, "readBuffer count");
+			const buffer = core.$makeBuffer(bufferModeName(mode));
+			core.$appendByteBuffer(
+				buffer,
+				readHandleBytes(handle, wanted)
+			);
+			return buffer;
+		});
+	}
+
+	function $writeBuffer(handle, buffer) {
+		return resultOf(function writeWholeBuffer() {
+			requireFileHandle(
+				handle,
+				"writeBuffer",
+				["Write", "Append"]
+			);
+			requireBuffer(buffer, "writeBuffer", null);
+			writeHandleBytes(
+				handle,
+				core.$bufferToBytes(buffer)
+			);
+			return null;
+		});
+	}
+
+	function $makeBuffer(mode) {
+		return core.$makeBuffer(bufferModeName(mode));
+	}
+
+	function $makeStringBuffer() {
+		return core.$makeBuffer("CharMode");
+	}
+
+	function $appendBuffer(buffer, byte) {
+		requireBuffer(buffer, "appendBuffer", "ByteMode");
+		core.$appendByteBuffer(
+			buffer,
+			[byteNumber(byte, "appendBuffer value")]
+		);
+		return null;
+	}
+
+	function $appendChar(buffer, character) {
+		requireBuffer(buffer, "appendChar", "CharMode");
+
+		if (
+			typeof character !== "string"
+				|| Array.from(character).length !== 1
+		) {
+			throw new Error("appendChar value must be a Char.");
+		}
+
+		core.$appendChar(buffer, character);
+		return null;
+	}
+
+	function $appendString(buffer, text) {
+		requireBuffer(buffer, "appendString", "CharMode");
+
+		if (typeof text !== "string") {
+			throw new Error("appendString value must be a Str.");
+		}
+
+		core.$appendString(buffer, text);
+		return null;
+	}
+
+	function $bufferLength(buffer) {
+		requireBuffer(buffer, "bufferLength", null);
+		return core.$bufferLength(buffer);
+	}
+
+	function $bufferToBytes(buffer) {
+		requireBuffer(buffer, "bufferToBytes", "ByteMode");
+		return core.$bufferToBytes(buffer);
+	}
+
+	function $bufferToString(buffer) {
+		requireBuffer(buffer, "bufferToString", "CharMode");
+		return core.$bufferToString(buffer);
+	}
+
+	// ── builtin module registry ──────────────────────────────────────────
 
     const coreModule = Object.freeze({
       __str__: core.$str,
@@ -331,17 +880,37 @@
       scriptArgs: $scriptArgs,
       getEnv: $getEnv,
       exit: $exit,
-		runNodeBundle: $runNodeBundle
+		runNodeBundle: $runNodeBundle,
+      envVars: $envVars
     });
 
     const fileModule = Object.freeze({
-      readFile: $readFile,
-      writeFile: $writeFile,
-      fileExists: $fileExists,
-      mkdirP: $mkdirP,
-      fileOpen: $fileOpen,
-      fileClose: $fileClose
-    });
+		readFile: $readFile,
+		writeFile: $writeFile,
+		fileExists: $fileExists,
+		mkdirP: $mkdirP,
+		removeFile: $removeFile,
+		fileOpen: $fileOpen,
+		fileClose: $fileClose,
+		readChar: $readChar,
+		readLine: $readLine,
+		readByte: $readByte,
+		readBytes: $readBytes,
+		writeChar: $writeChar,
+		writeLine: $writeLine,
+		writeByte: $writeByte,
+		writeBytes: $writeBytes,
+		readBuffer: $readBuffer,
+		writeBuffer: $writeBuffer,
+		makeBuffer: $makeBuffer,
+		makeStringBuffer: $makeStringBuffer,
+		appendBuffer: $appendBuffer,
+		appendChar: $appendChar,
+		appendString: $appendString,
+		bufferLength: $bufferLength,
+		bufferToBytes: $bufferToBytes,
+		bufferToString: $bufferToString,
+	});
 
     const jsonModule = Object.freeze({
       jsonSerialize: core.$jsonSerialize,
@@ -353,7 +922,7 @@
       sleep: core.$sleep
     });
 
-    const mathModule = Object.freeze({
+	const mathModule = Object.freeze({
       pi: core.$pi,
       e: core.$e,
       tau: core.$tau,
@@ -388,8 +957,28 @@
       $mkdirP,
       $fileOpen,
       $fileClose,
+      $removeFile,
+      $readChar,
+      $readLine,
+      $writeChar,
+      $writeLine,
+      $readByte,
+      $readBytes,
+      $writeByte,
+      $writeBytes,
+      $readBuffer,
+      $writeBuffer,
+      $makeBuffer,
+      $makeStringBuffer,
+      $appendBuffer,
+      $appendChar,
+      $appendString,
+      $bufferLength,
+      $bufferToBytes,
+      $bufferToString,
       $builtins,
 		$runNodeBundle,
+		$envVars
     });
   }
 );

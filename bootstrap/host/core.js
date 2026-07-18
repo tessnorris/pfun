@@ -1562,11 +1562,49 @@ function $jsonDeserialize(text, targetType) {
     return null;
   }
 
-  function $sleep(ms) {
-    return new Promise(function resolveLater(resolve) {
-      setTimeout(function done() { resolve(null); }, Number($canonI(ms)));
-    });
-  }
+function $sleep(ms) {
+		ms = $canonI(ms);
+
+		const maximum = 2147483647;
+
+		if (typeof ms === "bigint") {
+			if (ms < 0n) {
+				$runtimeError(
+					"sleep duration must be non-negative."
+				);
+			}
+
+			if (ms > 2147483647n) {
+				$runtimeError(
+					"sleep duration must be at most "
+						+ maximum
+						+ " milliseconds."
+				);
+			}
+
+			ms = Number(ms);
+		} else {
+			if (ms < 0) {
+				$runtimeError(
+					"sleep duration must be non-negative."
+				);
+			}
+
+			if (ms > maximum) {
+				$runtimeError(
+					"sleep duration must be at most "
+						+ maximum
+						+ " milliseconds."
+				);
+			}
+		}
+
+		return new Promise(function resolveLater(resolve) {
+			setTimeout(function done() {
+				resolve(null);
+			}, ms);
+		});
+	}
 
   function $pi() { return Math.PI; }
   function $e() { return Math.E; }

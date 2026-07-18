@@ -1,0 +1,125 @@
+// Slice D3 example-facing binary and buffer probe.
+
+import * from "file";
+import * from "io";
+
+let dir = "output/slice-d3/program";
+let bytesPath = dir ++ "/bytes.bin";
+let bufferPath = dir ++ "/buffer.txt";
+
+proc main() {
+	match mkdirP(dir) with
+	| Ok _ -> println("mkdir:ok")
+	| Err _ -> println("mkdir:err");
+
+	match fileOpen(bytesPath, Write) with
+	| Err _ -> println("openBytesWrite:err")
+	| Ok opened -> {
+		match writeByte(opened.value, 0xDE_b) with
+		| Ok _ -> println("writeByte:ok")
+		| Err _ -> println("writeByte:err");
+
+		match writeBytes(
+			opened.value,
+			[0xAD_b, 0xBE_b, 0xEF_b]
+		) with
+		| Ok _ -> println("writeBytes:ok")
+		| Err _ -> println("writeBytes:err");
+
+		match fileClose(opened.value) with
+		| Ok _ -> println("closeBytesWrite:ok")
+		| Err _ -> println("closeBytesWrite:err");
+	};
+
+	match fileOpen(bytesPath, Read) with
+	| Err _ -> println("openBytesRead:err")
+	| Ok opened -> {
+		match readByte(opened.value) with
+		| Ok byte -> println("byte1:" ++ str(byte.value))
+		| Eof _ -> println("byte1:eof")
+		| Err _ -> println("byte1:err");
+
+		match readBytes(opened.value, 3) with
+		| Ok bytes -> println("bytes:" ++ str(bytes.value))
+		| Eof _ -> println("bytes:eof")
+		| Err _ -> println("bytes:err");
+
+		match readByte(opened.value) with
+		| Ok byte -> println("byteEof:" ++ str(byte.value))
+		| Eof _ -> println("byteEof:yes")
+		| Err _ -> println("byteEof:err");
+
+		match fileClose(opened.value) with
+		| Ok _ -> println("closeBytesRead:ok")
+		| Err _ -> println("closeBytesRead:err");
+	};
+
+	var raw = makeBuffer(ByteMode);
+	appendBuffer(raw, 0x41_b);
+	appendBuffer(raw, 0x42_b);
+	println("rawLength:" ++ str(bufferLength(raw)));
+	println("rawBytes:" ++ str(bufferToBytes(raw)));
+
+	var chars = makeStringBuffer();
+	appendString(chars, "hello ");
+	appendChar(chars, 'β');
+	println("charsLength:" ++ str(bufferLength(chars)));
+	println("charsText:" ++ bufferToString(chars));
+
+	match fileOpen(bufferPath, Write) with
+	| Err _ -> println("openBufferWrite:err")
+	| Ok opened -> {
+		match writeBuffer(opened.value, chars) with
+		| Ok _ -> println("writeBuffer:ok")
+		| Err _ -> println("writeBuffer:err");
+
+		match fileClose(opened.value) with
+		| Ok _ -> println("closeBufferWrite:ok")
+		| Err _ -> println("closeBufferWrite:err");
+	};
+
+	match fileOpen(bufferPath, Read) with
+	| Err _ -> println("openBufferRead:err")
+	| Ok opened -> {
+		match readBuffer(opened.value, 5, ByteMode) with
+		| Ok buffer -> {
+			println(
+				"readBufferBytes:"
+					++ str(bufferToBytes(buffer.value))
+			)
+		}
+		| Err _ -> println("readBufferBytes:err");
+
+		match readBuffer(opened.value, 3, CharMode) with
+		| Ok buffer -> {
+			println(
+				"readBufferText:"
+					++ bufferToString(buffer.value)
+			)
+		}
+		| Err _ -> println("readBufferText:err");
+
+		match readBuffer(opened.value, 4, ByteMode) with
+		| Ok buffer -> {
+			println(
+				"readBufferEofLength:"
+					++ str(bufferLength(buffer.value))
+			)
+		}
+		| Err _ -> println("readBufferEofLength:err");
+
+		match fileClose(opened.value) with
+		| Ok _ -> println("closeBufferRead:ok")
+		| Err _ -> println("closeBufferRead:err");
+	};
+
+	match removeFile(bytesPath) with
+	| Ok _ -> println("removeBytes:ok")
+	| Err _ -> println("removeBytes:err");
+
+	match removeFile(bufferPath) with
+	| Ok _ -> println("removeBuffer:ok")
+	| Err _ -> println("removeBuffer:err");
+}
+
+main();

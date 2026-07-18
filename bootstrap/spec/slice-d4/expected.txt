@@ -1,0 +1,4 @@
+start
+zero
+fire
+done

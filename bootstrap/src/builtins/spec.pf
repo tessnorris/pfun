@@ -298,6 +298,17 @@ function ioExports() {
 			"exit",
 			sch([], proc1(TY.tInt(), TY.tUnit(), false)),
 			"$exit"
+		),
+		nodeProc(
+			"envVars",
+			sch(
+				[],
+				proc0(
+					dictOf(TY.tStr(), TY.tStr()),
+					false
+				)
+			),
+			"$envVars"
 		)
 	]
 }
@@ -305,14 +316,271 @@ function ioExports() {
 function fileExports() {
 	let handle = TY.tNamed("FileHandle", []);
 	let mode = TY.tNamed("FileMode", []);
-	let readResult = TY.tNamed("ReadResult", [tv(0), TY.tStr()]);
+	let buffer = TY.tNamed("Buffer", []);
+	let bufferMode = TY.tNamed("BufferMode", []);
+	let charRead = TY.tNamed(
+		"ReadResult",
+		[TY.tChar(), TY.tStr()]
+	);
+	let lineRead = TY.tNamed(
+		"ReadResult",
+		[TY.tStr(), TY.tStr()]
+	);
+	let byteRead = TY.tNamed(
+		"ReadResult",
+		[TY.tByte(), TY.tStr()]
+	);
+	let bytesRead = TY.tNamed(
+		"ReadResult",
+		[listOf(TY.tByte()), TY.tStr()]
+	);
+
 	[
-		nodeProc("readFile", sch([], proc1(TY.tStr(), ioResult(TY.tStr()), false)), "$readFile"),
-		nodeProc("writeFile", sch([], proc2(TY.tStr(), TY.tStr(), ioResult(TY.tUnit()), false)), "$writeFile"),
-		nodeProc("fileExists", sch([], proc1(TY.tStr(), TY.tBool(), false)), "$fileExists"),
-		nodeProc("mkdirP", sch([], proc1(TY.tStr(), ioResult(TY.tUnit()), false)), "$mkdirP"),
-		nodeProc("fileOpen", sch([], proc2(TY.tStr(), mode, ioResult(handle), false)), "$fileOpen"),
-		nodeProc("fileClose", sch([], proc1(handle, ioResult(TY.tUnit()), false)), "$fileClose")
+		nodeProc(
+			"readFile",
+			sch(
+				[],
+				proc1(
+					TY.tStr(),
+					ioResult(TY.tStr()),
+					false
+				)
+			),
+			"$readFile"
+		),
+		nodeProc(
+			"writeFile",
+			sch(
+				[],
+				proc2(
+					TY.tStr(),
+					TY.tStr(),
+					ioResult(TY.tUnit()),
+					false
+				)
+			),
+			"$writeFile"
+		),
+		nodeProc(
+			"fileExists",
+			sch(
+				[],
+				proc1(
+					TY.tStr(),
+					TY.tBool(),
+					false
+				)
+			),
+			"$fileExists"
+		),
+		nodeProc(
+			"mkdirP",
+			sch(
+				[],
+				proc1(
+					TY.tStr(),
+					ioResult(TY.tUnit()),
+					false
+				)
+			),
+			"$mkdirP"
+		),
+		nodeProc(
+			"removeFile",
+			sch(
+				[],
+				proc1(
+					TY.tStr(),
+					ioResult(TY.tUnit()),
+					false
+				)
+			),
+			"$removeFile"
+		),
+		nodeProc(
+			"fileOpen",
+			sch(
+				[],
+				proc2(
+					TY.tStr(),
+					mode,
+					ioResult(handle),
+					false
+				)
+			),
+			"$fileOpen"
+		),
+		nodeProc(
+			"fileClose",
+			sch(
+				[],
+				proc1(
+					handle,
+					ioResult(TY.tUnit()),
+					false
+				)
+			),
+			"$fileClose"
+		),
+		nodeProc(
+			"readChar",
+			sch([], proc1(handle, charRead, false)),
+			"$readChar"
+		),
+		nodeProc(
+			"readLine",
+			sch([], proc1(handle, lineRead, false)),
+			"$readLine"
+		),
+		nodeProc(
+			"readByte",
+			sch([], proc1(handle, byteRead, false)),
+			"$readByte"
+		),
+		nodeProc(
+			"readBytes",
+			sch(
+				[],
+				proc2(
+					handle,
+					TY.tInt(),
+					bytesRead,
+					false
+				)
+			),
+			"$readBytes"
+		),
+		nodeProc(
+			"writeChar",
+			sch(
+				[],
+				proc2(
+					handle,
+					TY.tChar(),
+					ioResult(TY.tUnit()),
+					false
+				)
+			),
+			"$writeChar"
+		),
+		nodeProc(
+			"writeLine",
+			sch(
+				[],
+				proc2(
+					handle,
+					TY.tStr(),
+					ioResult(TY.tUnit()),
+					false
+				)
+			),
+			"$writeLine"
+		),
+		nodeProc(
+			"writeByte",
+			sch(
+				[],
+				proc2(
+					handle,
+					TY.tByte(),
+					ioResult(TY.tUnit()),
+					false
+				)
+			),
+			"$writeByte"
+		),
+		nodeProc(
+			"writeBytes",
+			sch(
+				[],
+				proc2(
+					handle,
+					listOf(TY.tByte()),
+					ioResult(TY.tUnit()),
+					false
+				)
+			),
+			"$writeBytes"
+		),
+		nodeProc(
+			"readBuffer",
+			sch(
+				[],
+				proc3(
+					handle,
+					TY.tInt(),
+					bufferMode,
+					ioResult(buffer),
+					false
+				)
+			),
+			"$readBuffer"
+		),
+		nodeProc(
+			"writeBuffer",
+			sch(
+				[],
+				proc2(
+					handle,
+					buffer,
+					ioResult(TY.tUnit()),
+					false
+				)
+			),
+			"$writeBuffer"
+		),
+		nodeProc(
+			"makeBuffer",
+			sch(
+				[],
+				proc1(bufferMode, buffer, false)
+			),
+			"$makeBuffer"
+		),
+		nodeProc(
+			"makeStringBuffer",
+			sch([], proc0(buffer, false)),
+			"$makeStringBuffer"
+		),
+		nodeProc(
+			"appendBuffer",
+			sch(
+				[],
+				proc2(buffer, TY.tByte(), TY.tUnit(), false)
+			),
+			"$appendBuffer"
+		),
+		nodeProc(
+			"appendChar",
+			sch(
+				[],
+				proc2(buffer, TY.tChar(), TY.tUnit(), false)
+			),
+			"$appendChar"
+		),
+		nodeProc(
+			"appendString",
+			sch(
+				[],
+				proc2(buffer, TY.tStr(), TY.tUnit(), false)
+			),
+			"$appendString"
+		),
+		nodePure(
+			"bufferLength",
+			sch([], fn1(buffer, TY.tInt())),
+			"$bufferLength"
+		),
+		nodePure(
+			"bufferToBytes",
+			sch([], fn1(buffer, listOf(TY.tByte()))),
+			"$bufferToBytes"
+		),
+		nodePure(
+			"bufferToString",
+			sch([], fn1(buffer, TY.tStr())),
+			"$bufferToString"
+		)
 	]
 }
 
@@ -356,7 +624,22 @@ export function ioModuleSpec() {
 }
 
 export function fileModuleSpec() {
-	builtinModule("file", fileExports(), [builtinUnion("FileMode", fileModeVariants()), builtinUnion("ReadResult", readResultVariants()), builtinUnion("Result", resultVariants())])
+	builtinModule(
+		"file",
+		fileExports(),
+		[
+			builtinUnion("FileMode", fileModeVariants()),
+			builtinUnion(
+				"BufferMode",
+				bufferModeVariants()
+			),
+			builtinUnion(
+				"ReadResult",
+				readResultVariants()
+			),
+			builtinUnion("Result", resultVariants())
+		]
+	)
 }
 
 export function jsonModuleSpec() {

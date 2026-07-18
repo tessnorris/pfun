@@ -1,0 +1,23 @@
+// Slice D4 async/sleep probe.
+
+import * from "async";
+import * from "io";
+
+async proc fireAndForget() {
+	await sleep(10);
+	println("fire");
+}
+
+async proc main() {
+	println("start");
+
+	await sleep(0);
+	println("zero");
+
+	fireAndForget();
+
+	await sleep(40);
+	println("done");
+}
+
+main();

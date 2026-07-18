@@ -1,0 +1,9 @@
+// Slice D4 negative probe: await requires an async proc.
+
+import * from "async";
+
+proc main() {
+	await sleep(1);
+}
+
+main();

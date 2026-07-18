@@ -6,7 +6,7 @@ import * as Iface from "../src/check/iface";
 import * as ListX from "../src/data/listx";
 import * as StrX from "../src/data/strx";
 import * from "io"; // added by gen-test-harness
-import * from "testing/runner"; // added by gen-test-harness
+import * from "$PFUN_HOME/bootstrap/src/testing/runner"; // added by gen-test-harness
 
 
 function assertSomeValue(opt, message) {
@@ -134,6 +134,104 @@ function testBuiltinIfaceMapAliases() {
 	])
 }
 
+//![test("file iface exposes D2 text-file operations")]
+function testFileIfaceExposesD2TextOperations() {
+	match lookupBuiltinIface("file") with
+	| None -> {
+		Assert.assertions([
+			Assert.fail("Missing file builtin iface.")
+		])
+	}
+	| Some iface -> {
+		let i = iface.value;
+
+		Assert.assertions([
+			Assert.assertTrue(
+				Iface.hasExport(i, "readFile")
+			),
+			Assert.assertTrue(
+				Iface.hasExport(i, "writeFile")
+			),
+			Assert.assertTrue(
+				Iface.hasExport(i, "removeFile")
+			),
+			Assert.assertTrue(
+				Iface.hasExport(i, "fileOpen")
+			),
+			Assert.assertTrue(
+				Iface.hasExport(i, "fileClose")
+			),
+			Assert.assertTrue(
+				Iface.hasExport(i, "readChar")
+			),
+			Assert.assertTrue(
+				Iface.hasExport(i, "readLine")
+			),
+			Assert.assertTrue(
+				Iface.hasExport(i, "writeChar")
+			),
+			Assert.assertTrue(
+				Iface.hasExport(i, "writeLine")
+			)
+		])
+	}
+}
+
+//![test("file iface exposes D3 binary and buffer operations")]
+function testFileIfaceExposesD3BinaryAndBuffers() {
+	match lookupBuiltinIface("file") with
+	| None -> {
+		Assert.assertions([
+			Assert.fail("Missing file builtin iface.")
+		])
+	}
+	| Some iface -> {
+		let i = iface.value;
+
+		Assert.assertions([
+			assertSomeValue(
+				Iface.lookupUnion(i, "BufferMode"),
+				"Missing BufferMode union."
+			),
+			Assert.assertTrue(Iface.hasExport(i, "readByte")),
+			Assert.assertTrue(Iface.hasExport(i, "readBytes")),
+			Assert.assertTrue(Iface.hasExport(i, "writeByte")),
+			Assert.assertTrue(Iface.hasExport(i, "writeBytes")),
+			Assert.assertTrue(Iface.hasExport(i, "readBuffer")),
+			Assert.assertTrue(Iface.hasExport(i, "writeBuffer")),
+			Assert.assertTrue(Iface.hasExport(i, "makeBuffer")),
+			Assert.assertTrue(
+				Iface.hasExport(i, "makeStringBuffer")
+			),
+			Assert.assertTrue(Iface.hasExport(i, "appendBuffer")),
+			Assert.assertTrue(Iface.hasExport(i, "appendChar")),
+			Assert.assertTrue(Iface.hasExport(i, "appendString")),
+			Assert.assertTrue(Iface.hasExport(i, "bufferLength")),
+			Assert.assertTrue(Iface.hasExport(i, "bufferToBytes")),
+			Assert.assertTrue(Iface.hasExport(i, "bufferToString"))
+		])
+	}
+}
+
+//![test("io iface exposes D5 process argument and environment procedures")]
+function testIoIfaceExposesD5ProcessEnvironment() {
+	match lookupBuiltinIface("io") with
+	| None -> {
+		Assert.assertions([
+			Assert.fail("Missing io builtin iface.")
+		])
+	}
+	| Some iface -> {
+		let i = iface.value;
+
+		Assert.assertions([
+			Assert.assertTrue(Iface.hasExport(i, "scriptArgs")),
+			Assert.assertTrue(Iface.hasExport(i, "getEnv")),
+			Assert.assertTrue(Iface.hasExport(i, "envVars"))
+		])
+	}
+}
+
 // ─────────────────────────────────────────────────────────────────
 // GENERATED TEST HARNESS (gen-test-harness.js) — do not edit.
 // Lambda-closing lives in pure functions; the generated main has no
@@ -149,7 +247,10 @@ function __gen_suite_builtins_spec() {
 		test("io iface exposes stderr procedures", testIoIfaceExposesStderrProcedures),
 		test("intrinsic lookup returns host names", testIntrinsicLookupReturnsHostNames),
 		test("file iface includes FileMode and ReadResult unions", testFileIfaceIncludesUnions),
-		test("builtin iface map supports direct and core aliases", testBuiltinIfaceMapAliases)
+		test("builtin iface map supports direct and core aliases", testBuiltinIfaceMapAliases),
+		test("file iface exposes D2 text-file operations", testFileIfaceExposesD2TextOperations),
+		test("file iface exposes D3 binary and buffer operations", testFileIfaceExposesD3BinaryAndBuffers),
+		test("io iface exposes D5 process argument and environment procedures", testIoIfaceExposesD5ProcessEnvironment)
 	])
 }
 

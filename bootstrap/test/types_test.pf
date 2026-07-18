@@ -6,6 +6,7 @@
 
 import * as Assert from "testing/assertions";
 import * as H from "./check_helpers";
+import * as Compat from "../src/compat";
 
 //![suite("check/types")]
 
@@ -237,4 +238,39 @@ function testBuiltinPairSucceeds() {
 function testBuiltinPairMismatchFails() {
 	let src = "let p = Pair { 1, \"x\" };\nlet k = p.value + 1;";
 	H.assertHasDiag(H.typeDiags("builtin_pair_bad.pf", src))
+}
+
+//![test("match resolves shared variants from the subject union")]
+function testSharedVariantNamesUseSubjectUnion() {
+	let src =
+		"import * from \"file\";\n"
+		++ "proc inspect() {\n"
+		++ "  match fileOpen(\"ignored.txt\", Read) with\n"
+		++ "  | Ok opened -> {\n"
+		++ "      match readLine(opened.value) with\n"
+		++ "      | Ok line -> line.value ++ \"\"\n"
+		++ "      | Eof _ -> \"\"\n"
+		++ "      | Err failed -> failed.message;\n"
+		++ "    }\n"
+		++ "  | Err failed -> failed.message;\n"
+		++ "}\n";
+	let diags = H.typeDiagsWithBuiltins(
+		"shared_variant_subject.pf",
+		src
+	);
+
+	match Compat.uncons(diags) with
+	| None -> {
+		Assert.assertions([
+			Assert.assertEqual(0, 0)
+		])
+	}
+	| Some cell -> {
+		Assert.assertions([
+			Assert.assertEqual(
+				"",
+				cell.value.key.message
+			)
+		])
+	}
 }

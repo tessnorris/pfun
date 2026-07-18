@@ -6,8 +6,9 @@
 
 import * as Assert from "testing/assertions";
 import * as H from "./check_helpers";
+import * as Compat from "../src/compat";
 import * from "io"; // added by gen-test-harness
-import * from "testing/runner"; // added by gen-test-harness
+import * from "$PFUN_HOME/bootstrap/src/testing/runner"; // added by gen-test-harness
 
 //![suite("check/types")]
 
@@ -241,6 +242,41 @@ function testBuiltinPairMismatchFails() {
 	H.assertHasDiag(H.typeDiags("builtin_pair_bad.pf", src))
 }
 
+//![test("match resolves shared variants from the subject union")]
+function testSharedVariantNamesUseSubjectUnion() {
+	let src =
+		"import * from \"file\";\n"
+		++ "proc inspect() {\n"
+		++ "  match fileOpen(\"ignored.txt\", Read) with\n"
+		++ "  | Ok opened -> {\n"
+		++ "      match readLine(opened.value) with\n"
+		++ "      | Ok line -> line.value ++ \"\"\n"
+		++ "      | Eof _ -> \"\"\n"
+		++ "      | Err failed -> failed.message;\n"
+		++ "    }\n"
+		++ "  | Err failed -> failed.message;\n"
+		++ "}\n";
+	let diags = H.typeDiagsWithBuiltins(
+		"shared_variant_subject.pf",
+		src
+	);
+
+	match Compat.uncons(diags) with
+	| None -> {
+		Assert.assertions([
+			Assert.assertEqual(0, 0)
+		])
+	}
+	| Some cell -> {
+		Assert.assertions([
+			Assert.assertEqual(
+				"",
+				cell.value.key.message
+			)
+		])
+	}
+}
+
 // ─────────────────────────────────────────────────────────────────
 // GENERATED TEST HARNESS (gen-test-harness.js) — do not edit.
 // Lambda-closing lives in pure functions; the generated main has no
@@ -287,7 +323,8 @@ function __gen_suite_check_types() {
 		test("builtin Option match and payload succeed", testBuiltinOptionMatchSucceeds),
 		test("builtin core exports are ambient", testBuiltinCoreExportsAmbient),
 		test("builtin Pair construction and field access succeed", testBuiltinPairSucceeds),
-		test("builtin Pair field type mismatch fails", testBuiltinPairMismatchFails)
+		test("builtin Pair field type mismatch fails", testBuiltinPairMismatchFails),
+		test("match resolves shared variants from the subject union", testSharedVariantNamesUseSubjectUnion)
 	])
 }
 

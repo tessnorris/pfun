@@ -1626,7 +1626,13 @@ function inferCallArgsLoop(st, env, args, params, path, span) {
 			let ap = acell.value;
 			let pp = pcell.value;
 			let ao = cgenExpr(st, env, ap.key, path);
-			let st1 = unify(ao.st, ao.typ, pp.key, path, A.exprSpan(ap.key));
+			let st1 = unify(
+					ao.st,
+					ao.typ,
+					pp.key,
+					path,
+					A.exprSpan(ap.key)
+				);
 			inferCallArgsLoop(st1, env, ap.value, pp.value, path, span)
 		}
 	}
@@ -1739,35 +1745,146 @@ function inferRecordConstruction(st, env, name, fields, span, path) {
 	}
 }
 
-function inferFieldAccess(st, objectType, fieldName, span, path) {
+function inferFieldAccess(
+	st,
+	objectType,
+	fieldName,
+	span,
+	path
+) {
 	let t = apply(st.subst, objectType);
+
 	match t with
 	| TVariant v -> {
-		match IMS.imsGet(st.variants, v.vname) with
-		| None -> exprOut(addTypeDiag(st, path, span, "Unknown variant '" ++ v.vname ++ "'."), TUnknown)
+		match variantFromUnion(
+			st,
+			v.unionName,
+			v.vname
+		) with
+		| None -> {
+			exprOut(
+				addTypeDiag(
+					st,
+					path,
+					span,
+					"Unknown variant '"
+						++ v.vname
+						++ "'."
+				),
+				TUnknown
+			)
+		}
 		| Some vi -> {
-			match findFieldByName(vi.value.fields, fieldName) with
-			| None -> exprOut(addTypeDiag(st, path, span, "Variant " ++ v.vname ++ " has no field '" ++ fieldName ++ "'."), TUnknown)
-			| Some f -> exprOut(st, fieldTypeFromShape(f.value.shape, v.args))
+			match findFieldByName(
+				vi.value.fields,
+				fieldName
+			) with
+			| None -> {
+				exprOut(
+					addTypeDiag(
+						st,
+						path,
+						span,
+						"Variant "
+							++ v.vname
+							++ " has no field '"
+							++ fieldName
+							++ "'."
+					),
+					TUnknown
+				)
+			}
+			| Some f -> {
+				exprOut(
+					st,
+					fieldTypeFromShape(
+						f.value.shape,
+						v.args
+					)
+				)
+			}
 		}
 	}
 	| TNamed n -> {
-		match IMS.imsGet(st.records, n.tname) with
-		| None -> exprOut(addTypeDiag(st, path, span, "Type " ++ n.tname ++ " has no known fields."), TUnknown)
+		match IMS.imsGet(
+			st.records,
+			n.tname
+		) with
+		| None -> {
+			exprOut(
+				addTypeDiag(
+					st,
+					path,
+					span,
+					"Type "
+						++ n.tname
+						++ " has no known fields."
+				),
+				TUnknown
+			)
+		}
 		| Some info -> {
-			match findFieldByName(info.value.fields, fieldName) with
-			| None -> exprOut(addTypeDiag(st, path, span, "Type " ++ n.tname ++ " has no field '" ++ fieldName ++ "'."), TUnknown)
-			| Some f -> exprOut(st, fieldTypeFromShape(f.value.shape, n.args))
+			match findFieldByName(
+				info.value.fields,
+				fieldName
+			) with
+			| None -> {
+				exprOut(
+					addTypeDiag(
+						st,
+						path,
+						span,
+						"Type "
+							++ n.tname
+							++ " has no field '"
+							++ fieldName
+							++ "'."
+					),
+					TUnknown
+				)
+			}
+			| Some f -> {
+				exprOut(
+					st,
+					fieldTypeFromShape(
+						f.value.shape,
+						n.args
+					)
+				)
+			}
 		}
 	}
 	| TVar v -> {
 		let fv = freshVar(st);
-		let st1 = addConstraint(fv.key, HasField { v.v, fieldName, fv.value, span });
+		let st1 = addConstraint(
+			fv.key,
+			HasField {
+				v.v,
+				fieldName,
+				fv.value,
+				span
+			}
+		);
+
 		exprOut(st1, fv.value)
 	}
 	| TUnknown -> exprOut(st, TUnknown)
 	| TAny -> exprOut(st, TUnknown)
-	| _ -> exprOut(addTypeDiag(st, path, span, "Cannot access field '" ++ fieldName ++ "' on " ++ formatType(t) ++ "."), TUnknown)
+	| _ -> {
+		exprOut(
+			addTypeDiag(
+				st,
+				path,
+				span,
+				"Cannot access field '"
+					++ fieldName
+					++ "' on "
+					++ formatType(t)
+					++ "."
+			),
+			TUnknown
+		)
+	}
 }
 
 function inferIndexAccess(st, objectType, span, path) {
@@ -1801,28 +1918,141 @@ function inferFmtParts(st, env, parts, path) {
 
 // ── pattern and match inference ────────────────────────────────────────────
 
-function bindPattern(st, env, pattern, subjectT, path, span) {
+function findVariantInfo(variants, vname) {
+	match Compat.uncons(variants) with
+	| None -> None
+	| Some cell -> {
+		let p = cell.value;
+
+		if p.key.vname == vname then {
+			Some { p.key }
+		} else {
+			findVariantInfo(p.value, vname)
+		}
+	}
+}
+
+function variantFromUnion(st, unionName, vname) {
+	match IMS.imsGet(st.records, unionName) with
+	| None -> None
+	| Some info -> {
+		if info.value.isUnion then {
+			findVariantInfo(
+				info.value.variants,
+				vname
+			)
+		} else {
+			None
+		}
+	}
+}
+
+function variantForSubject(st, subjectT, vname) {
+	match apply(st.subst, subjectT) with
+	| TNamed named -> {
+		variantFromUnion(
+			st,
+			named.tname,
+			vname
+		)
+	}
+	| TVariant variant -> {
+		variantFromUnion(
+			st,
+			variant.unionName,
+			vname
+		)
+	}
+	| _ -> IMS.imsGet(st.variants, vname)
+}
+
+function bindPattern(
+	st,
+	env,
+	pattern,
+	subjectT,
+	path,
+	span
+) {
 	match pattern with
 	| PWild -> envOut(st, env)
 	| PVariant p -> {
-		match IMS.imsGet(st.variants, p.vname) with
-		| None -> envOut(addTypeDiag(st, path, span, "Unknown variant '" ++ p.vname ++ "'."), env)
+		match variantForSubject(
+			st,
+			subjectT,
+			p.vname
+		) with
+		| None -> {
+			envOut(
+				addTypeDiag(
+					st,
+					path,
+					span,
+					"Unknown variant '"
+						++ p.vname
+						++ "'."
+				),
+				env
+			)
+		}
 		| Some vi -> {
-			let args = unionSlotArgs(st, vi.value);
-			let st1 = unify(args.st, subjectT, TNamed { vi.value.unionName, args.types }, path, span);
+			let args = unionSlotArgs(
+				st,
+				vi.value
+			);
+			let st1 = unify(
+				args.st,
+				subjectT,
+				TNamed {
+					vi.value.unionName,
+					args.types
+				},
+				path,
+				span
+			);
 			let env1 = match p.bind with
-				| None -> env
-				| Some name -> putEnv(env, name.value, TMono { TVariant { p.vname, vi.value.unionName, args.types } });
+			| None -> env
+			| Some name -> {
+				putEnv(
+					env,
+					name.value,
+					TMono {
+						TVariant {
+							p.vname,
+							vi.value.unionName,
+							args.types
+						}
+					}
+				)
+			};
+
 			envOut(st1, env1)
 		}
 	}
 	| PList p -> {
 		let elem = freshVar(st);
-		let st1 = unify(elem.key, subjectT, TList { elem.value }, path, span);
-		let env1 = bindListPatternElems(env, p.elems, elem.value);
+		let st1 = unify(
+			elem.key,
+			subjectT,
+			TList { elem.value },
+			path,
+			span
+		);
+		let env1 = bindListPatternElems(
+			env,
+			p.elems,
+			elem.value
+		);
 		let env2 = match p.rest with
-			| None -> env1
-			| Some rest -> bindPatElem(env1, rest.value, TList { elem.value });
+		| None -> env1
+		| Some rest -> {
+			bindPatElem(
+				env1,
+				rest.value,
+				TList { elem.value }
+			)
+		};
+
 		envOut(st1, env2)
 	}
 }

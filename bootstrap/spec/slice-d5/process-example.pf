@@ -1,0 +1,27 @@
+// Slice D5 process arguments and environment probe.
+
+import * from "io";
+
+proc showEnvironment(label, name) {
+	match getEnv(name) with
+	| None -> println(label ++ ":none")
+	| Some found -> println(label ++ ":" ++ found.value);
+}
+
+proc main() {
+	let arguments = scriptArgs();
+
+	println("args:" ++ join(arguments, "|"));
+	showEnvironment("present", "PFUN_D5_PRESENT");
+	showEnvironment("empty", "PFUN_D5_EMPTY");
+	showEnvironment("missing", "PFUN_D5_MISSING");
+
+	var environment = envVars();
+
+	println(
+		"env-count-ok:"
+			++ str(length(environment) >= 2)
+	);
+}
+
+main();

@@ -1,0 +1,9 @@
+// Slice D5 negative probe: process environment reads are effects.
+
+import * from "io";
+
+function invalidEnvironmentRead() {
+	envVars()
+}
+
+let snapshot = invalidEnvironmentRead();
