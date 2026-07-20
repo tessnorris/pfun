@@ -4,14 +4,11 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-if [[ $# -gt 0 ]]; then
-	BASE_COMPILER="$1"
-elif [[ -f output/slice-b2/stage3/pfc.js ]]; then
-	BASE_COMPILER="output/slice-b2/stage3/pfc.js"
-elif [[ -f output/slice-b/stage3/pfc.js ]]; then
-	BASE_COMPILER="output/slice-b/stage3/pfc.js"
-else
-	BASE_COMPILER="bootstrap-stage2/pfc.js"
+BASE_COMPILER="${1:-boot/pfc.js}"
+
+if [[ ! -f "$BASE_COMPILER" ]]; then
+	echo "error: compiler not found: $BASE_COMPILER" >&2
+	exit 1
 fi
 
 WORK="output/slice-b3"
@@ -20,10 +17,6 @@ STAGE3="$WORK/stage3/pfc.js"
 STAGE4="$WORK/stage4/pfc.js"
 STAGE5="$WORK/stage5/pfc.js"
 
-if [[ ! -f "$BASE_COMPILER" ]]; then
-	echo "error: seed compiler not found: $BASE_COMPILER" >&2
-	exit 1
-fi
 
 cleanup() {
 	rm -rf "$RUNTIME_ROOT"
@@ -35,19 +28,19 @@ mkdir -p "$WORK/stage3" "$WORK/stage4" "$WORK/stage5"
 
 echo "== Build transitional compiler containing Slice B3 changes =="
 PFUN_HOME="$ROOT" node "$BASE_COMPILER" \
-	build bootstrap/src/drivers/cli.pf \
+	build src/drivers/cli.pf \
 	-o "$STAGE3"
 
 echo
 echo "== Rebuild with the new emitter/linker =="
 PFUN_HOME="$ROOT" node "$STAGE3" \
-	build bootstrap/src/drivers/cli.pf \
+	build src/drivers/cli.pf \
 	-o "$STAGE4"
 
 echo
 echo "== Compiler fixed point =="
 PFUN_HOME="$ROOT" node "$STAGE4" \
-	build bootstrap/src/drivers/cli.pf \
+	build src/drivers/cli.pf \
 	-o "$STAGE5"
 
 cmp "$STAGE4" "$STAGE5"
@@ -57,7 +50,7 @@ echo "compiler fixed point passed (stage4 == stage5)"
 echo
 echo "== Slice B3 JSON Node bundle =="
 PFUN_HOME="$ROOT" node "$TEST_COMPILER" \
-	build bootstrap/spec/slice-b3/main.pf \
+	build spec/slice-b3/main.pf \
 	-o "$WORK/slice-b3.js"
 
 rm -rf "$RUNTIME_ROOT"
@@ -66,7 +59,7 @@ node "$WORK/slice-b3.js" "$RUNTIME_ROOT" \
 	> "$WORK/slice-b3.actual.txt"
 
 diff -u \
-	bootstrap/spec/slice-b3/expected.txt \
+	spec/slice-b3/expected.txt \
 	"$WORK/slice-b3.actual.txt"
 
 JSON_FILE="$RUNTIME_ROOT/person.json"
@@ -87,7 +80,7 @@ echo "== Slice B3 negative diagnostics =="
 
 LOG="$WORK/partial-deserialize.log"
 if PFUN_HOME="$ROOT" node "$TEST_COMPILER" \
-	build bootstrap/spec/slice-b3/partial_deserialize.pf \
+	build spec/slice-b3/partial_deserialize.pf \
 	-o "$WORK/partial-deserialize.js" \
 	> "$LOG" 2>&1
 then
@@ -104,11 +97,6 @@ fi
 
 echo "partial-deserialize passed"
 
-if [[ -x scripts/test-v2-slice-b2.sh ]]; then
-	echo
-	echo "== B2, B1, and Slice A regression gates =="
-	bash scripts/test-v2-slice-b2.sh "$TEST_COMPILER"
-fi
 
 echo
 echo "ALL SLICE B3 ACCEPTANCE TESTS PASSED"

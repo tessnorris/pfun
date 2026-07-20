@@ -4,17 +4,10 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-if [[ $# -gt 0 ]]; then
-	BASE_COMPILER="$1"
-elif [[ -f output/slice-c3/stage1/pfc.js ]]; then
-	BASE_COMPILER="output/slice-c3/stage1/pfc.js"
-else
-	echo "error: no trusted C3 compiler was found" >&2
-	exit 1
-fi
+BASE_COMPILER="${1:-boot/pfc.js}"
 
 if [[ ! -f "$BASE_COMPILER" ]]; then
-	echo "error: seed compiler not found: $BASE_COMPILER" >&2
+	echo "error: compiler not found: $BASE_COMPILER" >&2
 	exit 1
 fi
 
@@ -25,28 +18,15 @@ STAGE2="$WORK/stage2/pfc.js"
 rm -rf "$WORK"
 mkdir -p "$WORK/stage1" "$WORK/stage2"
 
-echo "== TypeScript compiler build =="
-npm run build
-
-echo
-echo "== Bootstrap Pfun test corpus =="
-bash bootstrap/test/run-tests.sh --summary
-
-echo
-echo "== Host behavior =="
-node bootstrap/test/host_node_test.js
-node bootstrap/test/host_browser_test.js
-
-echo
 echo "== Build compiler containing Slice C4 =="
 PFUN_HOME="$ROOT" node "$BASE_COMPILER" \
-	build bootstrap/src/drivers/cli.pf \
+	build src/drivers/cli.pf \
 	-o "$STAGE1"
 
 echo
 echo "== Compiler fixed point =="
 PFUN_HOME="$ROOT" node "$STAGE1" \
-	build bootstrap/src/drivers/cli.pf \
+	build src/drivers/cli.pf \
 	-o "$STAGE2"
 
 cmp "$STAGE1" "$STAGE2"
@@ -55,7 +35,7 @@ echo "compiler fixed point passed"
 echo
 echo "== Default NodeBundle compatibility =="
 PFUN_HOME="$ROOT" node "$STAGE1" \
-	build bootstrap/spec/slice-c4/node-main.pf \
+	build spec/slice-c4/node-main.pf \
 	-o "$WORK/default.js" \
 	> "$WORK/default-build.stdout.txt" \
 	2> "$WORK/default-build.stderr.txt"
@@ -69,7 +49,7 @@ fi
 node "$WORK/default.js" > "$WORK/default.actual.txt"
 
 diff -u \
-	bootstrap/spec/slice-c4/node-expected.txt \
+	spec/slice-c4/node-expected.txt \
 	"$WORK/default.actual.txt"
 
 echo "default NodeBundle passed"
@@ -77,7 +57,7 @@ echo "default NodeBundle passed"
 echo
 echo "== Explicit NodeBundle target =="
 PFUN_HOME="$ROOT" node "$STAGE1" \
-	build bootstrap/spec/slice-c4/node-main.pf \
+	build spec/slice-c4/node-main.pf \
 	--target node-bundle \
 	-o "$WORK/explicit.js" \
 	> "$WORK/explicit-build.stdout.txt" \
@@ -86,7 +66,7 @@ PFUN_HOME="$ROOT" node "$STAGE1" \
 node "$WORK/explicit.js" > "$WORK/explicit.actual.txt"
 
 diff -u \
-	bootstrap/spec/slice-c4/node-expected.txt \
+	spec/slice-c4/node-expected.txt \
 	"$WORK/explicit.actual.txt"
 
 echo "explicit NodeBundle passed"
@@ -96,7 +76,7 @@ echo "== NodeFiles target =="
 NODE_FILES="$WORK/node-files"
 
 PFUN_HOME="$ROOT" node "$STAGE1" \
-	build bootstrap/spec/slice-c4/node-main.pf \
+	build spec/slice-c4/node-main.pf \
 	--target node \
 	-o "$NODE_FILES" \
 	> "$WORK/node-files-build.stdout.txt" \
@@ -128,7 +108,7 @@ fi
 node "$NODE_FILES/main.js" > "$WORK/node-files.actual.txt"
 
 diff -u \
-	bootstrap/spec/slice-c4/node-expected.txt \
+	spec/slice-c4/node-expected.txt \
 	"$WORK/node-files.actual.txt"
 
 echo "NodeFiles target passed"
@@ -138,7 +118,7 @@ echo "== BrowserBundle target =="
 BROWSER_OUT="$WORK/site/app.html"
 
 PFUN_HOME="$ROOT" node "$STAGE1" \
-	build bootstrap/spec/slice-c4/browser-main.pf \
+	build spec/slice-c4/browser-main.pf \
 	--page "C4 <Browser>" \
 	--target browser \
 	-o "$BROWSER_OUT" \
@@ -191,14 +171,14 @@ echo
 echo "== Build-target usage failures =="
 set +e
 PFUN_HOME="$ROOT" node "$STAGE1" \
-	build bootstrap/spec/slice-c4/node-main.pf \
+	build spec/slice-c4/node-main.pf \
 	--target wat \
 	> "$WORK/bad-target.stdout.txt" \
 	2> "$WORK/bad-target.stderr.txt"
 BAD_TARGET_RC=$?
 
 PFUN_HOME="$ROOT" node "$STAGE1" \
-	build bootstrap/spec/slice-c4/node-main.pf \
+	build spec/slice-c4/node-main.pf \
 	--page Nope \
 	> "$WORK/bad-page.stdout.txt" \
 	2> "$WORK/bad-page.stderr.txt"
@@ -241,9 +221,6 @@ fi
 
 echo "build-target usage passed"
 
-echo
-echo "== Slice C3 through Slice A regression gates =="
-bash scripts/test-v2-slice-c3.sh "$STAGE1"
 
 echo
 echo "ALL SLICE C4 BUILD-TARGET TESTS PASSED"

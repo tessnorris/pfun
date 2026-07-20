@@ -1,0 +1,56 @@
+// typed_iface_scheme_test.pf — regression for typed ModIface scheme bodies.
+
+import * as H from "./check_helpers";
+import * as I from "../src/check/iface";
+import * as TY from "../src/check/types";
+import * as IMS from "../src/data/imaps";
+import * from "io"; // added by gen-test-harness
+import * from "../src/test/runner"; // added by gen-test-harness
+
+//![suite("typed dependency interface schemes")]
+//![test("typed scheme body imports without IfaceType conversion")]
+function testTypedSchemeBodyImport() {
+	let types = IMS.imsPut(
+		IMS.imsEmpty(),
+		"answer",
+		I.mkScheme([], [], TY.typeToIface(TY.tInt()))
+	);
+	let iface = I.mkIfaceWithRecords(
+		"./dep",
+		IMS.imsEmpty(),
+		types,
+		IMS.imsEmpty(),
+		IMS.imsEmpty()
+	);
+	let deps = IMS.imsPut(
+		IMS.imsEmpty(),
+		"./dep",
+		iface
+	);
+	let unit = H.checkUnitWithDeps(
+		"typed_iface_main.pf",
+		"import { answer } from \"./dep\";\n"
+		++ "let n = answer + 1;",
+		deps
+	);
+	H.assertOkDiags(unit.diags)
+}
+
+// ─────────────────────────────────────────────────────────────────
+// GENERATED TEST HARNESS (gen-test-harness.js) — do not edit.
+// Lambda-closing lives in pure functions; the generated main has no
+// lambdas, so V1's fn-lambda-in-proc purity quirk is never triggered.
+// ─────────────────────────────────────────────────────────────────
+
+function __gen_suite_typed_dependency_interface_schemes() {
+	suite("typed dependency interface schemes", [
+		test("typed scheme body imports without IfaceType conversion", testTypedSchemeBodyImport)
+	])
+}
+
+proc main() {
+	let __summary = runSuites([__gen_suite_typed_dependency_interface_schemes()]);
+	printSummary(__summary);
+	exitForSummary(__summary);
+}
+main();

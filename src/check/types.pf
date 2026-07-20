@@ -1,0 +1,4121 @@
+// check/types.pf — Phase 7 type model and first inference pass for bootstrap.
+//
+// This file is intentionally a *bootstrap-safe first checker*, not the final
+// finished V2 type checker. It establishes the durable data model, substitution
+// machinery, scheme instantiation/generalization, constructor metadata, and a
+// real AST walk that records node types and emits TypeD diagnostics. Later
+// passes can tighten groundedness, SCC recursion, NonZero proofs, opaque-type
+// visibility, and full deferred-constraint discharge without changing the public
+// shapes introduced here.
+
+import * as A from "../syntax/ast";
+import * as T from "../syntax/token";
+import * as D from "./diag";
+import * as I from "./iface";
+import * as IMS from "../data/imaps";
+import * as IMI from "../data/imapi";
+import * as Compat from "../compat";
+
+// ── public type model ──────────────────────────────────────────────────────
+
+export type Type = {
+	| TInt
+	| TFloat
+	| TBool
+	| TStr
+	| TChar
+	| TByte
+	| TUnit
+	| TNonZero
+	| TAny
+
+	| TList: elem
+	| TArray: elem
+	| TDict: keyT, valT
+
+	| TFun: params, ret
+	| TProc: params, ret, isAsync
+
+	| TNamed: tname, args
+	// A value statically known to be a specific variant of a union. Members
+	// of the union for unification purposes (see design_variant_binder_widening.md);
+	// field access resolves against the variant's own payload fields.
+	| TVariant: vname, unionName, args
+	| TVar: v
+	| TUnknown
+}
+
+// `constraints` is generic so temporary iface.pf schemes can still flow into
+// this pass before the real constraint representation is frozen everywhere.
+export type InferScheme = { vars, generic constraints, generic body }
+
+export type Subst = { m }
+
+export type Constraint = {
+	| HasField: tvar, fname, ftype, span
+	| Equatable: t, span
+	| Comparable: t, span
+}
+
+export type TcSt = {
+	nextVar,
+	subst,
+	pending,
+	types,
+	diags,
+	records,
+	variants
+}
+
+export type TcOut = { st, generic val }
+
+// `exports` is a slot: its scheme values embed per-module type variables that
+// must never lock into (or leak from) one shared field variable.
+export type InferResult = { types, generic exports, diags }
+
+// ── checker-private metadata ───────────────────────────────────────────────
+
+// Non-generic fields share one module-wide type variable. Generic fields are
+// represented by a slot index on the containing named type.
+type FieldShape = {
+	| FieldMono: t
+	| FieldSlot: index
+}
+
+type FieldInfo = { fname, shape }
+
+type VariantInfo = { vname, unionName, fields, slotCount }
+
+type TypeInfo = { tname, isUnion, fields, variants, slotCount }
+
+type FieldsOut = { fields, slotCount }
+
+type VariantBuildOut = { variants, slotCount }
+
+type FreshListOut = { st, types }
+
+type EnvOut = { st, env }
+
+type ExprOut = { st, typ }
+
+type BodyOut = { st, typ }
+type NameScan = { refs, bound }
+type BindingDecl = { name, stmt, deps }
+type DfsOut = { visited, order }
+type ComponentOut = { visited, members }
+type ComponentsOut = { visited, groups }
+
+type TcEntry = {
+	| TScheme: scheme
+	| TMono: t
+	| TNamespace: table
+	| TTypeName: name
+	| TVariantCtor: info
+}
+
+// ── constructors exported for tests and later passes ───────────────────────
+
+export function tInt() { TInt }
+export function tFloat() { TFloat }
+export function tBool() { TBool }
+export function tStr() { TStr }
+export function tChar() { TChar }
+export function tByte() { TByte }
+export function tUnit() { TUnit }
+export function tNonZero() { TNonZero }
+export function tAny() { TAny }
+export function tList(elem) { TList { elem } }
+export function tArray(elem) { TArray { elem } }
+export function tDict(keyT, valT) { TDict { keyT, valT } }
+export function tFun(params, ret) { TFun { params, ret } }
+export generic function tProc(params, ret, isAsync) { TProc { params, ret, isAsync } }
+export function tNamed(tname, args) { TNamed { tname, args } }
+export function tVariant(vname, unionName, args) { TVariant { vname, unionName, args } }
+export function tVar(v) { TVar { v } }
+export function tUnknown() { TUnknown }
+
+export generic function mkScheme(vars, constraints, body) {
+	InferScheme { vars, constraints, body }
+}
+
+export function emptySubst() {
+	Subst { IMI.imiEmpty() }
+}
+
+export generic function mkInferResult(types, exports, diags) {
+	InferResult { types, exports, diags }
+}
+
+generic function out(st, val) {
+	TcOut { st, val }
+}
+
+function exprOut(st, typ) {
+	ExprOut { st, typ }
+}
+
+function envOut(st, env) {
+	EnvOut { st, env }
+}
+
+function bodyOut(st, typ) {
+	BodyOut { st, typ }
+}
+
+function freshListOut(st, types) {
+	FreshListOut { st, types }
+}
+
+// ── state helpers ──────────────────────────────────────────────────────────
+
+function emptyState() {
+	TcSt { 0, emptySubst(), [], IMI.imiEmpty(), [], IMS.imsEmpty(), IMS.imsEmpty() }
+}
+
+function withNextVar(st, nextVar) {
+	TcSt { nextVar, st.subst, st.pending, st.types, st.diags, st.records, st.variants }
+}
+
+function withSubst(st, subst) {
+	TcSt { st.nextVar, subst, st.pending, st.types, st.diags, st.records, st.variants }
+}
+
+function withPending(st, pending) {
+	TcSt { st.nextVar, st.subst, pending, st.types, st.diags, st.records, st.variants }
+}
+
+function withTypes(st, types) {
+	TcSt { st.nextVar, st.subst, st.pending, types, st.diags, st.records, st.variants }
+}
+
+function withDiags(st, diags) {
+	TcSt { st.nextVar, st.subst, st.pending, st.types, diags, st.records, st.variants }
+}
+
+function withRecords(st, records) {
+	TcSt { st.nextVar, st.subst, st.pending, st.types, st.diags, records, st.variants }
+}
+
+function withVariants(st, variants) {
+	TcSt { st.nextVar, st.subst, st.pending, st.types, st.diags, st.records, variants }
+}
+
+function addDiag(st, diag) {
+	withDiags(st, cons(diag, st.diags))
+}
+
+function typeDiag(path, span, message) {
+	D.err(TypeD, message, path, span)
+}
+
+function addTypeDiag(st, path, span, message) {
+	addDiag(st, typeDiag(path, span, message))
+}
+
+function addTypedNode(st, id, typ) {
+	withTypes(st, IMI.imiPut(st.types, id, apply(st.subst, typ)))
+}
+
+// `nextVar` is the preferred fresh identifier, but imported/generic
+// inference paths can leave an older substitution key at that number.
+// Reusing such an identifier silently applies the old solved type to a new
+// binding. Skip occupied substitution keys before allocating.
+function nextUnsubstitutedVar(st, v) {
+	match IMI.imiGet(st.subst.m, v) with
+	| None -> v
+	| Some _ -> nextUnsubstitutedVar(st, v + 1)
+}
+
+function freshVar(st) {
+	let v = nextUnsubstitutedVar(st, st.nextVar);
+	Pair { withNextVar(st, v + 1), TVar { v } }
+}
+
+function freshVars(st, n, acc) {
+	if n <= 0 then {
+		freshListOut(st, reverse(acc))
+	} else {
+		let fv = freshVar(st);
+		freshVars(fv.key, n - 1, cons(fv.value, acc))
+	}
+}
+
+function freshTypeList(st, n) {
+	freshVars(st, n, [])
+}
+
+// ── tiny list/set helpers ──────────────────────────────────────────────────
+
+function appendList(a, b) {
+	reduce(fn acc, x => cons(x, acc), b, reverse(a))
+}
+
+function appendOne(xs, x) {
+	reverse(cons(x, reverse(xs)))
+}
+
+function intContains(xs, v) {
+	match Compat.uncons(xs) with
+	| None -> false
+	| Some cell -> {
+		let p = cell.value;
+		if p.key == v then { true } else { intContains(p.value, v) }
+	}
+}
+
+function intAdd(xs, v) {
+	if intContains(xs, v) then { xs } else { cons(v, xs) }
+}
+
+function intUnion(a, b) {
+	match Compat.uncons(b) with
+	| None -> a
+	| Some cell -> {
+		let p = cell.value;
+		intUnion(intAdd(a, p.key), p.value)
+	}
+}
+
+function intRemoveAll(xs, remove) {
+	match Compat.uncons(xs) with
+	| None -> []
+	| Some cell -> {
+		let p = cell.value;
+		let rest = intRemoveAll(p.value, remove);
+		if intContains(remove, p.key) then { rest } else { cons(p.key, rest) }
+	}
+}
+
+function listLength(xs) {
+	length(xs)
+}
+
+function listMapTypes(f, xs) {
+	map(f, xs)
+}
+
+function maybeFirst(xs, fallback) {
+	match Compat.listAt(xs, 0) with
+	| None -> fallback
+	| Some x -> x.value
+}
+
+// ── type formatting ────────────────────────────────────────────────────────
+
+function joinTypeList(ts) {
+	join(map(formatType, ts), ", ")
+}
+
+export function formatType(t) {
+	match t with
+	| TInt -> "Int"
+	| TFloat -> "Float"
+	| TBool -> "Bool"
+	| TStr -> "Str"
+	| TChar -> "Char"
+	| TByte -> "Byte"
+	| TUnit -> "Unit"
+	| TNonZero -> "NonZero"
+	| TAny -> "Any"
+	| TList x -> "List<" ++ formatType(x.elem) ++ ">"
+	| TArray x -> "Array<" ++ formatType(x.elem) ++ ">"
+	| TDict x -> "Dict<" ++ formatType(x.keyT) ++ ", " ++ formatType(x.valT) ++ ">"
+	| TFun f -> "(" ++ joinTypeList(f.params) ++ ") -> " ++ formatType(f.ret)
+	| TProc p -> "proc(" ++ joinTypeList(p.params) ++ ") -> " ++ formatType(p.ret)
+	| TNamed n -> {
+		if length(n.args) == 0 then { n.tname }
+		else { n.tname ++ "<" ++ joinTypeList(n.args) ++ ">" }
+	}
+	| TVariant v -> {
+		if length(v.args) == 0 then { v.vname }
+		else { v.vname ++ "<" ++ joinTypeList(v.args) ++ ">" }
+	}
+	| TVar v -> "'" ++ __str__(v.v)
+	| TUnknown -> "?"
+}
+
+// ── substitution and free variables ────────────────────────────────────────
+
+function substGet(subst, v) {
+	IMI.imiGet(subst.m, v)
+}
+
+function substPut(subst, v, t) {
+	Subst { IMI.imiPut(subst.m, v, t) }
+}
+
+function applyList(subst, ts) {
+	map(fn t => applyType(subst, t), ts)
+}
+
+export function applyType(subst, t) {
+	match t with
+	| TVar v -> {
+		match substGet(subst, v.v) with
+		| None -> t
+		| Some found -> applyType(subst, found.value)
+	}
+	| TList x -> TList { applyType(subst, x.elem) }
+	| TArray x -> TArray { applyType(subst, x.elem) }
+	| TDict x -> TDict { applyType(subst, x.keyT), applyType(subst, x.valT) }
+	| TFun f -> TFun { applyList(subst, f.params), applyType(subst, f.ret) }
+	| TProc p -> TProc { applyList(subst, p.params), applyType(subst, p.ret), p.isAsync }
+	| TNamed n -> TNamed { n.tname, applyList(subst, n.args) }
+	| TVariant v -> TVariant { v.vname, v.unionName, applyList(subst, v.args) }
+	| _ -> t
+}
+
+export function apply(subst, t) {
+	applyType(subst, t)
+}
+
+function freeVarsList(ts) {
+	reduce(fn acc, t => intUnion(acc, freeVars(t)), [], ts)
+}
+
+export function freeVars(t) {
+	match t with
+	| TVar v -> [v.v]
+	| TList x -> freeVars(x.elem)
+	| TArray x -> freeVars(x.elem)
+	| TDict x -> intUnion(freeVars(x.keyT), freeVars(x.valT))
+	| TFun f -> intUnion(freeVarsList(f.params), freeVars(f.ret))
+	| TProc p -> intUnion(freeVarsList(p.params), freeVars(p.ret))
+	| TNamed n -> freeVarsList(n.args)
+	| TVariant v -> freeVarsList(v.args)
+	| _ -> []
+}
+
+function schemeFreeVars(scheme) {
+	intRemoveAll(freeVars(scheme.body), scheme.vars)
+}
+
+function envEntryFreeVars(entry) {
+	match entry with
+	| TScheme s -> schemeFreeVars(s.scheme)
+	| TMono m -> freeVars(m.t)
+	| TNamespace _ -> []
+	| TTypeName _ -> []
+	| TVariantCtor _ -> []
+}
+
+function envFreeVarsFromEntries(entries, acc) {
+	match Compat.uncons(entries) with
+	| None -> acc
+	| Some cell -> {
+		let p = cell.value;
+		envFreeVarsFromEntries(p.value, intUnion(acc, envEntryFreeVars(p.key.value)))
+	}
+}
+
+function envFreeVars(env) {
+	envFreeVarsFromEntries(IMS.imsEntries(env), [])
+}
+
+// Recursive functions are predeclared monomorphically so calls in their own
+// bodies, and calls across a mutually recursive group, share one signature.
+// When a `generic function` is generalized after inference, its own
+// predeclared binding must not lock those variables. Other environment
+// bindings remain locked, including the other members of a recursive group.
+// Non-generic declaration fields are module-owned type variables. Generic
+// functions may quantify call-local variables, but must never quantify these
+// shared declaration variables or importers could instantiate one record field
+// inconsistently with another.
+// A self-recursive container field (a FieldMono whose solved type is headed
+// by its own declaration, e.g. IMapS.left : IMapS<'w>) is exempt from the
+// lock: its embedded variables are the container's element types, and fresh
+// per-use instantiation is exactly the desired semantics. The architecture's
+// rule is that recursive fields recurse at the declaration's own slots; until
+// the checker can express that directly, quantifying these variables in the
+// functions that traverse the container is the sound approximation.
+function isSelfHeaded(st, ownName, t) {
+	match apply(st.subst, t) with
+	| TNamed n -> n.tname == ownName
+	| TVariant v -> v.unionName == ownName
+	| _ -> false
+}
+
+function fieldShapeFreeVars(st, ownName, shape) {
+	match shape with
+	| FieldMono f -> {
+		if isSelfHeaded(st, ownName, f.t) then { [] }
+		else { freeVars(apply(st.subst, f.t)) }
+	}
+	| FieldSlot _ -> []
+}
+
+function fieldInfosFreeVars(st, ownName, fields, acc) {
+	match Compat.uncons(fields) with
+	| None -> acc
+	| Some cell -> {
+		let p = cell.value;
+		fieldInfosFreeVars(
+			st,
+			ownName,
+			p.value,
+			intUnion(acc, fieldShapeFreeVars(st, ownName, p.key.shape))
+		)
+	}
+}
+
+function variantInfosFreeVars(st, ownName, variants, acc) {
+	match Compat.uncons(variants) with
+	| None -> acc
+	| Some cell -> {
+		let p = cell.value;
+		let withFields = fieldInfosFreeVars(st, ownName, p.key.fields, acc);
+		variantInfosFreeVars(st, ownName, p.value, withFields)
+	}
+}
+
+function typeInfoFreeVars(st, info) {
+	let fields = fieldInfosFreeVars(st, info.tname, info.fields, []);
+	variantInfosFreeVars(st, info.tname, info.variants, fields)
+}
+
+function declarationFreeVarsLoop(st, entries, acc) {
+	match Compat.uncons(entries) with
+	| None -> acc
+	| Some cell -> {
+		let p = cell.value;
+		declarationFreeVarsLoop(
+			st,
+			p.value,
+			intUnion(acc, typeInfoFreeVars(st, p.key.value))
+		)
+	}
+}
+
+function declarationFreeVars(st) {
+	declarationFreeVarsLoop(st, IMS.imsEntries(st.records), [])
+}
+
+function occursIn(v, t, subst) {
+	let applied = applyType(subst, t);
+	intContains(freeVars(applied), v)
+}
+
+// ── unification ────────────────────────────────────────────────────────────
+
+function sameScalar(a, b) {
+	match a with
+	| TInt -> { match b with | TInt -> true | _ -> false }
+	| TFloat -> { match b with | TFloat -> true | _ -> false }
+	| TBool -> { match b with | TBool -> true | _ -> false }
+	| TStr -> { match b with | TStr -> true | _ -> false }
+	| TChar -> { match b with | TChar -> true | _ -> false }
+	| TByte -> { match b with | TByte -> true | _ -> false }
+	| TUnit -> { match b with | TUnit -> true | _ -> false }
+	| TNonZero -> { match b with | TNonZero -> true | _ -> false }
+	| TAny -> true
+	| TUnknown -> true
+	| _ -> false
+}
+
+// Rule 2 (eager widening): a type variable never holds a variant type.
+// Binding a var to TVariant pins it to the union instead, so later sibling
+// merges through the same variable join correctly regardless of order.
+// See doc/design_variant_binder_widening.md.
+function widenVariant(t) {
+	match t with
+	| TVariant v -> TNamed { v.unionName, v.args }
+	| _ -> t
+}
+
+function bindVar(st, v, t, path, span) {
+	let t1 = widenVariant(apply(st.subst, t));
+	match t1 with
+	| TVar other -> {
+		if other.v == v then { st }
+		else { withSubst(st, substPut(st.subst, v, t1)) }
+	}
+	| _ -> {
+		if occursIn(v, t1, st.subst) then {
+			addTypeDiag(st, path, span, "Recursive type would be required: '" ++ __str__(v) ++ " occurs in " ++ formatType(t1) ++ ".")
+		} else {
+			withSubst(st, substPut(st.subst, v, t1))
+		}
+	}
+}
+
+// `if` is not a let-initializer in the bootstrap dialect; branch in helpers.
+function bindParamName(env, pname, ty) {
+	if pname == "_" then { env } else { putEnv(env, pname, TMono { ty }) }
+}
+
+function schemeOrMono(isGen, env, st1, solved) {
+	if isGen then {
+		TScheme { generalizeWithEnv(env, st1, solved) }
+	} else {
+		TMono { solved }
+	}
+}
+
+function builtinTyName(nm, argTs) {
+	if nm == "Int" then { TInt }
+	else if nm == "Float" then { TFloat }
+	else if nm == "Bool" then { TBool }
+	else if nm == "Str" || nm == "String" then { TStr }
+	else if nm == "Char" then { TChar }
+	else if nm == "Byte" then { TByte }
+	else if nm == "Unit" then { TUnit }
+	else if nm == "NonZero" then { TNonZero }
+	else if nm == "Any" then { TAny }
+	else if nm == "List" then { TList { maybeFirst(argTs, TUnknown) } }
+	else if nm == "Array" then { TArray { maybeFirst(argTs, TUnknown) } }
+	else { TNamed { nm, argTs } }
+}
+
+// Variables reachable without passing through a named type's slot arguments.
+function varsOutsideSlots(t) {
+	match t with
+	| TVar v -> [v.v]
+	| TList x -> varsOutsideSlots(x.elem)
+	| TArray x -> varsOutsideSlots(x.elem)
+	| TDict x -> intUnion(varsOutsideSlots(x.keyT), varsOutsideSlots(x.valT))
+	| TFun f -> intUnion(varsOutsideSlotsList(f.params), varsOutsideSlots(f.ret))
+	| TProc pr -> intUnion(varsOutsideSlotsList(pr.params), varsOutsideSlots(pr.ret))
+	| _ -> []
+}
+
+function varsOutsideSlotsList(ts) {
+	match Compat.uncons(ts) with
+	| None -> []
+	| Some cell -> intUnion(varsOutsideSlots(cell.value.key), varsOutsideSlotsList(cell.value.value))
+}
+
+function defaultSlotVar(t, v) {
+	applyType(Subst { IMI.imiPut(IMI.imiEmpty(), v, TUnit) }, t)
+}
+
+function defaultSlotVarsLoop(t, vs) {
+	match Compat.uncons(vs) with
+	| None -> t
+	| Some cell -> defaultSlotVarsLoop(defaultSlotVar(t, cell.value.key), cell.value.value)
+}
+
+// Slot defaulting (T2): residual variables that occur only inside named-type
+// slot arguments belong to payloads this module never constructs; any type
+// is admissible there, so they default to Unit rather than blocking export.
+function defaultResidualSlots(t) {
+	let residual = intRemoveAll(freeVars(t), varsOutsideSlots(t));
+	defaultSlotVarsLoop(t, residual)
+}
+
+function checkExportGround(st, stmt, path, bname, solved) {
+	if stmtIsGenericExport(stmt) then { st }
+	else if typeHasFreeVars(solved) then { addTypeDiag(st, path, A.stmtSpan(stmt), "Exported non-generic binding '" ++ bname ++ "' is not ground; add a constraining use, or declare it generic.") }
+	else { st }
+}
+
+function unifyTypeLists(st, aTys, bTys, path, span) {
+	if length(aTys) != length(bTys) then {
+		addTypeDiag(st, path, span, "Arity mismatch while unifying type lists.")
+	} else {
+		unifyTypeListsLoop(st, aTys, bTys, path, span)
+	}
+}
+
+function unifyTypeListsLoop(st, aTys, bTys, path, span) {
+	match Compat.uncons(aTys) with
+	| None -> st
+	| Some acell -> {
+		match Compat.uncons(bTys) with
+		| None -> st
+		| Some bcell -> {
+			let aPair = acell.value;
+			let bPair = bcell.value;
+			let st1 = unify(st, aPair.key, bPair.key, path, span);
+			unifyTypeListsLoop(st1, aPair.value, bPair.value, path, span)
+		}
+	}
+}
+
+// Takes payload fields, not TNamed binders: a variant passed to a helper
+// widens to its union (design_variant_binder_widening.md, Rule 2).
+function unifyNamed(st, aName, aArgs, bName, bArgs, path, span) {
+	if aName != bName then {
+		addTypeDiag(st, path, span, "Cannot unify " ++ formatType(TNamed { aName, aArgs }) ++ " with " ++ formatType(TNamed { bName, bArgs }) ++ ".")
+	} else {
+		unifyTypeLists(st, aArgs, bArgs, path, span)
+	}
+}
+
+export function unify(st, a, b, path, span) {
+	let a1 = apply(st.subst, a);
+	let b1 = apply(st.subst, b);
+	match a1 with
+	| TAny -> st
+	| TUnknown -> st
+	| TVar av -> bindVar(st, av.v, b1, path, span)
+	| TList ax -> {
+		match b1 with
+		| TList bx -> unify(st, ax.elem, bx.elem, path, span)
+		| TVar bv -> bindVar(st, bv.v, a1, path, span)
+		| TAny -> st
+		| TUnknown -> st
+		| _ -> addTypeDiag(st, path, span, "Expected " ++ formatType(a1) ++ ", got " ++ formatType(b1) ++ ".")
+	}
+	| TArray ax -> {
+		match b1 with
+		| TArray bx -> unify(st, ax.elem, bx.elem, path, span)
+		| TVar bv -> bindVar(st, bv.v, a1, path, span)
+		| TAny -> st
+		| TUnknown -> st
+		| _ -> addTypeDiag(st, path, span, "Expected " ++ formatType(a1) ++ ", got " ++ formatType(b1) ++ ".")
+	}
+	| TDict ax -> {
+		match b1 with
+		| TDict bx -> {
+			let st1 = unify(st, ax.keyT, bx.keyT, path, span);
+			unify(st1, ax.valT, bx.valT, path, span)
+		}
+		| TVar bv -> bindVar(st, bv.v, a1, path, span)
+		| TAny -> st
+		| TUnknown -> st
+		| _ -> addTypeDiag(st, path, span, "Expected " ++ formatType(a1) ++ ", got " ++ formatType(b1) ++ ".")
+	}
+	| TFun af -> {
+		match b1 with
+		| TFun bf -> {
+			let st1 = unifyTypeLists(st, af.params, bf.params, path, span);
+			unify(st1, af.ret, bf.ret, path, span)
+		}
+		| TVar bv -> bindVar(st, bv.v, a1, path, span)
+		| TAny -> st
+		| TUnknown -> st
+		| _ -> addTypeDiag(st, path, span, "Expected " ++ formatType(a1) ++ ", got " ++ formatType(b1) ++ ".")
+	}
+	| TProc ap -> {
+		match b1 with
+		| TProc bp -> {
+			let st1 = unifyTypeLists(st, ap.params, bp.params, path, span);
+			let st2 = unify(st1, ap.ret, bp.ret, path, span);
+			if ap.isAsync == bp.isAsync then { st2 }
+			else { addTypeDiag(st2, path, span, "Cannot unify async and non-async procedures.") }
+		}
+		| TVar bv -> bindVar(st, bv.v, a1, path, span)
+		| TAny -> st
+		| TUnknown -> st
+		| _ -> addTypeDiag(st, path, span, "Expected " ++ formatType(a1) ++ ", got " ++ formatType(b1) ++ ".")
+	}
+	| TNamed an -> {
+		match b1 with
+		| TNamed bn -> unifyNamed(st, an.tname, an.args, bn.tname, bn.args, path, span)
+		| TVariant bv -> {
+			if an.tname == bv.unionName then { unifyTypeLists(st, an.args, bv.args, path, span) }
+			else { addTypeDiag(st, path, span, "Expected " ++ formatType(a1) ++ ", got " ++ formatType(b1) ++ ".") }
+		}
+		| TVar bv -> bindVar(st, bv.v, a1, path, span)
+		| TAny -> st
+		| TUnknown -> st
+		| _ -> addTypeDiag(st, path, span, "Expected " ++ formatType(a1) ++ ", got " ++ formatType(b1) ++ ".")
+	}
+	| TVariant av -> {
+		// Rule 1: a known variant unifies with itself, with any sibling of
+		// the same union (the join is the union), and widens to its union.
+		match b1 with
+		| TVariant bv -> {
+			if av.unionName == bv.unionName then { unifyTypeLists(st, av.args, bv.args, path, span) }
+			else { addTypeDiag(st, path, span, "Expected " ++ formatType(a1) ++ ", got " ++ formatType(b1) ++ ".") }
+		}
+		| TNamed bn -> {
+			if av.unionName == bn.tname then { unifyTypeLists(st, av.args, bn.args, path, span) }
+			else { addTypeDiag(st, path, span, "Expected " ++ formatType(a1) ++ ", got " ++ formatType(b1) ++ ".") }
+		}
+		| TVar bv -> bindVar(st, bv.v, a1, path, span)
+		| TAny -> st
+		| TUnknown -> st
+		| _ -> addTypeDiag(st, path, span, "Expected " ++ formatType(a1) ++ ", got " ++ formatType(b1) ++ ".")
+	}
+	| _ -> {
+		match b1 with
+		| TVar bv -> bindVar(st, bv.v, a1, path, span)
+		| TAny -> st
+		| TUnknown -> st
+		| _ -> {
+			if sameScalar(a1, b1) then { st }
+			else { addTypeDiag(st, path, span, "Expected " ++ formatType(a1) ++ ", got " ++ formatType(b1) ++ ".") }
+		}
+	}
+}
+
+// ── constraints ────────────────────────────────────────────────────────────
+
+function addConstraint(st, c) {
+	withPending(st, cons(c, st.pending))
+}
+
+function typeContainsCallable(t) {
+	match t with
+	| TFun _ -> true
+	| TProc _ -> true
+	| TList x -> typeContainsCallable(x.elem)
+	| TArray x -> typeContainsCallable(x.elem)
+	| TDict x -> typeContainsCallable(x.keyT) || typeContainsCallable(x.valT)
+	| TNamed n -> anyTypeContainsCallable(n.args)
+	| TVariant v -> anyTypeContainsCallable(v.args)
+	| _ -> false
+}
+
+function anyTypeContainsCallable(ts) {
+	match Compat.uncons(ts) with
+	| None -> false
+	| Some cell -> {
+		let p = cell.value;
+		if typeContainsCallable(p.key) then { true } else { anyTypeContainsCallable(p.value) }
+	}
+}
+
+function comparableType(t) {
+	match t with
+	| TInt -> true
+	| TFloat -> true
+	| TBool -> true
+	| TStr -> true
+	| TChar -> true
+	| TByte -> true
+	| TNonZero -> true
+	| TList x -> comparableType(x.elem)
+	| TVar _ -> true
+	| TUnknown -> true
+	| TAny -> true
+	| _ -> false
+}
+
+function requireEquatable(st, typ, path, span) {
+	let t = apply(st.subst, typ);
+	match t with
+	| TVar v -> addConstraint(st, Equatable { t, span })
+	| _ -> {
+		if typeContainsCallable(t) then { addTypeDiag(st, path, span, "Type " ++ formatType(t) ++ " cannot be compared for equality.") }
+		else { st }
+	}
+}
+
+function requireComparable(st, typ, path, span) {
+	let t = apply(st.subst, typ);
+	match t with
+	| TVar v -> addConstraint(st, Comparable { t, span })
+	| _ -> {
+		if comparableType(t) then { st }
+		else { addTypeDiag(st, path, span, "Type " ++ formatType(t) ++ " is not Comparable.") }
+	}
+}
+
+// At module end, re-check each deferred constraint against the final
+// substitution. Constraints whose variable resolved to a concrete type are
+// re-validated (and may still fail); constraints still resting on an unbound
+// type variable are deferred silently — this pass does not yet carry
+// constraints on schemes, so diagnosing them here would reject legitimate
+// polymorphic helpers. Exported non-generic bindings are still caught by the
+// groundedness check.
+function recheckPending(st, path, c) {
+	match c with
+	| HasField h -> {
+		let t = apply(st.subst, TVar { h.tvar });
+		match t with
+		| TVar _ -> st
+		| TUnknown -> st
+		| TAny -> st
+		| TNamed n -> {
+			match IMS.imsGet(st.records, n.tname) with
+			| None -> addTypeDiag(st, path, h.span, "Type " ++ n.tname ++ " has no known fields.")
+			| Some info -> {
+				match findFieldByName(info.value.fields, h.fname) with
+				| None -> addTypeDiag(st, path, h.span, "Type " ++ n.tname ++ " has no field '" ++ h.fname ++ "'.")
+				| Some f -> unify(st, h.ftype, fieldTypeFromShape(f.value.shape, n.args), path, h.span)
+			}
+		}
+		| _ -> addTypeDiag(st, path, h.span, "Cannot access field '." ++ h.fname ++ "' on " ++ formatType(t) ++ ".")
+	}
+	| Equatable e -> {
+		let t = apply(st.subst, e.t);
+		match t with
+		| TVar _ -> st
+		| _ -> {
+			if typeContainsCallable(t) then { addTypeDiag(st, path, e.span, "Type " ++ formatType(t) ++ " cannot be compared for equality.") }
+			else { st }
+		}
+	}
+	| Comparable c2 -> {
+		let t = apply(st.subst, c2.t);
+		match t with
+		| TVar _ -> st
+		| _ -> {
+			if comparableType(t) then { st }
+			else { addTypeDiag(st, path, c2.span, "Type " ++ formatType(t) ++ " is not Comparable.") }
+		}
+	}
+}
+
+function finalizePending(st, path) {
+	reduce(fn acc, c => recheckPending(acc, path, c), st, reverse(st.pending))
+}
+
+// ── schemes ────────────────────────────────────────────────────────────────
+
+function generalizeWithEnv(env, st, t) {
+	let solved = apply(st.subst, t);
+	let locked = intUnion(envFreeVars(env), declarationFreeVars(st));
+	let vars = intRemoveAll(freeVars(solved), locked);
+	mkScheme(vars, [], solved)
+}
+
+export generic function generalize(envFree, st, t) {
+	let solved = apply(st.subst, t);
+	let vars = intRemoveAll(freeVars(solved), envFree);
+	mkScheme(vars, [], solved)
+}
+
+function freshMapForVars(st, vars, acc) {
+	match Compat.uncons(vars) with
+	| None -> Pair { st, acc }
+	| Some cell -> {
+		let p = cell.value;
+		let fv = freshVar(st);
+		freshMapForVars(fv.key, p.value, IMI.imiPut(acc, p.key, fv.value))
+	}
+}
+
+function replaceQuantified(t, m) {
+	match t with
+	| TVar v -> {
+		match IMI.imiGet(m, v.v) with
+		| None -> t
+		| Some found -> found.value
+	}
+	| TList x -> TList { replaceQuantified(x.elem, m) }
+	| TArray x -> TArray { replaceQuantified(x.elem, m) }
+	| TDict x -> TDict { replaceQuantified(x.keyT, m), replaceQuantified(x.valT, m) }
+	| TFun f -> TFun { map(fn x => replaceQuantified(x, m), f.params), replaceQuantified(f.ret, m) }
+	| TProc p -> TProc { map(fn x => replaceQuantified(x, m), p.params), replaceQuantified(p.ret, m), p.isAsync }
+	| TNamed n -> TNamed { n.tname, map(fn x => replaceQuantified(x, m), n.args) }
+	| TVariant v -> TVariant { v.vname, v.unionName, map(fn x => replaceQuantified(x, m), v.args) }
+	| _ -> t
+}
+
+export generic function instantiate(st, scheme) {
+	let fmap = freshMapForVars(st, scheme.vars, IMI.imiEmpty());
+	Pair { fmap.key, replaceQuantified(scheme.body, fmap.value) }
+}
+
+// Converters between the checker's Type and the interface's structural
+// IfaceType grammar. Variants are widened before export, so TVariant never
+// crosses the boundary.
+export function typeToIface(t) {
+	match t with
+	| TInt -> ITInt
+	| TFloat -> ITFloat
+	| TBool -> ITBool
+	| TStr -> ITStr
+	| TChar -> ITChar
+	| TByte -> ITByte
+	| TUnit -> ITUnit
+	| TNonZero -> ITNonZero
+	| TAny -> ITAny
+	| TList x -> ITList { typeToIface(x.elem) }
+	| TArray x -> ITArray { typeToIface(x.elem) }
+	| TDict x -> ITDict { typeToIface(x.keyT), typeToIface(x.valT) }
+	| TFun f -> ITFun { map(typeToIface, f.params), typeToIface(f.ret) }
+	| TProc p -> ITProc { map(typeToIface, p.params), typeToIface(p.ret), p.isAsync }
+	| TNamed n -> ITNamed { n.tname, map(typeToIface, n.args) }
+	| TVariant v -> ITNamed { v.unionName, map(typeToIface, v.args) }
+	| TVar v -> ITVar { v.v }
+	| TUnknown -> ITUnknown
+}
+
+function ifaceBodyToType(body) {
+	match body with
+	| ITUnknown -> TUnknown
+	| ITName n -> TNamed { n.name, [] }
+	| ITInt -> TInt
+	| ITFloat -> TFloat
+	| ITBool -> TBool
+	| ITStr -> TStr
+	| ITChar -> TChar
+	| ITByte -> TByte
+	| ITUnit -> TUnit
+	| ITNonZero -> TNonZero
+	| ITAny -> TAny
+	| ITList x -> TList { ifaceBodyToType(x.elem) }
+	| ITArray x -> TArray { ifaceBodyToType(x.elem) }
+	| ITDict x -> TDict { ifaceBodyToType(x.keyT), ifaceBodyToType(x.valT) }
+	| ITFun f -> TFun { map(ifaceBodyToType, f.params), ifaceBodyToType(f.ret) }
+	| ITProc p -> TProc { map(ifaceBodyToType, p.params), ifaceBodyToType(p.ret), p.isAsync }
+	| ITNamed n -> TNamed { n.tname, map(ifaceBodyToType, n.args) }
+	| ITVar v -> TVar { v.v }
+}
+
+function schemeFromIface(s) {
+	mkScheme(s.vars, s.constraints, ifaceBodyToType(s.body))
+}
+
+// ── type metadata from declarations ────────────────────────────────────────
+
+function fieldMono(t) { FieldMono { t } }
+function fieldSlot(index) { FieldSlot { index } }
+function fieldInfo(fname, shape) { FieldInfo { fname, shape } }
+function variantInfo(vname, unionName, fields, slotCount) { VariantInfo { vname, unionName, fields, slotCount } }
+function typeInfo(tname, isUnion, fields, variants, slotCount) { TypeInfo { tname, isUnion, fields, variants, slotCount } }
+
+function fieldsFromDecls(st, fieldDecls, slotCount, acc) {
+	match Compat.uncons(fieldDecls) with
+	| None -> Pair { st, FieldsOut { reverse(acc), slotCount } }
+	| Some cell -> {
+		let p = cell.value;
+		let f = p.key;
+		if f.isGeneric then {
+			fieldsFromDecls(st, p.value, slotCount + 1, cons(fieldInfo(f.fname, fieldSlot(slotCount)), acc))
+		} else {
+			let fv = freshVar(st);
+			fieldsFromDecls(fv.key, p.value, slotCount, cons(fieldInfo(f.fname, fieldMono(fv.value)), acc))
+		}
+	}
+}
+
+function variantsFromDecls(st, unionName, decls, slotCount, acc) {
+	match Compat.uncons(decls) with
+	| None -> Pair { st, VariantBuildOut { reverse(acc), slotCount } }
+	| Some cell -> {
+		let p = cell.value;
+		let v = p.key;
+		let flds = fieldsFromDecls(st, v.fields, slotCount, []);
+		let outv = variantInfo(v.vname, unionName, flds.value.fields, flds.value.slotCount);
+		variantsFromDecls(flds.key, unionName, p.value, flds.value.slotCount, cons(outv, acc))
+	}
+}
+
+function putVariantInfos(st, variants) {
+	match Compat.uncons(variants) with
+	| None -> st
+	| Some cell -> {
+		let p = cell.value;
+		putVariantInfos(withVariants(st, IMS.imsPut(st.variants, p.key.vname, p.key)), p.value)
+	}
+}
+
+function declareType(st, env, stmt) {
+	match stmt with
+	| SType s -> {
+		match s.decl with
+		| RecordDecl r -> registerRecord(st, env, r.tname, r.fields)
+		| UnionDecl u -> registerUnion(st, env, u.tname, u.variants)
+	}
+	| _ -> envOut(st, env)
+}
+
+function registerRecord(st, env, tname, fieldDecls) {
+	let flds = fieldsFromDecls(st, fieldDecls, 0, []);
+	let info = typeInfo(tname, false, flds.value.fields, [], flds.value.slotCount);
+	let st1 = withRecords(flds.key, IMS.imsPut(flds.key.records, tname, info));
+	let env1 = IMS.imsPut(env, tname, TTypeName { tname });
+	envOut(st1, env1)
+}
+
+// Pair remains seeded here for isolated type-checker unit tests that do not
+// provide the builtin interface map. Production checking also receives Pair's
+// declaration through builtins/spec.pf and ModIface.records.
+function registerBuiltinTypes(st, env) {
+	registerRecord(st, env, "Pair", [A.mkFieldDecl("key", true), A.mkFieldDecl("value", true)])
+}
+
+// Register a union's variants into the records/variants tables and bind the
+// union name and variant constructors into the environment. Used for local
+// union declarations and for unions arriving through dependency interfaces
+// (which carry the same AST VariantDecl lists).
+function registerUnion(st, env, unionName, variantDecls) {
+	let built = variantsFromDecls(st, unionName, variantDecls, 0, []);
+	let info = typeInfo(unionName, true, [], built.value.variants, built.value.slotCount);
+	let st1 = withRecords(built.key, IMS.imsPut(built.key.records, unionName, info));
+	let st2 = putVariantInfos(st1, built.value.variants);
+	let env1 = IMS.imsPut(env, unionName, TTypeName { unionName });
+	let env2 = bindVariantCtors(env1, built.value.variants);
+	envOut(st2, env2)
+}
+
+// Register every union carried by dependency interfaces, before imports are
+// bound and before local declarations (so local declarations of the same
+// name win). Like exhaust's addDepIfaces, this walks ALL provided interfaces
+// rather than only explicitly imported ones: builtin interfaces are never
+// imported by name, and variant constructors are program-global in the V1
+// runtime anyway. Aliased entries (the same interface keyed under both its
+// raw and resolved path) are registered once.
+function registerIfaceRecordEntries(st, env, entries) {
+	match Compat.uncons(entries) with
+	| None -> envOut(st, env)
+	| Some cell -> {
+		let p = cell.value;
+		let one = registerRecord(st, env, p.key.key, p.key.value);
+		registerIfaceRecordEntries(one.st, one.env, p.value)
+	}
+}
+
+function registerIfaceUnionEntries(st, env, entries) {
+	match Compat.uncons(entries) with
+	| None -> envOut(st, env)
+	| Some cell -> {
+		let p = cell.value;
+		let one = registerUnion(st, env, p.key.key, p.key.value);
+		registerIfaceUnionEntries(one.st, one.env, p.value)
+	}
+}
+
+// Exports of implicit builtin interfaces ($builtin/*) are bound into scope
+// without an import statement; the core language surface is ambient. Explicit
+// imports and local declarations are bound later and take precedence.
+function isImplicitBuiltinPath(path) {
+	slice(0, 9, path) == "$builtin/"
+}
+
+function bindAllIfaceExports(st, env, entries) {
+	match Compat.uncons(entries) with
+	| None -> env
+	| Some cell -> {
+		let p = cell.value;
+		bindAllIfaceExports(st, putEnv(env, p.key.key, TScheme { schemeFromIface(p.key.value) }), p.value)
+	}
+}
+
+function registerDepTypesLoop(st, env, entries, seen) {
+	match Compat.uncons(entries) with
+	| None -> envOut(st, env)
+	| Some cell -> {
+		let p = cell.value;
+		let iface = p.key.value;
+		if strListContains(seen, iface.path) then {
+			registerDepTypesLoop(st, env, p.value, seen)
+		} else {
+			let records = registerIfaceRecordEntries(
+				st,
+				env,
+				IMS.imsEntries(iface.records)
+			);
+			let one = registerIfaceUnionEntries(
+				records.st,
+				records.env,
+				IMS.imsEntries(iface.unions)
+			);
+			if isImplicitBuiltinPath(iface.path) then {
+				let env2 = bindAllIfaceExports(one.st, one.env, IMS.imsEntries(iface.types));
+				registerDepTypesLoop(one.st, env2, p.value, cons(iface.path, seen))
+			} else {
+				registerDepTypesLoop(one.st, one.env, p.value, cons(iface.path, seen))
+			}
+		}
+	}
+}
+
+function strListContains(xs, s) {
+	match Compat.uncons(xs) with
+	| None -> false
+	| Some cell -> {
+		if cell.value.key == s then { true } else { strListContains(cell.value.value, s) }
+	}
+}
+
+function registerDepTypes(st, env, deps) {
+	registerDepTypesLoop(st, env, IMS.imsEntries(deps), [])
+}
+
+function bindVariantCtors(env, variants) {
+	match Compat.uncons(variants) with
+	| None -> env
+	| Some cell -> {
+		let p = cell.value;
+		bindVariantCtors(IMS.imsPut(env, p.key.vname, TVariantCtor { p.key }), p.value)
+	}
+}
+
+function declareTypes(st, env, stmts) {
+	match Compat.uncons(stmts) with
+	| None -> envOut(st, env)
+	| Some cell -> {
+		let p = cell.value;
+		match p.key with
+		| SExport ex -> {
+			let out1 = declareType(st, env, ex.inner);
+			declareTypes(out1.st, out1.env, p.value)
+		}
+		| _ -> {
+			let out1 = declareType(st, env, p.key);
+			declareTypes(out1.st, out1.env, p.value)
+		}
+	}
+}
+
+// Three-way result for namespace member lookup from an EField object.
+type NsLookup = {
+	| NsNotNamespace
+	| NsMember: entry
+	| NsMissing: alias
+}
+
+// If the field-access object is a bare name bound to an import namespace,
+// resolve the member against the namespace table.
+function namespaceLookup(env, object, fname) {
+	match object with
+	| EVar v -> {
+		match lookupEnv(env, v.name) with
+		| Some entry -> {
+			match entry.value with
+			| TNamespace ns -> {
+				match IMS.imsGet(ns.table, fname) with
+				| Some member -> NsMember { member.value }
+				| None -> NsMissing { v.name }
+			}
+			| _ -> NsNotNamespace
+		}
+		| None -> NsNotNamespace
+	}
+	| _ -> NsNotNamespace
+}
+
+function fieldTypeFromShape(shape, args) {
+	match shape with
+	| FieldMono f -> f.t
+	| FieldSlot s -> {
+		match Compat.listAt(args, s.index) with
+		| None -> TUnknown
+		| Some t -> t.value
+	}
+}
+
+function findFieldByName(fields, name) {
+	match Compat.uncons(fields) with
+	| None -> None
+	| Some cell -> {
+		let p = cell.value;
+		if p.key.fname == name then { Some { p.key } } else { findFieldByName(p.value, name) }
+	}
+}
+
+function fieldAt(fields, index) {
+	Compat.listAt(fields, index)
+}
+
+// Fresh type arguments sized to the UNION's total slot count (variant field
+// shapes index into this list by absolute slot). A variant's own slotCount
+// is only the running total at its declaration position and must not be
+// used as the union's arity.
+function unionSlotArgs(st, vi) {
+	match IMS.imsGet(st.records, vi.unionName) with
+	| Some info -> slotArgs(st, info.value.slotCount)
+	| None -> slotArgs(st, vi.slotCount)
+}
+
+function slotArgs(st, count) {
+	freshTypeList(st, count)
+}
+
+// ── environment seeding ────────────────────────────────────────────────────
+
+function tOption(t) { TNamed { "Option", [t] } }
+function tResult(okT, errT) { TNamed { "Result", [okT, errT] } }
+
+function builtinEnv() {
+	let env0 = IMS.imsEmpty();
+	let env1 = IMS.imsPut(env0, "true", TMono { TBool });
+	let env2 = IMS.imsPut(env1, "false", TMono { TBool });
+	let env3 = IMS.imsPut(env2, "None", TMono { tOption(TUnknown) });
+	let env4 = IMS.imsPut(env3, "__str__", TScheme { mkScheme([0], [], TFun { [TVar { 0 }], TStr }) });
+	let env5 = IMS.imsPut(env4, "length", TScheme { mkScheme([0], [], TFun { [TList { TVar { 0 } }], TInt }) });
+	let env6 = IMS.imsPut(env5, "reverse", TScheme { mkScheme([0], [], TFun { [TList { TVar { 0 } }], TList { TVar { 0 } } }) });
+	let env7 = IMS.imsPut(env6, "cons", TScheme { mkScheme([0], [], TFun { [TVar { 0 }, TList { TVar { 0 } }], TList { TVar { 0 } } }) });
+	let env8 = IMS.imsPut(env7, "map", TScheme { mkScheme([0, 1], [], TFun { [TFun { [TVar { 0 }], TVar { 1 } }, TList { TVar { 0 } }], TList { TVar { 1 } } }) });
+	let env9 = IMS.imsPut(env8, "filter", TScheme { mkScheme([0], [], TFun { [TFun { [TVar { 0 }], TBool }, TList { TVar { 0 } }], TList { TVar { 0 } } }) });
+	let env10 = IMS.imsPut(env9, "reduce", TScheme { mkScheme([0, 1], [], TFun { [TFun { [TVar { 0 }, TVar { 1 }], TVar { 0 } }, TVar { 0 }, TList { TVar { 1 } }], TVar { 0 } }) });
+	let env11 = IMS.imsPut(env10, "slice", TScheme { mkScheme([0], [], TFun { [TInt, TInt, TList { TVar { 0 } }], TList { TVar { 0 } } }) });
+	let env12 = IMS.imsPut(env11, "join", TMono { TFun { [TList { TStr }, TStr], TStr } });
+	let env13 = IMS.imsPut(env12, "split", TMono { TFun { [TStr, TStr], TList { TStr } } });
+	env13
+}
+
+function lookupEnv(env, name) {
+	IMS.imsGet(env, name)
+}
+
+function putEnv(env, name, entry) {
+	IMS.imsPut(env, name, entry)
+}
+
+function bindParams(env, params, types) {
+	match Compat.uncons(params) with
+	| None -> env
+	| Some pcell -> {
+		match Compat.uncons(types) with
+		| None -> env
+		| Some tcell -> {
+			let pp = pcell.value;
+			let tp = tcell.value;
+			let env1 = bindParamName(env, pp.key, tp.key);
+			bindParams(env1, pp.value, tp.value)
+		}
+	}
+}
+
+// ── imports ────────────────────────────────────────────────────────────────
+
+function depsLookup(deps, rawPath) {
+	IMS.imsGet(deps, rawPath)
+}
+
+function bindOneImportedName(st, env, iface, name, alias) {
+	let local = match alias with | None -> name | Some a -> a.value;
+	match I.lookupType(iface, name) with
+	| Some sch -> putEnv(env, local, TScheme { schemeFromIface(sch.value) })
+	| None -> {
+		match I.lookupKind(iface, name) with
+		| Some kind -> putEnv(env, local, TMono { TUnknown })
+		| None -> env
+	}
+}
+
+function bindNamedImports(st, env, iface, names) {
+	match Compat.uncons(names) with
+	| None -> env
+	| Some cell -> {
+		let p = cell.value;
+		bindNamedImports(st, bindOneImportedName(st, env, iface, p.key.name, p.key.alias), iface, p.value)
+	}
+}
+
+function bindNamespaceEntries(entries, table) {
+	match Compat.uncons(entries) with
+	| None -> table
+	| Some cell -> {
+		let p = cell.value;
+		bindNamespaceEntries(p.value, IMS.imsPut(table, p.key.key, TScheme { schemeFromIface(p.key.value) }))
+	}
+}
+
+function bindImportStmt(st, env, stmt, deps) {
+	match stmt with
+	| SImport s -> {
+		match depsLookup(deps, s.rawPath) with
+		| None -> envOut(st, env)
+		| Some ifaceCell -> {
+			let iface = ifaceCell.value;
+			match s.spec with
+			| INames spec -> envOut(st, bindNamedImports(st, env, iface, spec.names))
+			| INamespace ns -> {
+				let table = bindNamespaceEntries(IMS.imsEntries(iface.types), IMS.imsEmpty());
+				envOut(st, putEnv(env, ns.alias, TNamespace { table }))
+			}
+			| IStar -> envOut(st, bindNamedImports(st, env, iface, map(fn p => A.mkImportName(p.key, None), IMS.imsEntries(iface.types))))
+		}
+	}
+	| _ -> envOut(st, env)
+}
+
+function bindImports(st, env, stmts, deps) {
+	match Compat.uncons(stmts) with
+	| None -> envOut(st, env)
+	| Some cell -> {
+		let p = cell.value;
+		let out1 = match p.key with
+			| SExport e -> bindImportStmt(st, env, e.inner, deps)
+			| _ -> bindImportStmt(st, env, p.key, deps);
+		bindImports(out1.st, out1.env, p.value, deps)
+	}
+}
+
+// ── expression inference helpers ───────────────────────────────────────────
+
+function isDefinitelyNonNumericType(t) {
+	match t with
+	| TInt -> false
+	| TFloat -> false
+	| TVar _ -> false
+	| TUnknown -> false
+	| TAny -> false
+	| _ -> true
+}
+
+function isDefinitelyNonStringType(t) {
+	match t with
+	| TStr -> false
+	| TVar _ -> false
+	| TUnknown -> false
+	| TAny -> false
+	| _ -> true
+}
+
+function isFloatType(t) {
+	match t with
+	| TFloat -> true
+	| _ -> false
+}
+
+// The other operand of a Float-typed binary: Int promotes silently, an
+// unbound variable is pinned to Float, wildcards pass. Definitely-non-numeric
+// operands were already rejected in inferBinaryByOp.
+function promoteFloatOperand(st, t, path, span) {
+	match t with
+	| TVar v -> unify(st, t, TFloat, path, span)
+	| _ -> st
+}
+
+function inferNumericBinary(st, path, span, leftT, rightT) {
+	let l = apply(st.subst, leftT);
+	let r = apply(st.subst, rightT);
+	if isFloatType(l) || isFloatType(r) then {
+		let st1 = promoteFloatOperand(st, l, path, span);
+		let st2 = promoteFloatOperand(st1, r, path, span);
+		exprOut(st2, TFloat)
+	} else {
+		let st1 = unify(st, l, TInt, path, span);
+		let st2 = unify(st1, r, TInt, path, span);
+		exprOut(st2, TInt)
+	}
+}
+
+function inferNumericUnary(st, path, span, op, t0) {
+	let t = apply(st.subst, t0);
+	if isDefinitelyNonNumericType(t) then {
+		exprOut(addTypeDiag(st, path, span, "Operator '" ++ op ++ "' requires a numeric operand."), TUnknown)
+	} else {
+		match t with
+		| TFloat -> exprOut(st, TFloat)
+		| _ -> exprOut(unify(st, t, TInt, path, span), TInt)
+	}
+}
+
+function inferLogicalBinary(st, path, span, leftT, rightT) {
+	let st1 = unify(st, leftT, TBool, path, span);
+	let st2 = unify(st1, rightT, TBool, path, span);
+	exprOut(st2, TBool)
+}
+
+function inferEquality(st, path, span, leftT, rightT) {
+	let st1 = unify(st, leftT, rightT, path, span);
+	let st2 = requireEquatable(st1, leftT, path, span);
+	exprOut(st2, TBool)
+}
+
+function inferComparison(st, path, span, leftT, rightT) {
+	let st1 = unify(st, leftT, rightT, path, span);
+	let st2 = requireComparable(st1, leftT, path, span);
+	exprOut(st2, TBool)
+}
+
+// -- NonZero Int divisor checking --------------------------------------------
+//
+// Float division/modulo remains IEEE/host-total. Int `/` and `%` require
+// either:
+//   * a syntactic nonzero integer literal in divisor position;
+//   * a value typed NonZero, normally obtained through nonZero(...);
+//   * or safeDiv/safeMod, which return Option<Int>.
+
+function isZeroIntLiteral(expr) {
+	match expr with
+	| EInt value -> value.n == 0
+	| EUnary unary -> {
+		if unary.op == "-" then {
+			isZeroIntLiteral(unary.operand)
+		} else {
+			false
+		}
+	}
+	| _ -> false
+}
+
+function isNonZeroIntLiteral(expr) {
+	match expr with
+	| EInt value -> value.n != 0
+	| EUnary unary -> {
+		if unary.op == "-" then {
+			isNonZeroIntLiteral(unary.operand)
+		} else {
+			false
+		}
+	}
+	| _ -> false
+}
+
+function isDefinitelyNonDivisionNumericType(t) {
+	match t with
+	| TInt -> false
+	| TFloat -> false
+	| TNonZero -> false
+	| TVar _ -> false
+	| TUnknown -> false
+	| TAny -> false
+	| _ -> true
+}
+
+function safeDivisionName(op) {
+	if op == "/" then {
+		"safeDiv"
+	} else {
+		"safeMod"
+	}
+}
+
+function nonZeroDivisorMessage(op, zeroLiteral) {
+	let intro = zeroLiteral
+		? "Literal 0 is not a valid Int divisor. "
+		: "Int operator '" ++ op ++ "' requires a NonZero divisor. ";
+	let safeName = safeDivisionName(op);
+
+	intro
+	++ "Use `match nonZero(y) with | Some nz -> x "
+	++ op
+	++ " nz.value | None -> ...`, `"
+	++ safeName
+	++ "(x, y)`, or inline a nonzero integer literal."
+}
+
+function inferIntDivision(
+	st,
+	path,
+	span,
+	op,
+	rhsExpr,
+	leftT,
+	rightT
+) {
+	let st1 = unify(st, leftT, TInt, path, span);
+	let right = apply(st1.subst, rightT);
+
+	if isZeroIntLiteral(rhsExpr) then {
+		exprOut(
+			addTypeDiag(
+				st1,
+				path,
+				span,
+				nonZeroDivisorMessage(op, true)
+			),
+			TInt
+		)
+	} else if isNonZeroIntLiteral(rhsExpr) then {
+		let st2 = unify(st1, rightT, TInt, path, span);
+		exprOut(st2, TInt)
+	} else {
+		match right with
+		| TNonZero -> exprOut(st1, TInt)
+		| TVar _ -> {
+			let st2 = unify(st1, rightT, TNonZero, path, span);
+			exprOut(st2, TInt)
+		}
+		| TUnknown -> exprOut(st1, TUnknown)
+		| _ -> {
+			exprOut(
+				addTypeDiag(
+					st1,
+					path,
+					span,
+					nonZeroDivisorMessage(op, false)
+				),
+				TInt
+			)
+		}
+	}
+}
+
+function inferDivisionBinary(
+	st,
+	path,
+	span,
+	op,
+	rhsExpr,
+	leftT,
+	rightT
+) {
+	let left = apply(st.subst, leftT);
+	let right = apply(st.subst, rightT);
+
+	if isDefinitelyNonDivisionNumericType(left)
+		|| isDefinitelyNonDivisionNumericType(right) then {
+		exprOut(
+			addTypeDiag(
+				st,
+				path,
+				span,
+				"Operator '" ++ op ++ "' requires numeric operands."
+			),
+			TUnknown
+		)
+	} else if isFloatType(left) || isFloatType(right) then {
+		inferNumericBinary(st, path, span, leftT, rightT)
+	} else {
+		inferIntDivision(
+			st,
+			path,
+			span,
+			op,
+			rhsExpr,
+			leftT,
+			rightT
+		)
+	}
+}
+
+function inferBinaryExpr(
+	st,
+	path,
+	span,
+	op,
+	rhsExpr,
+	leftT,
+	rightT
+) {
+	if op == "/" || op == "%" then {
+		inferDivisionBinary(
+			st,
+			path,
+			span,
+			op,
+			rhsExpr,
+			leftT,
+			rightT
+		)
+	} else {
+		inferBinaryByOp(st, path, span, op, leftT, rightT)
+	}
+}
+
+function inferBinaryByOp(st, path, span, op, leftT, rightT) {
+	let left = apply(st.subst, leftT);
+	let right = apply(st.subst, rightT);
+
+	if op == "++" then {
+		if isDefinitelyNonStringType(left) || isDefinitelyNonStringType(right) then {
+			exprOut(
+				addTypeDiag(
+					st,
+					path,
+					span,
+					"Operator '++' requires Str operands."
+				),
+				TStr
+			)
+		} else {
+			let st1 = unify(st, leftT, TStr, path, span);
+			let st2 = unify(st1, rightT, TStr, path, span);
+			exprOut(st2, TStr)
+		}
+	} else if op == "+" || op == "-" || op == "*" || op == "/" || op == "%" then {
+		if isDefinitelyNonNumericType(left) || isDefinitelyNonNumericType(right) then {
+			exprOut(
+				addTypeDiag(
+					st,
+					path,
+					span,
+					"Operator '" ++ op ++ "' requires numeric operands."
+				),
+				TUnknown
+			)
+		} else {
+			inferNumericBinary(st, path, span, leftT, rightT)
+		}
+	} else if op == "==" || op == "!=" then {
+		inferEquality(st, path, span, leftT, rightT)
+	} else if op == "<" || op == ">" || op == "<=" || op == ">=" then {
+		inferComparison(st, path, span, leftT, rightT)
+	} else if op == "&&" || op == "||" then {
+		inferLogicalBinary(st, path, span, leftT, rightT)
+	} else if op == "&" || op == "|" || op == "<<" || op == ">>" then {
+		let st1 = unify(st, leftT, TInt, path, span);
+		let st2 = unify(st1, rightT, TInt, path, span);
+		exprOut(st2, TInt)
+	} else {
+		exprOut(
+			addTypeDiag(
+				st,
+				path,
+				span,
+				"Unknown binary operator '" ++ op ++ "'."
+			),
+			TUnknown
+		)
+	}
+}
+
+function inferCallArgs(st, env, args, params, path, span) {
+	if length(args) != length(params) then {
+		Pair { addTypeDiag(st, path, span, "Call expected " ++ __str__(length(params)) ++ " argument(s), got " ++ __str__(length(args)) ++ "."), st }
+	} else {
+		inferCallArgsLoop(st, env, args, params, path, span)
+	}
+}
+
+function inferCallArgsLoop(st, env, args, params, path, span) {
+	match Compat.uncons(args) with
+	| None -> Pair { st, st }
+	| Some acell -> {
+		match Compat.uncons(params) with
+		| None -> Pair { st, st }
+		| Some pcell -> {
+			let ap = acell.value;
+			let pp = pcell.value;
+			let ao = cgenExpr(st, env, ap.key, path);
+			let st1 = unify(
+					ao.st,
+					ao.typ,
+					pp.key,
+					path,
+					A.exprSpan(ap.key)
+				);
+			inferCallArgsLoop(st1, env, ap.value, pp.value, path, span)
+		}
+	}
+}
+
+function inferCall(st, env, callee, args, span, path) {
+	let co = cgenExpr(st, env, callee, path);
+	let ct = apply(co.st.subst, co.typ);
+	match ct with
+	| TFun tf -> {
+		let ao = inferCallArgs(co.st, env, args, tf.params, path, span);
+		exprOut(ao.key, tf.ret)
+	}
+	| TProc pr -> {
+		let ao = inferCallArgs(co.st, env, args, pr.params, path, span);
+		exprOut(ao.key, pr.ret)
+	}
+	| TVar v -> {
+		let fresh = freshTypeList(co.st, length(args));
+		let ret = freshVar(fresh.st);
+		let fnT = TFun { fresh.types, ret.value };
+		let st1 = unify(ret.key, ct, fnT, path, span);
+		let ao = inferCallArgs(st1, env, args, fresh.types, path, span);
+		exprOut(ao.key, ret.value)
+	}
+	| TUnknown -> exprOut(co.st, TUnknown)
+	| TAny -> exprOut(co.st, TUnknown)
+	| _ -> exprOut(addTypeDiag(co.st, path, span, "Cannot call value of type " ++ formatType(ct) ++ "."), TUnknown)
+}
+
+function inferListElems(st, env, elems, elemT, path) {
+	match Compat.uncons(elems) with
+	| None -> exprOut(st, TList { elemT })
+	| Some cell -> {
+		let p = cell.value;
+		let eo = cgenExpr(st, env, p.key, path);
+		let st1 = unify(eo.st, eo.typ, elemT, path, A.exprSpan(p.key));
+		inferListElems(st1, env, p.value, elemT, path)
+	}
+}
+
+function inferDictEntries(st, env, entries, keyT, valT, path) {
+	match Compat.uncons(entries) with
+	| None -> exprOut(st, TDict { keyT, valT })
+	| Some cell -> {
+		let p = cell.value;
+		let ko = cgenExpr(st, env, p.key.key, path);
+		let st1 = unify(ko.st, ko.typ, keyT, path, A.exprSpan(p.key.key));
+		let vo = cgenExpr(st1, env, p.key.value, path);
+		let st2 = unify(vo.st, vo.typ, valT, path, A.exprSpan(p.key.value));
+		inferDictEntries(st2, env, p.value, keyT, valT, path)
+	}
+}
+
+function inferArrayElems(st, env, elems, elemT, path) {
+	match Compat.uncons(elems) with
+	| None -> exprOut(st, TArray { elemT })
+	| Some cell -> {
+		let p = cell.value;
+		let eo = cgenExpr(st, env, p.key, path);
+		let st1 = unify(eo.st, eo.typ, elemT, path, A.exprSpan(p.key));
+		inferArrayElems(st1, env, p.value, elemT, path)
+	}
+}
+
+function fieldExpectedByInput(fields, input, index, args) {
+	match input.fname with
+	| Some name -> {
+		match findFieldByName(fields, name.value) with
+		| None -> None
+		| Some f -> Some { fieldTypeFromShape(f.value.shape, args) }
+	}
+	| None -> {
+		match fieldAt(fields, index) with
+		| None -> None
+		| Some f -> Some { fieldTypeFromShape(f.value.shape, args) }
+	}
+}
+
+function inferConstructorFields(st, env, inputs, fields, args, path, index) {
+	match Compat.uncons(inputs) with
+	| None -> st
+	| Some cell -> {
+		let p = cell.value;
+		match fieldExpectedByInput(fields, p.key, index, args) with
+		| None -> inferConstructorFields(addTypeDiag(st, path, A.exprSpan(p.key.value), "Unknown or extra constructor field."), env, p.value, fields, args, path, index + 1)
+		| Some expected -> {
+			let vo = cgenExpr(st, env, p.key.value, path);
+			let st1 = unify(vo.st, vo.typ, expected.value, path, A.exprSpan(p.key.value));
+			inferConstructorFields(st1, env, p.value, fields, args, path, index + 1)
+		}
+	}
+}
+
+function inferRecordConstruction(st, env, name, fields, span, path) {
+	match IMS.imsGet(st.records, name) with
+	| Some rec -> {
+		let args = slotArgs(st, rec.value.slotCount);
+		let st1 = inferConstructorFields(args.st, env, fields, rec.value.fields, args.types, path, 0);
+		exprOut(st1, TNamed { name, args.types })
+	}
+	| None -> {
+		match IMS.imsGet(st.variants, name) with
+		| Some vi -> {
+			let args = unionSlotArgs(st, vi.value);
+			let st1 = inferConstructorFields(args.st, env, fields, vi.value.fields, args.types, path, 0);
+			exprOut(st1, TVariant { name, vi.value.unionName, args.types })
+		}
+		| None -> exprOut(addTypeDiag(st, path, span, "Unknown record or variant constructor '" ++ name ++ "'."), TUnknown)
+	}
+}
+
+function inferFieldAccess(
+	st,
+	objectType,
+	fieldName,
+	span,
+	path
+) {
+	let t = apply(st.subst, objectType);
+
+	match t with
+	| TVariant v -> {
+		match variantFromUnion(
+			st,
+			v.unionName,
+			v.vname
+		) with
+		| None -> {
+			exprOut(
+				addTypeDiag(
+					st,
+					path,
+					span,
+					"Unknown variant '"
+						++ v.vname
+						++ "'."
+				),
+				TUnknown
+			)
+		}
+		| Some vi -> {
+			match findFieldByName(
+				vi.value.fields,
+				fieldName
+			) with
+			| None -> {
+				exprOut(
+					addTypeDiag(
+						st,
+						path,
+						span,
+						"Variant "
+							++ v.vname
+							++ " has no field '"
+							++ fieldName
+							++ "'."
+					),
+					TUnknown
+				)
+			}
+			| Some f -> {
+				exprOut(
+					st,
+					fieldTypeFromShape(
+						f.value.shape,
+						v.args
+					)
+				)
+			}
+		}
+	}
+	| TNamed n -> {
+		match IMS.imsGet(
+			st.records,
+			n.tname
+		) with
+		| None -> {
+			exprOut(
+				addTypeDiag(
+					st,
+					path,
+					span,
+					"Type "
+						++ n.tname
+						++ " has no known fields."
+				),
+				TUnknown
+			)
+		}
+		| Some info -> {
+			match findFieldByName(
+				info.value.fields,
+				fieldName
+			) with
+			| None -> {
+				exprOut(
+					addTypeDiag(
+						st,
+						path,
+						span,
+						"Type "
+							++ n.tname
+							++ " has no field '"
+							++ fieldName
+							++ "'."
+					),
+					TUnknown
+				)
+			}
+			| Some f -> {
+				exprOut(
+					st,
+					fieldTypeFromShape(
+						f.value.shape,
+						n.args
+					)
+				)
+			}
+		}
+	}
+	| TVar v -> {
+		let fv = freshVar(st);
+		let st1 = addConstraint(
+			fv.key,
+			HasField {
+				v.v,
+				fieldName,
+				fv.value,
+				span
+			}
+		);
+
+		exprOut(st1, fv.value)
+	}
+	| TUnknown -> exprOut(st, TUnknown)
+	| TAny -> exprOut(st, TUnknown)
+	| _ -> {
+		exprOut(
+			addTypeDiag(
+				st,
+				path,
+				span,
+				"Cannot access field '"
+					++ fieldName
+					++ "' on "
+					++ formatType(t)
+					++ "."
+			),
+			TUnknown
+		)
+	}
+}
+
+function inferIndexAccess(st, objectType, span, path) {
+	let t = apply(st.subst, objectType);
+	match t with
+	| TList l -> exprOut(st, tOption(l.elem))
+	| TArray a -> exprOut(st, tOption(a.elem))
+	| TStr -> exprOut(st, tOption(TChar))
+	| TDict d -> exprOut(st, tOption(d.valT))
+	| TVar v -> {
+		let elem = freshVar(st);
+		let st1 = unify(elem.key, t, TList { elem.value }, path, span);
+		exprOut(st1, tOption(elem.value))
+	}
+	| _ -> exprOut(addTypeDiag(st, path, span, "Cannot index value of type " ++ formatType(t) ++ "."), TUnknown)
+}
+
+function inferFmtParts(st, env, parts, path) {
+	match Compat.uncons(parts) with
+	| None -> exprOut(st, TStr)
+	| Some cell -> {
+		let p = cell.value;
+		match p.key with
+		| FmtLit _ -> inferFmtParts(st, env, p.value, path)
+		| FmtExpr fe -> {
+			let eo = cgenExpr(st, env, fe.e, path);
+			inferFmtParts(eo.st, env, p.value, path)
+		}
+	}
+}
+
+// ── pattern and match inference ────────────────────────────────────────────
+
+function findVariantInfo(variants, vname) {
+	match Compat.uncons(variants) with
+	| None -> None
+	| Some cell -> {
+		let p = cell.value;
+
+		if p.key.vname == vname then {
+			Some { p.key }
+		} else {
+			findVariantInfo(p.value, vname)
+		}
+	}
+}
+
+function variantFromUnion(st, unionName, vname) {
+	match IMS.imsGet(st.records, unionName) with
+	| None -> None
+	| Some info -> {
+		if info.value.isUnion then {
+			findVariantInfo(
+				info.value.variants,
+				vname
+			)
+		} else {
+			None
+		}
+	}
+}
+
+function variantForSubject(st, subjectT, vname) {
+	match apply(st.subst, subjectT) with
+	| TNamed named -> {
+		variantFromUnion(
+			st,
+			named.tname,
+			vname
+		)
+	}
+	| TVariant variant -> {
+		variantFromUnion(
+			st,
+			variant.unionName,
+			vname
+		)
+	}
+	| _ -> IMS.imsGet(st.variants, vname)
+}
+
+function bindPattern(
+	st,
+	env,
+	pattern,
+	subjectT,
+	path,
+	span
+) {
+	match pattern with
+	| PWild -> envOut(st, env)
+	| PVariant p -> {
+		match variantForSubject(
+			st,
+			subjectT,
+			p.vname
+		) with
+		| None -> {
+			envOut(
+				addTypeDiag(
+					st,
+					path,
+					span,
+					"Unknown variant '"
+						++ p.vname
+						++ "'."
+				),
+				env
+			)
+		}
+		| Some vi -> {
+			let args = unionSlotArgs(
+				st,
+				vi.value
+			);
+			let st1 = unify(
+				args.st,
+				subjectT,
+				TNamed {
+					vi.value.unionName,
+					args.types
+				},
+				path,
+				span
+			);
+			let env1 = match p.bind with
+			| None -> env
+			| Some name -> {
+				putEnv(
+					env,
+					name.value,
+					TMono {
+						TVariant {
+							p.vname,
+							vi.value.unionName,
+							args.types
+						}
+					}
+				)
+			};
+
+			envOut(st1, env1)
+		}
+	}
+	| PList p -> {
+		let elem = freshVar(st);
+		let st1 = unify(
+			elem.key,
+			subjectT,
+			TList { elem.value },
+			path,
+			span
+		);
+		let env1 = bindListPatternElems(
+			env,
+			p.elems,
+			elem.value
+		);
+		let env2 = match p.rest with
+		| None -> env1
+		| Some rest -> {
+			bindPatElem(
+				env1,
+				rest.value,
+				TList { elem.value }
+			)
+		};
+
+		envOut(st1, env2)
+	}
+}
+
+function bindPatElem(env, patElem, typ) {
+	match patElem with
+	| PeWild -> env
+	| PeBind b -> putEnv(env, b.pname, TMono { typ })
+}
+
+function bindListPatternElems(env, elems, elemT) {
+	match Compat.uncons(elems) with
+	| None -> env
+	| Some cell -> {
+		let p = cell.value;
+		bindListPatternElems(bindPatElem(env, p.key, elemT), p.value, elemT)
+	}
+}
+
+function inferMatchArms(st, env, arms, subjectT, resultT, path) {
+	match Compat.uncons(arms) with
+	| None -> exprOut(st, resultT)
+	| Some cell -> {
+		let p = cell.value;
+		let arm = p.key;
+		let bound = bindPattern(st, env, arm.pattern, subjectT, path, A.exprSpan(arm.body));
+		let st1 = match arm.guard with
+			| None -> bound.st
+			| Some g -> {
+				let go = cgenExpr(bound.st, bound.env, g.value, path);
+				unify(go.st, go.typ, TBool, path, A.exprSpan(g.value))
+			};
+		let bo = cgenExpr(st1, bound.env, arm.body, path);
+		let st2 = unify(bo.st, bo.typ, resultT, path, A.exprSpan(arm.body));
+		inferMatchArms(st2, env, p.value, subjectT, resultT, path)
+	}
+}
+
+// ── expression inference ──────────────────────────────────────────────────
+
+export function cgenExpr(st, env, e, path) {
+	match e with
+	| EInt x -> exprOut(addTypedNode(st, x.id, TInt), TInt)
+	| EFloat x -> exprOut(addTypedNode(st, x.id, TFloat), TFloat)
+	| EBool x -> exprOut(addTypedNode(st, x.id, TBool), TBool)
+	| EStr x -> exprOut(addTypedNode(st, x.id, TStr), TStr)
+	| EChar x -> exprOut(addTypedNode(st, x.id, TChar), TChar)
+	| EByte x -> exprOut(addTypedNode(st, x.id, TByte), TByte)
+	| EVar x -> {
+		match lookupEnv(env, x.name) with
+		| None -> exprOut(addTypedNode(addTypeDiag(st, path, x.span, "Unknown name '" ++ x.name ++ "'."), x.id, TUnknown), TUnknown)
+		| Some entry -> {
+			match entry.value with
+			| TScheme s -> {
+				let inst = instantiate(st, s.scheme);
+				exprOut(addTypedNode(inst.key, x.id, inst.value), inst.value)
+			}
+			| TMono m -> exprOut(addTypedNode(st, x.id, m.t), m.t)
+			| TVariantCtor vc -> {
+				if length(vc.info.fields) == 0 then {
+					let args = unionSlotArgs(st, vc.info);
+					let typ = TVariant { vc.info.vname, vc.info.unionName, args.types };
+					exprOut(addTypedNode(args.st, x.id, typ), typ)
+				} else {
+					exprOut(addTypedNode(addTypeDiag(st, path, x.span, "Variant '" ++ x.name ++ "' requires a payload."), x.id, TUnknown), TUnknown)
+				}
+			}
+			| TNamespace _ -> exprOut(addTypedNode(st, x.id, TUnknown), TUnknown)
+			| TTypeName _ -> exprOut(addTypedNode(st, x.id, TUnknown), TUnknown)
+		}
+	}
+	| EUnary x -> {
+		let oo = cgenExpr(st, env, x.operand, path);
+		if x.op == "!" then {
+			let st1 = unify(oo.st, oo.typ, TBool, path, x.span);
+			exprOut(addTypedNode(st1, x.id, TBool), TBool)
+		} else if x.op == "-" then {
+			let ro = inferNumericUnary(oo.st, path, x.span, "-", oo.typ);
+			exprOut(addTypedNode(ro.st, x.id, ro.typ), ro.typ)
+		} else {
+			exprOut(addTypedNode(oo.st, x.id, oo.typ), oo.typ)
+		}
+	}
+	| EBinary x -> {
+		let lo = cgenExpr(st, env, x.lhs, path);
+		let ro = cgenExpr(lo.st, env, x.rhs, path);
+		let bo = inferBinaryExpr(ro.st, path, x.span, x.op, x.rhs, lo.typ, ro.typ);
+		exprOut(addTypedNode(bo.st, x.id, bo.typ), bo.typ)
+	}
+	| EIf x -> {
+		let co = cgenExpr(st, env, x.cond, path);
+		let st1 = unify(co.st, co.typ, TBool, path, A.exprSpan(x.cond));
+		let to = cgenExpr(st1, env, x.thenE, path);
+		let eo = cgenExpr(to.st, env, x.elseE, path);
+		// Rule 3: merge the branches through a fresh variable so sibling
+		// variants join to their union (eager widening in bindVar).
+		let j = freshVar(eo.st);
+		let st2 = unify(j.key, j.value, to.typ, path, x.span);
+		let st3 = unify(st2, j.value, eo.typ, path, x.span);
+		let typ = apply(st3.subst, j.value);
+		exprOut(addTypedNode(st3, x.id, typ), typ)
+	}
+	| ECall x -> {
+		let co = inferCall(st, env, x.callee, x.args, x.span, path);
+		exprOut(addTypedNode(co.st, x.id, co.typ), co.typ)
+	}
+	| ELambda x -> {
+		let ps = freshTypeList(st, length(x.params));
+		let env1 = bindParams(env, x.params, ps.types);
+		// Lambda bodies are expressions (an EBlock for block-bodied lambdas),
+		// never bare statement lists — those belong to SFun.
+		let bo = cgenExpr(ps.st, env1, x.body, path);
+		let typ = TFun { ps.types, bo.typ };
+		exprOut(addTypedNode(bo.st, x.id, typ), typ)
+	}
+	| EBlock x -> {
+		let bo = inferBody(st, env, x.stmts, path);
+		exprOut(addTypedNode(bo.st, x.id, bo.typ), bo.typ)
+	}
+	| EList x -> {
+		let elem = freshVar(st);
+		let lo = inferListElems(elem.key, env, x.elems, elem.value, path);
+		exprOut(addTypedNode(lo.st, x.id, lo.typ), lo.typ)
+	}
+	| EComp x -> {
+		let bound = bindCompGens(st, env, x.gens, path);
+		let guardSt = match x.guard with
+			| None -> bound.st
+			| Some g -> {
+				let go = cgenExpr(bound.st, bound.env, g.value, path);
+				unify(go.st, go.typ, TBool, path, A.exprSpan(g.value))
+			};
+		let bo = cgenExpr(guardSt, bound.env, x.body, path);
+		let typ = TList { bo.typ };
+		exprOut(addTypedNode(bo.st, x.id, typ), typ)
+	}
+	| ERecord x -> {
+		let ro = inferRecordConstruction(st, env, x.tname, x.fields, x.span, path);
+		exprOut(addTypedNode(ro.st, x.id, ro.typ), ro.typ)
+	}
+	| EField x -> {
+		// Namespace member access (`Ns.name`) resolves against the import's
+		// table and instantiates the member's scheme, exactly like an EVar
+		// lookup of a star-imported name. Without this, the namespace object
+		// types as TUnknown and every cross-module member silently escapes
+		// checking (which groundedness was the first rule to notice).
+		match namespaceLookup(env, x.object, x.fname) with
+		| NsMember m -> {
+			match m.entry with
+			| TScheme s -> {
+				let inst = instantiate(st, s.scheme);
+				let typ = inst.value;
+				exprOut(addTypedNode(inst.key, x.id, typ), typ)
+			}
+			| TMono mo -> exprOut(addTypedNode(st, x.id, mo.t), mo.t)
+			| _ -> exprOut(addTypedNode(addTypeDiag(st, path, x.span, "Namespace member '" ++ x.fname ++ "' is not a value."), x.id, TUnknown), TUnknown)
+		}
+		| NsMissing ms -> exprOut(addTypedNode(addTypeDiag(st, path, x.span, "Namespace '" ++ ms.alias ++ "' has no export '" ++ x.fname ++ "'."), x.id, TUnknown), TUnknown)
+		| NsNotNamespace -> {
+			let oo = cgenExpr(st, env, x.object, path);
+			let fo = inferFieldAccess(oo.st, oo.typ, x.fname, x.span, path);
+			exprOut(addTypedNode(fo.st, x.id, fo.typ), fo.typ)
+		}
+	}
+	| EIndex x -> {
+		let oo = cgenExpr(st, env, x.object, path);
+		let io = cgenExpr(oo.st, env, x.index, path);
+		let st1 = unify(io.st, io.typ, TInt, path, A.exprSpan(x.index));
+		let ix = inferIndexAccess(st1, oo.typ, x.span, path);
+		exprOut(addTypedNode(ix.st, x.id, ix.typ), ix.typ)
+	}
+	| EMatch x -> {
+		let so = cgenExpr(st, env, x.subject, path);
+		let rt = freshVar(so.st);
+		let mo = inferMatchArms(rt.key, env, x.arms, so.typ, rt.value, path);
+		let typ = apply(mo.st.subst, rt.value);
+		exprOut(addTypedNode(mo.st, x.id, typ), typ)
+	}
+	| EDict x -> {
+		let kt = freshVar(st);
+		let vt = freshVar(kt.key);
+		let do = inferDictEntries(vt.key, env, x.entries, kt.value, vt.value, path);
+		exprOut(addTypedNode(do.st, x.id, do.typ), do.typ)
+	}
+	| EArray x -> {
+		let elem = freshVar(st);
+		let ao = inferArrayElems(elem.key, env, x.elems, elem.value, path);
+		exprOut(addTypedNode(ao.st, x.id, ao.typ), ao.typ)
+	}
+	| EAwait x -> {
+		let vo = cgenExpr(st, env, x.value, path);
+		exprOut(addTypedNode(vo.st, x.id, vo.typ), vo.typ)
+	}
+	| EFmt x -> {
+		let fo = inferFmtParts(st, env, x.parts, path);
+		exprOut(addTypedNode(fo.st, x.id, TStr), TStr)
+	}
+}
+
+function bindCompGens(st, env, gens, path) {
+	match Compat.uncons(gens) with
+	| None -> envOut(st, env)
+	| Some cell -> {
+		let p = cell.value;
+		let elem = freshVar(st);
+		let src = cgenExpr(elem.key, env, p.key.source, path);
+		let st1 = unify(src.st, src.typ, TList { elem.value }, path, A.exprSpan(p.key.source));
+		let env1 = putEnv(env, p.key.gvar, TMono { elem.value });
+		bindCompGens(st1, env1, p.value, path)
+	}
+}
+
+// ── statement/function inference ───────────────────────────────────────────
+
+function inferBody(st, env, stmts, path) {
+	inferBodyLoop(st, env, stmts, TUnit, path)
+}
+
+function inferBodyLoop(st, env, stmts, lastT, path) {
+	match Compat.uncons(stmts) with
+	| None -> bodyOut(st, lastT)
+	| Some cell -> {
+		let p = cell.value;
+		match p.key with
+		| SExpr sx -> {
+			let eo = cgenExpr(st, env, sx.expr, path);
+			inferBodyLoop(eo.st, env, p.value, eo.typ, path)
+		}
+		| SIf sx -> {
+			// A trailing `if` is the block's value (house style for lambda
+			// bodies and function results): both branches are unified and
+			// their type becomes the body result. In any other position the
+			// branches' trailing values are discarded, so they are checked
+			// independently and deliberately NOT unified.
+			if length(p.value) == 0 then {
+				let co = cgenExpr(st, env, sx.cond, path);
+				let st1 = unify(co.st, co.typ, TBool, path, A.exprSpan(sx.cond));
+				let thenOut = inferBody(st1, env, sx.thenS, path);
+				match sx.elseS with
+				| None -> bodyOut(addTypedNode(thenOut.st, sx.id, TUnit), TUnit)
+				| Some es -> {
+					let elseOut = inferBody(thenOut.st, env, es.value, path);
+					// Rule 3: merge through a fresh variable (see EIf).
+					let j = freshVar(elseOut.st);
+					let st2 = unify(j.key, j.value, thenOut.typ, path, sx.span);
+					let st3 = unify(st2, j.value, elseOut.typ, path, sx.span);
+					let typ = apply(st3.subst, j.value);
+					bodyOut(addTypedNode(st3, sx.id, typ), typ)
+				}
+			} else {
+				let so = cgenStmt(st, env, p.key, path);
+				inferBodyLoop(so.st, so.env, p.value, TUnit, path)
+			}
+		}
+		| SReturn sr -> {
+			match sr.value with
+			| None -> inferBodyLoop(st, env, p.value, TUnit, path)
+			| Some rv -> {
+				let eo = cgenExpr(st, env, rv.value, path);
+				inferBodyLoop(eo.st, env, p.value, eo.typ, path)
+			}
+		}
+		| _ -> {
+			let so = cgenStmt(st, env, p.key, path);
+			inferBodyLoop(so.st, so.env, p.value, TUnit, path)
+		}
+	}
+}
+
+// ── top-level binding groups ───────────────────────────────────────────────
+//
+// The architecture requires SCC binding groups. A whole-module monomorphic
+// predeclaration makes forward references possible, but it also prevents a
+// generic callee from being generalized before an unrelated caller is checked.
+// The helpers below build a dependency graph for top-level value bindings,
+// solve SCCs dependency-first, and generalize explicit generic functions only
+// after their complete recursive group has been inferred.
+
+function strContains(xs, value) {
+	match Compat.uncons(xs) with
+	| None -> false
+	| Some cell -> {
+		let p = cell.value;
+		if p.key == value then {
+			true
+		} else {
+			strContains(p.value, value)
+		}
+	}
+}
+
+function strAdd(xs, value) {
+	if strContains(xs, value) then {
+		xs
+	} else {
+		cons(value, xs)
+	}
+}
+
+function strUnion(a, b) {
+	match Compat.uncons(b) with
+	| None -> a
+	| Some cell -> {
+		let p = cell.value;
+		strUnion(strAdd(a, p.key), p.value)
+	}
+}
+
+function addNames(bound, names) {
+	match Compat.uncons(names) with
+	| None -> bound
+	| Some cell -> {
+		let p = cell.value;
+		addNames(strAdd(bound, p.key), p.value)
+	}
+}
+
+function addTopRef(name, topNames, bound, refs) {
+	if strContains(topNames, name) then {
+		if strContains(bound, name) then {
+			refs
+		} else {
+			strAdd(refs, name)
+		}
+	} else {
+		refs
+	}
+}
+
+function scanExprList(exprs, topNames, bound, refs) {
+	match Compat.uncons(exprs) with
+	| None -> refs
+	| Some cell -> {
+		let p = cell.value;
+		let refs1 = scanExpr(p.key, topNames, bound, refs);
+		scanExprList(p.value, topNames, bound, refs1)
+	}
+}
+
+function scanFields(fields, topNames, bound, refs) {
+	match Compat.uncons(fields) with
+	| None -> refs
+	| Some cell -> {
+		let p = cell.value;
+		let refs1 = scanExpr(p.key.value, topNames, bound, refs);
+		scanFields(p.value, topNames, bound, refs1)
+	}
+}
+
+function scanDictEntries(entries, topNames, bound, refs) {
+	match Compat.uncons(entries) with
+	| None -> refs
+	| Some cell -> {
+		let p = cell.value;
+		let refs1 = scanExpr(p.key.key, topNames, bound, refs);
+		let refs2 = scanExpr(p.key.value, topNames, bound, refs1);
+		scanDictEntries(p.value, topNames, bound, refs2)
+	}
+}
+
+function scanFmtParts(parts, topNames, bound, refs) {
+	match Compat.uncons(parts) with
+	| None -> refs
+	| Some cell -> {
+		let p = cell.value;
+		match p.key with
+		| FmtLit _ -> scanFmtParts(p.value, topNames, bound, refs)
+		| FmtExpr part -> {
+			let refs1 = scanExpr(part.e, topNames, bound, refs);
+			scanFmtParts(p.value, topNames, bound, refs1)
+		}
+	}
+}
+
+function addPatElemBound(bound, elem) {
+	match elem with
+	| PeBind p -> {
+		if p.pname == "_" then {
+			bound
+		} else {
+			strAdd(bound, p.pname)
+		}
+	}
+	| PeWild -> bound
+}
+
+function addPatElemsBound(bound, elems) {
+	match Compat.uncons(elems) with
+	| None -> bound
+	| Some cell -> {
+		let p = cell.value;
+		addPatElemsBound(addPatElemBound(bound, p.key), p.value)
+	}
+}
+
+function addPatternBound(bound, pattern) {
+	match pattern with
+	| PWild -> bound
+	| PVariant p -> {
+		match p.bind with
+		| None -> bound
+		| Some name -> strAdd(bound, name.value)
+	}
+	| PList p -> {
+		let bound1 = addPatElemsBound(bound, p.elems);
+		match p.rest with
+		| None -> bound1
+		| Some rest -> addPatElemBound(bound1, rest.value)
+	}
+}
+
+function scanMatchArms(arms, topNames, bound, refs) {
+	match Compat.uncons(arms) with
+	| None -> refs
+	| Some cell -> {
+		let p = cell.value;
+		let armBound = addPatternBound(bound, p.key.pattern);
+		let refs1 = match p.key.guard with
+			| None -> refs
+			| Some guard -> scanExpr(
+				guard.value,
+				topNames,
+				armBound,
+				refs
+			);
+		let refs2 = scanExpr(
+			p.key.body,
+			topNames,
+			armBound,
+			refs1
+		);
+		scanMatchArms(
+			p.value,
+			topNames,
+			bound,
+			refs2
+		)
+	}
+}
+
+function scanCompGens(gens, topNames, bound, refs) {
+	match Compat.uncons(gens) with
+	| None -> NameScan { refs, bound }
+	| Some cell -> {
+		let p = cell.value;
+		let refs1 = scanExpr(
+			p.key.source,
+			topNames,
+			bound,
+			refs
+		);
+		let bound1 = strAdd(bound, p.key.gvar);
+		scanCompGens(
+			p.value,
+			topNames,
+			bound1,
+			refs1
+		)
+	}
+}
+
+function scanExpr(expr, topNames, bound, refs) {
+	match expr with
+	| EInt _ -> refs
+	| EFloat _ -> refs
+	| EBool _ -> refs
+	| EStr _ -> refs
+	| EChar _ -> refs
+	| EByte _ -> refs
+
+	| EVar x -> addTopRef(x.name, topNames, bound, refs)
+
+	| EUnary x -> scanExpr(
+		x.operand,
+		topNames,
+		bound,
+		refs
+	)
+	| EBinary x -> {
+		let refs1 = scanExpr(x.lhs, topNames, bound, refs);
+		scanExpr(x.rhs, topNames, bound, refs1)
+	}
+	| EIf x -> {
+		let refs1 = scanExpr(x.cond, topNames, bound, refs);
+		let refs2 = scanExpr(x.thenE, topNames, bound, refs1);
+		scanExpr(x.elseE, topNames, bound, refs2)
+	}
+
+	| ECall x -> {
+		let refs1 = scanExpr(x.callee, topNames, bound, refs);
+		scanExprList(x.args, topNames, bound, refs1)
+	}
+	| ELambda x -> scanExpr(
+		x.body,
+		topNames,
+		addNames(bound, x.params),
+		refs
+	)
+	| EBlock x -> {
+		let out = scanStmtList(
+			x.stmts,
+			topNames,
+			bound,
+			refs
+		);
+		out.refs
+	}
+
+	| EList x -> scanExprList(
+		x.elems,
+		topNames,
+		bound,
+		refs
+	)
+	| EComp x -> {
+		let gens = scanCompGens(
+			x.gens,
+			topNames,
+			bound,
+			refs
+		);
+		let refs1 = scanExpr(
+			x.body,
+			topNames,
+			gens.bound,
+			gens.refs
+		);
+		match x.guard with
+		| None -> refs1
+		| Some guard -> scanExpr(
+			guard.value,
+			topNames,
+			gens.bound,
+			refs1
+		)
+	}
+	| ERecord x -> scanFields(
+		x.fields,
+		topNames,
+		bound,
+		refs
+	)
+
+	| EField x -> scanExpr(
+		x.object,
+		topNames,
+		bound,
+		refs
+	)
+	| EIndex x -> {
+		let refs1 = scanExpr(x.object, topNames, bound, refs);
+		scanExpr(x.index, topNames, bound, refs1)
+	}
+	| EMatch x -> {
+		let refs1 = scanExpr(x.subject, topNames, bound, refs);
+		scanMatchArms(
+			x.arms,
+			topNames,
+			bound,
+			refs1
+		)
+	}
+
+	| EDict x -> scanDictEntries(
+		x.entries,
+		topNames,
+		bound,
+		refs
+	)
+	| EArray x -> scanExprList(
+		x.elems,
+		topNames,
+		bound,
+		refs
+	)
+	| EAwait x -> scanExpr(
+		x.value,
+		topNames,
+		bound,
+		refs
+	)
+	| EFmt x -> scanFmtParts(
+		x.parts,
+		topNames,
+		bound,
+		refs
+	)
+}
+
+function scanStmtBranch(stmts, topNames, bound, refs) {
+	let out = scanStmtList(stmts, topNames, bound, refs);
+	out.refs
+}
+
+function scanStmt(stmt, topNames, bound, refs) {
+	match stmt with
+	| SLet x -> {
+		let refs1 = scanExpr(x.init, topNames, bound, refs);
+		NameScan { refs1, strAdd(bound, x.name) }
+	}
+	| SVar x -> {
+		let refs1 = scanExpr(x.init, topNames, bound, refs);
+		NameScan { refs1, strAdd(bound, x.name) }
+	}
+	| SAssign x -> {
+		let refs1 = addTopRef(x.name, topNames, bound, refs);
+		let refs2 = scanExpr(x.value, topNames, bound, refs1);
+		NameScan { refs2, bound }
+	}
+	| SIndexAssign x -> {
+		let refs1 = scanExpr(x.object, topNames, bound, refs);
+		let refs2 = scanExpr(x.index, topNames, bound, refs1);
+		let refs3 = scanExpr(x.value, topNames, bound, refs2);
+		NameScan { refs3, bound }
+	}
+	| SFun x -> {
+		let bodyBound = addNames(
+			strAdd(bound, x.name),
+			x.params
+		);
+		let bodyOut = scanStmtList(
+			x.body,
+			topNames,
+			bodyBound,
+			refs
+		);
+		NameScan {
+			bodyOut.refs,
+			strAdd(bound, x.name)
+		}
+	}
+	| SType _ -> NameScan { refs, bound }
+	| SExpr x -> NameScan {
+		scanExpr(x.expr, topNames, bound, refs),
+		bound
+	}
+	| SReturn x -> {
+		match x.value with
+		| None -> NameScan { refs, bound }
+		| Some value -> NameScan {
+			scanExpr(
+				value.value,
+				topNames,
+				bound,
+				refs
+			),
+			bound
+		}
+	}
+	| SIf x -> {
+		let refs1 = scanExpr(x.cond, topNames, bound, refs);
+		let refs2 = scanStmtBranch(
+			x.thenS,
+			topNames,
+			bound,
+			refs1
+		);
+		let refs3 = match x.elseS with
+			| None -> refs2
+			| Some branch -> scanStmtBranch(
+				branch.value,
+				topNames,
+				bound,
+				refs2
+			);
+		NameScan { refs3, bound }
+	}
+	| SWhile x -> {
+		let refs1 = scanExpr(x.cond, topNames, bound, refs);
+		let refs2 = scanStmtBranch(
+			x.body,
+			topNames,
+			bound,
+			refs1
+		);
+		NameScan { refs2, bound }
+	}
+	| SImport _ -> NameScan { refs, bound }
+	| SExport x -> scanStmt(
+		x.inner,
+		topNames,
+		bound,
+		refs
+	)
+	| SExtern x -> NameScan {
+		refs,
+		strAdd(bound, x.decl.name)
+	}
+}
+
+function scanStmtList(stmts, topNames, bound, refs) {
+	match Compat.uncons(stmts) with
+	| None -> NameScan { refs, bound }
+	| Some cell -> {
+		let p = cell.value;
+		let one = scanStmt(
+			p.key,
+			topNames,
+			bound,
+			refs
+		);
+		scanStmtList(
+			p.value,
+			topNames,
+			one.bound,
+			one.refs
+		)
+	}
+}
+
+function bindingNameOf(stmt) {
+	match stmt with
+	| SLet x -> Some { x.name }
+	| SVar x -> Some { x.name }
+	| SFun x -> Some { x.name }
+	| SExport x -> bindingNameOf(x.inner)
+	| _ -> None
+}
+
+function collectRawBindings(stmts, acc) {
+	match Compat.uncons(stmts) with
+	| None -> reverse(acc)
+	| Some cell -> {
+		let p = cell.value;
+		match bindingNameOf(p.key) with
+		| None -> collectRawBindings(p.value, acc)
+		| Some name -> collectRawBindings(
+			p.value,
+			cons(
+				BindingDecl {
+					name.value,
+					p.key,
+					[]
+				},
+				acc
+			)
+		)
+	}
+}
+
+function bindingNames(bindings, acc) {
+	match Compat.uncons(bindings) with
+	| None -> reverse(acc)
+	| Some cell -> {
+		let p = cell.value;
+		bindingNames(
+			p.value,
+			cons(p.key.name, acc)
+		)
+	}
+}
+
+function bindingDeps(stmt, topNames) {
+	match stmt with
+	| SFun x -> {
+		let out = scanStmtList(
+			x.body,
+			topNames,
+			addNames([], x.params),
+			[]
+		);
+		out.refs
+	}
+	| SLet x -> scanExpr(x.init, topNames, [], [])
+	| SVar x -> scanExpr(x.init, topNames, [], [])
+	| SExport x -> bindingDeps(x.inner, topNames)
+	| _ -> []
+}
+
+function fillBindingDeps(bindings, topNames, acc) {
+	match Compat.uncons(bindings) with
+	| None -> reverse(acc)
+	| Some cell -> {
+		let p = cell.value;
+		fillBindingDeps(
+			p.value,
+			topNames,
+			cons(
+				BindingDecl {
+					p.key.name,
+					p.key.stmt,
+					bindingDeps(p.key.stmt, topNames)
+				},
+				acc
+			)
+		)
+	}
+}
+
+function collectBindings(stmts) {
+	let raw = collectRawBindings(stmts, []);
+	let names = bindingNames(raw, []);
+	fillBindingDeps(raw, names, [])
+}
+
+function findBinding(bindings, name) {
+	match Compat.uncons(bindings) with
+	| None -> None
+	| Some cell -> {
+		let p = cell.value;
+		if p.key.name == name then {
+			Some { p.key }
+		} else {
+			findBinding(p.value, name)
+		}
+	}
+}
+
+function depsForName(bindings, name) {
+	match findBinding(bindings, name) with
+	| None -> []
+	| Some binding -> binding.value.deps
+}
+
+function finishDeps(
+	deps,
+	bindings,
+	visited,
+	order
+) {
+	match Compat.uncons(deps) with
+	| None -> DfsOut { visited, order }
+	| Some cell -> {
+		let p = cell.value;
+		let one = finishDfs(
+			p.key,
+			bindings,
+			visited,
+			order
+		);
+		finishDeps(
+			p.value,
+			bindings,
+			one.visited,
+			one.order
+		)
+	}
+}
+
+function finishDfs(name, bindings, visited, order) {
+	if strContains(visited, name) then {
+		DfsOut { visited, order }
+	} else {
+		let visited1 = strAdd(visited, name);
+		let after = finishDeps(
+			depsForName(bindings, name),
+			bindings,
+			visited1,
+			order
+		);
+		DfsOut {
+			after.visited,
+			cons(name, after.order)
+		}
+	}
+}
+
+function finishAll(names, bindings, visited, order) {
+	match Compat.uncons(names) with
+	| None -> DfsOut { visited, order }
+	| Some cell -> {
+		let p = cell.value;
+		let one = finishDfs(
+			p.key,
+			bindings,
+			visited,
+			order
+		);
+		finishAll(
+			p.value,
+			bindings,
+			one.visited,
+			one.order
+		)
+	}
+}
+
+function reverseDepsForName(bindings, name, acc) {
+	match Compat.uncons(bindings) with
+	| None -> reverse(acc)
+	| Some cell -> {
+		let p = cell.value;
+		let acc1 = if strContains(p.key.deps, name) then {
+			cons(p.key.name, acc)
+		} else {
+			acc
+		};
+		reverseDepsForName(p.value, name, acc1)
+	}
+}
+
+function collectReverseDeps(
+	deps,
+	bindings,
+	visited,
+	members
+) {
+	match Compat.uncons(deps) with
+	| None -> ComponentOut { visited, members }
+	| Some cell -> {
+		let p = cell.value;
+		let one = collectReverseDfs(
+			p.key,
+			bindings,
+			visited,
+			members
+		);
+		collectReverseDeps(
+			p.value,
+			bindings,
+			one.visited,
+			one.members
+		)
+	}
+}
+
+function collectReverseDfs(
+	name,
+	bindings,
+	visited,
+	members
+) {
+	if strContains(visited, name) then {
+		ComponentOut { visited, members }
+	} else {
+		let visited1 = strAdd(visited, name);
+		let incoming = reverseDepsForName(
+			bindings,
+			name,
+			[]
+		);
+		let after = collectReverseDeps(
+			incoming,
+			bindings,
+			visited1,
+			cons(name, members)
+		);
+		after
+	}
+}
+
+function collectComponents(
+	order,
+	bindings,
+	visited,
+	groups
+) {
+	match Compat.uncons(order) with
+	| None -> ComponentsOut { visited, groups }
+	| Some cell -> {
+		let p = cell.value;
+		if strContains(visited, p.key) then {
+			collectComponents(
+				p.value,
+				bindings,
+				visited,
+				groups
+			)
+		} else {
+			let one = collectReverseDfs(
+				p.key,
+				bindings,
+				visited,
+				[]
+			);
+			collectComponents(
+				p.value,
+				bindings,
+				one.visited,
+				cons(one.members, groups)
+			)
+		}
+	}
+}
+
+function bindingGroups(bindings) {
+	let names = bindingNames(bindings, []);
+	let finished = finishAll(
+		names,
+		bindings,
+		[],
+		[]
+	);
+	let components = collectComponents(
+		finished.order,
+		bindings,
+		[],
+		[]
+	);
+	components.groups
+}
+
+function bindingsInGroup(bindings, names, acc) {
+	match Compat.uncons(bindings) with
+	| None -> reverse(acc)
+	| Some cell -> {
+		let p = cell.value;
+		let acc1 = if strContains(names, p.key.name) then {
+			cons(p.key, acc)
+		} else {
+			acc
+		};
+		bindingsInGroup(p.value, names, acc1)
+	}
+}
+
+function predeclareBinding(st, env, stmt) {
+	match stmt with
+	| SFun s -> {
+		let ps = freshTypeList(st, length(s.params));
+		let ret = freshVar(ps.st);
+		let typ = rawFunctionType(
+			s.kind,
+			ps.types,
+			ret.value
+		);
+		envOut(
+			ret.key,
+			putEnv(env, s.name, TMono { typ })
+		)
+	}
+	| SLet s -> {
+		let typ = freshVar(st);
+		envOut(
+			typ.key,
+			putEnv(env, s.name, TMono { typ.value })
+		)
+	}
+	| SVar s -> {
+		let typ = freshVar(st);
+		envOut(
+			typ.key,
+			putEnv(env, s.name, TMono { typ.value })
+		)
+	}
+	| SExport s -> predeclareBinding(st, env, s.inner)
+	| _ -> envOut(st, env)
+}
+
+function predeclareBindings(st, env, bindings) {
+	match Compat.uncons(bindings) with
+	| None -> envOut(st, env)
+	| Some cell -> {
+		let p = cell.value;
+		let one = predeclareBinding(
+			st,
+			env,
+			p.key.stmt
+		);
+		predeclareBindings(
+			one.st,
+			one.env,
+			p.value
+		)
+	}
+}
+
+function inferExternStmt(st, env, stmt, path) {
+	match stmt with
+	| SExtern x -> inferExtern(
+		st,
+		env,
+		x.id,
+		x.decl,
+		path
+	)
+	| SExport x -> {
+		match x.inner with
+		| SExtern _ -> {
+			let inner = inferExternStmt(
+				st,
+				env,
+				x.inner,
+				path
+			);
+			envOut(
+				addTypedNode(inner.st, x.id, TUnit),
+				inner.env
+			)
+		}
+		| _ -> envOut(st, env)
+	}
+	| _ -> envOut(st, env)
+}
+
+function inferExterns(st, env, stmts, path) {
+	match Compat.uncons(stmts) with
+	| None -> envOut(st, env)
+	| Some cell -> {
+		let p = cell.value;
+		let one = inferExternStmt(
+			st,
+			env,
+			p.key,
+			path
+		);
+		inferExterns(
+			one.st,
+			one.env,
+			p.value,
+			path
+		)
+	}
+}
+
+function inferFunctionAgainstPredecl(
+	st,
+	env,
+	id,
+	params,
+	body,
+	kind,
+	span,
+	paramTypes,
+	returnType,
+	path
+) {
+	let env1 = bindParams(env, params, paramTypes);
+	let bo = inferBody(st, env1, body, path);
+	let st1 = unify(
+		bo.st,
+		returnType,
+		bo.typ,
+		path,
+		span
+	);
+	let typ = rawFunctionType(
+		kind,
+		paramTypes,
+		returnType
+	);
+	envOut(
+		addTypedNode(
+			st1,
+			id,
+			apply(st1.subst, typ)
+		),
+		env
+	)
+}
+
+function inferPredeclaredFunction(
+	st,
+	env,
+	id,
+	name,
+	params,
+	body,
+	kind,
+	span,
+	path
+) {
+	match lookupEnv(env, name) with
+	| None -> {
+		let fallback = inferFunctionDecl(
+			st,
+			env,
+			id,
+			name,
+			params,
+			body,
+			kind,
+			span,
+			path
+		);
+		envOut(fallback.st, env)
+	}
+	| Some entry -> {
+		match entry.value with
+		| TMono mono -> {
+			match mono.t with
+			| TFun f -> inferFunctionAgainstPredecl(
+				st,
+				env,
+				id,
+				params,
+				body,
+				kind,
+				span,
+				f.params,
+				f.ret,
+				path
+			)
+			| TProc p -> inferFunctionAgainstPredecl(
+				st,
+				env,
+				id,
+				params,
+				body,
+				kind,
+				span,
+				p.params,
+				p.ret,
+				path
+			)
+			| _ -> {
+				let fallback = inferFunctionDecl(
+					st,
+					env,
+					id,
+					name,
+					params,
+					body,
+					kind,
+					span,
+					path
+				);
+				envOut(fallback.st, env)
+			}
+		}
+		| _ -> {
+			let fallback = inferFunctionDecl(
+				st,
+				env,
+				id,
+				name,
+				params,
+				body,
+				kind,
+				span,
+				path
+			);
+			envOut(fallback.st, env)
+		}
+	}
+}
+
+function inferPredeclaredValue(
+	st,
+	env,
+	id,
+	name,
+	init,
+	span,
+	path
+) {
+	let value = cgenExpr(st, env, init, path);
+	let st1 = match lookupEnv(env, name) with
+	| None -> value.st
+	| Some entry -> {
+		match entry.value with
+		| TMono mono -> unify(
+			value.st,
+			mono.t,
+			value.typ,
+			path,
+			span
+		)
+		| _ -> value.st
+	};
+	let typ = match lookupEnv(env, name) with
+	| None -> value.typ
+	| Some entry -> {
+		match entry.value with
+		| TMono mono -> apply(st1.subst, mono.t)
+		| _ -> value.typ
+	};
+	envOut(addTypedNode(st1, id, typ), env)
+}
+
+function inferGroupBinding(st, env, stmt, path) {
+	match stmt with
+	| SFun s -> inferPredeclaredFunction(
+		st,
+		env,
+		s.id,
+		s.name,
+		s.params,
+		s.body,
+		s.kind,
+		s.span,
+		path
+	)
+	| SLet s -> inferPredeclaredValue(
+		st,
+		env,
+		s.id,
+		s.name,
+		s.init,
+		s.span,
+		path
+	)
+	| SVar s -> inferPredeclaredValue(
+		st,
+		env,
+		s.id,
+		s.name,
+		s.init,
+		s.span,
+		path
+	)
+	| SExport s -> {
+		let inner = inferGroupBinding(
+			st,
+			env,
+			s.inner,
+			path
+		);
+		envOut(
+			addTypedNode(inner.st, s.id, TUnit),
+			env
+		)
+	}
+	| _ -> envOut(st, env)
+}
+
+function inferGroupMembers(st, env, bindings, path) {
+	match Compat.uncons(bindings) with
+	| None -> envOut(st, env)
+	| Some cell -> {
+		let p = cell.value;
+		let one = inferGroupBinding(
+			st,
+			env,
+			p.key.stmt,
+			path
+		);
+		inferGroupMembers(
+			one.st,
+			env,
+			p.value,
+			path
+		)
+	}
+}
+
+function envFreeVarsExceptNamesFromEntries(
+	entries,
+	excluded,
+	acc
+) {
+	match Compat.uncons(entries) with
+	| None -> acc
+	| Some cell -> {
+		let p = cell.value;
+		let binding = p.key;
+		let acc1 = if strContains(
+			excluded,
+			binding.key
+		) then {
+			acc
+		} else {
+			intUnion(
+				acc,
+				envEntryFreeVars(binding.value)
+			)
+		};
+		envFreeVarsExceptNamesFromEntries(
+			p.value,
+			excluded,
+			acc1
+		)
+	}
+}
+
+function envFreeVarsExceptNames(env, excluded) {
+	envFreeVarsExceptNamesFromEntries(
+		IMS.imsEntries(env),
+		excluded,
+		[]
+	)
+}
+
+function bindingIsGeneric(stmt) {
+	match stmt with
+	| SFun s -> isGenericKind(s.kind)
+	| SExport s -> bindingIsGeneric(s.inner)
+	| _ -> false
+}
+
+function solvedBindingType(st, env, name) {
+	match lookupEnv(env, name) with
+	| None -> TUnknown
+	| Some entry -> {
+		match entry.value with
+		| TMono mono -> apply(st.subst, mono.t)
+		| TScheme scheme -> apply(
+			st.subst,
+			scheme.scheme.body
+		)
+		| _ -> TUnknown
+	}
+}
+
+function nonGenericGroupVars(
+	st,
+	env,
+	bindings,
+	acc
+) {
+	match Compat.uncons(bindings) with
+	| None -> acc
+	| Some cell -> {
+		let p = cell.value;
+		let acc1 = if bindingIsGeneric(p.key.stmt) then {
+			acc
+		} else {
+			intUnion(
+				acc,
+				freeVars(
+					solvedBindingType(
+						st,
+						env,
+						p.key.name
+					)
+				)
+			)
+		};
+		nonGenericGroupVars(
+			st,
+			env,
+			p.value,
+			acc1
+		)
+	}
+}
+
+function groupLockedVars(st, env, names, bindings) {
+	let outer = envFreeVarsExceptNames(env, names);
+	let declarations = declarationFreeVars(st);
+	let nonGeneric = nonGenericGroupVars(
+		st,
+		env,
+		bindings,
+		[]
+	);
+	intUnion(
+		intUnion(outer, declarations),
+		nonGeneric
+	)
+}
+
+function schemeWithLocked(st, typ, locked) {
+	let solved = apply(st.subst, typ);
+	let vars = intRemoveAll(freeVars(solved), locked);
+	mkScheme(vars, [], solved)
+}
+
+function finalizeGroupEntries(
+	st,
+	baseEnv,
+	outEnv,
+	bindings,
+	locked
+) {
+	match Compat.uncons(bindings) with
+	| None -> outEnv
+	| Some cell -> {
+		let p = cell.value;
+		let solved = solvedBindingType(
+			st,
+			baseEnv,
+			p.key.name
+		);
+		let entry = if bindingIsGeneric(p.key.stmt) then {
+			TScheme {
+				schemeWithLocked(st, solved, locked)
+			}
+		} else {
+			TMono { solved }
+		};
+		finalizeGroupEntries(
+			st,
+			baseEnv,
+			putEnv(outEnv, p.key.name, entry),
+			p.value,
+			locked
+		)
+	}
+}
+
+function groupIsRecursive(names, bindings) {
+	match Compat.uncons(names) with
+	| None -> false
+	| Some cell -> {
+		let p = cell.value;
+		match Compat.uncons(p.value) with
+		| Some _ -> true
+		| None -> strContains(
+			depsForName(bindings, p.key),
+			p.key
+		)
+	}
+}
+
+function inferDirectGroupMembers(
+	st,
+	env,
+	bindings,
+	path
+) {
+	match Compat.uncons(bindings) with
+	| None -> envOut(st, env)
+	| Some cell -> {
+		let p = cell.value;
+		let one = cgenStmt(
+			st,
+			env,
+			p.key.stmt,
+			path
+		);
+		inferDirectGroupMembers(
+			one.st,
+			one.env,
+			p.value,
+			path
+		)
+	}
+}
+
+function inferOneBindingGroup(
+	st,
+	env,
+	names,
+	members,
+	bindings,
+	path
+) {
+	if groupIsRecursive(names, bindings) then {
+		let predeclared = predeclareBindings(
+			st,
+			env,
+			members
+		);
+		let checked = inferGroupMembers(
+			predeclared.st,
+			predeclared.env,
+			members,
+			path
+		);
+		let locked = groupLockedVars(
+			checked.st,
+			predeclared.env,
+			names,
+			members
+		);
+		let env1 = finalizeGroupEntries(
+			checked.st,
+			predeclared.env,
+			env,
+			members,
+			locked
+		);
+		envOut(checked.st, env1)
+	} else {
+		inferDirectGroupMembers(
+			st,
+			env,
+			members,
+			path
+		)
+	}
+}
+
+function inferBindingGroups(
+	st,
+	env,
+	groups,
+	bindings,
+	path
+) {
+	match Compat.uncons(groups) with
+	| None -> envOut(st, env)
+	| Some cell -> {
+		let p = cell.value;
+		let members = bindingsInGroup(
+			bindings,
+			p.key,
+			[]
+		);
+		let checked = inferOneBindingGroup(
+			st,
+			env,
+			p.key,
+			members,
+			bindings,
+			path
+		);
+		inferBindingGroups(
+			checked.st,
+			checked.env,
+			p.value,
+			bindings,
+			path
+		)
+	}
+}
+
+function isGroupedBinding(stmt) {
+	match stmt with
+	| SFun _ -> true
+	| SLet _ -> true
+	| SVar _ -> true
+	| SExport s -> isGroupedBinding(s.inner)
+	| _ -> false
+}
+
+function isExternBinding(stmt) {
+	match stmt with
+	| SExtern _ -> true
+	| SExport s -> isExternBinding(s.inner)
+	| _ -> false
+}
+
+function inferResidualStmts(st, env, stmts, path) {
+	match Compat.uncons(stmts) with
+	| None -> envOut(st, env)
+	| Some cell -> {
+		let p = cell.value;
+		let one = if isGroupedBinding(p.key) then {
+			envOut(st, env)
+		} else {
+			if isExternBinding(p.key) then {
+				envOut(st, env)
+			} else {
+				cgenStmt(st, env, p.key, path)
+			}
+		};
+		inferResidualStmts(
+			one.st,
+			one.env,
+			p.value,
+			path
+		)
+	}
+}
+
+function isGenericKind(kind) {
+	match kind with
+	| PureFn k -> k.isGeneric
+	| ProcFn k -> k.isGeneric
+}
+
+function rawFunctionType(kind, params, ret) {
+	match kind with
+	| PureFn _ -> TFun { params, ret }
+	| ProcFn k -> TProc { params, ret, k.isAsync }
+}
+
+// Takes SFun payload fields, not the binder (Rule 2 widening).
+//
+// A module-wide predeclaration supports forward references, but it must not be
+// used directly as the function body's recursive signature: earlier callers
+// may already have constrained it. Instead:
+//
+// 1. infer the body against a fresh local signature;
+// 2. rebind the function name to that local monomorphic signature so every
+//    recursive call shares it;
+// 3. reconcile the completed local signature with the module predeclaration,
+//    preserving constraints from earlier forward references.
+// Takes SFun payload fields, not the binder (Rule 2 widening).
+//
+// Module-wide predeclarations continue to support forward references exactly
+// as before. For the function currently being inferred, however, use a fresh
+// local monomorphic signature and rebind only its own name. That makes all
+// self-recursive calls share the declaration's parameter and return variables
+// without turning every module function into one monomorphic recursive group.
+function inferFunctionDecl(
+	st,
+	env,
+	id,
+	name,
+	params,
+	body,
+	kind,
+	span,
+	path
+) {
+	let ps = freshTypeList(st, length(params));
+	let ret = freshVar(ps.st);
+	let localType = rawFunctionType(kind, ps.types, ret.value);
+	let recursiveEnv = putEnv(
+		env,
+		name,
+		TMono { localType }
+	);
+	let env1 = bindParams(recursiveEnv, params, ps.types);
+	let bo = inferBody(ret.key, env1, body, path);
+	let st1 = unify(
+		bo.st,
+		ret.value,
+		bo.typ,
+		path,
+		span
+	);
+	let solved = apply(st1.subst, localType);
+	let st2 = addTypedNode(st1, id, solved);
+	let entry = schemeOrMono(
+		isGenericKind(kind),
+		env,
+		st2,
+		solved
+	);
+	envOut(st2, putEnv(env, name, entry))
+}
+
+function inferTypeExpr(st, te) {
+	match te with
+	| TyName n -> {
+		let args = inferTypeExprList(st, n.args, []);
+		let typ = builtinTyName(n.name, args.value);
+		Pair { args.key, typ }
+	}
+	| TyFun f -> {
+		let ps = inferTypeExprList(st, f.params, []);
+		let ret = inferTypeExpr(ps.key, f.ret);
+		Pair { ret.key, TFun { ps.value, ret.value } }
+	}
+}
+
+function inferTypeExprList(st, tes, acc) {
+	match Compat.uncons(tes) with
+	| None -> Pair { st, reverse(acc) }
+	| Some cell -> {
+		let p = cell.value;
+		let one = inferTypeExpr(st, p.key);
+		inferTypeExprList(one.key, p.value, cons(one.value, acc))
+	}
+}
+
+function typedParamsTypes(st, params, acc) {
+	match Compat.uncons(params) with
+	| None -> Pair { st, reverse(acc) }
+	| Some cell -> {
+		let p = cell.value;
+		let one = inferTypeExpr(st, p.key.typeExpr);
+		typedParamsTypes(one.key, p.value, cons(one.value, acc))
+	}
+}
+
+// Takes SExtern payload fields, not the binder (Rule 2 widening).
+function inferExtern(st, env, id, decl, path) {
+	let params = typedParamsTypes(st, decl.params, []);
+	let ret = inferTypeExpr(params.key, decl.ret);
+	let typ = match decl.kind with
+		| ExternFunction -> TFun { params.value, ret.value }
+		| ExternProc k -> TProc { params.value, ret.value, k.isAsync };
+	envOut(addTypedNode(ret.key, id, typ), putEnv(env, decl.name, TMono { typ }))
+}
+
+export function cgenStmt(st, env, s, path) {
+	match s with
+	| SLet x -> {
+		let eo = cgenExpr(st, env, x.init, path);
+		envOut(addTypedNode(eo.st, x.id, eo.typ), putEnv(env, x.name, TMono { eo.typ }))
+	}
+	| SVar x -> {
+		let eo = cgenExpr(st, env, x.init, path);
+		envOut(addTypedNode(eo.st, x.id, eo.typ), putEnv(env, x.name, TMono { eo.typ }))
+	}
+	| SAssign x -> {
+		match lookupEnv(env, x.name) with
+		| None -> envOut(addTypeDiag(st, path, x.span, "Unknown assignment target '" ++ x.name ++ "'."), env)
+		| Some e -> {
+			let rhs = cgenExpr(st, env, x.value, path);
+			let target = match e.value with | TMono m -> m.t | TScheme sc -> sc.scheme.body | _ -> TUnknown;
+			let st1 = unify(rhs.st, target, rhs.typ, path, x.span);
+			envOut(addTypedNode(st1, x.id, TUnit), env)
+		}
+	}
+	| SIndexAssign x -> {
+		let oo = cgenExpr(st, env, x.object, path);
+		let io = cgenExpr(oo.st, env, x.index, path);
+		let st1 = unify(io.st, io.typ, TInt, path, A.exprSpan(x.index));
+		let slot = inferIndexAccess(st1, oo.typ, x.span, path);
+		let rhs = cgenExpr(slot.st, env, x.value, path);
+		let expected = match slot.typ with
+			| TNamed opt -> { match Compat.listAt(opt.args, 0) with | None -> TUnknown | Some v -> v.value }
+			| _ -> TUnknown;
+		let st2 = unify(rhs.st, expected, rhs.typ, path, A.exprSpan(x.value));
+		envOut(addTypedNode(st2, x.id, TUnit), env)
+	}
+	| SFun x -> inferFunctionDecl(
+		st,
+		env,
+		x.id,
+		x.name,
+		x.params,
+		x.body,
+		x.kind,
+		x.span,
+		path
+	)
+	| SType x -> envOut(addTypedNode(st, x.id, TUnit), env)
+	| SExpr x -> {
+		let eo = cgenExpr(st, env, x.expr, path);
+		envOut(addTypedNode(eo.st, x.id, eo.typ), env)
+	}
+	| SReturn x -> {
+		match x.value with
+		| None -> envOut(addTypedNode(st, x.id, TUnit), env)
+		| Some rv -> {
+			let eo = cgenExpr(st, env, rv.value, path);
+			envOut(addTypedNode(eo.st, x.id, eo.typ), env)
+		}
+	}
+	| SIf x -> {
+		let co = cgenExpr(st, env, x.cond, path);
+		let st1 = unify(co.st, co.typ, TBool, path, A.exprSpan(x.cond));
+		let thenOut = inferBody(st1, env, x.thenS, path);
+		// Statement-position if discards branch values, so the branches'
+		// trailing expression types are deliberately NOT unified here.
+		// Value-position (trailing) ifs are handled in inferBodyLoop.
+		let elseOut = match x.elseS with
+			| None -> bodyOut(thenOut.st, TUnit)
+			| Some es -> inferBody(thenOut.st, env, es.value, path);
+		envOut(addTypedNode(elseOut.st, x.id, TUnit), env)
+	}
+	| SWhile x -> {
+		let co = cgenExpr(st, env, x.cond, path);
+		let st1 = unify(co.st, co.typ, TBool, path, A.exprSpan(x.cond));
+		let bo = inferBody(st1, env, x.body, path);
+		envOut(addTypedNode(bo.st, x.id, TUnit), env)
+	}
+	| SImport x -> envOut(addTypedNode(st, x.id, TUnit), env)
+	| SExport x -> {
+		let inner = cgenStmt(st, env, x.inner, path);
+		envOut(addTypedNode(inner.st, x.id, TUnit), inner.env)
+	}
+	| SExtern x -> inferExtern(st, env, x.id, x.decl, path)
+}
+
+function inferStmts(st, env, stmts, path) {
+	match Compat.uncons(stmts) with
+	| None -> envOut(st, env)
+	| Some cell -> {
+		let p = cell.value;
+		let out1 = cgenStmt(st, env, p.key, path);
+		inferStmts(out1.st, out1.env, p.value, path)
+	}
+}
+
+// ── exports and groundedness ───────────────────────────────────────────────
+
+function exportedNameOf(stmt) {
+	match stmt with
+	| SLet s -> Some { s.name }
+	| SVar s -> Some { s.name }
+	| SFun s -> Some { s.name }
+	| SType s -> {
+		match s.decl with
+		| RecordDecl r -> Some { r.tname }
+		| UnionDecl u -> Some { u.tname }
+	}
+	| _ -> None
+}
+
+function stmtIsGenericExport(stmt) {
+	match stmt with
+	| SFun s -> isGenericKind(s.kind)
+	| _ -> false
+}
+
+function typeHasFreeVars(t) {
+	length(freeVars(t)) > 0
+}
+
+// Rule 4: exported interfaces are variant-free. Deep-widen every TVariant
+// to its union so iface schemes and importers never see variant types.
+function widenVariantsDeep(t) {
+	match t with
+	| TVariant v -> TNamed { v.unionName, map(widenVariantsDeep, v.args) }
+	| TList x -> TList { widenVariantsDeep(x.elem) }
+	| TArray x -> TArray { widenVariantsDeep(x.elem) }
+	| TDict x -> TDict { widenVariantsDeep(x.keyT), widenVariantsDeep(x.valT) }
+	| TFun f -> TFun { map(widenVariantsDeep, f.params), widenVariantsDeep(f.ret) }
+	| TProc pr -> TProc { map(widenVariantsDeep, pr.params), widenVariantsDeep(pr.ret), pr.isAsync }
+	| TNamed n -> TNamed { n.tname, map(widenVariantsDeep, n.args) }
+	| _ -> t
+}
+
+// A generalized scheme is closed over its quantified variables. Later module
+// substitutions may solve its unquantified outer variables, but must never
+// rewrite the quantified variables themselves.
+function substMapWithoutVars(m, vars) {
+	match Compat.uncons(vars) with
+	| None -> m
+	| Some cell -> {
+		let p = cell.value;
+		substMapWithoutVars(
+			IMI.imiRemove(m, p.key),
+			p.value
+		)
+	}
+}
+
+function applySchemeForExport(st, scheme) {
+	let m = substMapWithoutVars(
+		st.subst.m,
+		scheme.vars
+	);
+	apply(Subst { m }, scheme.body)
+}
+
+function exportSchemeFor(st, env, stmt, path) {
+	match exportedNameOf(stmt) with
+	| None -> Pair { st, None }
+	| Some n -> {
+		match lookupEnv(env, n.value) with
+		| None -> Pair {
+			st,
+			Some {
+				Pair {
+					n.value,
+					mkScheme(
+						[],
+						[],
+						TNamed { n.value, [] }
+					)
+				}
+			}
+		}
+		| Some entry -> {
+			match entry.value with
+			| TScheme s -> {
+				let solved = widenVariantsDeep(
+					applySchemeForExport(
+						st,
+						s.scheme
+					)
+				);
+				Pair {
+					st,
+					Some {
+						Pair {
+							n.value,
+							mkScheme(
+								s.scheme.vars,
+								s.scheme.constraints,
+								solved
+							)
+						}
+					}
+				}
+			}
+			| TMono m -> {
+				let solved = defaultResidualSlots(
+					widenVariantsDeep(
+						apply(st.subst, m.t)
+					)
+				);
+				let st1 = checkExportGround(
+					st,
+					stmt,
+					path,
+					n.value,
+					solved
+				);
+				Pair {
+					st1,
+					Some {
+						Pair {
+							n.value,
+							mkScheme([], [], solved)
+						}
+					}
+				}
+			}
+			| _ -> Pair {
+				st,
+				Some {
+					Pair {
+						n.value,
+						mkScheme([], [], TUnknown)
+					}
+				}
+			}
+		}
+	}
+}
+
+function collectExportsLoop(st, env, stmts, path, acc) {
+	match Compat.uncons(stmts) with
+	| None -> Pair { st, acc }
+	| Some cell -> {
+		let p = cell.value;
+		match p.key with
+		| SExport e -> {
+			let one = exportSchemeFor(st, env, e.inner, path);
+			let acc1 = match one.value with
+				| None -> acc
+				| Some pair -> IMS.imsPut(acc, pair.value.key, pair.value.value);
+			collectExportsLoop(one.key, env, p.value, path, acc1)
+		}
+		| _ -> collectExportsLoop(st, env, p.value, path, acc)
+	}
+}
+
+function collectExports(st, env, stmts, path) {
+	collectExportsLoop(st, env, stmts, path, IMS.imsEmpty())
+}
+
+function applyTypesMap(types, subst) {
+	IMI.imiMap(fn t => apply(subst, t), types)
+}
+
+// ── public entry point ─────────────────────────────────────────────────────
+
+export generic function inferModule(ast, deps) {
+	let st0 = emptyState();
+	let env0 = builtinEnv();
+	let intrinsic = registerBuiltinTypes(st0, env0);
+	let seeded = registerDepTypes(intrinsic.st, intrinsic.env, deps);
+	let imported = bindImports(seeded.st, seeded.env, ast.stmts, deps);
+	let declared = declareTypes(imported.st, imported.env, ast.stmts);
+	let externed = inferExterns(
+		declared.st,
+		declared.env,
+		ast.stmts,
+		ast.path
+	);
+	let bindings = collectBindings(ast.stmts);
+	let groups = bindingGroups(bindings);
+	let grouped = inferBindingGroups(
+		externed.st,
+		externed.env,
+		groups,
+		bindings,
+		ast.path
+	);
+	let solved = inferResidualStmts(
+		grouped.st,
+		grouped.env,
+		ast.stmts,
+		ast.path
+	);
+	let pendingDone = finalizePending(solved.st, ast.path);
+	let exported = collectExports(
+		pendingDone,
+		solved.env,
+		ast.stmts,
+		ast.path
+	);
+	mkInferResult(
+		applyTypesMap(
+			exported.key.types,
+			exported.key.subst
+		),
+		exported.value,
+		reverse(exported.key.diags)
+	)
+}

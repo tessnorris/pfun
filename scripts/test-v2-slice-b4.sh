@@ -4,16 +4,11 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-if [[ $# -gt 0 ]]; then
-	BASE_COMPILER="$1"
-elif [[ -f output/slice-b3/stage4/pfc.js ]]; then
-	BASE_COMPILER="output/slice-b3/stage4/pfc.js"
-elif [[ -f output/slice-b3/stage5/pfc.js ]]; then
-	BASE_COMPILER="output/slice-b3/stage5/pfc.js"
-elif [[ -f output/slice-b2/stage3/pfc.js ]]; then
-	BASE_COMPILER="output/slice-b2/stage3/pfc.js"
-else
-	BASE_COMPILER="bootstrap-stage2/pfc.js"
+BASE_COMPILER="${1:-boot/pfc.js}"
+
+if [[ ! -f "$BASE_COMPILER" ]]; then
+	echo "error: compiler not found: $BASE_COMPILER" >&2
+	exit 1
 fi
 
 WORK="output/slice-b4"
@@ -33,10 +28,6 @@ cleanup() {
 }
 trap cleanup EXIT
 
-if [[ ! -f "$BASE_COMPILER" ]]; then
-	echo "error: seed compiler not found: $BASE_COMPILER" >&2
-	exit 1
-fi
 
 if ! command -v timeout > /dev/null 2>&1; then
 	echo "error: Slice B4 requires the coreutils 'timeout' command" >&2
@@ -48,13 +39,13 @@ mkdir -p "$WORK/stage1" "$WORK/stage2"
 
 echo "== Build compiler containing Slice B4 corpus =="
 PFUN_HOME="$ROOT" node "$BASE_COMPILER" \
-	build bootstrap/src/drivers/cli.pf \
+	build src/drivers/cli.pf \
 	-o "$STAGE1"
 
 echo
 echo "== Compiler fixed point =="
 PFUN_HOME="$ROOT" node "$STAGE1" \
-	build bootstrap/src/drivers/cli.pf \
+	build src/drivers/cli.pf \
 	-o "$STAGE2"
 
 cmp "$STAGE1" "$STAGE2"
@@ -72,12 +63,12 @@ build_program() {
 echo
 echo "== Build Slice B4 input programs =="
 
-build_program "scanln" "bootstrap/spec/slice-b4/scanln.pf"
-build_program "scanchar" "bootstrap/spec/slice-b4/scanchar.pf"
-build_program "mixed-input" "bootstrap/spec/slice-b4/mixed_input.pf"
-build_program "empty-input" "bootstrap/spec/slice-b4/empty_input.pf"
+build_program "scanln" "spec/slice-b4/scanln.pf"
+build_program "scanchar" "spec/slice-b4/scanchar.pf"
+build_program "mixed-input" "spec/slice-b4/mixed_input.pf"
+build_program "empty-input" "spec/slice-b4/empty_input.pf"
 build_program "permission-denied" \
-	"bootstrap/spec/slice-b4/permission_denied.pf"
+	"spec/slice-b4/permission_denied.pf"
 
 echo
 echo "== scanln: CRLF, empty line, final unterminated line, EOF =="
@@ -87,7 +78,7 @@ printf 'alpha\r\n\r\nomega' |
 	> "$WORK/scanln.actual.txt"
 
 diff -u \
-	bootstrap/spec/slice-b4/scanln.expected.txt \
+	spec/slice-b4/scanln.expected.txt \
 	"$WORK/scanln.actual.txt"
 
 echo "scanln passed"
@@ -100,7 +91,7 @@ printf 'Aé🙂' |
 	> "$WORK/scanchar.actual.txt"
 
 diff -u \
-	bootstrap/spec/slice-b4/scanchar.expected.txt \
+	spec/slice-b4/scanchar.expected.txt \
 	"$WORK/scanchar.actual.txt"
 
 echo "scanChar passed"
@@ -113,7 +104,7 @@ printf 'first\nZ' |
 	> "$WORK/mixed-input.actual.txt"
 
 diff -u \
-	bootstrap/spec/slice-b4/mixed_input.expected.txt \
+	spec/slice-b4/mixed_input.expected.txt \
 	"$WORK/mixed-input.actual.txt"
 
 echo "shared stdin cursor passed"
@@ -126,7 +117,7 @@ printf '' |
 	> "$WORK/empty-input.actual.txt"
 
 diff -u \
-	bootstrap/spec/slice-b4/empty_input.expected.txt \
+	spec/slice-b4/empty_input.expected.txt \
 	"$WORK/empty-input.actual.txt"
 
 echo "immediate EOF passed"
@@ -239,19 +230,14 @@ echo "== Slice B4 negative diagnostics =="
 
 expect_build_failure \
 	"pure-scanln" \
-	"bootstrap/spec/slice-b4/pure_scanln.pf" \
+	"spec/slice-b4/pure_scanln.pf" \
 	"Pure code cannot call procedure 'scanln'."
 
 expect_build_failure \
 	"pure-scanchar" \
-	"bootstrap/spec/slice-b4/pure_scanchar.pf" \
+	"spec/slice-b4/pure_scanchar.pf" \
 	"Pure code cannot call procedure 'scanChar'."
 
-if [[ -x scripts/test-v2-slice-b3.sh ]]; then
-	echo
-	echo "== B3, B2, B1, and Slice A regression gates =="
-	bash scripts/test-v2-slice-b3.sh "$STAGE1"
-fi
 
 echo
 echo "ALL SLICE B4 ACCEPTANCE TESTS PASSED"

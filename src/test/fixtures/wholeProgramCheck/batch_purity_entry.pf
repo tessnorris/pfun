@@ -1,4 +1,0 @@
-import * from "io";
-import { leakyA } from "./batch_purity_leaf_a";
-import { mutateB } from "./batch_purity_leaf_b";
-println("entry is itself clean");

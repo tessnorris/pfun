@@ -1,0 +1,184 @@
+// test/lexer_test.pf — tests for src/syntax/lexer.pf
+// and src/syntax/token.pf.
+
+import * as Assert from "../src/test/assertions";
+import * as Lex from "../src/syntax/lexer";
+import * as T from "../src/syntax/token";
+import * as Compat from "../src/compat";
+
+function lexTokens(source) {
+	match Lex.lex("lexer-test.pf", source) with
+	| LexOk ok -> ok.tokens
+	| LexErr _ -> []
+}
+
+function lexDiagCount(source) {
+	match Lex.lex("lexer-test.pf", source) with
+	| LexOk _ -> 0
+	| LexErr err -> length(err.diags)
+}
+
+function tokKindAt(tokens, index) {
+	match Compat.listAt(tokens, index) with
+	| Some tok -> T.tokenKind(tok.value)
+	| None -> "<missing>"
+}
+
+function tokPayloadAt(tokens, index) {
+	match Compat.listAt(tokens, index) with
+	| Some tok -> T.tokenPayload(tok.value)
+	| None -> "<missing>"
+}
+
+function tokLineAt(tokens, index) {
+	match Compat.listAt(tokens, index) with
+	| Some tok -> tok.value.span.start.line
+	| None -> -1
+}
+
+function tokColAt(tokens, index) {
+	match Compat.listAt(tokens, index) with
+	| Some tok -> tok.value.span.start.col
+	| None -> -1
+}
+
+function tokenCheck(tokens, index, kind, payload) {
+	if tokKindAt(tokens, index) == kind && tokPayloadAt(tokens, index) == payload then {
+		Assert.assertTrue(true)
+	} else {
+		Assert.fail(
+			"Token " ++ __str__(index)
+			++ " expected " ++ kind ++ "(" ++ payload ++ ") but got "
+			++ tokKindAt(tokens, index) ++ "(" ++ tokPayloadAt(tokens, index) ++ ")."
+		)
+	}
+}
+
+//![suite("syntax/lexer")]
+//![test("lexes keywords identifiers operators literals and eof")]
+function testBasicTokenStream() {
+	let tokens = lexTokens("let answer = 42; answer ++ \"!\";");
+	Assert.assertions([
+		Assert.assertEqual(10, length(tokens)),
+		tokenCheck(tokens, 0, "TokKw", "let"),
+		tokenCheck(tokens, 1, "TokIdent", "answer"),
+		tokenCheck(tokens, 2, "TokOp", "="),
+		tokenCheck(tokens, 3, "TokInt", "42"),
+		tokenCheck(tokens, 4, "TokOp", ";"),
+		tokenCheck(tokens, 5, "TokIdent", "answer"),
+		tokenCheck(tokens, 6, "TokOp", "++"),
+		tokenCheck(tokens, 7, "TokStr", "!"),
+		tokenCheck(tokens, 8, "TokOp", ";"),
+		tokenCheck(tokens, 9, "TokEof", "")
+	])
+}
+
+//![test("lexes opaque as a declaration keyword")]
+function testOpaqueKeyword() {
+	let tokens = lexTokens("export opaque type Box = { value };");
+	Assert.assertions([
+		tokenCheck(tokens, 0, "TokKw", "export"),
+		tokenCheck(tokens, 1, "TokKw", "opaque"),
+		tokenCheck(tokens, 2, "TokKw", "type")
+	])
+}
+
+//![test("uses longest operator matches")]
+function testLongestOperators() {
+	let tokens = lexTokens("a == b != c <= d >= e && f || g |> h -> i => j <- k << l >> m ++ n");
+	Assert.assertions([
+		tokenCheck(tokens, 1, "TokOp", "=="),
+		tokenCheck(tokens, 3, "TokOp", "!="),
+		tokenCheck(tokens, 5, "TokOp", "<="),
+		tokenCheck(tokens, 7, "TokOp", ">="),
+		tokenCheck(tokens, 9, "TokOp", "&&"),
+		tokenCheck(tokens, 11, "TokOp", "||"),
+		tokenCheck(tokens, 13, "TokOp", "|>"),
+		tokenCheck(tokens, 15, "TokOp", "->"),
+		tokenCheck(tokens, 17, "TokOp", "=>"),
+		tokenCheck(tokens, 19, "TokOp", "<-"),
+		tokenCheck(tokens, 21, "TokOp", "<<"),
+		tokenCheck(tokens, 23, "TokOp", ">>"),
+		tokenCheck(tokens, 25, "TokOp", "++")
+	])
+}
+
+//![test("lexes decimal hex byte and float numbers")]
+function testNumberForms() {
+	let tokens = lexTokens("0 42 0x1B 255b 0xFF_b 1.25 2e3 4.5e-2");
+	Assert.assertions([
+		tokenCheck(tokens, 0, "TokInt", "0"),
+		tokenCheck(tokens, 1, "TokInt", "42"),
+		tokenCheck(tokens, 2, "TokInt", "27"),
+		tokenCheck(tokens, 3, "TokByte", "255"),
+		tokenCheck(tokens, 4, "TokByte", "255"),
+		tokenCheck(tokens, 5, "TokFloat", "1.25"),
+		tokenCheck(tokens, 6, "TokFloat", "2e3"),
+		tokenCheck(tokens, 7, "TokFloat", "4.5e-2")
+	])
+}
+
+//![test("lexes strings raw strings chars and format strings")]
+function testStringCharAndFormatTokens() {
+	let tokens = lexTokens("\"a\\nb\" @\"C:\\tmp\" 'x' '\\n' $\"hello {name}\"");
+	Assert.assertions([
+		tokenCheck(tokens, 0, "TokStr", "a\nb"),
+		tokenCheck(tokens, 1, "TokRawStr", "C:\\tmp"),
+		tokenCheck(tokens, 2, "TokChar", "x"),
+		tokenCheck(tokens, 3, "TokChar", "\n"),
+		tokenCheck(tokens, 4, "TokFmtStr", "hello {name}")
+	])
+}
+
+//![test("skips line and block comments while preserving positions")]
+function testCommentsAndPositions() {
+	let source = "let x = 1;\n// comment\n/* block\ncomment */\nx = x + 1;";
+	let tokens = lexTokens(source);
+	Assert.assertions([
+		tokenCheck(tokens, 0, "TokKw", "let"),
+		tokenCheck(tokens, 5, "TokIdent", "x"),
+		Assert.assertEqual(5, tokLineAt(tokens, 5)),
+		Assert.assertEqual(1, tokColAt(tokens, 5))
+	])
+}
+
+//![test("reports lexical errors without throwing")]
+function testLexErrors() {
+	Assert.assertions([
+		Assert.assertTrue(lexDiagCount("\"unterminated") > 0),
+		Assert.assertTrue(lexDiagCount("0x") > 0),
+		Assert.assertTrue(lexDiagCount("256b") > 0),
+		Assert.assertTrue(lexDiagCount("$\"oops }\"") > 0),
+		Assert.assertTrue(lexDiagCount("#") > 0)
+	])
+}
+
+// ── format string bodies ─────────────────────────────────────────────────────
+
+function fmtBodyOf(source) {
+	match Compat.listAt(lexTokens(source), 0) with
+	| Some tok -> T.tokenPayload(tok.value)
+	| None -> ""
+}
+
+//![test("format string bodies keep embedded literals out of the depth count")]
+function testFmtEmbeddedLiterals() {
+	Assert.assertions([
+		Assert.assertEqual("x {join(xs, \"}\")} y", fmtBodyOf("$\"x {join(xs, \"}\")} y\"")),
+		Assert.assertEqual("a {f(\"{\")} b", fmtBodyOf("$\"a {f(\"{\")} b\"")),
+		Assert.assertEqual("c {g('}')} d", fmtBodyOf("$\"c {g('}')} d\"")),
+		Assert.assertEqual("e {h(@\"}\")} f", fmtBodyOf("$\"e {h(@\"}\")} f\""))
+	])
+}
+
+//![test("carriage return is whitespace")]
+function testCarriageReturnIsWhitespace() {
+	let cr = __str__(chrU(13));
+	let tokens = lexTokens("let" ++ cr ++ "x" ++ cr ++ "= 1;");
+	Assert.assertions([
+		Assert.assertEqual(6, length(tokens)),
+		tokenCheck(tokens, 0, "TokKw", "let"),
+		tokenCheck(tokens, 1, "TokIdent", "x"),
+		Assert.assertEqual(0, lexDiagCount("let" ++ cr ++ "x = 1;"))
+	])
+}

@@ -1,0 +1,102 @@
+// test/runner_test.pf — tests for src/test/runner.pf.
+
+import * as Assert from "../src/test/assertions";
+import {
+	test as subjectTest,
+	suite as subjectSuite,
+	runSuite as subjectRunSuite,
+	runSuites as subjectRunSuites,
+	summaryOk as subjectSummaryOk,
+	renderSummary as subjectRenderSummary
+} from "../src/test/runner";
+import {
+	testPassed as subjectTestPassed,
+	testFailed as subjectTestFailed,
+	resultOk as subjectResultOk
+} from "../src/test/assertions";
+import * as StrX from "../src/data/strx";
+import * as Compat from "../src/compat";
+
+function passingRun() {
+	subjectTestPassed()
+}
+
+function failingRun() {
+	subjectTestFailed(["boom"])
+}
+
+//![suite("test/runner")]
+
+//![test("runSuite creates one report per test")]
+function testRunSuiteReports() {
+	let suiteValue = subjectSuite(
+		"sample",
+		[
+			subjectTest("passes", passingRun),
+			subjectTest("fails", failingRun)
+		]
+	);
+	let reports = subjectRunSuite(suiteValue);
+	let first = Compat.listAt(reports, 0);
+	let second = Compat.listAt(reports, 1);
+	Assert.assertions([
+		Assert.assertEqual(2, length(reports)),
+		match first with
+		| Some report -> {
+			Assert.assertTrue(
+				subjectResultOk(report.value.result)
+			)
+		}
+		| None -> Assert.fail("Missing first report."),
+		match second with
+		| Some report -> {
+			Assert.assertFalse(
+				subjectResultOk(report.value.result)
+			)
+		}
+		| None -> Assert.fail("Missing second report.")
+	])
+}
+
+//![test("runSuites summarizes pass fail counts")]
+function testRunSuitesSummary() {
+	let suiteOne = subjectSuite(
+		"one",
+		[subjectTest("passes", passingRun)]
+	);
+	let suiteTwo = subjectSuite(
+		"two",
+		[subjectTest("fails", failingRun)]
+	);
+	let summary = subjectRunSuites([suiteOne, suiteTwo]);
+	Assert.assertions([
+		Assert.assertEqual(2, length(summary.reports)),
+		Assert.assertEqual(1, summary.passed),
+		Assert.assertEqual(1, summary.failed),
+		Assert.assertFalse(subjectSummaryOk(summary))
+	])
+}
+
+//![test("renderSummary includes report lines and totals")]
+function testRenderSummary() {
+	let suiteValue = subjectSuite(
+		"sample",
+		[
+			subjectTest("passes", passingRun),
+			subjectTest("fails", failingRun)
+		]
+	);
+	let summary = subjectRunSuites([suiteValue]);
+	let rendered = subjectRenderSummary(summary);
+	Assert.assertions([
+		Assert.assertTrue(
+			StrX.contains(rendered, "PASS sample / passes")
+		),
+		Assert.assertTrue(
+			StrX.contains(rendered, "FAIL sample / fails")
+		),
+		Assert.assertTrue(
+			StrX.contains(rendered, "1 passed, 1 failed")
+		)
+	])
+}

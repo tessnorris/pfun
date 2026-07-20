@@ -1,5 +1,0 @@
-import * from "io";
-import * from "foreign";
-import * from "timer";
-
-println("builtin imports ok");

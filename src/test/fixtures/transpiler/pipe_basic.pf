@@ -1,6 +1,0 @@
-import * from "io";
-function double(x) { x * 2; }
-function addOne(x) { x + 1; }
-println(__str__(5 |> double));
-println(__str__(3 |> addOne |> double));
-println(__str__([1,2,3] |> length));

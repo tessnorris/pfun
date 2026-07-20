@@ -1,8 +1,0 @@
-import * from "io";
-import * from "async";
-
-async proc f() {
-  let x = await sleep(100);
-  return x + 5;
-}
-println(f());

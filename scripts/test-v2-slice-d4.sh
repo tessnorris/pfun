@@ -4,17 +4,10 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-if [[ $# -gt 0 ]]; then
-	BASE_COMPILER="$1"
-elif [[ -f output/slice-d3/stage1/pfc.js ]]; then
-	BASE_COMPILER="output/slice-d3/stage1/pfc.js"
-else
-	echo "error: no trusted D3 compiler was found" >&2
-	exit 1
-fi
+BASE_COMPILER="${1:-boot/pfc.js}"
 
 if [[ ! -f "$BASE_COMPILER" ]]; then
-	echo "error: seed compiler not found: $BASE_COMPILER" >&2
+	echo "error: compiler not found: $BASE_COMPILER" >&2
 	exit 1
 fi
 
@@ -25,28 +18,15 @@ STAGE2="$WORK/stage2/pfc.js"
 rm -rf "$WORK"
 mkdir -p "$WORK/stage1" "$WORK/stage2"
 
-echo "== TypeScript compiler build =="
-npm run build
-
-echo
-echo "== Bootstrap Pfun test corpus =="
-bash bootstrap/test/run-tests.sh --summary
-
-echo
-echo "== Node host manifest and async/sleep behavior =="
-node bootstrap/test/host_node_test.js
-node bootstrap/test/async_node_host_test.js
-
-echo
 echo "== Build compiler containing Slice D4 =="
 PFUN_HOME="$ROOT" node "$BASE_COMPILER" \
-	build bootstrap/src/drivers/cli.pf \
+	build src/drivers/cli.pf \
 	-o "$STAGE1"
 
 echo
 echo "== Compiler fixed point =="
 PFUN_HOME="$ROOT" node "$STAGE1" \
-	build bootstrap/src/drivers/cli.pf \
+	build src/drivers/cli.pf \
 	-o "$STAGE2"
 
 cmp "$STAGE1" "$STAGE2"
@@ -56,7 +36,7 @@ echo
 echo "== Awaited and fire-and-forget async execution through pfc run =="
 set +e
 PFUN_HOME="$ROOT" node "$STAGE1" \
-	run bootstrap/spec/slice-d4/async-example.pf \
+	run spec/slice-d4/async-example.pf \
 	> "$WORK/program.stdout.txt" \
 	2> "$WORK/program.stderr.txt"
 PROGRAM_RC=$?
@@ -82,7 +62,7 @@ if [[ -s "$WORK/program.stderr.txt" ]]; then
 fi
 
 diff -u \
-	bootstrap/spec/slice-d4/expected.txt \
+	spec/slice-d4/expected.txt \
 	"$WORK/program.stdout.txt"
 
 echo "async execution passed"
@@ -91,7 +71,7 @@ echo
 echo "== Await outside async is rejected =="
 set +e
 PFUN_HOME="$ROOT" node "$STAGE1" \
-	check bootstrap/spec/slice-d4/await-outside-async.pf \
+	check spec/slice-d4/await-outside-async.pf \
 	> "$WORK/await-negative.stdout.txt" \
 	2> "$WORK/await-negative.stderr.txt"
 AWAIT_RC=$?
@@ -121,7 +101,7 @@ echo "await-context rejection passed"
 echo
 echo "== Direct NodeBundle async compatibility =="
 PFUN_HOME="$ROOT" node "$STAGE1" \
-	build bootstrap/spec/slice-d4/async-example.pf \
+	build spec/slice-d4/async-example.pf \
 	-o "$WORK/async-example.js" \
 	> "$WORK/build.stdout.txt" \
 	2> "$WORK/build.stderr.txt"
@@ -152,14 +132,11 @@ if [[ -s "$WORK/bundle.stderr.txt" ]]; then
 fi
 
 diff -u \
-	bootstrap/spec/slice-d4/expected.txt \
+	spec/slice-d4/expected.txt \
 	"$WORK/bundle.stdout.txt"
 
 echo "direct NodeBundle async execution passed"
 
-echo
-echo "== Slice D3 through Slice A regression gates =="
-bash scripts/test-v2-slice-d3.sh "$STAGE1"
 
 echo
 echo "ALL SLICE D4 ASYNC-SLEEP TESTS PASSED"

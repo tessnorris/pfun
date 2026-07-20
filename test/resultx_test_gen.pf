@@ -1,0 +1,219 @@
+// test/resultx_test.pf — tests for src/data/resultx.pf.
+
+import * as Assert from "../src/test/assertions";
+import * from "../src/data/resultx";
+import * from "io"; // added by gen-test-harness
+import * from "../src/test/runner"; // added by gen-test-harness
+
+function bOkIntIs(result, expected) {
+	match result with
+	| BOk ok -> ok.value == expected
+	| BErr _ -> false
+}
+
+function bOkStrIs(result, expected) {
+	match result with
+	| BOk ok -> ok.value == expected
+	| BErr _ -> false
+}
+
+generic function bErrIs(result, expected) {
+	match result with
+	| BOk _ -> false
+	| BErr err -> err.message == expected
+}
+
+function optionIntIs(opt, expected) {
+	match opt with
+	| Some found -> found.value == expected
+	| None -> false
+}
+
+function intListText(xs) {
+	join(map(fn x => __str__(x), xs), ",")
+}
+
+function bOkIntListIs(result, expectedText) {
+	match result with
+	| BOk ok -> intListText(ok.value) == expectedText
+	| BErr _ -> false
+}
+
+//![suite("data/resultx")]
+
+//![test("constructors and predicates")]
+function testConstructorsAndPredicates() {
+	Assert.assertions([
+		Assert.assertTrue(isOk(ok(1))),
+		Assert.assertFalse(isOk(err("bad"))),
+		Assert.assertTrue(isErr(err("bad"))),
+		Assert.assertFalse(isErr(ok(1)))
+	])
+}
+
+//![test("mapResult and mapErr")]
+function testMapResultAndMapErr() {
+	Assert.assertions([
+		Assert.assertTrue(
+			bOkIntIs(
+				mapResult(fn x => x + 1, BOk { 3 }),
+				4
+			)
+		),
+		Assert.assertTrue(
+			bErrIs(
+				mapResult(fn x => x + 1, BErr { "bad" }),
+				"bad"
+			)
+		),
+		Assert.assertTrue(
+			bErrIs(
+				mapErr(
+					fn message => message ++ "!",
+					BErr { "bad" }
+				),
+				"bad!"
+			)
+		),
+		Assert.assertTrue(
+			bOkIntIs(
+				mapErr(
+					fn message => message ++ "!",
+					BOk { 3 }
+				),
+				3
+			)
+		)
+	])
+}
+
+//![test("andThenResult and withDefault")]
+function testAndThenAndDefault() {
+	Assert.assertions([
+		Assert.assertTrue(
+			bOkIntIs(
+				andThenResult(
+					BOk { 3 },
+					fn x => BOk { x * 2 }
+				),
+				6
+			)
+		),
+		Assert.assertTrue(
+			bErrIs(
+				andThenResult(
+					BErr { "bad" },
+					fn x => BOk { x * 2 }
+				),
+				"bad"
+			)
+		),
+		Assert.assertEqual(3, withDefault(0, BOk { 3 })),
+		Assert.assertEqual(0, withDefault(0, BErr { "bad" }))
+	])
+}
+
+//![test("option conversion")]
+function testOptionConversion() {
+	Assert.assertions([
+		Assert.assertTrue(
+			optionIntIs(toOption(BOk { 3 }), 3)
+		),
+		Assert.assertNone(toOption(BErr { "bad" })),
+		Assert.assertTrue(
+			bOkIntIs(
+				fromOption("missing", Some { 3 }),
+				3
+			)
+		),
+		Assert.assertTrue(
+			bErrIs(
+				fromOption("missing", None),
+				"missing"
+			)
+		)
+	])
+}
+
+//![test("combine keeps first error and otherwise returns right")]
+function testCombine() {
+	Assert.assertions([
+		Assert.assertTrue(
+			bOkStrIs(
+				combine(
+					BOk { "left" },
+					BOk { "right" }
+				),
+				"right"
+			)
+		),
+		Assert.assertTrue(
+			bErrIs(
+				combine(
+					BErr { "left bad" },
+					BOk { "right" }
+				),
+				"left bad"
+			)
+		),
+		Assert.assertTrue(
+			bErrIs(
+				combine(
+					BOk { "left" },
+					BErr { "right bad" }
+				),
+				"right bad"
+			)
+		)
+	])
+}
+
+//![test("collect accumulates values or first error")]
+function testCollect() {
+	Assert.assertions([
+		Assert.assertTrue(
+			bOkIntListIs(
+				collect([
+					BOk { 1 },
+					BOk { 2 },
+					BOk { 3 }
+				]),
+				"1,2,3"
+			)
+		),
+		Assert.assertTrue(
+			bErrIs(
+				collect([
+					BOk { 1 },
+					BErr { "bad" },
+					BOk { 3 }
+				]),
+				"bad"
+			)
+		)
+	])
+}
+
+// ─────────────────────────────────────────────────────────────────
+// GENERATED TEST HARNESS (gen-test-harness.js) — do not edit.
+// Lambda-closing lives in pure functions; the generated main has no
+// lambdas, so V1's fn-lambda-in-proc purity quirk is never triggered.
+// ─────────────────────────────────────────────────────────────────
+
+function __gen_suite_data_resultx() {
+	suite("data/resultx", [
+		test("constructors and predicates", testConstructorsAndPredicates),
+		test("mapResult and mapErr", testMapResultAndMapErr),
+		test("andThenResult and withDefault", testAndThenAndDefault),
+		test("option conversion", testOptionConversion),
+		test("combine keeps first error and otherwise returns right", testCombine),
+		test("collect accumulates values or first error", testCollect)
+	])
+}
+
+proc main() {
+	let __summary = runSuites([__gen_suite_data_resultx()]);
+	printSummary(__summary);
+	exitForSummary(__summary);
+}
+main();

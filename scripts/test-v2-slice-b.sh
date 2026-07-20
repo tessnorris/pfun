@@ -4,25 +4,20 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-if [[ $# -gt 0 ]]; then
-	BASE_COMPILER="$1"
-elif [[ -f output/slice-a/stage3/pfc.js ]]; then
-	BASE_COMPILER="output/slice-a/stage3/pfc.js"
-else
-	BASE_COMPILER="bootstrap-stage2/pfc.js"
+BASE_COMPILER="${1:-boot/pfc.js}"
+
+if [[ ! -f "$BASE_COMPILER" ]]; then
+	echo "error: compiler not found: $BASE_COMPILER" >&2
+	exit 1
 fi
 
 WORK="output/slice-b"
 STAGE3="$WORK/stage3/pfc.js"
 STAGE4="$WORK/stage4/pfc.js"
 
-if [[ ! -f "$BASE_COMPILER" ]]; then
-	echo "error: seed compiler not found: $BASE_COMPILER" >&2
-	exit 1
-fi
 
-if [[ ! -f bootstrap/src/stdlib/list.pf ]]; then
-	echo "error: bootstrap/src/stdlib/list.pf is missing; install the V2 list facade first" >&2
+if [[ ! -f src/stdlib/list.pf ]]; then
+	echo "error: src/stdlib/list.pf is missing; install the V2 list facade first" >&2
 	exit 1
 fi
 
@@ -31,13 +26,13 @@ mkdir -p "$WORK/stage3" "$WORK/stage4"
 
 echo "== Build compiler containing Slice B changes =="
 PFUN_HOME="$ROOT" node "$BASE_COMPILER" \
-	build bootstrap/src/drivers/cli.pf \
+	build src/drivers/cli.pf \
 	-o "$STAGE3"
 
 echo
 echo "== Compiler fixed point =="
 PFUN_HOME="$ROOT" node "$STAGE3" \
-	build bootstrap/src/drivers/cli.pf \
+	build src/drivers/cli.pf \
 	-o "$STAGE4"
 
 cmp "$STAGE3" "$STAGE4"
@@ -46,13 +41,13 @@ echo "compiler fixed point passed"
 echo
 echo "== Slice B positive Node bundle =="
 PFUN_HOME="$ROOT" node "$STAGE3" \
-	build bootstrap/spec/slice-b/main.pf \
+	build spec/slice-b/main.pf \
 	-o "$WORK/slice-b.js"
 
 node "$WORK/slice-b.js" > "$WORK/slice-b.actual.txt"
 
 diff -u \
-	bootstrap/spec/slice-b/expected.txt \
+	spec/slice-b/expected.txt \
 	"$WORK/slice-b.actual.txt"
 
 echo "Slice B positive program passed"
@@ -93,7 +88,7 @@ echo "== Slice B negative diagnostics =="
 
 expect_build_failure \
 	"literal-zero-divisor" \
-	"bootstrap/spec/slice-b/literal_zero_divisor.pf" \
+	"spec/slice-b/literal_zero_divisor.pf" \
 	"Literal 0 is not a valid Int divisor." \
 	"match nonZero(y)" \
 	"safeDiv(x, y)" \
@@ -101,7 +96,7 @@ expect_build_failure \
 
 expect_build_failure \
 	"variable-divisor" \
-	"bootstrap/spec/slice-b/variable_divisor.pf" \
+	"spec/slice-b/variable_divisor.pf" \
 	"requires a NonZero divisor" \
 	"match nonZero(y)" \
 	"safeDiv(x, y)" \
@@ -109,35 +104,30 @@ expect_build_failure \
 
 expect_build_failure \
 	"variable-modulus" \
-	"bootstrap/spec/slice-b/variable_modulus.pf" \
+	"spec/slice-b/variable_modulus.pf" \
 	"requires a NonZero divisor" \
 	"safeMod(x, y)"
 
 expect_build_failure \
 	"partial-nth" \
-	"bootstrap/spec/slice-b/partial_nth.pf" \
+	"spec/slice-b/partial_nth.pf" \
 	"requires numeric operands"
 
 expect_build_failure \
 	"partial-index" \
-	"bootstrap/spec/slice-b/partial_index.pf" \
+	"spec/slice-b/partial_index.pf" \
 	"requires numeric operands"
 
 expect_build_failure \
 	"partial-chr" \
-	"bootstrap/spec/slice-b/partial_chr.pf" \
+	"spec/slice-b/partial_chr.pf" \
 	"Expected Option<Char>, got Char."
 
 expect_build_failure \
 	"partial-head" \
-	"bootstrap/spec/slice-b/partial_head.pf" \
+	"spec/slice-b/partial_head.pf" \
 	"requires numeric operands"
 
-if [[ -x scripts/test-v2-slice-a.sh ]]; then
-	echo
-	echo "== Slice A regression gate =="
-	bash scripts/test-v2-slice-a.sh "$STAGE3"
-fi
 
 echo
 echo "ALL SLICE B1 ACCEPTANCE TESTS PASSED"

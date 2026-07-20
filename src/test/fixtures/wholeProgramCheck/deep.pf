@@ -1,3 +1,0 @@
-export proc deepSideEffect(x) {
-  println(x);
-}

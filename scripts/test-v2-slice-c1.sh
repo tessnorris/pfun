@@ -4,21 +4,10 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-if [[ $# -gt 0 ]]; then
-	BASE_COMPILER="$1"
-elif [[ -f output/slice-b6/stage1/pfc.js ]]; then
-	BASE_COMPILER="output/slice-b6/stage1/pfc.js"
-elif [[ -f output/slice-b5/stage1/pfc.js ]]; then
-	BASE_COMPILER="output/slice-b5/stage1/pfc.js"
-elif [[ -f bootstrap-stage2/pfc.js ]]; then
-	BASE_COMPILER="bootstrap-stage2/pfc.js"
-else
-	echo "error: no trusted seed compiler was found" >&2
-	exit 1
-fi
+BASE_COMPILER="${1:-boot/pfc.js}"
 
 if [[ ! -f "$BASE_COMPILER" ]]; then
-	echo "error: seed compiler not found: $BASE_COMPILER" >&2
+	echo "error: compiler not found: $BASE_COMPILER" >&2
 	exit 1
 fi
 
@@ -30,23 +19,15 @@ COMPILER="$ROOT/$STAGE1"
 rm -rf "$WORK"
 mkdir -p "$WORK/stage1" "$WORK/stage2"
 
-echo "== TypeScript compiler build =="
-npm run build
-
-echo
-echo "== Bootstrap Pfun test corpus =="
-bash bootstrap/test/run-tests.sh --summary
-
-echo
 echo "== Build compiler containing Slice C1 =="
 PFUN_HOME="$ROOT" node "$BASE_COMPILER" \
-	build bootstrap/src/drivers/cli.pf \
+	build src/drivers/cli.pf \
 	-o "$STAGE1"
 
 echo
 echo "== Compiler fixed point =="
 PFUN_HOME="$ROOT" node "$STAGE1" \
-	build bootstrap/src/drivers/cli.pf \
+	build src/drivers/cli.pf \
 	-o "$STAGE2"
 
 cmp "$STAGE1" "$STAGE2"
@@ -63,13 +44,13 @@ mkdir -p "$CHECK_CWD"
 (
 	cd "$CHECK_CWD"
 	PFUN_HOME="$ROOT" node "$COMPILER" \
-		check ../../../bootstrap/spec/slice-c1/good.pf \
+		check ../../../spec/slice-c1/good.pf \
 		> "$CHECK_STDOUT" \
 		2> "$CHECK_STDERR"
 )
 
 if ! grep -F \
-	"Checked ../../../bootstrap/spec/slice-c1/good.pf" \
+	"Checked ../../../spec/slice-c1/good.pf" \
 	"$WORK/check-good.stdout.txt" >/dev/null
 then
 	echo "error: successful check did not print the expected confirmation" >&2
@@ -94,7 +75,7 @@ echo
 echo "== Check-only diagnostic failure =="
 set +e
 PFUN_HOME="$ROOT" node "$STAGE1" \
-	check bootstrap/spec/slice-c1/pure-calls-proc.pf \
+	check spec/slice-c1/pure-calls-proc.pf \
 	> "$WORK/check-bad.stdout.txt" \
 	2> "$WORK/check-bad.stderr.txt"
 BAD_RC=$?
@@ -176,7 +157,7 @@ echo "usage behavior passed"
 echo
 echo "== Existing build command regression =="
 PFUN_HOME="$ROOT" node "$STAGE1" \
-	build bootstrap/spec/slice-c1/good.pf \
+	build spec/slice-c1/good.pf \
 	-o "$WORK/good.js" \
 	> "$WORK/build.stdout.txt" \
 	2> "$WORK/build.stderr.txt"
@@ -184,16 +165,11 @@ PFUN_HOME="$ROOT" node "$STAGE1" \
 node "$WORK/good.js" > "$WORK/build.actual.txt"
 
 diff -u \
-	bootstrap/spec/slice-c1/build-expected.txt \
+	spec/slice-c1/build-expected.txt \
 	"$WORK/build.actual.txt"
 
 echo "build regression passed"
 
-if [[ -x scripts/test-v2-slice-b6.sh ]]; then
-	echo
-	echo "== Slice B6 through Slice A regression gates =="
-	bash scripts/test-v2-slice-b6.sh "$STAGE1"
-fi
 
 echo
 echo "ALL SLICE C1 CHECK-COMMAND TESTS PASSED"

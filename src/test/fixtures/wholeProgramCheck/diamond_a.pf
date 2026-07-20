@@ -1,5 +1,0 @@
-import { double } from "./lib";
-
-export function viaA(x) {
-  return double(x) + 1;
-}

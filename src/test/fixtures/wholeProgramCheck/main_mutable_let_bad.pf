@@ -1,2 +1,0 @@
-let b = makeBuffer(ByteMode);
-println(bufferLength(b));

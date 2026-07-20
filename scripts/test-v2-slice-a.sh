@@ -4,28 +4,30 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-BASE_COMPILER="${1:-bootstrap-stage2/pfc.js}"
+BASE_COMPILER="${1:-boot/pfc.js}"
+
+if [[ ! -f "$BASE_COMPILER" ]]; then
+	echo "error: compiler not found: $BASE_COMPILER" >&2
+	exit 1
+fi
+
 WORK="output/slice-a"
 STAGE3="$WORK/stage3/pfc.js"
 STAGE4="$WORK/stage4/pfc.js"
 
-if [[ ! -f "$BASE_COMPILER" ]]; then
-	echo "error: seed compiler not found: $BASE_COMPILER" >&2
-	exit 1
-fi
 
 rm -rf "$WORK"
 mkdir -p "$WORK/stage3" "$WORK/stage4"
 
 echo "== Build compiler containing Slice A changes =="
 PFUN_HOME="$ROOT" node "$BASE_COMPILER" \
-	build bootstrap/src/drivers/cli.pf \
+	build src/drivers/cli.pf \
 	-o "$STAGE3"
 
 echo
 echo "== Compiler fixed point =="
 PFUN_HOME="$ROOT" node "$STAGE3" \
-	build bootstrap/src/drivers/cli.pf \
+	build src/drivers/cli.pf \
 	-o "$STAGE4"
 
 cmp "$STAGE3" "$STAGE4"
@@ -34,13 +36,13 @@ echo "compiler fixed point passed"
 echo
 echo "== Slice A positive Node bundle =="
 PFUN_HOME="$ROOT" node "$STAGE3" \
-	build bootstrap/spec/slice-a/main.pf \
+	build spec/slice-a/main.pf \
 	-o "$WORK/slice-a.js"
 
 node "$WORK/slice-a.js" > "$WORK/slice-a.actual.txt"
 
 diff -u \
-	bootstrap/spec/slice-a/expected.txt \
+	spec/slice-a/expected.txt \
 	"$WORK/slice-a.actual.txt"
 
 echo "Slice A positive program passed"
@@ -81,24 +83,24 @@ echo "== Slice A negative diagnostics =="
 
 expect_build_failure \
 	"exact-arity-too-few" \
-	"bootstrap/spec/slice-a/exact_arity_too_few.pf" \
+	"spec/slice-a/exact_arity_too_few.pf" \
 	"Call expected 2 argument(s), got 1."
 
 expect_build_failure \
 	"exact-arity-too-many" \
-	"bootstrap/spec/slice-a/exact_arity_too_many.pf" \
+	"spec/slice-a/exact_arity_too_many.pf" \
 	"Call expected 2 argument(s), got 3."
 
 expect_build_failure \
 	"guarded-only-match" \
-	"bootstrap/spec/slice-a/guarded_only_match.pf" \
+	"spec/slice-a/guarded_only_match.pf" \
 	"Non-exhaustive match on 'SliceGuarded'" \
 	"missing unguarded arm(s)" \
 	"SliceGuardA"
 
 expect_build_failure \
 	"pure-calls-proc" \
-	"bootstrap/spec/slice-a/pure_calls_proc.pf" \
+	"spec/slice-a/pure_calls_proc.pf" \
 	"Pure code cannot call procedure 'importedAnnounce'."
 
 if [[ -f examples/example-V2.pf && -f examples/example-V2.expected.txt ]]; then

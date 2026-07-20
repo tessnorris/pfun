@@ -1,0 +1,88 @@
+// test/runner.pf — small bootstrap-safe test runner primitives.
+//
+// This runner stores pure functions as values. It never stores procs, so it is
+// compatible with V2's second-class proc rule. Generated harnesses may choose to
+// call these helpers or inline equivalent code.
+
+import * as A from "./assertions";
+import * from "io";
+import * as ListX from "../data/listx";
+import * as StrX from "../data/strx";
+
+export type HarnessTestCase = { name, run }
+export type HarnessSuite = { name, tests }
+export type HarnessTestReport = { suite, name, result }
+export type HarnessRunSummary = {
+	generic reports,
+	generic passed,
+	generic failed
+}
+
+export generic function test(name, run) {
+	HarnessTestCase { name, run }
+}
+
+export generic function suite(name, tests) {
+	HarnessSuite { name, tests }
+}
+
+function harnessSuiteGroundingWitness() {
+	let one = HarnessTestCase {
+		"",
+		fn () => A.assertions([
+			A.assertTrue(true)
+		])
+	};
+	HarnessSuite { "", [one] }
+}
+
+
+export generic function report(suiteName, testName, result) {
+	HarnessTestReport { suiteName, testName, result }
+}
+
+function runTest(suiteName, t) {
+	report(suiteName, t.name, t.run())
+}
+
+export generic function runSuite(s) {
+	map(fn t => runTest(s.name, t), s.tests)
+}
+
+export generic function runSuites(suites) {
+	let reports = ListX.concat(map(runSuite, suites));
+	let passed = ListX.countWhere(fn r => A.resultOk(r.result), reports);
+	let failed = length(reports) - passed;
+	HarnessRunSummary { reports, passed, failed }
+}
+
+export generic function summaryOk(summary) {
+	summary.failed == 0
+}
+
+function reportLine(r) {
+	if A.resultOk(r.result) then {
+		"PASS " ++ r.suite ++ " / " ++ r.name
+	} else {
+		let msgs = A.resultMessages(r.result);
+		"FAIL " ++ r.suite ++ " / " ++ r.name ++ "\n" ++ StrX.indent(2, StrX.joinLines(msgs))
+	}
+}
+
+export generic function renderReport(r) {
+	reportLine(r)
+}
+
+export generic function renderSummary(summary) {
+	let body = StrX.joinLines(map(renderReport, summary.reports));
+	let totals = __str__(summary.passed) ++ " passed, " ++ __str__(summary.failed) ++ " failed";
+	if length(body) == 0 then { totals } else { body ++ "\n" ++ totals }
+}
+
+export generic proc printSummary(summary) {
+	println(renderSummary(summary));
+}
+
+export generic proc exitForSummary(summary) {
+	if summary.failed == 0 then { exit(0); } else { exit(1); }
+}

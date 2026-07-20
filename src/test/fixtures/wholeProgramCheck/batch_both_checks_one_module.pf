@@ -1,9 +1,0 @@
-import * from "io";
-export proc sideEffect(x) {
-  println(x);
-}
-function leakyBoth() {
-  let g = sideEffect;
-  return -"oops";
-}
-println("entry");

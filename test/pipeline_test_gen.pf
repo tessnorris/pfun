@@ -1,0 +1,521 @@
+// test/pipeline_test.pf — pure production-pipeline tests.
+
+import * as Assert from "../src/test/assertions";
+import * as A from "../src/syntax/ast";
+import * as I from "../src/check/iface";
+import * as IMS from "../src/data/imaps";
+import * as Compat from "../src/compat";
+import * as MG from "../src/graph/modgraph";
+import * as Spec from "../src/builtins/spec";
+import * as Load from "../src/drivers/load";
+import * as Pipeline from "../src/compile/pipeline";
+import * as Link from "../src/compile/link";
+import * from "io"; // added by gen-test-harness
+import * from "../src/test/runner"; // added by gen-test-harness
+
+function env() {
+	MG.mkSearchEnv("src/stdlib", ".",
+		Spec.builtinNames()
+	)
+}
+
+function source(path, text) {
+	MG.mkSourceFile(path, text)
+}
+
+function sourceMap(files) {
+	Load.sourceMapFromFiles(files)
+}
+
+function host() {
+	Link.hostSrc(
+		"globalThis.PfunCore = {};\n",
+		"globalThis.PfunNode = {};\n"
+	)
+}
+
+function containsText(text, needle) {
+	match findSlice(text, needle) with
+	| None -> false
+	| Some _ -> true
+}
+
+function firstDiagMessage(diags) {
+	match Compat.listAt(diags, 0) with
+	| None -> "<missing diagnostic>"
+	| Some diag -> diag.value.message
+}
+
+function firstCheckedPath(modules) {
+	match Compat.listAt(modules, 0) with
+	| None -> "<missing checked module>"
+	| Some module -> module.value.path
+}
+
+function secondCheckedPath(modules) {
+	match Compat.listAt(modules, 1) with
+	| None -> "<missing checked module>"
+	| Some module -> module.value.path
+}
+
+function firstEmittedId(modules) {
+	match Compat.listAt(modules, 0) with
+	| None -> "<missing emitted module>"
+	| Some module -> module.value.moduleId
+}
+
+function schemaFieldsText(schemas, name) {
+	match IMS.imsGet(schemas, name) with
+	| None -> "<missing>"
+	| Some fields -> join(fields.value, "|")
+}
+
+function artifactText(artifact) {
+	match artifact with
+	| SingleJs a -> a.text
+	| HtmlPage a -> a.text
+	| FileSet _ -> ""
+}
+
+function filePaths(files) {
+	map(fn file => file.relPath, files)
+}
+
+function hasPath(paths, wanted) {
+	match Compat.uncons(paths) with
+	| None -> false
+	| Some cell -> {
+		if cell.value.key == wanted then { true }
+		else { hasPath(cell.value.value, wanted) }
+	}
+}
+
+function loadedTwoModuleGraph() {
+	let files = sourceMap([
+		source(
+			"src/main.pf",
+			"import { dep } from \"./dep\"; "
+			++ "export let answer = dep();"
+		),
+		source(
+			"src/dep.pf",
+			"export function dep() { 42 }"
+		)
+	]);
+	Load.loadGraphMem(files, "src/main.pf", env())
+}
+
+//![suite("compile/pipeline policy")]
+//![test("derives browser safety from target")]
+function testBrowserSafetyPolicy() {
+	Assert.assertions([
+		Assert.assertFalse(
+			Pipeline.browserSafeForTarget(
+				Link.nodeFiles("out")
+			)
+		),
+		Assert.assertFalse(
+			Pipeline.browserSafeForTarget(
+				Link.nodeBundle()
+			)
+		),
+		Assert.assertTrue(
+			Pipeline.browserSafeForTarget(
+				Link.browserBundle(
+					Link.barePage("test")
+				)
+			)
+		)
+	])
+}
+
+//![test("derives builtin singleton variants from interfaces")]
+function testBuiltinSingletons() {
+	let singletons = Pipeline.singletonsFromIfaces(
+		Spec.allBuiltinIfaces()
+	);
+	Assert.assertions([
+		Assert.assertEqual(
+			"Option",
+			match IMS.imsGet(singletons, "None") with
+			| None -> "<missing>"
+			| Some found -> found.value
+		),
+		Assert.assertEqual(
+			"ReadResult",
+			match IMS.imsGet(singletons, "Eof") with
+			| None -> "<missing>"
+			| Some found -> found.value
+		),
+		Assert.assertFalse(
+			IMS.imsHas(singletons, "Some")
+		)
+	])
+}
+
+//![test("derives builtin record and variant field layouts")]
+function testBuiltinSchemaFields() {
+	let schemas = Pipeline.schemaFieldsFromIfaces(
+		Spec.allBuiltinIfaces()
+	);
+	Assert.assertions([
+		Assert.assertEqual(
+			"key|value",
+			schemaFieldsText(schemas, "Pair")
+		),
+		Assert.assertEqual(
+			"value",
+			schemaFieldsText(schemas, "Some")
+		)
+	])
+}
+
+//![test("omits ambiguous singleton names")]
+function testAmbiguousSingletons() {
+	let one = I.putUnion(
+		I.emptyIface("one"),
+		"First",
+		[
+			A.mkVariantDecl("Same", []),
+			A.mkVariantDecl("OnlyOne", [])
+		]
+	);
+	let two = I.putUnion(
+		I.emptyIface("two"),
+		"Second",
+		[
+			A.mkVariantDecl("Same", [])
+		]
+	);
+	let ifaces = IMS.imsFromList([
+		Pair { "one", one },
+		Pair { "two", two }
+	]);
+	let singletons = Pipeline.singletonsFromIfaces(ifaces);
+
+	Assert.assertions([
+		Assert.assertFalse(
+			IMS.imsHas(singletons, "Same")
+		),
+		Assert.assertEqual(
+			"First",
+			match IMS.imsGet(singletons, "OnlyOne") with
+			| None -> "<missing>"
+			| Some found -> found.value
+		)
+	])
+}
+
+//![suite("compile/pipeline checking")]
+//![test("topologically orders before checking")]
+function testCheckOrdersModules() {
+	match loadedTwoModuleGraph() with
+	| LoadErr e -> Assert.assertions([
+		Assert.fail(
+			"Expected loader success, got "
+			++ __str__(length(e.diags))
+			++ " diagnostics."
+		)
+	])
+	| LoadOk loaded -> {
+		match Pipeline.checkProgram(loaded.modules) with
+		| PipelineCheckErr bad -> Assert.assertions([
+			Assert.fail(
+				"Expected checking success, got "
+				++ __str__(length(bad.diags))
+				++ " diagnostics."
+			)
+		])
+		| PipelineCheckOk good -> Assert.assertions([
+			Assert.assertEqual(
+				"src/dep.pf",
+				firstCheckedPath(good.checked.modules)
+			),
+			Assert.assertEqual(
+				"src/main.pf",
+				secondCheckedPath(good.checked.modules)
+			)
+		])
+	}
+}
+
+//![test("returns topology diagnostics without checking")]
+function testCheckCycleError() {
+	let files = sourceMap([
+		source(
+			"src/a.pf",
+			"import * as B from \"./b\"; let a = 1;"
+		),
+		source(
+			"src/b.pf",
+			"import * as A from \"./a\"; let b = 2;"
+		)
+	]);
+
+	match Load.loadGraphMem(files, "src/a.pf", env()) with
+	| LoadErr _ -> Assert.assertions([
+		Assert.fail("Expected cyclic sources to load.")
+	])
+	| LoadOk loaded -> {
+		match Pipeline.checkProgram(loaded.modules) with
+		| PipelineCheckOk _ -> Assert.assertions([
+			Assert.fail("Expected import-cycle diagnostics.")
+		])
+		| PipelineCheckErr bad -> Assert.assertions([
+			Assert.assertTrue(length(bad.diags) > 0),
+			Assert.assertTrue(
+				containsText(
+					firstDiagMessage(bad.diags),
+					"Import cycle"
+				)
+			)
+		])
+	}
+}
+
+//![test("returns checker diagnostics without emission")]
+function testCheckTypeError() {
+	let files = sourceMap([
+		source(
+			"src/main.pf",
+			"export let bad = \"a\" + \"b\";"
+		)
+	]);
+
+	match Load.loadGraphMem(files, "src/main.pf", env()) with
+	| LoadErr _ -> Assert.assertions([
+		Assert.fail("Expected source loading success.")
+	])
+	| LoadOk loaded -> {
+		match Pipeline.checkProgram(loaded.modules) with
+		| PipelineCheckOk _ -> Assert.assertions([
+			Assert.fail("Expected type diagnostics.")
+		])
+		| PipelineCheckErr bad -> Assert.assertions([
+			Assert.assertTrue(length(bad.diags) > 0)
+		])
+	}
+}
+
+//![suite("compile/pipeline compilation")]
+//![test("emits every checked module and links a Node bundle")]
+function testCompileNodeBundle() {
+	match loadedTwoModuleGraph() with
+	| LoadErr _ -> Assert.assertions([
+		Assert.fail("Expected loader success.")
+	])
+	| LoadOk loaded -> {
+		match Pipeline.compileProgram(
+			loaded.modules,
+			Link.nodeBundle(),
+			host()
+		) with
+		| PipelineCompileErr bad -> Assert.assertions([
+			Assert.fail(
+				"Expected compilation success, got "
+				++ __str__(length(bad.diags))
+				++ " diagnostics."
+			)
+		])
+		| PipelineCompileOk good -> {
+			let text = artifactText(good.artifact);
+			Assert.assertions([
+				Assert.assertEqual(
+					2,
+					length(good.emitted)
+				),
+				Assert.assertEqual(
+					"src/dep.pf",
+					firstEmittedId(good.emitted)
+				),
+				Assert.assertTrue(
+					containsText(text, "\"src/dep\"")
+				),
+				Assert.assertTrue(
+					containsText(text, "\"src/main\"")
+				),
+				Assert.assertTrue(
+					containsText(text, "$req(\"src/main\")")
+				)
+			])
+		}
+	}
+}
+
+//![test("compiles imported record field access without dynamic field lookup")]
+function testCompileImportedRecordField() {
+	let files = sourceMap([
+		source(
+			"src/main.pf",
+			"import { box } from \"./box\"; "
+			++ "export let answer = box().value + 1;"
+		),
+		source(
+			"src/box.pf",
+			"export type Box = { value }; "
+			++ "export function box() { Box { value = 41 } }"
+		)
+	]);
+
+	match Load.loadGraphMem(files, "src/main.pf", env()) with
+	| LoadErr _ -> Assert.assertions([
+		Assert.fail("Expected imported-record graph to load.")
+	])
+	| LoadOk loaded -> {
+		match Pipeline.compileProgram(
+			loaded.modules,
+			Link.nodeBundle(),
+			host()
+		) with
+		| PipelineCompileErr bad -> Assert.assertions([
+			Assert.fail(
+				"Expected imported-record compilation success, got "
+				++ __str__(length(bad.diags))
+				++ " diagnostics."
+			)
+		])
+		| PipelineCompileOk good -> {
+			let text = artifactText(good.artifact);
+			Assert.assertions([
+				Assert.assertTrue(
+					containsText(text, ".f[0]")
+				),
+				Assert.assertFalse(
+					containsText(
+						text,
+						"$field(box(), \"value\")"
+					)
+				)
+			])
+		}
+	}
+}
+
+//![test("passes builtin imports through check emit and link")]
+function testCompileBuiltinImport() {
+	let files = sourceMap([
+		source(
+			"src/main.pf",
+			"import * as IO from \"io\"; "
+			++ "export let answer = 42;"
+		)
+	]);
+
+	match Load.loadGraphMem(files, "src/main.pf", env()) with
+	| LoadErr _ -> Assert.assertions([
+		Assert.fail("Expected loader success.")
+	])
+	| LoadOk loaded -> {
+		match Pipeline.compileProgram(
+			loaded.modules,
+			Link.nodeBundle(),
+			host()
+		) with
+		| PipelineCompileErr bad -> Assert.assertions([
+			Assert.fail(
+				"Expected builtin compilation success, got "
+				++ __str__(length(bad.diags))
+				++ " diagnostics."
+			)
+		])
+		| PipelineCompileOk good -> {
+			let text = artifactText(good.artifact);
+			Assert.assertions([
+				Assert.assertTrue(
+					containsText(
+						text,
+						"$require(\"io\")"
+					)
+				),
+				Assert.assertTrue(
+					containsText(
+						text,
+						"globalThis.PfunBuiltins"
+					)
+				)
+			])
+		}
+	}
+}
+
+//![test("links NodeFiles artifacts without driver effects")]
+function testCompileNodeFiles() {
+	match loadedTwoModuleGraph() with
+	| LoadErr _ -> Assert.assertions([
+		Assert.fail("Expected loader success.")
+	])
+	| LoadOk loaded -> {
+		match Pipeline.compileProgram(
+			loaded.modules,
+			Link.nodeFiles("out"),
+			host()
+		) with
+		| PipelineCompileErr bad -> Assert.assertions([
+			Assert.fail(
+				"Expected NodeFiles success, got "
+				++ __str__(length(bad.diags))
+				++ " diagnostics."
+			)
+		])
+		| PipelineCompileOk good -> {
+			match good.artifact with
+			| SingleJs _ -> Assert.assertions([
+				Assert.fail("Expected FileSet artifact.")
+			])
+			| HtmlPage _ -> Assert.assertions([
+				Assert.fail("Expected FileSet artifact.")
+			])
+			| FileSet set -> {
+				let paths = filePaths(set.files);
+				Assert.assertions([
+					Assert.assertEqual(4, length(set.files)),
+					Assert.assertTrue(
+						hasPath(paths, "out/package.json")
+					),
+					Assert.assertTrue(
+						hasPath(paths, "out/main.js")
+					)
+				])
+			}
+		}
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────
+// GENERATED TEST HARNESS (gen-test-harness.js) — do not edit.
+// Lambda-closing lives in pure functions; the generated main has no
+// lambdas, so V1's fn-lambda-in-proc purity quirk is never triggered.
+// ─────────────────────────────────────────────────────────────────
+
+function __gen_suite_compile_pipeline_policy() {
+	suite("compile/pipeline policy", [
+		test("derives browser safety from target", testBrowserSafetyPolicy),
+		test("derives builtin singleton variants from interfaces", testBuiltinSingletons),
+		test("derives builtin record and variant field layouts", testBuiltinSchemaFields),
+		test("omits ambiguous singleton names", testAmbiguousSingletons)
+	])
+}
+
+function __gen_suite_compile_pipeline_checking() {
+	suite("compile/pipeline checking", [
+		test("topologically orders before checking", testCheckOrdersModules),
+		test("returns topology diagnostics without checking", testCheckCycleError),
+		test("returns checker diagnostics without emission", testCheckTypeError)
+	])
+}
+
+function __gen_suite_compile_pipeline_compilation() {
+	suite("compile/pipeline compilation", [
+		test("emits every checked module and links a Node bundle", testCompileNodeBundle),
+		test("compiles imported record field access without dynamic field lookup", testCompileImportedRecordField),
+		test("passes builtin imports through check emit and link", testCompileBuiltinImport),
+		test("links NodeFiles artifacts without driver effects", testCompileNodeFiles)
+	])
+}
+
+proc main() {
+	let __summary = runSuites([__gen_suite_compile_pipeline_policy(), __gen_suite_compile_pipeline_checking(), __gen_suite_compile_pipeline_compilation()]);
+	printSummary(__summary);
+	exitForSummary(__summary);
+}
+main();

@@ -1,0 +1,92 @@
+// Tests for listutils-compatible additions to data/listx.pf.
+
+import * as Assert from "../src/test/assertions";
+import * as ListX from "../src/data/listx";
+import * from "io"; // added by gen-test-harness
+import * from "../src/test/runner"; // added by gen-test-harness
+
+generic function intListText(xs) {
+	join(map(fn x => __str__(x), xs), ",")
+}
+
+function pairListText(xs) {
+	join(map(fn p => __str__(p.key) ++ ":" ++ __str__(p.value), xs), "|")
+}
+
+generic function optionIntIs(value, expected) {
+	match value with
+	| None -> false
+	| Some found -> found.value == expected
+}
+
+//![suite("data/listx extended API")]
+//![test("aggregates and extrema")]
+function testAggregatesAndExtrema() {
+	Assert.assertions([
+		Assert.assertEqual(10, ListX.sum([1, 2, 3, 4])),
+		Assert.assertEqual(24, ListX.product([1, 2, 3, 4])),
+		Assert.assertEqual(2, ListX.count(fn x => x % 2 == 0, [1, 2, 3, 4, 5])),
+		Assert.assertTrue(optionIntIs(ListX.minimum([4, 2, 7, 1]), 1)),
+		Assert.assertTrue(optionIntIs(ListX.maximum([4, 2, 7, 1]), 7)),
+		Assert.assertNone(ListX.minimum([])),
+		Assert.assertNone(ListX.maximum([]))
+	])
+}
+
+//![test("membership and association lookup")]
+function testMembershipAndLookup() {
+	let pairs = [Pair { "a", 10 }, Pair { "b", 20 }];
+	Assert.assertions([
+		Assert.assertTrue(ListX.elem("b", ["a", "b", "c"])),
+		Assert.assertFalse(ListX.elem("z", ["a", "b", "c"])),
+		Assert.assertTrue(ListX.notElem("z", ["a", "b", "c"])),
+		Assert.assertTrue(optionIntIs(ListX.lookup("b", pairs), 20)),
+		Assert.assertNone(ListX.lookup("z", pairs))
+	])
+}
+
+//![test("flatMap zipWith unzip and enumerate")]
+function testCombiningHelpers() {
+	let unzipped = ListX.unzip([Pair { 1, "a" }, Pair { 2, "b" }]);
+	Assert.assertions([
+		Assert.assertEqual("1,1,2,2,3,3", intListText(ListX.flatMap(fn x => [x, x], [1, 2, 3]))),
+		Assert.assertEqual("11,22", intListText(ListX.zipWith(fn a, b => a + b, [1, 2, 3], [10, 20]))),
+		Assert.assertEqual("1,2", intListText(unzipped.key)),
+		Assert.assertEqual("a|b", join(unzipped.value, "|")),
+		Assert.assertEqual("0:8|1:9", pairListText(ListX.enumerate([8, 9])))
+	])
+}
+
+//![test("merge and scalar sorting")]
+function testOrderingHelpers() {
+	Assert.assertions([
+		Assert.assertEqual("1,2,3,4,5,6", intListText(ListX.merge(fn a, b => a - b, [1, 3, 5], [2, 4, 6]))),
+		Assert.assertEqual("1,2,3,4,5", intListText(ListX.sort([5, 1, 4, 2, 3]))),
+		Assert.assertEqual("5,4,3,2,1", intListText(ListX.sortDesc([5, 1, 4, 2, 3]))),
+		Assert.assertEqual(-1, ListX.compareScalar("a", "b")),
+		Assert.assertEqual(0, ListX.compareScalar("a", "a")),
+		Assert.assertEqual(1, ListX.compareScalar("b", "a"))
+	])
+}
+
+// ─────────────────────────────────────────────────────────────────
+// GENERATED TEST HARNESS (gen-test-harness.js) — do not edit.
+// Lambda-closing lives in pure functions; the generated main has no
+// lambdas, so V1's fn-lambda-in-proc purity quirk is never triggered.
+// ─────────────────────────────────────────────────────────────────
+
+function __gen_suite_data_listx_extended_API() {
+	suite("data/listx extended API", [
+		test("aggregates and extrema", testAggregatesAndExtrema),
+		test("membership and association lookup", testMembershipAndLookup),
+		test("flatMap zipWith unzip and enumerate", testCombiningHelpers),
+		test("merge and scalar sorting", testOrderingHelpers)
+	])
+}
+
+proc main() {
+	let __summary = runSuites([__gen_suite_data_listx_extended_API()]);
+	printSummary(__summary);
+	exitForSummary(__summary);
+}
+main();

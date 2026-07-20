@@ -1,4 +1,0 @@
-import * from "io";
-import { f } from "./batch_type_leaf_a";
-import { g } from "./batch_type_leaf_b";
-println("entry is itself clean");

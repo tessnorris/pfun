@@ -1,5 +1,0 @@
-import * from "io";
-let r = "hello"
-  |> fn s => s + " world"
-  |> fn s => s + "!";
-println(r);

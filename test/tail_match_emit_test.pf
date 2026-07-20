@@ -1,0 +1,98 @@
+// test/tail_match_emit_test.pf
+//
+// Regression: self-tail calls nested in a tail-position match must be
+// lowered into the function's while(true) loop rather than emitted as
+// ordinary JavaScript recursion.
+
+import * as Assert from "../src/test/assertions";
+import * as A from "../src/syntax/ast";
+import * as T from "../src/syntax/token";
+import * as IMI from "../src/data/imapi";
+import * as IMS from "../src/data/imaps";
+import * as StrX from "../src/data/strx";
+import * as J from "../src/compile/js";
+import * as E from "../src/compile/emit";
+
+function testSpan() {
+  let p = T.mkPos(1, 1, 0);
+  T.pointSpan(p)
+}
+
+function noTypes() {
+  IMI.imiEmpty()
+}
+
+function opts() {
+  E.emitOpts("tail-match-test", IMS.imsEmpty(), false)
+}
+
+//![suite("compile/emit tail match")]
+//![test("lowers a recursive match arm into the TCO loop")]
+function testTailMatchLowering() {
+  let sp = testSpan();
+
+  let doneArm = A.mkMatchArm(
+    A.pList([], None),
+    None,
+    A.eInt(1, 0, sp)
+  );
+
+  let recur = A.eCall(
+    2,
+    A.eVar(3, "walk", sp),
+    [A.eVar(4, "rest", sp)],
+    sp
+  );
+
+  let recurArm = A.mkMatchArm(
+    A.pList(
+      [A.peWild()],
+      Some { A.peBind("rest") }
+    ),
+    None,
+    recur
+  );
+
+  let matchExpr = A.eMatch(
+    5,
+    A.eVar(6, "items", sp),
+    [doneArm, recurArm],
+    sp
+  );
+
+  let body = [
+    A.sExpr(7, matchExpr, sp)
+  ];
+
+  let fnStmt = A.sFun(
+    8,
+    "walk",
+    ["items"],
+    body,
+    A.pureFn(false, false),
+    sp
+  );
+
+  let text = J.printJs(
+    E.emitStmtForTest(noTypes(), opts(), fnStmt)
+  );
+
+  Assert.assertions([
+    Assert.assertEqual(
+      1,
+      length(E.tailCallsOf("walk", body))
+    ),
+    Assert.assertTrue(
+      StrX.contains(text, "while (true)")
+    ),
+    Assert.assertTrue(
+      StrX.contains(text, "const $match$5")
+    ),
+    Assert.assertTrue(
+      StrX.contains(text, "continue;")
+    ),
+    Assert.assertFalse(
+      StrX.contains(text, "return walk(")
+    )
+  ])
+}

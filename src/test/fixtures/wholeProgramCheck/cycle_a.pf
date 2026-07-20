@@ -1,2 +1,0 @@
-import { b } from "./cycle_b";
-export let a = 1;

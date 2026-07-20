@@ -1,3 +1,0 @@
-import * from "io";
-let x = 10 / 0;
-println(x);

@@ -1,0 +1,423 @@
+// data/listx.pf — bootstrap-safe extended list helpers.
+//
+// The language prelude still owns the small ambient list floor:
+// map, filter, reduce, cons, reverse, length, slice, take, range, and so on.
+//
+// This module owns the opt-in extended list API exposed publicly as "list".
+// Bootstrap rules:
+// - no list `+`
+// - no head/tail/nth outside compat
+// - no arrays or builtin Dict
+// - no proc values or effects
+
+import * as Compat from "../compat";
+
+generic function revOnto(xs, acc) {
+	reduce(fn a, x => cons(x, a), acc, xs)
+}
+
+export generic function isEmpty(xs) {
+	length(xs) == 0
+}
+
+export generic function nonEmpty(xs) {
+	length(xs) > 0
+}
+
+export generic function appendL(a, b) {
+	revOnto(revOnto(a, []), b)
+}
+
+export generic function appendOne(xs, x) {
+	appendL(xs, [x])
+}
+
+export generic function concat(lists) {
+	reverse(reduce(fn acc, xs => revOnto(xs, acc), [], lists))
+}
+
+export generic function foldLeft(f, init, xs) {
+	reduce(f, init, xs)
+}
+
+// ── folds and aggregates ──────────────────────────────────────────────────
+
+export generic function sum(xs) {
+	reduce(fn acc, x => acc + x, 0, xs)
+}
+
+export generic function product(xs) {
+	reduce(fn acc, x => acc * x, 1, xs)
+}
+
+export generic function count(pred, xs) {
+	reduce(fn n, x => {
+		if pred(x) then { n + 1 } else { n }
+	}, 0, xs)
+}
+
+export generic function countWhere(pred, xs) {
+	count(pred, xs)
+}
+
+generic function minByLoop(cmp, xs, best) {
+	match Compat.uncons(xs) with
+	| None -> best
+	| Some cell -> {
+		let p = cell.value;
+		if cmp(p.key, best) < 0 then {
+			minByLoop(cmp, p.value, p.key)
+		} else {
+			minByLoop(cmp, p.value, best)
+		}
+	}
+}
+
+export generic function minBy(cmp, xs) {
+	match Compat.uncons(xs) with
+	| None -> None
+	| Some cell -> {
+		let p = cell.value;
+		Some { minByLoop(cmp, p.value, p.key) }
+	}
+}
+
+generic function maxByLoop(cmp, xs, best) {
+	match Compat.uncons(xs) with
+	| None -> best
+	| Some cell -> {
+		let p = cell.value;
+		if cmp(p.key, best) > 0 then {
+			maxByLoop(cmp, p.value, p.key)
+		} else {
+			maxByLoop(cmp, p.value, best)
+		}
+	}
+}
+
+export generic function maxBy(cmp, xs) {
+	match Compat.uncons(xs) with
+	| None -> None
+	| Some cell -> {
+		let p = cell.value;
+		Some { maxByLoop(cmp, p.value, p.key) }
+	}
+}
+
+export generic function compareScalar(a, b) {
+	if a < b then { -1 }
+	else if a > b then { 1 }
+	else { 0 }
+}
+
+export generic function minimum(xs) {
+	minBy(compareScalar, xs)
+}
+
+export generic function maximum(xs) {
+	maxBy(compareScalar, xs)
+}
+
+// ── predicates and searching ──────────────────────────────────────────────
+
+generic function anyLoop(pred, xs) {
+	match Compat.uncons(xs) with
+	| None -> false
+	| Some cell -> {
+		let p = cell.value;
+		if pred(p.key) then { true } else { anyLoop(pred, p.value) }
+	}
+}
+
+export generic function any(pred, xs) {
+	anyLoop(pred, xs)
+}
+
+generic function allLoop(pred, xs) {
+	match Compat.uncons(xs) with
+	| None -> true
+	| Some cell -> {
+		let p = cell.value;
+		if pred(p.key) then { allLoop(pred, p.value) } else { false }
+	}
+}
+
+export generic function all(pred, xs) {
+	allLoop(pred, xs)
+}
+
+export generic function containsBy(eq, needle, xs) {
+	any(fn x => eq(x, needle), xs)
+}
+
+export generic function elem(needle, xs) {
+	any(fn x => x == needle, xs)
+}
+
+export generic function notElem(needle, xs) {
+	!elem(needle, xs)
+}
+
+generic function findByLoop(pred, xs, index) {
+	match Compat.uncons(xs) with
+	| None -> None
+	| Some cell -> {
+		let p = cell.value;
+		if pred(p.key) then {
+			Some { Pair { index, p.key } }
+		} else {
+			findByLoop(pred, p.value, index + 1)
+		}
+	}
+}
+
+export generic function findBy(pred, xs) {
+	findByLoop(pred, xs, 0)
+}
+
+export generic function indexOfBy(eq, needle, xs) {
+	match findBy(fn x => eq(x, needle), xs) with
+	| None -> None
+	| Some found -> Some { found.value.key }
+}
+
+generic function lookupLoop(key, pairs) {
+	match Compat.uncons(pairs) with
+	| None -> None
+	| Some cell -> {
+		let p = cell.value;
+		if p.key.key == key then {
+			Some { p.key.value }
+		} else {
+			lookupLoop(key, p.value)
+		}
+	}
+}
+
+export generic function lookup(key, pairs) {
+	lookupLoop(key, pairs)
+}
+
+// ── mapping and combining ─────────────────────────────────────────────────
+
+export generic function filterMap(f, xs) {
+	let rev = reduce(fn acc, x => {
+		match f(x) with
+		| None -> acc
+		| Some y -> cons(y.value, acc)
+	}, [], xs);
+	reverse(rev)
+}
+
+export generic function mapWithIndex(f, xs) {
+	let st = reduce(
+		fn state, x => Pair {
+			state.key + 1,
+			cons(f(state.key, x), state.value)
+		},
+		Pair { 0, [] },
+		xs
+	);
+	reverse(st.value)
+}
+
+export generic function flatMap(f, xs) {
+	concat(map(f, xs))
+}
+
+generic function zipWithLoop(f, a, b, acc) {
+	match Compat.uncons(a) with
+	| None -> reverse(acc)
+	| Some acell -> {
+		match Compat.uncons(b) with
+		| None -> reverse(acc)
+		| Some bcell -> {
+			let ap = acell.value;
+			let bp = bcell.value;
+			zipWithLoop(
+				f,
+				ap.value,
+				bp.value,
+				cons(f(ap.key, bp.key), acc)
+			)
+		}
+	}
+}
+
+export generic function zipWith(f, a, b) {
+	zipWithLoop(f, a, b, [])
+}
+
+export generic function zip(a, b) {
+	zipWith(fn x, y => Pair { x, y }, a, b)
+}
+
+generic function unzipLoop(pairs, keys, values) {
+	match Compat.uncons(pairs) with
+	| None -> Pair {
+		reverse(keys),
+		reverse(values)
+	}
+	| Some cell -> {
+		let listCell = cell.value;
+		let item = listCell.key;
+
+		unzipLoop(
+			listCell.value,
+			cons(item.key, keys),
+			cons(item.value, values)
+		)
+	}
+}
+
+export generic function unzip(pairs) {
+	unzipLoop(pairs, [], [])
+}
+
+export generic function enumerate(xs) {
+	mapWithIndex(fn i, x => Pair { i, x }, xs)
+}
+
+// ── slicing helpers ───────────────────────────────────────────────────────
+
+export generic function takeL(n, xs) {
+	if n <= 0 then { [] } else { slice(0, n, xs) }
+}
+
+export generic function dropL(n, xs) {
+	if n <= 0 then {
+		xs
+	} else {
+		let count = length(xs) - n;
+		if count <= 0 then { [] } else { slice(n, count, xs) }
+	}
+}
+
+export generic function splitAt(n, xs) {
+	Pair { takeL(n, xs), dropL(n, xs) }
+}
+
+export generic function intersperse(sep, xs) {
+	let st = reduce(fn state, x => {
+		if state.key then {
+			Pair { true, cons(x, cons(sep, state.value)) }
+		} else {
+			Pair { true, cons(x, state.value) }
+		}
+	}, Pair { false, [] }, xs);
+	reverse(st.value)
+}
+
+// ── stable merge sort ─────────────────────────────────────────────────────
+
+generic function mergeStep(cmp, a, b, la, lb, st) {
+	let i = st.key.key;
+	let j = st.key.value;
+	let acc = st.value;
+
+	if i >= la then {
+		match Compat.listAt(b, j) with
+		| None -> st
+		| Some y -> Pair {
+			Pair { i, j + 1 },
+			cons(y.value, acc)
+		}
+	} else if j >= lb then {
+		match Compat.listAt(a, i) with
+		| None -> st
+		| Some x -> Pair {
+			Pair { i + 1, j },
+			cons(x.value, acc)
+		}
+	} else {
+		match Compat.listAt(a, i) with
+		| None -> st
+		| Some x -> {
+			match Compat.listAt(b, j) with
+			| None -> st
+			| Some y -> {
+				if cmp(x.value, y.value) <= 0 then {
+					Pair {
+						Pair { i + 1, j },
+						cons(x.value, acc)
+					}
+				} else {
+					Pair {
+						Pair { i, j + 1 },
+						cons(y.value, acc)
+					}
+				}
+			}
+		}
+	}
+}
+
+generic function mergeTwo(cmp, a, b) {
+	let la = length(a);
+	let lb = length(b);
+	let steps = appendL(a, b);
+	let fin = reduce(
+		fn st, ignored => mergeStep(cmp, a, b, la, lb, st),
+		Pair { Pair { 0, 0 }, [] },
+		steps
+	);
+	reverse(fin.value)
+}
+
+export generic function merge(cmp, a, b) {
+	mergeTwo(cmp, a, b)
+}
+
+generic function passStep(cmp, st, run) {
+	let hasPending = st.key.key;
+	let pending = st.key.value;
+	let out = st.value;
+
+	if hasPending then {
+		Pair {
+			Pair { false, [] },
+			cons(mergeTwo(cmp, pending, run), out)
+		}
+	} else {
+		Pair { Pair { true, run }, out }
+	}
+}
+
+generic function mergePass(cmp, runs) {
+	let fin = reduce(
+		fn st, run => passStep(cmp, st, run),
+		Pair { Pair { false, [] }, [] },
+		runs
+	);
+	if fin.key.key then {
+		reverse(cons(fin.key.value, fin.value))
+	} else {
+		reverse(fin.value)
+	}
+}
+
+generic function mergeAll(cmp, runs) {
+	if length(runs) <= 1 then {
+		match Compat.uncons(runs) with
+		| None -> []
+		| Some u -> u.value.key
+	} else {
+		mergeAll(cmp, mergePass(cmp, runs))
+	}
+}
+
+export generic function sortBy(cmp, xs) {
+	if length(xs) <= 1 then {
+		xs
+	} else {
+		mergeAll(cmp, map(fn x => [x], xs))
+	}
+}
+
+export generic function sort(xs) {
+	sortBy(compareScalar, xs)
+}
+
+export generic function sortDesc(xs) {
+	sortBy(fn a, b => compareScalar(b, a), xs)
+}

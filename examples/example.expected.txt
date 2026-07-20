@@ -1,0 +1,49 @@
+Pfun V2 language examples
+=========================
+
+--- Core values and control flow ---
+immutable = 100
+mutable = 10
+maximum = 20
+count: 1 2 3 4 5
+clamp(150) = 100
+composition(3) = 8
+factorial(10) = 3628800
+
+--- Strings, chars, raw strings, and format strings ---
+concat = hello world
+format = Alice is 30
+raw = C:\Users\Alice\Documents\notes.txt
+split/join = one|two|three
+trim = hello
+replaceAll = a-b-c
+padLeft = 007
+prefix/suffix = true/true
+take/drop while = 123/abc
+chr(65) = A
+
+--- Lists, comprehensions, and the list library ---
+mapped evens = [4, 8]
+ambient reduce = 15
+pattern sum = 15
+sum = 15
+product = 120
+sorted = [1, 2, 3, 4, 5]
+descending = [5, 4, 3, 2, 1]
+comprehension = [4, 8]
+firstOrZero = 9/0
+zip = [1:a, 2:b]
+enumerate = [0:alpha, 1:beta]
+flatMap = [1, 1, 2, 2, 3, 3]
+
+--- Records, unions, generic fields, and match ---
+point = (3, 4)
+circle area = 25
+rectangle area = 12
+classify small = small circle
+classify large = large circle
+option = found 2
+missing option = not found
+generic boxes = 42/pfun
+
+All deterministic V2 examples completed.

@@ -1,0 +1,81 @@
+// test/check/exhaust_test.pf — Phase 9 exhaustiveness tests.
+//
+// These tests cover union coverage, the unguarded-arm guard rule, list length
+// algebra, wildcard fallback, and non-union catch-all behavior.
+
+import * as Assert from "../src/test/assertions";
+import * as H from "./check_helpers";
+
+//![suite("check/exhaust")]
+
+//![test("exhaustive union match succeeds")]
+function testExhaustiveUnionSucceeds() {
+	let src = "type Color = { | Red | Blue }\nfunction code(c) { match c with | Red -> 1 | Blue -> 2; }";
+	H.assertOkDiags(H.exhaustDiags("union_ok.pf", src))
+}
+
+//![test("missing union variant fails")]
+function testMissingUnionVariantFails() {
+	let src = "type Color = { | Red | Blue }\nfunction code(c) { match c with | Red -> 1; }";
+	H.assertHasMessage(H.exhaustDiags("union_missing.pf", src), "missing")
+}
+
+//![test("wildcard covers union")]
+function testWildcardCoversUnion() {
+	let src = "type Color = { | Red | Blue }\nfunction code(c) { match c with | Red -> 1 | _ -> 0; }";
+	H.assertOkDiags(H.exhaustDiags("union_wildcard.pf", src))
+}
+
+//![test("guarded union arm does not count")]
+function testGuardedUnionArmDoesNotCount() {
+	let src = "type T = { | A: n | B }\nfunction h(t) { match t with | A a where a.n > 0 -> 1 | B -> 2; }";
+	H.assertHasMessage(H.exhaustDiags("guarded_union.pf", src), "missing")
+}
+
+//![test("wrong variant in union match fails")]
+function testWrongVariantInUnionMatchFails() {
+	let src = "type Color = { | Red | Blue }\nfunction code(c) { match c with | Red -> 1 | Green -> 3 | Blue -> 2; }";
+	H.assertHasMessage(H.exhaustDiags("wrong_variant.pf", src), "not a variant")
+}
+
+//![test("list empty plus rest pattern succeeds")]
+function testListEmptyPlusRestSucceeds() {
+	let src = "function firstOrZero(xs) { match xs with | [] -> 0 | [x, ...rest] -> x; }\nlet n = firstOrZero([1, 2, 3]);";
+	H.assertOkDiags(H.exhaustDiags("list_ok.pf", src))
+}
+
+//![test("list rest without empty fails")]
+function testListRestWithoutEmptyFails() {
+	let src = "function first(xs) { match xs with | [x, ...rest] -> x; }\nlet n = first([1, 2]);";
+	H.assertHasMessage(H.exhaustDiags("list_missing_empty.pf", src), "length 0")
+}
+
+//![test("list exact patterns without rest fail at length two")]
+function testListExactPatternsWithoutRestFailAtLengthTwo() {
+	let src = "function f(xs) { match xs with | [] -> 0 | [x] -> x; }\nlet n = f([1, 2]);";
+	H.assertHasMessage(H.exhaustDiags("list_missing_two.pf", src), "length 2")
+}
+
+//![test("guarded empty list arm does not count")]
+function testGuardedListArmDoesNotCount() {
+	let src = "function f(xs) { match xs with | [] where true -> 0 | [x, ...rest] -> x; }\nlet n = f([1]);";
+	H.assertHasMessage(H.exhaustDiags("list_guarded_empty.pf", src), "length 0")
+}
+
+//![test("scalar wildcard fallback succeeds")]
+function testScalarWildcardFallbackSucceeds() {
+	let src = "function f() { match 1 with | _ -> 1; }";
+	H.assertOkDiags(H.exhaustDiags("scalar_wildcard.pf", src))
+}
+
+//![test("scalar guarded wildcard does not count")]
+function testScalarGuardedWildcardDoesNotCount() {
+	let src = "function f() { match 1 with | _ where true -> 1; }";
+	H.assertHasMessage(H.exhaustDiags("scalar_guard_only.pf", src), "fallback")
+}
+
+//![test("nested match on binder must cover the union")]
+function testNestedMatchOnBinderCoversUnion() {
+	let src = "type T = { | A: n | B }\nfunction h(t) { match t with | A a -> (match a with | A x -> x.n) | B -> 0; }";
+	H.assertHasMessage(H.exhaustDiags("nested_binder.pf", src), "missing")
+}

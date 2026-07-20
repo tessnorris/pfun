@@ -69,7 +69,7 @@ function parseArgs(argv) {
   const args = {
     dir: 'tests',
     recursive: false,
-    runnerImport: 'import * from "./runner";',
+    runnerImport: 'import * from "../src/test/runner";',
     ioImport: 'import * from "io";',
     orchestrate: '',        // output path for orchestrator; empty = skip
     mode: 'compile',
@@ -99,9 +99,9 @@ function printHelp() {
   --dir DIR             directory to scan for annotated *_test.pf (default: tests)
   --recursive           scan subdirectories
   --runner-import STR   import line ensuring runSuites is in scope
-                        (default: import * from "./runner";)
+                        (default: import * from "../src/test/runner";)
   --orchestrate FILE    also emit an orchestrator script over the generated files
-  --mode MODE           orchestrator: interp | compile (default: compile)
+  --mode MODE           orchestrator: compile (deprecated, no interp now)
   --pfun PATH           orchestrator: pfun launcher (may be multi-word)
   --runtime PATH        orchestrator compile mode: path to pfun-runtime.js
   --timeout SECS        orchestrator: per-file timeout (default 60, 0 disables)
@@ -247,7 +247,9 @@ function generateHarness(fileBase, suites) {
   for (const { s } of suiteExprs) {
     if (s.builder) out.push(`\tlet __in_${ident(s.name)} = ${s.builder.name}();`);
   }
-  out.push(`\trunSuites([${suiteExprs.map(e => e.expr).join(', ')}]);`);
+  out.push(`\tlet __summary = runSuites([${suiteExprs.map(e => e.expr).join(', ')}]);`);
+  out.push('\tprintSummary(__summary);');
+  out.push('\texitForSummary(__summary);');
   out.push('}');
   out.push('main();');
   out.push('');
@@ -342,18 +344,6 @@ function generateOrchestrator(args, relFiles, rootUp) {
   // $PFUN_HOME must be set for "$PFUN_HOME/lib/..." imports to resolve.
   L.push('export PFUN_HOME="${PFUN_HOME:-$PROJECT_ROOT}"');
 
-  if (args.mode === 'compile') {
-    const rtRel = args.runtime
-      ? path.relative(repoRoot, path.resolve(args.runtime))
-      : '';
-    L.push(`export PFUN_RUNTIME=${rtRel ? '"$PROJECT_ROOT/' + rtRel + '"' : '""'}`);
-
-    const ioRel = rtRel
-      ? path.join(path.dirname(rtRel), 'pfun-io.js')
-      : '';
-    L.push(`export PFUN_IO=${ioRel ? '"$PROJECT_ROOT/' + ioRel + '"' : '""'}`);
-  }
-
   L.push('');
   L.push('pass=0');
   L.push('fail=0');
@@ -394,51 +384,29 @@ function generateOrchestrator(args, relFiles, rootUp) {
   L.push('  local rc=0');
   L.push('  local failure_kind=""');
 
-  if (args.mode === 'interp') {
-    L.push(`  ${timeoutPrefix}${pfunCmd} "$f" >"$log" 2>&1`);
-    L.push('  rc=$?');
-  } else {
-    L.push('  local base');
-    L.push('  base="$(basename "$f" .pf)"');
-    L.push('  local outdir');
-    L.push('  outdir="$(mktemp -d)"');
+  L.push('  local base');
+  L.push('  base="$(basename "$f" .pf)"');
+  L.push('  local outdir');
+  L.push('  outdir="$(mktemp -d)"');
+  L.push('  local outfile="$outdir/$base.js"');
 
-    L.push(`  ${pfunCmd} -c "$f" -o "$outdir" >"$log" 2>&1`);
-    L.push('  local compile_rc=$?');
+  L.push(`  ${pfunCmd} build "$f" -o "$outfile" >"$log" 2>&1`);
+  L.push('  local compile_rc=$?');
 
-    L.push('  if [ "$compile_rc" -ne 0 ]; then');
-    L.push('    rc="$compile_rc"');
-    L.push('    failure_kind="compile"');
-    L.push('    printf "%sCOMPILE FAILED:%s %s\\n" "$BOLD_RED" "$RESET" "$f" >>"$log"');
-    L.push('  else');
-    L.push('    local js');
-    L.push('    js="$(find "$outdir" -name "${base}.js" ! -path "*/lib/*" | head -1)"');
+  L.push('  if [ "$compile_rc" -ne 0 ]; then');
+  L.push('    rc="$compile_rc"');
+  L.push('    failure_kind="compile"');
+  L.push('    printf "%sCOMPILE FAILED:%s %s\\n" "$BOLD_RED" "$RESET" "$f" >>"$log"');
+  L.push('  elif [ ! -f "$outfile" ]; then');
+  L.push('    rc=1');
+  L.push('    failure_kind="no js"');
+  L.push('    printf "%sNO OUTPUT JS:%s %s\\n" "$BOLD_RED" "$RESET" "$f" >>"$log"');
+  L.push('  else');
+  L.push(`    ${timeoutPrefix}node "$outfile" >>"$log" 2>&1`);
+  L.push('    rc=$?');
+  L.push('  fi');
 
-    L.push('    if [ -z "$js" ]; then');
-    L.push('      rc=1');
-    L.push('      failure_kind="no js"');
-    L.push('      printf "%sNO OUTPUT JS:%s %s\\n" "$BOLD_RED" "$RESET" "$f" >>"$log"');
-    L.push('    else');
-    L.push('      local jsdir');
-    L.push('      jsdir="$(dirname "$js")"');
-
-    L.push('      if [ -n "$PFUN_RUNTIME" ]; then');
-    L.push('        mkdir -p "$jsdir/lib" "$outdir/lib"');
-    L.push('        cp "$PFUN_RUNTIME" "$jsdir/lib/pfun-runtime.js" 2>/dev/null || true');
-    L.push('        cp "$PFUN_RUNTIME" "$outdir/lib/pfun-runtime.js" 2>/dev/null || true');
-    L.push('        [ -n "$PFUN_IO" ] && {');
-    L.push('          cp "$PFUN_IO" "$jsdir/lib/pfun-io.js" 2>/dev/null || true');
-    L.push('          cp "$PFUN_IO" "$outdir/lib/pfun-io.js" 2>/dev/null || true');
-    L.push('        }');
-    L.push('      fi');
-
-    L.push(`      ${timeoutPrefix}node "$js" >>"$log" 2>&1`);
-    L.push('      rc=$?');
-    L.push('    fi');
-    L.push('  fi');
-
-    L.push('  rm -rf "$outdir"');
-  }
+  L.push('  rm -rf "$outdir"');
 
   L.push('');
   L.push('  if [ "$rc" -eq 0 ]; then');

@@ -1,0 +1,370 @@
+// compile/pipeline.pf — pure checker/emitter/linker coordination.
+//
+// This module is the single pure production path after source loading:
+//
+// RawModule list
+//   -> dependency-first topological order
+//   -> checkGraph with manifest-derived builtin interfaces
+//   -> singleton-variant table from the frozen interface graph
+//   -> emitModule for every checked module
+//   -> link target artifact
+//
+// Drivers own filesystem and process effects. They pass already-loaded raw
+// modules and already-read host source text into this module.
+//
+// Bootstrap constraints:
+// - no head/tail/nth outside compat.pf
+// - no builtin Dict or mutable Array
+// - no list `+`
+// - no proc values, proc lambdas, async, lazy data, or float arithmetic
+
+import * as MG from "../graph/modgraph";
+import * as Check from "../check/check";
+import * as Spec from "../builtins/spec";
+import * as IMS from "../data/imaps";
+import * as Compat from "../compat";
+import * as Emit from "./emit";
+import * as Link from "./link";
+
+// ── public result model ────────────────────────────────────────────────────
+
+export type PipelineCheckResult = {
+	| PipelineCheckOk: checked
+	| PipelineCheckErr: diags
+}
+
+export type PipelineCompileResult = {
+	| PipelineCompileOk: checked, emitted, artifact
+	| PipelineCompileErr: diags
+}
+
+// Internal state used while deriving singleton variant names. `blocked` keeps
+// an ambiguous name permanently excluded if two different unions export the
+// same zero-field variant.
+type PipelineSingletonState = {
+	values,
+	blocked
+}
+
+// ── small helpers ──────────────────────────────────────────────────────────
+
+function hasDiags(diags) {
+	length(diags) > 0
+}
+
+function singletonState(values, blocked) {
+	PipelineSingletonState {
+		values = values,
+		blocked = blocked
+	}
+}
+
+function emptySingletonState() {
+	singletonState(
+		IMS.imsEmpty(),
+		IMS.imsEmpty()
+	)
+}
+
+// ── target policy ──────────────────────────────────────────────────────────
+
+// Browser-safe emission replaces Node-only extern access with a deterministic
+// runtime diagnostic. It is a property of the target, not a driver option.
+export function browserSafeForTarget(target) {
+	match target with
+	| NodeFiles _ -> false
+	| NodeBundle -> false
+	| BrowserBundle _ -> true
+}
+
+// ── singleton variant derivation ───────────────────────────────────────────
+
+// A zero-field variant used as an unqualified value may need to be synthesized
+// directly by the emitter. The checker interface graph is the authority:
+// - local variants are already emitted as local bindings;
+// - imported and builtin variants appear in frozen ModIface.unions;
+// - ambiguous names are omitted so star-import runtime lookup can diagnose
+//   ambiguity instead of the compiler choosing one union arbitrarily.
+
+function putSingletonName(st, name, unionName) {
+	if IMS.imsHas(st.blocked, name) then {
+		st
+	} else {
+		match IMS.imsGet(st.values, name) with
+		| None -> singletonState(
+			IMS.imsPut(st.values, name, unionName),
+			st.blocked
+		)
+		| Some existing -> {
+			if existing.value == unionName then {
+				st
+			} else {
+				singletonState(
+					IMS.imsRemove(st.values, name),
+					IMS.imsPut(st.blocked, name, true)
+				)
+			}
+		}
+	}
+}
+
+function singletonVariantsLoop(variants, unionName, st) {
+	match Compat.uncons(variants) with
+	| None -> st
+	| Some cell -> {
+		let variant = cell.value.key;
+		let rest = cell.value.value;
+		let next = length(variant.fields) == 0
+			? putSingletonName(st, variant.vname, unionName)
+			: st;
+		singletonVariantsLoop(rest, unionName, next)
+	}
+}
+
+function singletonUnionEntriesLoop(entries, st) {
+	match Compat.uncons(entries) with
+	| None -> st
+	| Some cell -> {
+		let entry = cell.value.key;
+		let next = singletonVariantsLoop(entry.value, entry.key, st);
+		singletonUnionEntriesLoop(
+			cell.value.value,
+			next
+		)
+	}
+}
+
+function singletonIfaceEntriesLoop(entries, st) {
+	match Compat.uncons(entries) with
+	| None -> st
+	| Some cell -> {
+		let iface = cell.value.key.value;
+		let next = singletonUnionEntriesLoop(
+			IMS.imsEntries(iface.unions),
+			st
+		);
+		singletonIfaceEntriesLoop(
+			cell.value.value,
+			next
+		)
+	}
+}
+
+export generic function singletonsFromIfaces(ifaces) {
+	singletonIfaceEntriesLoop(
+		IMS.imsEntries(ifaces),
+		emptySingletonState()
+	).values
+}
+
+// ── global field-layout derivation ─────────────────────────────────────────
+
+function fieldNames(fields) {
+	map(fn field => field.fname, fields)
+}
+
+function putRecordSchemaEntries(entries, acc) {
+	match Compat.uncons(entries) with
+	| None -> acc
+	| Some cell -> {
+		let entry = cell.value.key;
+		putRecordSchemaEntries(
+			cell.value.value,
+			IMS.imsPut(
+				acc,
+				entry.key,
+				fieldNames(entry.value)
+			)
+		)
+	}
+}
+
+function putVariantSchemas(variants, acc) {
+	match Compat.uncons(variants) with
+	| None -> acc
+	| Some cell -> {
+		let variant = cell.value.key;
+		putVariantSchemas(
+			cell.value.value,
+			IMS.imsPut(
+				acc,
+				variant.vname,
+				fieldNames(variant.fields)
+			)
+		)
+	}
+}
+
+function putUnionSchemaEntries(entries, acc) {
+	match Compat.uncons(entries) with
+	| None -> acc
+	| Some cell -> {
+		let entry = cell.value.key;
+		putUnionSchemaEntries(
+			cell.value.value,
+			putVariantSchemas(entry.value, acc)
+		)
+	}
+}
+
+function putIfaceSchemas(iface, acc) {
+	let records = putRecordSchemaEntries(
+		IMS.imsEntries(iface.records),
+		acc
+	);
+	putUnionSchemaEntries(
+		IMS.imsEntries(iface.unions),
+		records
+	)
+}
+
+function schemaIfaceEntriesLoop(entries, acc, seen) {
+	match Compat.uncons(entries) with
+	| None -> acc
+	| Some cell -> {
+		let iface = cell.value.key.value;
+		if IMS.imsHas(seen, iface.path) then {
+			schemaIfaceEntriesLoop(
+				cell.value.value,
+				acc,
+				seen
+			)
+		} else {
+			schemaIfaceEntriesLoop(
+				cell.value.value,
+				putIfaceSchemas(iface, acc),
+				IMS.imsPut(seen, iface.path, true)
+			)
+		}
+	}
+}
+
+export function schemaFieldsFromIfaces(ifaces) {
+	schemaIfaceEntriesLoop(
+		IMS.imsEntries(ifaces),
+		IMS.imsEmpty(),
+		IMS.imsEmpty()
+	)
+}
+
+// ── checking ───────────────────────────────────────────────────────────────
+
+// Lower-level entry point for tests and future embedding. `builtinIfaces` must
+// be an imaps map with the same aliases accepted by checkGraph.
+export function checkWithBuiltins(raws, builtinIfaces) {
+	match MG.toposort(raws) with
+	| TopoErr bad -> PipelineCheckErr { bad.diags }
+	| TopoOk ordered -> {
+		let checked = Check.checkGraph(
+			ordered.modules,
+			builtinIfaces
+		);
+		if hasDiags(checked.diags) then {
+			PipelineCheckErr { checked.diags }
+		} else {
+			PipelineCheckOk { checked }
+		}
+	}
+}
+
+// Normal compiler entry point. Builtin checker surfaces come from the manifest,
+// preserving builtins/spec.pf as the single source of truth.
+export function checkProgram(raws) {
+	checkWithBuiltins(
+		raws,
+		Spec.allBuiltinIfaces()
+	)
+}
+
+// ── emission ───────────────────────────────────────────────────────────────
+
+function emitCheckedLoop(
+	modules,
+	singletons,
+	schemaFields,
+	browserSafe,
+	acc
+) {
+	match Compat.uncons(modules) with
+	| None -> reverse(acc)
+	| Some cell -> {
+		let checked = cell.value.key;
+		let emitted = Emit.emitModule(
+			checked,
+			Emit.withIntrinsics(
+				Emit.emitOptsWithSchemas(
+					checked.path,
+					singletons,
+					browserSafe,
+					schemaFields
+				),
+				Spec.ambientIntrinsics()
+			)
+		);
+		emitCheckedLoop(
+			cell.value.value,
+			singletons,
+			schemaFields,
+			browserSafe,
+			cons(emitted, acc)
+		)
+	}
+}
+
+// Emits checked modules in their dependency-first order.
+export function emitChecked(checked, target) {
+	let singletons = singletonsFromIfaces(
+		checked.ifaces
+	);
+	let schemaFields = schemaFieldsFromIfaces(
+		checked.ifaces
+	);
+	emitCheckedLoop(
+		checked.modules,
+		singletons,
+		schemaFields,
+		browserSafeForTarget(target),
+		[]
+	)
+}
+
+// ── complete pure compilation ──────────────────────────────────────────────
+
+export function compileWithBuiltins(
+	raws,
+	builtinIfaces,
+	target,
+	host
+) {
+	match checkWithBuiltins(raws, builtinIfaces) with
+	| PipelineCheckErr bad -> PipelineCompileErr {
+		bad.diags
+	}
+	| PipelineCheckOk good -> {
+		let emitted = emitChecked(
+			good.checked,
+			target
+		);
+		let artifact = Link.link(
+			emitted,
+			target,
+			host
+		);
+		PipelineCompileOk {
+			checked = good.checked,
+			emitted = emitted,
+			artifact = artifact
+		}
+	}
+}
+
+// Main pure production entry point used by CLI/build/run/serve/playground
+// drivers. No command needs a weaker or duplicated pipeline.
+export function compileProgram(raws, target, host) {
+	compileWithBuiltins(
+		raws,
+		Spec.allBuiltinIfaces(),
+		target,
+		host
+	)
+}

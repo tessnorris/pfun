@@ -1,4 +1,0 @@
-import * from "io";
-import { middleTypeViolation } from "./middle_type";
-
-println(middleTypeViolation());

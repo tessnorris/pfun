@@ -1,6 +1,0 @@
-import * from "io";
-import { double } from "./lib";
-function ok() {
-  return double(5);
-}
-println(ok());

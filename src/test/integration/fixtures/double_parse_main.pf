@@ -1,4 +1,0 @@
-import * from "io";
-import { double } from "./double_parse_lib";
-
-println(double(21));

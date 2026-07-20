@@ -1,7 +1,0 @@
-import * from "io";
-import { Square } from "./shapes";
-
-let s = Square { 5 };
-let r = match s with
-  | Square sq -> sq.side;
-println(r);

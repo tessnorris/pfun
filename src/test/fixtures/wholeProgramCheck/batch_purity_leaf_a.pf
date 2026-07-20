@@ -1,8 +1,0 @@
-import * from "io";
-export proc sideEffectA(x) {
-  println(x);
-}
-export function leakyA() {
-  let g = sideEffectA;
-  return 1;
-}

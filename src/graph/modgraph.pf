@@ -1,0 +1,431 @@
+// graph/modgraph.pf — Phase 5 module graph helpers for the bootstrap compiler.
+//
+// This module is deliberately pure. Drivers read files and decide which source
+// files exist; this module extracts import edges, resolves import strings into a
+// stable path shape, and topologically sorts already-parsed modules.
+
+import * as A from "../syntax/ast";
+import * as T from "../syntax/token";
+import * as D from "../check/diag";
+import * as IMS from "../data/imaps";
+import * as Compat from "../compat";
+
+// ── public data ────────────────────────────────────────────────────────────
+
+export type SourceFile = { path, text }
+
+export type ResolvedPath = {
+	| UserPath: p
+	| BuiltinPath: name
+}
+
+export type ImportEdge = { spec, rawPath, resolved, span }
+
+export type RawModule = { path, ast, edges }
+
+// `builtinNames` is a list of bare module names known to the compiler, e.g.
+// ["io", "file", "db/postgresql"]. `libDir` is the fallback directory for bare
+// non-builtin imports. Drivers are still responsible for proving user files
+// actually exist.
+export type SearchEnv = { libDir, pfunHome, builtinNames }
+
+export type ResolveResult = {
+	| ResolveOk: resolved
+	| ResolveErr: diag
+}
+
+export type EdgesResult = {
+	| EdgesOk: edges
+	| EdgesErr: diags
+}
+
+export type TopoResult = {
+	| TopoOk: modules
+	| TopoErr: diags
+}
+
+// Internal DFS state for toposort.
+type VisitState = {
+	| NotVisited
+	| Visiting
+	| Visited
+}
+
+type TopoSt = { byPath, states, acc, diags }
+
+type VisitResult = {
+	| VisitOk: st
+	| VisitFail: st
+}
+
+// ── constructors ───────────────────────────────────────────────────────────
+
+export function mkSourceFile(path, text) {
+	SourceFile { path, text }
+}
+
+export function userPath(p) {
+	UserPath { p }
+}
+
+export function builtinPath(name) {
+	BuiltinPath { name }
+}
+
+export function mkImportEdge(spec, rawPath, resolved, span) {
+	ImportEdge { spec, rawPath, resolved, span }
+}
+
+export function mkRawModule(path, ast, edges) {
+	RawModule { path, ast, edges }
+}
+
+export function mkSearchEnv(libDir, pfunHome, builtinNames) {
+	SearchEnv { libDir, pfunHome, builtinNames }
+}
+
+// ── diagnostics and spans ──────────────────────────────────────────────────
+
+function fallbackSpan() {
+	let p = T.mkPos(1, 1, 0);
+	T.pointSpan(p)
+}
+
+function importDiag(path, span, message) {
+	D.err(ImportD, message, path, span)
+}
+
+function diagForResolve(fromDir, rawPath) {
+	importDiag(fromDir, fallbackSpan(), "Cannot resolve import '" ++ rawPath ++ "'.")
+}
+
+function hasDiags(diags) {
+	length(diags) > 0
+}
+
+// ── small list/string helpers ──────────────────────────────────────────────
+
+function appendOne(xs, x) {
+	reverse(cons(x, reverse(xs)))
+}
+
+function listContains(xs, value) {
+	match Compat.uncons(xs) with
+	| None -> false
+	| Some cell -> {
+		let pair = cell.value;
+		if pair.key == value then { true } else { listContains(pair.value, value) }
+	}
+}
+
+function startsWith(s, prefix) {
+	let n = length(prefix);
+	if length(s) < n then { false } else { slice(0, n, s) == prefix }
+}
+
+function endsWith(s, suffix) {
+	let n = length(suffix);
+	let len = length(s);
+	if len < n then { false } else { slice(len - n, n, s) == suffix }
+}
+
+function stripLeadingDotSlash(s) {
+	if startsWith(s, "./") then { slice(2, length(s) - 2, s) } else { s }
+}
+
+function ensurePfExtension(path) {
+	if endsWith(path, ".pf") then { path } else { path ++ ".pf" }
+}
+
+function lastSlashFrom(path, i, found) {
+	if i >= length(path) then { found }
+	else if slice(i, 1, path) == "/" then { lastSlashFrom(path, i + 1, i) }
+	else { lastSlashFrom(path, i + 1, found) }
+}
+
+export function dirOf(path) {
+	let ix = lastSlashFrom(path, 0, -1);
+	if ix < 0 then { "." }
+	else if ix == 0 then { "/" }
+	else { slice(0, ix, path) }
+}
+
+function joinPath(dir, rawPath) {
+	if startsWith(rawPath, "/") then { rawPath }
+	else if dir == "" || dir == "." then { rawPath }
+	else if endsWith(dir, "/") then { dir ++ rawPath }
+	else { dir ++ "/" ++ rawPath }
+}
+
+function popComponent(stack, absolute) {
+	match Compat.uncons(stack) with
+	| None -> {
+		if absolute then {
+			[]
+		} else {
+			[".."]
+		}
+	}
+	| Some cell -> {
+		if !absolute && cell.value.key == ".." then {
+			cons("..", stack)
+		} else {
+			cell.value.value
+		}
+	}
+}
+
+function normalizeParts(parts, stack, absolute) {
+	match Compat.uncons(parts) with
+	| None -> reverse(stack)
+	| Some cell -> {
+		let part = cell.value.key;
+		let rest = cell.value.value;
+		if part == "" || part == "." then { normalizeParts(rest, stack, absolute) }
+		else if part == ".." then { normalizeParts(rest, popComponent(stack, absolute), absolute) }
+		else { normalizeParts(rest, cons(part, stack), absolute) }
+	}
+}
+
+function addLeadingSlash(path, absolute) {
+	if !absolute then { path }
+	else if path == "" then { "/" }
+	else { "/" ++ path }
+}
+
+export function normalizePath(path) {
+	let absolute = startsWith(path, "/");
+	let parts = split(path, "/");
+	let clean = normalizeParts(parts, [], absolute);
+	let joined = join(clean, "/");
+	let fixed = addLeadingSlash(joined, absolute);
+	if fixed == "" then { "." } else { fixed }
+}
+
+function canonicalUserPath(path) {
+	normalizePath(ensurePfExtension(stripLeadingDotSlash(path)))
+}
+
+export function resolvedPathToStr(resolved) {
+	match resolved with
+	| UserPath r -> r.p
+	| BuiltinPath r -> "$builtin/" ++ r.name
+}
+
+export function isBuiltinImport(rawPath, env) {
+	listContains(env.builtinNames, rawPath)
+}
+
+export function isRelativeImport(rawPath) {
+	startsWith(rawPath, "./") || startsWith(rawPath, "../")
+}
+
+export function isPublicNamespaceImport(rawPath) {
+	startsWith(rawPath, "testing/")
+	|| startsWith(rawPath, "browser/")
+}
+
+function publicNamespacePath(rawPath, env) {
+	canonicalUserPath(
+		joinPath(
+			env.pfunHome,
+			"src/" ++ rawPath
+		)
+	)
+}
+
+// Public namespaces are ordinary file-backed Pfun modules. This branch must
+// run before builtin recognition because the loader intentionally does not
+// enqueue BuiltinPath edges.
+export function resolveImport(rawPath, fromDir, env) {
+	if isRelativeImport(rawPath) then {
+		ResolveOk {
+			userPath(
+				canonicalUserPath(
+					joinPath(fromDir, rawPath)
+				)
+			)
+		}
+	} else if isPublicNamespaceImport(rawPath) then {
+		ResolveOk {
+			userPath(
+				publicNamespacePath(rawPath, env)
+			)
+		}
+	} else if isBuiltinImport(rawPath, env) then {
+		ResolveOk { builtinPath(rawPath) }
+	} else if env.libDir != "" then {
+		ResolveOk {
+			userPath(
+				canonicalUserPath(
+					joinPath(env.libDir, rawPath)
+				)
+			)
+		}
+	} else {
+		ResolveErr {
+			diagForResolve(fromDir, rawPath)
+		}
+	}
+}
+
+// ── edge extraction ────────────────────────────────────────────────────────
+
+function edgeOfImport(stmt, modulePath, fromDir, env) {
+	match stmt with
+	| SImport s -> {
+		match resolveImport(s.rawPath, fromDir, env) with
+		| ResolveOk r -> EdgesOk { [mkImportEdge(s.spec, s.rawPath, r.resolved, s.span)] }
+		| ResolveErr e -> EdgesErr { [e.diag] }
+	}
+	| SExport e -> edgeOfImport(e.inner, modulePath, fromDir, env)
+	| _ -> EdgesOk { [] }
+}
+
+function appendEdges(a, b) {
+	match Compat.uncons(b) with
+	| None -> a
+	| Some cell -> appendEdges(appendOne(a, cell.value.key), cell.value.value)
+}
+
+function edgeLoop(stmts, modulePath, fromDir, env, edges, diags) {
+	match Compat.uncons(stmts) with
+	| None -> {
+		if hasDiags(diags) then { EdgesErr { reverse(diags) } }
+		else { EdgesOk { edges } }
+	}
+	| Some cell -> {
+		match edgeOfImport(cell.value.key, modulePath, fromDir, env) with
+		| EdgesOk e -> edgeLoop(cell.value.value, modulePath, fromDir, env, appendEdges(edges, e.edges), diags)
+		| EdgesErr d -> edgeLoop(cell.value.value, modulePath, fromDir, env, edges, appendEdges(diags, d.diags))
+	}
+}
+
+export function edgesOf(ast, env) {
+	edgeLoop(ast.stmts, ast.path, dirOf(ast.path), env, [], [])
+}
+
+// ── toposort ───────────────────────────────────────────────────────────────
+
+function rawModulePair(m) {
+	Pair { canonicalUserPath(m.path), m }
+}
+
+function moduleMapLoop(mods, acc) {
+	match Compat.uncons(mods) with
+	| None -> IMS.imsFromList(reverse(acc))
+	| Some cell -> moduleMapLoop(cell.value.value, cons(rawModulePair(cell.value.key), acc))
+}
+
+function moduleMap(mods) {
+	moduleMapLoop(mods, [])
+}
+
+function stateOf(states, path) {
+	match IMS.imsGet(states, path) with
+	| None -> NotVisited
+	| Some s -> s.value
+}
+
+function topoState(byPath, states, acc, diags) {
+	TopoSt { byPath, states, acc, diags }
+}
+
+function withState(st, path, state) {
+	topoState(st.byPath, IMS.imsPut(st.states, path, state), st.acc, st.diags)
+}
+
+function withDiag(st, diag) {
+	topoState(st.byPath, st.states, st.acc, cons(diag, st.diags))
+}
+
+function withAcc(st, module) {
+	topoState(st.byPath, st.states, cons(module, st.acc), st.diags)
+}
+
+function missingModuleDiag(importer, edge) {
+	importDiag(importer, edge.span, "Imported module '" ++ resolvedPathToStr(edge.resolved) ++ "' was not loaded.")
+}
+
+function cycleDiag(path, span) {
+	importDiag(path, span, "Import cycle involving '" ++ path ++ "'.")
+}
+
+function visitEdge(edge, importer, st, stack) {
+	match edge.resolved with
+	| BuiltinPath _ -> VisitOk { st }
+	| UserPath p -> visitPath(p.p, importer, edge.span, st, cons(importer, stack))
+}
+
+function visitEdges(edges, importer, st, stack) {
+	match Compat.uncons(edges) with
+	| None -> VisitOk { st }
+	| Some cell -> {
+		match visitEdge(cell.value.key, importer, st, stack) with
+		| VisitOk r -> visitEdges(cell.value.value, importer, r.st, stack)
+		| VisitFail r -> VisitFail { r.st }
+	}
+}
+
+function visitLoaded(path, module, st, stack) {
+	let marked = withState(st, path, Visiting);
+	match visitEdges(module.edges, path, marked, stack) with
+	| VisitFail bad -> VisitFail { bad.st }
+	| VisitOk ok -> {
+		let done = withState(ok.st, path, Visited);
+		VisitOk { withAcc(done, module) }
+	}
+}
+
+function visitPath(path, importer, span, st, stack) {
+	let key = canonicalUserPath(path);
+	match stateOf(st.states, key) with
+	| Visited -> VisitOk { st }
+	| Visiting -> VisitFail { withDiag(st, cycleDiag(key, span)) }
+	| NotVisited -> {
+		match IMS.imsGet(st.byPath, key) with
+		| None -> {
+			let edge = mkImportEdge(A.iStar(), key, userPath(key), span);
+			VisitFail { withDiag(st, missingModuleDiag(importer, edge)) }
+		}
+		| Some m -> visitLoaded(key, m.value, st, stack)
+	}
+}
+
+function visitModuleValue(module, st) {
+	let key = canonicalUserPath(module.path);
+	visitPath(key, key, fallbackSpan(), st, [])
+}
+
+function topoLoop(mods, st) {
+	match Compat.uncons(mods) with
+	| None -> {
+		if hasDiags(st.diags) then { TopoErr { reverse(st.diags) } }
+		else { TopoOk { reverse(st.acc) } }
+	}
+	| Some cell -> {
+		match visitModuleValue(cell.value.key, st) with
+		| VisitOk r -> topoLoop(cell.value.value, r.st)
+		| VisitFail r -> topoLoop(cell.value.value, r.st)
+	}
+}
+
+export function toposort(mods) {
+	let byPath = moduleMap(mods);
+	let st = topoState(byPath, IMS.imsEmpty(), [], []);
+	topoLoop(mods, st)
+}
+
+// Grounding witness: pins the concrete record fields and closes the exported
+// resolver/edge functions without executing. Placed at end of module: a
+// forward call would constrain only the orphaned predeclaration signature.
+function graphGroundingWitness() {
+	let sf = mkSourceFile("", "");
+	let env = mkSearchEnv("", "", [""]);
+	let m = A.mkModule("", [], 0);
+	let raw = mkRawModule("", m, [mkImportEdge(A.iStar(), "", userPath(""), fallbackSpan())]);
+	let b = isBuiltinImport("", env);
+	let r = resolveImport("", "", env);
+	let e = edgesOf(m, env);
+	sf.path ++ raw.path
+}

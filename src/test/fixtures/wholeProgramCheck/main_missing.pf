@@ -1,3 +1,0 @@
-import * from "io";
-import { foo } from "./doesnotexist";
-println(foo);

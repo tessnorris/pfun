@@ -1,3 +1,0 @@
-import { buildGreeting } from "./transitive_mutable_let_dep";
-
-println(buildGreeting());

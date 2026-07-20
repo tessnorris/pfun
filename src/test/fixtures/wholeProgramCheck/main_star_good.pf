@@ -1,7 +1,0 @@
-import * from "io";
-import * from "./lib";
-proc bump() {
-  counter = counter + 1;
-  return counter;
-}
-println(bump());

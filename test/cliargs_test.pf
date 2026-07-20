@@ -1,0 +1,393 @@
+// test/cliargs_test.pf — pure CLI policy tests.
+
+import * as Assert from "../src/test/assertions";
+import * as Cli from "../src/drivers/cliargs";
+
+function containsText(text, needle) {
+	match findSlice(text, needle) with
+	| None -> false
+	| Some _ -> true
+}
+
+function checkEntry(plan) {
+	match plan with
+	| CliCheck command -> command.entry
+	| CliBuild _ -> ""
+	| CliRun _ -> ""
+	| CliUsage _ -> ""
+}
+
+function buildEntry(plan) {
+	match plan with
+	| CliCheck _ -> ""
+	| CliBuild command -> command.entry
+	| CliRun _ -> ""
+	| CliUsage _ -> ""
+}
+
+function buildTarget(plan) {
+	match plan with
+	| CliCheck _ -> ""
+	| CliBuild command -> command.target
+	| CliRun _ -> ""
+	| CliUsage _ -> ""
+}
+
+function buildOutput(plan) {
+	match plan with
+	| CliCheck _ -> ""
+	| CliBuild command -> command.output
+	| CliRun _ -> ""
+	| CliUsage _ -> ""
+}
+
+function buildPage(plan) {
+	match plan with
+	| CliCheck _ -> ""
+	| CliBuild command -> command.page
+	| CliRun _ -> ""
+	| CliUsage _ -> ""
+}
+
+function runEntry(plan) {
+	match plan with
+	| CliCheck _ -> ""
+	| CliBuild _ -> ""
+	| CliRun command -> command.entry
+	| CliUsage _ -> ""
+}
+
+function runArgsText(plan) {
+	match plan with
+	| CliCheck _ -> ""
+	| CliBuild _ -> ""
+	| CliRun command -> join(command.args, "|")
+	| CliUsage _ -> ""
+}
+
+function usageMessage(plan) {
+	match plan with
+	| CliCheck _ -> ""
+	| CliBuild _ -> ""
+	| CliRun _ -> ""
+	| CliUsage usage -> usage.message
+}
+
+function isCheck(plan) {
+	match plan with
+	| CliCheck _ -> true
+	| CliBuild _ -> false
+	| CliRun _ -> false
+	| CliUsage _ -> false
+}
+
+function isBuild(plan) {
+	match plan with
+	| CliCheck _ -> false
+	| CliBuild _ -> true
+	| CliRun _ -> false
+	| CliUsage _ -> false
+}
+
+function isRun(plan) {
+	match plan with
+	| CliCheck _ -> false
+	| CliBuild _ -> false
+	| CliRun _ -> true
+	| CliUsage _ -> false
+}
+
+function isUsage(plan) {
+	match plan with
+	| CliCheck _ -> false
+	| CliBuild _ -> false
+	| CliRun _ -> false
+	| CliUsage _ -> true
+}
+
+//![suite("drivers/cliargs command parsing")]
+//![test("parses check")]
+function testCheck() {
+	let plan = Cli.parseArgs(["check", "src/main.pf"]);
+
+	Assert.assertions([
+		Assert.assertTrue(isCheck(plan)),
+		Assert.assertEqual(
+			"src/main.pf",
+			checkEntry(plan)
+		)
+	])
+}
+
+//![test("preserves the default node bundle build")]
+function testDefaultBuild() {
+	let plan = Cli.parseArgs(["build", "src/main.pf"]);
+
+	Assert.assertions([
+		Assert.assertTrue(isBuild(plan)),
+		Assert.assertEqual(
+			"src/main.pf",
+			buildEntry(plan)
+		),
+		Assert.assertEqual(
+			"node-bundle",
+			buildTarget(plan)
+		),
+		Assert.assertEqual(
+			"pfc.js",
+			buildOutput(plan)
+		),
+		Assert.assertEqual(
+			"Pfun Application",
+			buildPage(plan)
+		)
+	])
+}
+
+//![test("parses all build targets and defaults")]
+function testBuildTargets() {
+	let files = Cli.parseArgs([
+		"build",
+		"src/main.pf",
+		"--target",
+		"node"
+	]);
+	let bundle = Cli.parseArgs([
+		"build",
+		"src/main.pf",
+		"--target",
+		"node-bundle"
+	]);
+	let browser = Cli.parseArgs([
+		"build",
+		"src/main.pf",
+		"--target",
+		"browser"
+	]);
+
+	Assert.assertions([
+		Assert.assertEqual("node", buildTarget(files)),
+		Assert.assertEqual("build", buildOutput(files)),
+		Assert.assertEqual(
+			"node-bundle",
+			buildTarget(bundle)
+		),
+		Assert.assertEqual(
+			"pfc.js",
+			buildOutput(bundle)
+		),
+		Assert.assertEqual(
+			"browser",
+			buildTarget(browser)
+		),
+		Assert.assertEqual(
+			"index.html",
+			buildOutput(browser)
+		)
+	])
+}
+
+//![test("parses build options in either order")]
+function testBuildOptionOrder() {
+	let first = Cli.parseArgs([
+		"build",
+		"src/main.pf",
+		"--target",
+		"browser",
+		"--page",
+		"C4 Browser",
+		"-o",
+		"site/app.html"
+	]);
+	let second = Cli.parseArgs([
+		"build",
+		"src/main.pf",
+		"--output",
+		"dist",
+		"--target",
+		"node"
+	]);
+
+	Assert.assertions([
+		Assert.assertEqual(
+			"browser",
+			buildTarget(first)
+		),
+		Assert.assertEqual(
+			"site/app.html",
+			buildOutput(first)
+		),
+		Assert.assertEqual(
+			"C4 Browser",
+			buildPage(first)
+		),
+		Assert.assertEqual(
+			"node",
+			buildTarget(second)
+		),
+		Assert.assertEqual(
+			"dist",
+			buildOutput(second)
+		)
+	])
+}
+
+//![test("parses run and forwards arguments")]
+function testRunArgs() {
+	let plan = Cli.parseArgs([
+		"run",
+		"src/main.pf",
+		"alpha",
+		"beta gamma",
+		"--literal"
+	]);
+
+	Assert.assertions([
+		Assert.assertTrue(isRun(plan)),
+		Assert.assertEqual(
+			"src/main.pf",
+			runEntry(plan)
+		),
+		Assert.assertEqual(
+			"alpha|beta gamma|--literal",
+			runArgsText(plan)
+		)
+	])
+}
+
+//![test("rejects malformed build target options")]
+function testBadBuildOptions() {
+	let target = Cli.parseArgs([
+		"build",
+		"src/main.pf",
+		"--target",
+		"wat"
+	]);
+	let page = Cli.parseArgs([
+		"build",
+		"src/main.pf",
+		"--page",
+		"Wrong target"
+	]);
+	let missing = Cli.parseArgs([
+		"build",
+		"src/main.pf",
+		"--target"
+	]);
+	let unknown = Cli.parseArgs([
+		"build",
+		"src/main.pf",
+		"--wat",
+		"x"
+	]);
+
+	Assert.assertions([
+		Assert.assertTrue(isUsage(target)),
+		Assert.assertTrue(isUsage(page)),
+		Assert.assertTrue(isUsage(missing)),
+		Assert.assertTrue(isUsage(unknown)),
+		Assert.assertTrue(
+			containsText(
+				usageMessage(target),
+				"Unknown build target"
+			)
+		),
+		Assert.assertTrue(
+			containsText(
+				usageMessage(page),
+				"--page is only valid"
+			)
+		),
+		Assert.assertTrue(
+			containsText(
+				usageMessage(missing),
+				"requires a value"
+			)
+		),
+		Assert.assertTrue(
+			containsText(
+				usageMessage(unknown),
+				"Unknown build option"
+			)
+		)
+	])
+}
+
+//![test("rejects missing command entries")]
+function testMissingEntries() {
+	let build = Cli.parseArgs(["build"]);
+	let run = Cli.parseArgs(["run"]);
+
+	Assert.assertions([
+		Assert.assertTrue(isUsage(build)),
+		Assert.assertTrue(isUsage(run)),
+		Assert.assertEqual(
+			Cli.usageText(),
+			usageMessage(build)
+		)
+	])
+}
+
+//![suite("drivers/cliargs environment policy")]
+//![test("defaults PFUN_HOME to the working directory")]
+function testHomeDefault() {
+	Assert.assertions([
+		Assert.assertEqual(
+			".",
+			Cli.homeFromEnv(None)
+		),
+		Assert.assertEqual(
+			".",
+			Cli.homeFromEnv(Some { "" })
+		),
+		Assert.assertEqual(
+			"/opt/pfun",
+			Cli.homeFromEnv(
+				Some { "/opt/pfun" }
+			)
+		)
+	])
+}
+
+//![suite("drivers/cliargs path policy")]
+//![test("joins home-relative paths")]
+function testJoinPath() {
+	Assert.assertions([
+		Assert.assertEqual(
+			"./host/core.js",
+			Cli.joinPath(
+				".",
+				"host/core.js"
+			)
+		),
+		Assert.assertEqual(
+			"/opt/pfun/host/browser.js",
+			Cli.joinPath(
+				"/opt/pfun/",
+				"/host/browser.js"
+			)
+		)
+	])
+}
+
+//![test("derives the output parent directory")]
+function testOutputDir() {
+	Assert.assertions([
+		Assert.assertEqual(
+			".",
+			Cli.outputDir("pfc.js")
+		),
+		Assert.assertEqual(
+			"boot",
+			Cli.outputDir("boot/pfc.js")
+		),
+		Assert.assertEqual(
+			"/",
+			Cli.outputDir("/pfc.js")
+		),
+		Assert.assertEqual(
+			"/tmp/out",
+			Cli.outputDir("/tmp/out/pfc.js")
+		)
+	])
+}
