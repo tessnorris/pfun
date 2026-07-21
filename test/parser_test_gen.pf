@@ -337,6 +337,23 @@ function testFunctionAndProcFlags() {
 	])
 }
 
+//![test("parses typed sync and async proc lambdas and proc types")]
+function testProcLambdaForms() {
+	Assert.assertions([
+		parseOkAssertion(
+			"let step = proc (x: Int) -> Int { x + 1; }; "
+			++ "let later = async proc () -> Unit { }; "
+			++ "extern proc schedule(action: proc() -> Unit) -> Unit; "
+			++ "extern proc scheduleAsync(action: async proc(Int) -> Unit) -> Unit;"
+		),
+		assertModuleStmtCount(
+			"let step = proc (x: Int) -> Int { x + 1; }; "
+			++ "let later = async proc () -> Unit { };",
+			2
+		)
+	])
+}
+
 //![test("parses lazy comprehensions")]
 function testLazyComprehension() {
 	Assert.assertions([
@@ -398,6 +415,8 @@ function testParseErrors() {
 		),
 		parseErrAssertion("export var counter = 0;"),
 		parseErrAssertion("let f = proc x => x;"),
+		parseErrAssertion("let f = proc (x) -> Int { x; };"),
+		parseErrAssertion("let f = async function (x: Int) -> Int { x; };"),
 		parseErrAssertion("let xs = lazy foo();"),
 		parseErrAssertion("if true then let x = 1;"),
 		parseErrAssertion("let x = match xs with | [...rest] -> 0;")
@@ -435,6 +454,7 @@ function __gen_suite_syntax_parser() {
 	suite("syntax/parser", [
 		test("parses let statements with Pratt precedence", testLetPrecedence),
 		test("parses function and proc declaration flags", testFunctionAndProcFlags),
+		test("parses typed sync and async proc lambdas and proc types", testProcLambdaForms),
 		test("parses lazy comprehensions", testLazyComprehension),
 		test("parses match list patterns", testMatchListPatterns),
 		test("parses statement if blocks", testIfStatementBlocks),

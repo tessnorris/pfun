@@ -118,7 +118,7 @@ generic function runExhaust(ast, infer, deps) {
 
 export generic function checkModule(ast, deps) {
 	let infer = TY.inferModule(ast, deps);
-	let purity = P.checkModule(ast, deps);
+	let purity = P.checkModule(ast, deps, infer.types);
 	let exhaust = runExhaust(ast, infer, deps);
 	let d1 = appendList(infer.diags, purity.diags);
 	let d2 = appendList(d1, exhaust.diags);

@@ -46,4 +46,9 @@ option = found 2
 missing option = not found
 generic boxes = 42/pfun
 
+--- Procedure lambdas and callbacks ---
+event 1: first
+event 2: second
+async result = 42
+
 All deterministic V2 examples completed.

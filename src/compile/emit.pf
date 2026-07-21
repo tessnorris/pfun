@@ -1088,6 +1088,19 @@ function emitLambda(ctx, params, body0) {
 	)
 }
 
+function emitProcLambda(ctx, params, body0, isAsync) {
+	let names = map(fn param => param.name, params);
+	let lambdaCtx = withAsyncDepth(
+		addLocals(ctx, names),
+		ctx.asyncDepth + (isAsync ? 1 : 0)
+	);
+	J.jsArrow(
+		names,
+		J.jsBlockBody(emitResultStmtList(lambdaCtx, body0)),
+		isAsync
+	)
+}
+
 function emitList(ctx, mode, elems) {
 	match mode with
 	| StrictList -> {
@@ -1581,6 +1594,7 @@ function emitExpr(ctx, expr) {
 	}
 	| ECall e -> emitCall(ctx, e.id, e.callee, e.args)
 	| ELambda e -> emitLambda(ctx, e.params, e.body)
+	| EProcLambda e -> emitProcLambda(ctx, e.params, e.body, e.isAsync)
 	| EBlock e -> emitBlockExpr(ctx, e.stmts)
 	| EList e -> emitList(ctx, e.mode, e.elems)
 	| EComp e -> emitComp(ctx, e.gens, e.guard, e.body, e.mode)

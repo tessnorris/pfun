@@ -1,0 +1,5 @@
+import { step } from "./provider";
+
+function forbidden() {
+	step(1)
+}

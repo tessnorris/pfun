@@ -641,6 +641,50 @@ function testReturnOptionEmission() {
 }
 
 
+//![test("emits sync and async proc lambdas as block arrows")]
+function testProcLambdaEmission() {
+	let sp = testSpan();
+	let x = A.eVar(801, "x", sp);
+	let sum = A.eBinary(802, "+", x, A.eInt(803, 1, sp), sp);
+	let sync = A.eProcLambda(
+		800,
+		[A.mkTypedParam("x", A.tyName("Int", []))],
+		A.tyName("Int", []),
+		[A.sExpr(804, sum, sp)],
+		false,
+		sp
+	);
+	let laterCall = A.eCall(
+		811,
+		A.eVar(812, "later", sp),
+		[],
+		sp
+	);
+	let asyncValue = A.eProcLambda(
+		810,
+		[],
+		A.tyName("Int", []),
+		[A.sExpr(813, A.eAwait(814, laterCall, sp), sp)],
+		true,
+		sp
+	);
+	let types = typeTable([
+		Pair { 801, TY.tInt() },
+		Pair { 802, TY.tInt() },
+		Pair { 803, TY.tInt() }
+	]);
+	let syncText = renderExpr(types, opts(), sync);
+	let asyncText = renderExpr(types, opts(), asyncValue);
+
+	Assert.assertions([
+		Assert.assertTrue(StrX.contains(syncText, "(x) => {")),
+		Assert.assertTrue(StrX.contains(syncText, "return $addI(x, 1);")),
+		Assert.assertTrue(StrX.contains(asyncText, "async () => {")),
+		Assert.assertTrue(StrX.contains(asyncText, "return await later();"))
+	])
+}
+
+
 //![test("emits browser-safe extern stubs and private native bindings")]
 function testExternEmission() {
 	let sp = testSpan();

@@ -5666,7 +5666,7 @@
     exports["LexErr"] = LexErr;
     exports["lex"] = lex;
   });
-  $registerSchemas([{name: "StrictList", union: "ListMode", fields: [], variant: true}, {name: "LazyList", union: "ListMode", fields: [], variant: true}, {name: "Field", union: null, fields: ["fname", "value"], variant: false}, {name: "GenClause", union: null, fields: ["gvar", "source"], variant: false}, {name: "DictEntry", union: null, fields: ["key", "value"], variant: false}, {name: "PeBind", union: "PatElem", fields: ["pname"], variant: true}, {name: "PeWild", union: "PatElem", fields: [], variant: true}, {name: "PWild", union: "Pattern", fields: [], variant: true}, {name: "PVariant", union: "Pattern", fields: ["vname", "bind"], variant: true}, {name: "PList", union: "Pattern", fields: ["elems", "rest"], variant: true}, {name: "MatchArm", union: null, fields: ["pattern", "guard", "body"], variant: false}, {name: "FmtLit", union: "FmtPart", fields: ["s"], variant: true}, {name: "FmtExpr", union: "FmtPart", fields: ["e"], variant: true}, {name: "EInt", union: "Expr", fields: ["id", "n", "span"], variant: true}, {name: "EFloat", union: "Expr", fields: ["id", "text", "span"], variant: true}, {name: "EBool", union: "Expr", fields: ["id", "b", "span"], variant: true}, {name: "EStr", union: "Expr", fields: ["id", "s", "span"], variant: true}, {name: "EChar", union: "Expr", fields: ["id", "c", "span"], variant: true}, {name: "EByte", union: "Expr", fields: ["id", "b", "span"], variant: true}, {name: "EVar", union: "Expr", fields: ["id", "name", "span"], variant: true}, {name: "EUnary", union: "Expr", fields: ["id", "op", "operand", "span"], variant: true}, {name: "EBinary", union: "Expr", fields: ["id", "op", "lhs", "rhs", "span"], variant: true}, {name: "EIf", union: "Expr", fields: ["id", "cond", "thenE", "elseE", "span"], variant: true}, {name: "ECall", union: "Expr", fields: ["id", "callee", "args", "span"], variant: true}, {name: "ELambda", union: "Expr", fields: ["id", "params", "body", "span"], variant: true}, {name: "EBlock", union: "Expr", fields: ["id", "stmts", "span"], variant: true}, {name: "EList", union: "Expr", fields: ["id", "elems", "mode", "span"], variant: true}, {name: "EComp", union: "Expr", fields: ["id", "body", "gens", "guard", "mode", "span"], variant: true}, {name: "ERecord", union: "Expr", fields: ["id", "tname", "fields", "span"], variant: true}, {name: "EField", union: "Expr", fields: ["id", "object", "fname", "span"], variant: true}, {name: "EIndex", union: "Expr", fields: ["id", "object", "index", "span"], variant: true}, {name: "EMatch", union: "Expr", fields: ["id", "subject", "arms", "span"], variant: true}, {name: "EDict", union: "Expr", fields: ["id", "entries", "span"], variant: true}, {name: "EArray", union: "Expr", fields: ["id", "elems", "span"], variant: true}, {name: "EAwait", union: "Expr", fields: ["id", "value", "span"], variant: true}, {name: "EFmt", union: "Expr", fields: ["id", "parts", "span"], variant: true}, {name: "PureFn", union: "FnKind", fields: ["isMemo", "isGeneric"], variant: true}, {name: "ProcFn", union: "FnKind", fields: ["isAsync", "isGeneric"], variant: true}, {name: "FieldDecl", union: null, fields: ["fname", "isGeneric"], variant: false}, {name: "VariantDecl", union: null, fields: ["vname", "fields"], variant: false}, {name: "RecordDecl", union: "TypeDecl", fields: ["tname", "fields"], variant: true}, {name: "UnionDecl", union: "TypeDecl", fields: ["tname", "variants"], variant: true}, {name: "ImportName", union: null, fields: ["name", "alias"], variant: false}, {name: "INames", union: "ImportSpec", fields: ["names"], variant: true}, {name: "INamespace", union: "ImportSpec", fields: ["alias"], variant: true}, {name: "IStar", union: "ImportSpec", fields: [], variant: true}, {name: "TyName", union: "TypeExpr", fields: ["name", "args"], variant: true}, {name: "TyFun", union: "TypeExpr", fields: ["params", "ret"], variant: true}, {name: "ExternFunction", union: "ExternKind", fields: [], variant: true}, {name: "ExternProc", union: "ExternKind", fields: ["isAsync"], variant: true}, {name: "TypedParam", union: null, fields: ["name", "typeExpr"], variant: false}, {name: "ExternDecl", union: null, fields: ["kind", "name", "params", "ret", "platform"], variant: false}, {name: "SLet", union: "Stmt", fields: ["id", "name", "init", "span"], variant: true}, {name: "SVar", union: "Stmt", fields: ["id", "name", "init", "span"], variant: true}, {name: "SAssign", union: "Stmt", fields: ["id", "name", "value", "span"], variant: true}, {name: "SIndexAssign", union: "Stmt", fields: ["id", "object", "index", "value", "span"], variant: true}, {name: "SFun", union: "Stmt", fields: ["id", "name", "params", "body", "kind", "span"], variant: true}, {name: "SType", union: "Stmt", fields: ["id", "decl", "isOpaque", "span"], variant: true}, {name: "SExpr", union: "Stmt", fields: ["id", "expr", "span"], variant: true}, {name: "SReturn", union: "Stmt", fields: ["id", "value", "span"], variant: true}, {name: "SIf", union: "Stmt", fields: ["id", "cond", "thenS", "elseS", "span"], variant: true}, {name: "SWhile", union: "Stmt", fields: ["id", "cond", "body", "span"], variant: true}, {name: "SImport", union: "Stmt", fields: ["id", "spec", "rawPath", "span"], variant: true}, {name: "SExport", union: "Stmt", fields: ["id", "inner", "span"], variant: true}, {name: "SExtern", union: "Stmt", fields: ["id", "decl", "span"], variant: true}, {name: "Module", union: null, fields: ["path", "stmts", "nextId"], variant: false}]);
+  $registerSchemas([{name: "StrictList", union: "ListMode", fields: [], variant: true}, {name: "LazyList", union: "ListMode", fields: [], variant: true}, {name: "Field", union: null, fields: ["fname", "value"], variant: false}, {name: "GenClause", union: null, fields: ["gvar", "source"], variant: false}, {name: "DictEntry", union: null, fields: ["key", "value"], variant: false}, {name: "PeBind", union: "PatElem", fields: ["pname"], variant: true}, {name: "PeWild", union: "PatElem", fields: [], variant: true}, {name: "PWild", union: "Pattern", fields: [], variant: true}, {name: "PVariant", union: "Pattern", fields: ["vname", "bind"], variant: true}, {name: "PList", union: "Pattern", fields: ["elems", "rest"], variant: true}, {name: "MatchArm", union: null, fields: ["pattern", "guard", "body"], variant: false}, {name: "FmtLit", union: "FmtPart", fields: ["s"], variant: true}, {name: "FmtExpr", union: "FmtPart", fields: ["e"], variant: true}, {name: "EInt", union: "Expr", fields: ["id", "n", "span"], variant: true}, {name: "EFloat", union: "Expr", fields: ["id", "text", "span"], variant: true}, {name: "EBool", union: "Expr", fields: ["id", "b", "span"], variant: true}, {name: "EStr", union: "Expr", fields: ["id", "s", "span"], variant: true}, {name: "EChar", union: "Expr", fields: ["id", "c", "span"], variant: true}, {name: "EByte", union: "Expr", fields: ["id", "b", "span"], variant: true}, {name: "EVar", union: "Expr", fields: ["id", "name", "span"], variant: true}, {name: "EUnary", union: "Expr", fields: ["id", "op", "operand", "span"], variant: true}, {name: "EBinary", union: "Expr", fields: ["id", "op", "lhs", "rhs", "span"], variant: true}, {name: "EIf", union: "Expr", fields: ["id", "cond", "thenE", "elseE", "span"], variant: true}, {name: "ECall", union: "Expr", fields: ["id", "callee", "args", "span"], variant: true}, {name: "ELambda", union: "Expr", fields: ["id", "params", "body", "span"], variant: true}, {name: "EProcLambda", union: "Expr", fields: ["id", "params", "ret", "body", "isAsync", "span"], variant: true}, {name: "EBlock", union: "Expr", fields: ["id", "stmts", "span"], variant: true}, {name: "EList", union: "Expr", fields: ["id", "elems", "mode", "span"], variant: true}, {name: "EComp", union: "Expr", fields: ["id", "body", "gens", "guard", "mode", "span"], variant: true}, {name: "ERecord", union: "Expr", fields: ["id", "tname", "fields", "span"], variant: true}, {name: "EField", union: "Expr", fields: ["id", "object", "fname", "span"], variant: true}, {name: "EIndex", union: "Expr", fields: ["id", "object", "index", "span"], variant: true}, {name: "EMatch", union: "Expr", fields: ["id", "subject", "arms", "span"], variant: true}, {name: "EDict", union: "Expr", fields: ["id", "entries", "span"], variant: true}, {name: "EArray", union: "Expr", fields: ["id", "elems", "span"], variant: true}, {name: "EAwait", union: "Expr", fields: ["id", "value", "span"], variant: true}, {name: "EFmt", union: "Expr", fields: ["id", "parts", "span"], variant: true}, {name: "PureFn", union: "FnKind", fields: ["isMemo", "isGeneric"], variant: true}, {name: "ProcFn", union: "FnKind", fields: ["isAsync", "isGeneric"], variant: true}, {name: "FieldDecl", union: null, fields: ["fname", "isGeneric"], variant: false}, {name: "VariantDecl", union: null, fields: ["vname", "fields"], variant: false}, {name: "RecordDecl", union: "TypeDecl", fields: ["tname", "fields"], variant: true}, {name: "UnionDecl", union: "TypeDecl", fields: ["tname", "variants"], variant: true}, {name: "ImportName", union: null, fields: ["name", "alias"], variant: false}, {name: "INames", union: "ImportSpec", fields: ["names"], variant: true}, {name: "INamespace", union: "ImportSpec", fields: ["alias"], variant: true}, {name: "IStar", union: "ImportSpec", fields: [], variant: true}, {name: "TyName", union: "TypeExpr", fields: ["name", "args"], variant: true}, {name: "TyFun", union: "TypeExpr", fields: ["params", "ret"], variant: true}, {name: "TyProc", union: "TypeExpr", fields: ["params", "ret", "isAsync"], variant: true}, {name: "ExternFunction", union: "ExternKind", fields: [], variant: true}, {name: "ExternProc", union: "ExternKind", fields: ["isAsync"], variant: true}, {name: "TypedParam", union: null, fields: ["name", "typeExpr"], variant: false}, {name: "ExternDecl", union: null, fields: ["kind", "name", "params", "ret", "platform"], variant: false}, {name: "SLet", union: "Stmt", fields: ["id", "name", "init", "span"], variant: true}, {name: "SVar", union: "Stmt", fields: ["id", "name", "init", "span"], variant: true}, {name: "SAssign", union: "Stmt", fields: ["id", "name", "value", "span"], variant: true}, {name: "SIndexAssign", union: "Stmt", fields: ["id", "object", "index", "value", "span"], variant: true}, {name: "SFun", union: "Stmt", fields: ["id", "name", "params", "body", "kind", "span"], variant: true}, {name: "SType", union: "Stmt", fields: ["id", "decl", "isOpaque", "span"], variant: true}, {name: "SExpr", union: "Stmt", fields: ["id", "expr", "span"], variant: true}, {name: "SReturn", union: "Stmt", fields: ["id", "value", "span"], variant: true}, {name: "SIf", union: "Stmt", fields: ["id", "cond", "thenS", "elseS", "span"], variant: true}, {name: "SWhile", union: "Stmt", fields: ["id", "cond", "body", "span"], variant: true}, {name: "SImport", union: "Stmt", fields: ["id", "spec", "rawPath", "span"], variant: true}, {name: "SExport", union: "Stmt", fields: ["id", "inner", "span"], variant: true}, {name: "SExtern", union: "Stmt", fields: ["id", "decl", "span"], variant: true}, {name: "Module", union: null, fields: ["path", "stmts", "nextId"], variant: false}]);
   $maps["src/syntax/ast"] = {"./token": "src/syntax/token"};
   $mods["src/syntax/ast"] = ((exports, $require) => {
     const T = $require("./token");
@@ -5725,6 +5725,9 @@
     function ELambda(id, params, body, span) {
       return $makeVariant("ELambda", "Expr", ["id", "params", "body", "span"], [id, params, body, span]);
     }
+    function EProcLambda(id, params, ret, body, isAsync, span) {
+      return $makeVariant("EProcLambda", "Expr", ["id", "params", "ret", "body", "isAsync", "span"], [id, params, ret, body, isAsync, span]);
+    }
     function EBlock(id, stmts, span) {
       return $makeVariant("EBlock", "Expr", ["id", "stmts", "span"], [id, stmts, span]);
     }
@@ -5782,6 +5785,9 @@
     }
     function TyFun(params, ret) {
       return $makeVariant("TyFun", "TypeExpr", ["params", "ret"], [params, ret]);
+    }
+    function TyProc(params, ret, isAsync) {
+      return $makeVariant("TyProc", "TypeExpr", ["params", "ret", "isAsync"], [params, ret, isAsync]);
     }
     const ExternFunction = $makeVariant("ExternFunction", "ExternKind", [], []);
     function ExternProc(isAsync) {
@@ -5850,11 +5856,11 @@
       const supporting = [$makeVariant("PeBind", "PatElem", ["pname"], ["p"]), PeWild];
       const patterns = [PWild, pattern, $makeVariant("PList", "Pattern", ["elems", "rest"], [[patElem], $makeVariant("Some", "Option", ["value"], [patElem])])];
       const formatParts = [fmt, $makeVariant("FmtExpr", "FmtPart", ["e"], [baseExpr])];
-      const expressions = [baseExpr, $makeVariant("EFloat", "Expr", ["id", "text", "span"], [0, "0.0", sp]), $makeVariant("EBool", "Expr", ["id", "b", "span"], [0, false, sp]), $makeVariant("EStr", "Expr", ["id", "s", "span"], [0, "", sp]), $makeVariant("EChar", "Expr", ["id", "c", "span"], [0, "x", sp]), $makeVariant("EByte", "Expr", ["id", "b", "span"], [0, 0, sp]), $makeVariant("EVar", "Expr", ["id", "name", "span"], [0, "x", sp]), $makeVariant("EUnary", "Expr", ["id", "op", "operand", "span"], [0, "-", baseExpr, sp]), $makeVariant("EBinary", "Expr", ["id", "op", "lhs", "rhs", "span"], [0, "+", baseExpr, baseExpr, sp]), $makeVariant("EIf", "Expr", ["id", "cond", "thenE", "elseE", "span"], [0, baseExpr, baseExpr, baseExpr, sp]), $makeVariant("ECall", "Expr", ["id", "callee", "args", "span"], [0, baseExpr, [baseExpr], sp]), $makeVariant("ELambda", "Expr", ["id", "params", "body", "span"], [0, ["x"], baseExpr, sp]), $makeVariant("EBlock", "Expr", ["id", "stmts", "span"], [0, [baseStmt], sp]), $makeVariant("EList", "Expr", ["id", "elems", "mode", "span"], [0, [baseExpr], StrictList, sp]), $makeVariant("EComp", "Expr", ["id", "body", "gens", "guard", "mode", "span"], [0, baseExpr, [gen], $makeVariant("Some", "Option", ["value"], [baseExpr]), LazyList, sp]), $makeVariant("ERecord", "Expr", ["id", "tname", "fields", "span"], [0, "R", [field], sp]), $makeVariant("EField", "Expr", ["id", "object", "fname", "span"], [0, baseExpr, "field", sp]), $makeVariant("EIndex", "Expr", ["id", "object", "index", "span"], [0, baseExpr, baseExpr, sp]), $makeVariant("EMatch", "Expr", ["id", "subject", "arms", "span"], [0, baseExpr, [arm], sp]), $makeVariant("EDict", "Expr", ["id", "entries", "span"], [0, [entry], sp]), $makeVariant("EArray", "Expr", ["id", "elems", "span"], [0, [baseExpr], sp]), $makeVariant("EAwait", "Expr", ["id", "value", "span"], [0, baseExpr, sp]), $makeVariant("EFmt", "Expr", ["id", "parts", "span"], [0, formatParts, sp])];
+      const expressions = [baseExpr, $makeVariant("EFloat", "Expr", ["id", "text", "span"], [0, "0.0", sp]), $makeVariant("EBool", "Expr", ["id", "b", "span"], [0, false, sp]), $makeVariant("EStr", "Expr", ["id", "s", "span"], [0, "", sp]), $makeVariant("EChar", "Expr", ["id", "c", "span"], [0, "x", sp]), $makeVariant("EByte", "Expr", ["id", "b", "span"], [0, 0, sp]), $makeVariant("EVar", "Expr", ["id", "name", "span"], [0, "x", sp]), $makeVariant("EUnary", "Expr", ["id", "op", "operand", "span"], [0, "-", baseExpr, sp]), $makeVariant("EBinary", "Expr", ["id", "op", "lhs", "rhs", "span"], [0, "+", baseExpr, baseExpr, sp]), $makeVariant("EIf", "Expr", ["id", "cond", "thenE", "elseE", "span"], [0, baseExpr, baseExpr, baseExpr, sp]), $makeVariant("ECall", "Expr", ["id", "callee", "args", "span"], [0, baseExpr, [baseExpr], sp]), $makeVariant("ELambda", "Expr", ["id", "params", "body", "span"], [0, ["x"], baseExpr, sp]), $makeVariant("EProcLambda", "Expr", ["id", "params", "ret", "body", "isAsync", "span"], [0, [typedParam], typeExpr, [baseStmt], false, sp]), $makeVariant("EBlock", "Expr", ["id", "stmts", "span"], [0, [baseStmt], sp]), $makeVariant("EList", "Expr", ["id", "elems", "mode", "span"], [0, [baseExpr], StrictList, sp]), $makeVariant("EComp", "Expr", ["id", "body", "gens", "guard", "mode", "span"], [0, baseExpr, [gen], $makeVariant("Some", "Option", ["value"], [baseExpr]), LazyList, sp]), $makeVariant("ERecord", "Expr", ["id", "tname", "fields", "span"], [0, "R", [field], sp]), $makeVariant("EField", "Expr", ["id", "object", "fname", "span"], [0, baseExpr, "field", sp]), $makeVariant("EIndex", "Expr", ["id", "object", "index", "span"], [0, baseExpr, baseExpr, sp]), $makeVariant("EMatch", "Expr", ["id", "subject", "arms", "span"], [0, baseExpr, [arm], sp]), $makeVariant("EDict", "Expr", ["id", "entries", "span"], [0, [entry], sp]), $makeVariant("EArray", "Expr", ["id", "elems", "span"], [0, [baseExpr], sp]), $makeVariant("EAwait", "Expr", ["id", "value", "span"], [0, baseExpr, sp]), $makeVariant("EFmt", "Expr", ["id", "parts", "span"], [0, formatParts, sp])];
       const fnKinds = [kind, $makeVariant("ProcFn", "FnKind", ["isAsync", "isGeneric"], [false, false])];
       const typeDecls = [typeDecl, $makeVariant("UnionDecl", "TypeDecl", ["tname", "variants"], ["U", [variantDecl]])];
       const importSpecs = [importSpec, $makeVariant("INamespace", "ImportSpec", ["alias"], ["N"]), IStar];
-      const typeExprs = [typeExpr, $makeVariant("TyFun", "TypeExpr", ["params", "ret"], [[typeExpr], typeExpr])];
+      const typeExprs = [typeExpr, $makeVariant("TyFun", "TypeExpr", ["params", "ret"], [[typeExpr], typeExpr]), $makeVariant("TyProc", "TypeExpr", ["params", "ret", "isAsync"], [[typeExpr], typeExpr, false])];
       const externKinds = [ExternFunction, $makeVariant("ExternProc", "ExternKind", ["isAsync"], [false])];
       const statements = [$makeVariant("SLet", "Stmt", ["id", "name", "init", "span"], [0, "x", baseExpr, sp]), $makeVariant("SVar", "Stmt", ["id", "name", "init", "span"], [0, "x", baseExpr, sp]), $makeVariant("SAssign", "Stmt", ["id", "name", "value", "span"], [0, "x", baseExpr, sp]), $makeVariant("SIndexAssign", "Stmt", ["id", "object", "index", "value", "span"], [0, baseExpr, baseExpr, baseExpr, sp]), $makeVariant("SFun", "Stmt", ["id", "name", "params", "body", "kind", "span"], [0, "f", ["x"], [baseStmt], kind, sp]), $makeVariant("SType", "Stmt", ["id", "decl", "isOpaque", "span"], [0, typeDecl, false, sp]), baseStmt, $makeVariant("SReturn", "Stmt", ["id", "value", "span"], [0, $makeVariant("Some", "Option", ["value"], [baseExpr]), sp]), $makeVariant("SIf", "Stmt", ["id", "cond", "thenS", "elseS", "span"], [0, baseExpr, [baseStmt], $makeVariant("Some", "Option", ["value"], [[baseStmt]]), sp]), $makeVariant("SWhile", "Stmt", ["id", "cond", "body", "span"], [0, baseExpr, [baseStmt], sp]), $makeVariant("SImport", "Stmt", ["id", "spec", "rawPath", "span"], [0, importSpec, "./dep", sp]), $makeVariant("SExport", "Stmt", ["id", "inner", "span"], [0, baseStmt, sp]), $makeVariant("SExtern", "Stmt", ["id", "decl", "span"], [0, externDecl, sp])];
       return $makeRecord("Module", ["path", "stmts", "nextId"], ["witness.pf", statements, 1]);
@@ -5934,6 +5940,9 @@
     function eLambda(id, params, body, span) {
       return $makeVariant("ELambda", "Expr", ["id", "params", "body", "span"], [id, params, body, span]);
     }
+    function eProcLambda(id, params, ret, body, isAsync, span) {
+      return $makeVariant("EProcLambda", "Expr", ["id", "params", "ret", "body", "isAsync", "span"], [id, params, ret, body, isAsync, span]);
+    }
     function eBlock(id, stmts, span) {
       return $makeVariant("EBlock", "Expr", ["id", "stmts", "span"], [id, stmts, span]);
     }
@@ -6003,6 +6012,9 @@
     function tyFun(params, ret) {
       return $makeVariant("TyFun", "TypeExpr", ["params", "ret"], [params, ret]);
     }
+    function tyProc(params, ret, isAsync) {
+      return $makeVariant("TyProc", "TypeExpr", ["params", "ret", "isAsync"], [params, ret, isAsync]);
+    }
     function externFunction() {
       return ExternFunction;
     }
@@ -6058,303 +6070,311 @@
       return $makeRecord("Module", ["path", "stmts", "nextId"], [path, stmts, nextId]);
     }
     function exprId(expr) {
-      return (($match$831) => {
-        if ($match$831.$t === "EInt") {
-          const e = $match$831;
+      return (($match$862) => {
+        if ($match$862.$t === "EInt") {
+          const e = $match$862;
           return e.f[0];
         }
-        if ($match$831.$t === "EFloat") {
-          const e = $match$831;
+        if ($match$862.$t === "EFloat") {
+          const e = $match$862;
           return e.f[0];
         }
-        if ($match$831.$t === "EBool") {
-          const e = $match$831;
+        if ($match$862.$t === "EBool") {
+          const e = $match$862;
           return e.f[0];
         }
-        if ($match$831.$t === "EStr") {
-          const e = $match$831;
+        if ($match$862.$t === "EStr") {
+          const e = $match$862;
           return e.f[0];
         }
-        if ($match$831.$t === "EChar") {
-          const e = $match$831;
+        if ($match$862.$t === "EChar") {
+          const e = $match$862;
           return e.f[0];
         }
-        if ($match$831.$t === "EByte") {
-          const e = $match$831;
+        if ($match$862.$t === "EByte") {
+          const e = $match$862;
           return e.f[0];
         }
-        if ($match$831.$t === "EVar") {
-          const e = $match$831;
+        if ($match$862.$t === "EVar") {
+          const e = $match$862;
           return e.f[0];
         }
-        if ($match$831.$t === "EUnary") {
-          const e = $match$831;
+        if ($match$862.$t === "EUnary") {
+          const e = $match$862;
           return e.f[0];
         }
-        if ($match$831.$t === "EBinary") {
-          const e = $match$831;
+        if ($match$862.$t === "EBinary") {
+          const e = $match$862;
           return e.f[0];
         }
-        if ($match$831.$t === "EIf") {
-          const e = $match$831;
+        if ($match$862.$t === "EIf") {
+          const e = $match$862;
           return e.f[0];
         }
-        if ($match$831.$t === "ECall") {
-          const e = $match$831;
+        if ($match$862.$t === "ECall") {
+          const e = $match$862;
           return e.f[0];
         }
-        if ($match$831.$t === "ELambda") {
-          const e = $match$831;
+        if ($match$862.$t === "ELambda") {
+          const e = $match$862;
           return e.f[0];
         }
-        if ($match$831.$t === "EBlock") {
-          const e = $match$831;
+        if ($match$862.$t === "EProcLambda") {
+          const e = $match$862;
           return e.f[0];
         }
-        if ($match$831.$t === "EList") {
-          const e = $match$831;
+        if ($match$862.$t === "EBlock") {
+          const e = $match$862;
           return e.f[0];
         }
-        if ($match$831.$t === "EComp") {
-          const e = $match$831;
+        if ($match$862.$t === "EList") {
+          const e = $match$862;
           return e.f[0];
         }
-        if ($match$831.$t === "ERecord") {
-          const e = $match$831;
+        if ($match$862.$t === "EComp") {
+          const e = $match$862;
           return e.f[0];
         }
-        if ($match$831.$t === "EField") {
-          const e = $match$831;
+        if ($match$862.$t === "ERecord") {
+          const e = $match$862;
           return e.f[0];
         }
-        if ($match$831.$t === "EIndex") {
-          const e = $match$831;
+        if ($match$862.$t === "EField") {
+          const e = $match$862;
           return e.f[0];
         }
-        if ($match$831.$t === "EMatch") {
-          const e = $match$831;
+        if ($match$862.$t === "EIndex") {
+          const e = $match$862;
           return e.f[0];
         }
-        if ($match$831.$t === "EDict") {
-          const e = $match$831;
+        if ($match$862.$t === "EMatch") {
+          const e = $match$862;
           return e.f[0];
         }
-        if ($match$831.$t === "EArray") {
-          const e = $match$831;
+        if ($match$862.$t === "EDict") {
+          const e = $match$862;
           return e.f[0];
         }
-        if ($match$831.$t === "EAwait") {
-          const e = $match$831;
+        if ($match$862.$t === "EArray") {
+          const e = $match$862;
           return e.f[0];
         }
-        if ($match$831.$t === "EFmt") {
-          const e = $match$831;
+        if ($match$862.$t === "EAwait") {
+          const e = $match$862;
           return e.f[0];
         }
-        throw $matchFail("src/syntax/ast.pf", 831);
+        if ($match$862.$t === "EFmt") {
+          const e = $match$862;
+          return e.f[0];
+        }
+        throw $matchFail("src/syntax/ast.pf", 862);
       })(expr);
     }
     function exprSpan(expr) {
-      return (($match$882) => {
-        if ($match$882.$t === "EInt") {
-          const e = $match$882;
+      return (($match$915) => {
+        if ($match$915.$t === "EInt") {
+          const e = $match$915;
           return e.f[2];
         }
-        if ($match$882.$t === "EFloat") {
-          const e = $match$882;
+        if ($match$915.$t === "EFloat") {
+          const e = $match$915;
           return e.f[2];
         }
-        if ($match$882.$t === "EBool") {
-          const e = $match$882;
+        if ($match$915.$t === "EBool") {
+          const e = $match$915;
           return e.f[2];
         }
-        if ($match$882.$t === "EStr") {
-          const e = $match$882;
+        if ($match$915.$t === "EStr") {
+          const e = $match$915;
           return e.f[2];
         }
-        if ($match$882.$t === "EChar") {
-          const e = $match$882;
+        if ($match$915.$t === "EChar") {
+          const e = $match$915;
           return e.f[2];
         }
-        if ($match$882.$t === "EByte") {
-          const e = $match$882;
+        if ($match$915.$t === "EByte") {
+          const e = $match$915;
           return e.f[2];
         }
-        if ($match$882.$t === "EVar") {
-          const e = $match$882;
+        if ($match$915.$t === "EVar") {
+          const e = $match$915;
           return e.f[2];
         }
-        if ($match$882.$t === "EUnary") {
-          const e = $match$882;
+        if ($match$915.$t === "EUnary") {
+          const e = $match$915;
           return e.f[3];
         }
-        if ($match$882.$t === "EBinary") {
-          const e = $match$882;
+        if ($match$915.$t === "EBinary") {
+          const e = $match$915;
           return e.f[4];
         }
-        if ($match$882.$t === "EIf") {
-          const e = $match$882;
+        if ($match$915.$t === "EIf") {
+          const e = $match$915;
           return e.f[4];
         }
-        if ($match$882.$t === "ECall") {
-          const e = $match$882;
+        if ($match$915.$t === "ECall") {
+          const e = $match$915;
           return e.f[3];
         }
-        if ($match$882.$t === "ELambda") {
-          const e = $match$882;
+        if ($match$915.$t === "ELambda") {
+          const e = $match$915;
           return e.f[3];
         }
-        if ($match$882.$t === "EBlock") {
-          const e = $match$882;
-          return e.f[2];
-        }
-        if ($match$882.$t === "EList") {
-          const e = $match$882;
-          return e.f[3];
-        }
-        if ($match$882.$t === "EComp") {
-          const e = $match$882;
+        if ($match$915.$t === "EProcLambda") {
+          const e = $match$915;
           return e.f[5];
         }
-        if ($match$882.$t === "ERecord") {
-          const e = $match$882;
-          return e.f[3];
-        }
-        if ($match$882.$t === "EField") {
-          const e = $match$882;
-          return e.f[3];
-        }
-        if ($match$882.$t === "EIndex") {
-          const e = $match$882;
-          return e.f[3];
-        }
-        if ($match$882.$t === "EMatch") {
-          const e = $match$882;
-          return e.f[3];
-        }
-        if ($match$882.$t === "EDict") {
-          const e = $match$882;
+        if ($match$915.$t === "EBlock") {
+          const e = $match$915;
           return e.f[2];
         }
-        if ($match$882.$t === "EArray") {
-          const e = $match$882;
+        if ($match$915.$t === "EList") {
+          const e = $match$915;
+          return e.f[3];
+        }
+        if ($match$915.$t === "EComp") {
+          const e = $match$915;
+          return e.f[5];
+        }
+        if ($match$915.$t === "ERecord") {
+          const e = $match$915;
+          return e.f[3];
+        }
+        if ($match$915.$t === "EField") {
+          const e = $match$915;
+          return e.f[3];
+        }
+        if ($match$915.$t === "EIndex") {
+          const e = $match$915;
+          return e.f[3];
+        }
+        if ($match$915.$t === "EMatch") {
+          const e = $match$915;
+          return e.f[3];
+        }
+        if ($match$915.$t === "EDict") {
+          const e = $match$915;
           return e.f[2];
         }
-        if ($match$882.$t === "EAwait") {
-          const e = $match$882;
+        if ($match$915.$t === "EArray") {
+          const e = $match$915;
           return e.f[2];
         }
-        if ($match$882.$t === "EFmt") {
-          const e = $match$882;
+        if ($match$915.$t === "EAwait") {
+          const e = $match$915;
           return e.f[2];
         }
-        throw $matchFail("src/syntax/ast.pf", 882);
+        if ($match$915.$t === "EFmt") {
+          const e = $match$915;
+          return e.f[2];
+        }
+        throw $matchFail("src/syntax/ast.pf", 915);
       })(expr);
     }
     function stmtSpan(stmt) {
-      return (($match$933) => {
-        if ($match$933.$t === "SLet") {
-          const s = $match$933;
+      return (($match$968) => {
+        if ($match$968.$t === "SLet") {
+          const s = $match$968;
           return s.f[3];
         }
-        if ($match$933.$t === "SVar") {
-          const s = $match$933;
+        if ($match$968.$t === "SVar") {
+          const s = $match$968;
           return s.f[3];
         }
-        if ($match$933.$t === "SAssign") {
-          const s = $match$933;
+        if ($match$968.$t === "SAssign") {
+          const s = $match$968;
           return s.f[3];
         }
-        if ($match$933.$t === "SIndexAssign") {
-          const s = $match$933;
+        if ($match$968.$t === "SIndexAssign") {
+          const s = $match$968;
           return s.f[4];
         }
-        if ($match$933.$t === "SFun") {
-          const s = $match$933;
+        if ($match$968.$t === "SFun") {
+          const s = $match$968;
           return s.f[5];
         }
-        if ($match$933.$t === "SType") {
-          const s = $match$933;
+        if ($match$968.$t === "SType") {
+          const s = $match$968;
           return s.f[3];
         }
-        if ($match$933.$t === "SExpr") {
-          const s = $match$933;
+        if ($match$968.$t === "SExpr") {
+          const s = $match$968;
           return s.f[2];
         }
-        if ($match$933.$t === "SReturn") {
-          const s = $match$933;
+        if ($match$968.$t === "SReturn") {
+          const s = $match$968;
           return s.f[2];
         }
-        if ($match$933.$t === "SIf") {
-          const s = $match$933;
+        if ($match$968.$t === "SIf") {
+          const s = $match$968;
           return s.f[4];
         }
-        if ($match$933.$t === "SWhile") {
-          const s = $match$933;
+        if ($match$968.$t === "SWhile") {
+          const s = $match$968;
           return s.f[3];
         }
-        if ($match$933.$t === "SImport") {
-          const s = $match$933;
+        if ($match$968.$t === "SImport") {
+          const s = $match$968;
           return s.f[3];
         }
-        if ($match$933.$t === "SExport") {
-          const s = $match$933;
+        if ($match$968.$t === "SExport") {
+          const s = $match$968;
           return s.f[2];
         }
-        if ($match$933.$t === "SExtern") {
-          const s = $match$933;
+        if ($match$968.$t === "SExtern") {
+          const s = $match$968;
           return s.f[2];
         }
-        throw $matchFail("src/syntax/ast.pf", 933);
+        throw $matchFail("src/syntax/ast.pf", 968);
       })(stmt);
     }
     function spanJoin(a, b) {
       return $field(T, "mkSpan")(a.f[0], b.f[1]);
     }
     function assignVarName(expr) {
-      return (($match$974) => {
-        if ($match$974.$t === "EVar") {
-          const e = $match$974;
+      return (($match$1009) => {
+        if ($match$1009.$t === "EVar") {
+          const e = $match$1009;
           return $makeVariant("Some", "Option", ["value"], [e.f[1]]);
         }
         if (true) {
           return $makeVariant("None", "Option", [], []);
         }
-        throw $matchFail("src/syntax/ast.pf", 974);
+        throw $matchFail("src/syntax/ast.pf", 1009);
       })(expr);
     }
     function assignIndexParts(expr) {
-      return (($match$983) => {
-        if ($match$983.$t === "EIndex") {
-          const e = $match$983;
+      return (($match$1018) => {
+        if ($match$1018.$t === "EIndex") {
+          const e = $match$1018;
           return $makeVariant("Some", "Option", ["value"], [$makeRecord("Pair", ["key", "value"], [e.f[1], e.f[2]])]);
         }
         if (true) {
           return $makeVariant("None", "Option", [], []);
         }
-        throw $matchFail("src/syntax/ast.pf", 983);
+        throw $matchFail("src/syntax/ast.pf", 1018);
       })(expr);
     }
     function isNoArgVariantPattern(pattern) {
-      return (($match$995) => {
-        if ($match$995.$t === "PVariant") {
-          const p = $match$995;
+      return (($match$1030) => {
+        if ($match$1030.$t === "PVariant") {
+          const p = $match$1030;
           return (() => {
-            return (($match$998) => {
-              if ($match$998.$t === "None") {
+            return (($match$1033) => {
+              if ($match$1033.$t === "None") {
                 return true;
               }
-              if ($match$998.$t === "Some") {
+              if ($match$1033.$t === "Some") {
                 return false;
               }
-              throw $matchFail("src/syntax/ast.pf", 998);
+              throw $matchFail("src/syntax/ast.pf", 1033);
             })(p.f[1]);
           })();
         }
         if (true) {
           return false;
         }
-        throw $matchFail("src/syntax/ast.pf", 995);
+        throw $matchFail("src/syntax/ast.pf", 1030);
       })(pattern);
     }
     const astSigPos = $field(T, "mkPos")(1, 1, 0);
@@ -6460,6 +6480,16 @@
       return astSigExpr;
     }
     const astSigLambdaFns = [astSigLambda, eLambda];
+    function astSigProcLambda(id, params, ret, body, isAsync, span) {
+      const ids = [0, id];
+      const paramLists = [astSigExternDecl.f[2], params];
+      const returns = [astSigTypeExpr, ret];
+      const bodies = [astSigStmts, body];
+      const asyncFlags = [false, isAsync];
+      const spans = [astSigSpan, span];
+      return astSigExpr;
+    }
+    const astSigProcLambdaFns = [astSigProcLambda, eProcLambda];
     function astSigBlock(id, stmts, span) {
       const ids = [0, id];
       const stmtLists = [astSigStmts, stmts];
@@ -6551,6 +6581,13 @@
       return astSigTypeExpr;
     }
     const astSigTyNameFns = [astSigTyName, tyName];
+    function astSigTyProc(params, ret, isAsync) {
+      const paramLists = [astSigTypeExprs, params];
+      const returns = [astSigTypeExpr, ret];
+      const asyncFlags = [false, isAsync];
+      return astSigTypeExpr;
+    }
+    const astSigTyProcFns = [astSigTyProc, tyProc];
     function astSigNamedStmt(id, name, value, span) {
       const ids = [0, id];
       const names = ["", name];
@@ -6676,6 +6713,7 @@
     exports["EIf"] = EIf;
     exports["ECall"] = ECall;
     exports["ELambda"] = ELambda;
+    exports["EProcLambda"] = EProcLambda;
     exports["EBlock"] = EBlock;
     exports["EList"] = EList;
     exports["EComp"] = EComp;
@@ -6696,6 +6734,7 @@
     exports["IStar"] = IStar;
     exports["TyName"] = TyName;
     exports["TyFun"] = TyFun;
+    exports["TyProc"] = TyProc;
     exports["ExternFunction"] = ExternFunction;
     exports["ExternProc"] = ExternProc;
     exports["SLet"] = SLet;
@@ -6736,6 +6775,7 @@
     exports["eIf"] = eIf;
     exports["eCall"] = eCall;
     exports["eLambda"] = eLambda;
+    exports["eProcLambda"] = eProcLambda;
     exports["eBlock"] = eBlock;
     exports["eList"] = eList;
     exports["eComp"] = eComp;
@@ -6759,6 +6799,7 @@
     exports["iStar"] = iStar;
     exports["tyName"] = tyName;
     exports["tyFun"] = tyFun;
+    exports["tyProc"] = tyProc;
     exports["externFunction"] = externFunction;
     exports["externProc"] = externProc;
     exports["mkTypedParam"] = mkTypedParam;
@@ -8661,49 +8702,115 @@
       }
     }
     function pTypeExpr(st) {
-      if (atOp(st, "(")) {
-        return pFunctionTypeExpr(st);
+      if (atKw(st, "proc")) {
+        return pProcTypeExpr(st, false);
       } else {
-        return (($match$3578) => {
-          if ($match$3578.$t === "PErr") {
-            const e = $match$3578;
-            return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
-          }
-          if ($match$3578.$t === "POk") {
-            const name = $match$3578;
-            return (() => {
-              if (atOp(name.f[0], "<")) {
-                return (($match$3592) => {
-                  if ($match$3592.$t === "PErr") {
-                    const e = $match$3592;
-                    return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
-                  }
-                  if ($match$3592.$t === "POk") {
-                    const args = $match$3592;
-                    return ok(args.f[0], $field(A, "tyName")(name.f[1], args.f[1]));
-                  }
-                  throw $matchFail("src/syntax/parser.pf", 3592);
-                })(pTypeArgs(advance(name.f[0]), []));
-              } else {
-                return ok(name.f[0], $field(A, "tyName")(name.f[1], []));
+        if (atKw(st, "async")) {
+          return pAsyncProcTypeExpr(st);
+        } else {
+          if (atOp(st, "(")) {
+            return pFunctionTypeExpr(st);
+          } else {
+            return (($match$3595) => {
+              if ($match$3595.$t === "PErr") {
+                const e = $match$3595;
+                return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
               }
-            })();
+              if ($match$3595.$t === "POk") {
+                const name = $match$3595;
+                return (() => {
+                  if (atOp(name.f[0], "<")) {
+                    return (($match$3609) => {
+                      if ($match$3609.$t === "PErr") {
+                        const e = $match$3609;
+                        return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
+                      }
+                      if ($match$3609.$t === "POk") {
+                        const args = $match$3609;
+                        return ok(args.f[0], $field(A, "tyName")(name.f[1], args.f[1]));
+                      }
+                      throw $matchFail("src/syntax/parser.pf", 3609);
+                    })(pTypeArgs(advance(name.f[0]), []));
+                  } else {
+                    return ok(name.f[0], $field(A, "tyName")(name.f[1], []));
+                  }
+                })();
+              }
+              throw $matchFail("src/syntax/parser.pf", 3595);
+            })(expectIdent(st, "as type name"));
           }
-          throw $matchFail("src/syntax/parser.pf", 3578);
-        })(expectIdent(st, "as type name"));
+        }
       }
+    }
+    function pAsyncProcTypeExpr(st) {
+      const st1 = advance(st);
+      if (atKw(st1, "proc")) {
+        return pProcTypeExpr(st1, true);
+      } else {
+        return failHere(st1, "Expected proc after async in procedure type.");
+      }
+    }
+    function pProcTypeExpr(st, isAsync) {
+      const st1 = advance(st);
+      return (($match$3673) => {
+        if ($match$3673.$t === "PErr") {
+          const e = $match$3673;
+          return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
+        }
+        if ($match$3673.$t === "POk") {
+          const open = $match$3673;
+          return (() => {
+            return (($match$3683) => {
+              if ($match$3683.$t === "PErr") {
+                const e = $match$3683;
+                return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
+              }
+              if ($match$3683.$t === "POk") {
+                const params = $match$3683;
+                return (() => {
+                  return (($match$3693) => {
+                    if ($match$3693.$t === "PErr") {
+                      const e = $match$3693;
+                      return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
+                    }
+                    if ($match$3693.$t === "POk") {
+                      const arrow = $match$3693;
+                      return (() => {
+                        return (($match$3704) => {
+                          if ($match$3704.$t === "PErr") {
+                            const e = $match$3704;
+                            return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
+                          }
+                          if ($match$3704.$t === "POk") {
+                            const ret = $match$3704;
+                            return ok(ret.f[0], $field(A, "tyProc")(params.f[1], ret.f[1], isAsync));
+                          }
+                          throw $matchFail("src/syntax/parser.pf", 3704);
+                        })(pTypeExpr(arrow.f[0]));
+                      })();
+                    }
+                    throw $matchFail("src/syntax/parser.pf", 3693);
+                  })(expectOp(params.f[0], "->", "after procedure type parameters"));
+                })();
+              }
+              throw $matchFail("src/syntax/parser.pf", 3683);
+            })(pTypeExprList(open.f[0], []));
+          })();
+        }
+        throw $matchFail("src/syntax/parser.pf", 3673);
+      })(expectOp(st1, "(", "to start procedure type"));
     }
     function pTypeArgs(st, acc) {
       if (atOp(st, ">")) {
         return ok(advance(st), $reverse(acc));
       } else {
-        return (($match$3643) => {
-          if ($match$3643.$t === "PErr") {
-            const e = $match$3643;
+        return (($match$3742) => {
+          if ($match$3742.$t === "PErr") {
+            const e = $match$3742;
             return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
           }
-          if ($match$3643.$t === "POk") {
-            const te = $match$3643;
+          if ($match$3742.$t === "POk") {
+            const te = $match$3742;
             return (() => {
               if (atOp(te.f[0], ",")) {
                 return pTypeArgs(advance(te.f[0]), $cons(te.f[1], acc));
@@ -8716,70 +8823,70 @@
               }
             })();
           }
-          throw $matchFail("src/syntax/parser.pf", 3643);
+          throw $matchFail("src/syntax/parser.pf", 3742);
         })(pTypeExpr(st));
       }
     }
     function pFunctionTypeExpr(st) {
-      return (($match$3694) => {
-        if ($match$3694.$t === "PErr") {
-          const e = $match$3694;
+      return (($match$3793) => {
+        if ($match$3793.$t === "PErr") {
+          const e = $match$3793;
           return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
         }
-        if ($match$3694.$t === "POk") {
-          const open = $match$3694;
+        if ($match$3793.$t === "POk") {
+          const open = $match$3793;
           return (() => {
-            return (($match$3704) => {
-              if ($match$3704.$t === "PErr") {
-                const e = $match$3704;
+            return (($match$3803) => {
+              if ($match$3803.$t === "PErr") {
+                const e = $match$3803;
                 return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
               }
-              if ($match$3704.$t === "POk") {
-                const params = $match$3704;
+              if ($match$3803.$t === "POk") {
+                const params = $match$3803;
                 return (() => {
-                  return (($match$3714) => {
-                    if ($match$3714.$t === "PErr") {
-                      const e = $match$3714;
+                  return (($match$3813) => {
+                    if ($match$3813.$t === "PErr") {
+                      const e = $match$3813;
                       return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
                     }
-                    if ($match$3714.$t === "POk") {
-                      const arrow = $match$3714;
+                    if ($match$3813.$t === "POk") {
+                      const arrow = $match$3813;
                       return (() => {
-                        return (($match$3725) => {
-                          if ($match$3725.$t === "PErr") {
-                            const e = $match$3725;
+                        return (($match$3824) => {
+                          if ($match$3824.$t === "PErr") {
+                            const e = $match$3824;
                             return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
                           }
-                          if ($match$3725.$t === "POk") {
-                            const ret = $match$3725;
+                          if ($match$3824.$t === "POk") {
+                            const ret = $match$3824;
                             return ok(ret.f[0], $field(A, "tyFun")(params.f[1], ret.f[1]));
                           }
-                          throw $matchFail("src/syntax/parser.pf", 3725);
+                          throw $matchFail("src/syntax/parser.pf", 3824);
                         })(pTypeExpr(arrow.f[0]));
                       })();
                     }
-                    throw $matchFail("src/syntax/parser.pf", 3714);
+                    throw $matchFail("src/syntax/parser.pf", 3813);
                   })(expectOp(params.f[0], "->", "after function type parameters"));
                 })();
               }
-              throw $matchFail("src/syntax/parser.pf", 3704);
+              throw $matchFail("src/syntax/parser.pf", 3803);
             })(pTypeExprList(open.f[0], []));
           })();
         }
-        throw $matchFail("src/syntax/parser.pf", 3694);
+        throw $matchFail("src/syntax/parser.pf", 3793);
       })(expectOp(st, "(", "to start function type"));
     }
     function pTypeExprList(st, acc) {
       if (atOp(st, ")")) {
         return ok(advance(st), $reverse(acc));
       } else {
-        return (($match$3762) => {
-          if ($match$3762.$t === "PErr") {
-            const e = $match$3762;
+        return (($match$3861) => {
+          if ($match$3861.$t === "PErr") {
+            const e = $match$3861;
             return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
           }
-          if ($match$3762.$t === "POk") {
-            const te = $match$3762;
+          if ($match$3861.$t === "POk") {
+            const te = $match$3861;
             return (() => {
               if (atOp(te.f[0], ",")) {
                 return pTypeExprList(advance(te.f[0]), $cons(te.f[1], acc));
@@ -8792,21 +8899,21 @@
               }
             })();
           }
-          throw $matchFail("src/syntax/parser.pf", 3762);
+          throw $matchFail("src/syntax/parser.pf", 3861);
         })(pTypeExpr(st));
       }
     }
     function pExpr(st, minPrec) {
-      return (($match$3813) => {
-        if ($match$3813.$t === "PErr") {
-          const e = $match$3813;
+      return (($match$3912) => {
+        if ($match$3912.$t === "PErr") {
+          const e = $match$3912;
           return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
         }
-        if ($match$3813.$t === "POk") {
-          const left = $match$3813;
+        if ($match$3912.$t === "POk") {
+          const left = $match$3912;
           return pInfix(left.f[0], left.f[1], minPrec);
         }
-        throw $matchFail("src/syntax/parser.pf", 3813);
+        throw $matchFail("src/syntax/parser.pf", 3912);
       })(pPrefix(st));
     }
     function pPrefix(st) {
@@ -8842,44 +8949,44 @@
                         return pIdentOrRecord(st0, id, tokText(st), start);
                       } else {
                         if (atOp(st, "(")) {
-                          return (($match$4005) => {
-                            if ($match$4005.$t === "PErr") {
-                              const e = $match$4005;
+                          return (($match$4104) => {
+                            if ($match$4104.$t === "PErr") {
+                              const e = $match$4104;
                               return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
                             }
-                            if ($match$4005.$t === "POk") {
-                              const inner = $match$4005;
+                            if ($match$4104.$t === "POk") {
+                              const inner = $match$4104;
                               return (() => {
-                                return (($match$4016) => {
-                                  if ($match$4016.$t === "PErr") {
-                                    const e = $match$4016;
+                                return (($match$4115) => {
+                                  if ($match$4115.$t === "PErr") {
+                                    const e = $match$4115;
                                     return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
                                   }
-                                  if ($match$4016.$t === "POk") {
-                                    const close = $match$4016;
+                                  if ($match$4115.$t === "POk") {
+                                    const close = $match$4115;
                                     return ok(close.f[0], inner.f[1]);
                                   }
-                                  throw $matchFail("src/syntax/parser.pf", 4016);
+                                  throw $matchFail("src/syntax/parser.pf", 4115);
                                 })(expectOp(inner.f[0], ")", "after parenthesized expression"));
                               })();
                             }
-                            throw $matchFail("src/syntax/parser.pf", 4005);
+                            throw $matchFail("src/syntax/parser.pf", 4104);
                           })(pExpr(advance(st0), 1));
                         } else {
                           if (atOp(st, "[")) {
                             return pListAfterOpen(advance(st0), id, $field(A, "strictListMode")(), start);
                           } else {
                             if (atOp(st, "{")) {
-                              return (($match$4053) => {
-                                if ($match$4053.$t === "PErr") {
-                                  const e = $match$4053;
+                              return (($match$4152) => {
+                                if ($match$4152.$t === "PErr") {
+                                  const e = $match$4152;
                                   return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
                                 }
-                                if ($match$4053.$t === "POk") {
-                                  const b = $match$4053;
+                                if ($match$4152.$t === "POk") {
+                                  const b = $match$4152;
                                   return ok(b.f[0], $field(A, "eBlock")(id, b.f[1].f[0], b.f[1].f[1]));
                                 }
-                                throw $matchFail("src/syntax/parser.pf", 4053);
+                                throw $matchFail("src/syntax/parser.pf", 4152);
                               })(pBlock(st0));
                             } else {
                               if (atKw(st, "lazy")) {
@@ -8895,42 +9002,46 @@
                                       return pLambda(st0, id, start);
                                     } else {
                                       if (atKw(st, "proc")) {
-                                        return failHere(st, "Proc lambdas are not part of the bootstrap/V2 syntax.");
+                                        return pProcLambda(st0, id, start, false);
                                       } else {
-                                        if (atKw(st, "match")) {
-                                          return pMatch(st0, id, start);
+                                        if (atKw(st, "async")) {
+                                          return pAsyncProcLambda(st0, id, start);
                                         } else {
-                                          if (atKw(st, "if")) {
-                                            return pIfExpr(st0, id, start);
+                                          if (atKw(st, "match")) {
+                                            return pMatch(st0, id, start);
                                           } else {
-                                            if (atKw(st, "await")) {
-                                              return (($match$4148) => {
-                                                if ($match$4148.$t === "PErr") {
-                                                  const e = $match$4148;
-                                                  return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
-                                                }
-                                                if ($match$4148.$t === "POk") {
-                                                  const v = $match$4148;
-                                                  return ok(v.f[0], $field(A, "eAwait")(id, v.f[1], spanFromStart(start, $field(A, "exprSpan")(v.f[1]))));
-                                                }
-                                                throw $matchFail("src/syntax/parser.pf", 4148);
-                                              })(pExpr(advance(st0), 12));
+                                            if (atKw(st, "if")) {
+                                              return pIfExpr(st0, id, start);
                                             } else {
-                                              if (atOp(st, "-") || atOp(st, "!")) {
-                                                const op = tokText(st);
-                                                return (($match$4190) => {
-                                                  if ($match$4190.$t === "PErr") {
-                                                    const e = $match$4190;
+                                              if (atKw(st, "await")) {
+                                                return (($match$4259) => {
+                                                  if ($match$4259.$t === "PErr") {
+                                                    const e = $match$4259;
                                                     return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
                                                   }
-                                                  if ($match$4190.$t === "POk") {
-                                                    const v = $match$4190;
-                                                    return ok(v.f[0], $field(A, "eUnary")(id, op, v.f[1], spanFromStart(start, $field(A, "exprSpan")(v.f[1]))));
+                                                  if ($match$4259.$t === "POk") {
+                                                    const v = $match$4259;
+                                                    return ok(v.f[0], $field(A, "eAwait")(id, v.f[1], spanFromStart(start, $field(A, "exprSpan")(v.f[1]))));
                                                   }
-                                                  throw $matchFail("src/syntax/parser.pf", 4190);
+                                                  throw $matchFail("src/syntax/parser.pf", 4259);
                                                 })(pExpr(advance(st0), 12));
                                               } else {
-                                                return failHere(st, "Expected expression.");
+                                                if (atOp(st, "-") || atOp(st, "!")) {
+                                                  const op = tokText(st);
+                                                  return (($match$4301) => {
+                                                    if ($match$4301.$t === "PErr") {
+                                                      const e = $match$4301;
+                                                      return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
+                                                    }
+                                                    if ($match$4301.$t === "POk") {
+                                                      const v = $match$4301;
+                                                      return ok(v.f[0], $field(A, "eUnary")(id, op, v.f[1], spanFromStart(start, $field(A, "exprSpan")(v.f[1]))));
+                                                    }
+                                                    throw $matchFail("src/syntax/parser.pf", 4301);
+                                                  })(pExpr(advance(st0), 12));
+                                                } else {
+                                                  return failHere(st, "Expected expression.");
+                                                }
                                               }
                                             }
                                           }
@@ -8956,16 +9067,16 @@
     function pIdentOrRecord(st0, id, name, start) {
       const after = advance(st0);
       if (atOp(after, "{")) {
-        return (($match$4255) => {
-          if ($match$4255.$t === "PErr") {
-            const e = $match$4255;
+        return (($match$4367) => {
+          if ($match$4367.$t === "PErr") {
+            const e = $match$4367;
             return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
           }
-          if ($match$4255.$t === "POk") {
-            const fields = $match$4255;
+          if ($match$4367.$t === "POk") {
+            const fields = $match$4367;
             return ok(fields.f[0], $field(A, "eRecord")(id, name, fields.f[1], spanFromStartToPrev(start, fields.f[0])));
           }
-          throw $matchFail("src/syntax/parser.pf", 4255);
+          throw $matchFail("src/syntax/parser.pf", 4367);
         })(pRecordFieldsExpr(advance(after), []));
       } else {
         return ok(after, $field(A, "eVar")(id, name, start));
@@ -8990,20 +9101,20 @@
                 return ok(st, left);
               } else {
                 const st1 = advance(st);
-                return (($match$4363) => {
-                  if ($match$4363.$t === "PErr") {
-                    const e = $match$4363;
+                return (($match$4475) => {
+                  if ($match$4475.$t === "PErr") {
+                    const e = $match$4475;
                     return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
                   }
-                  if ($match$4363.$t === "POk") {
-                    const rhs = $match$4363;
+                  if ($match$4475.$t === "POk") {
+                    const rhs = $match$4475;
                     return (() => {
                       const f = freshId(rhs.f[0]);
                       const expr = $field(A, "eBinary")(f.f[1], op, left, rhs.f[1], spanFromStart($field(A, "exprSpan")(left), $field(A, "exprSpan")(rhs.f[1])));
                       return pInfix(f.f[0], expr, minPrec);
                     })();
                   }
-                  throw $matchFail("src/syntax/parser.pf", 4363);
+                  throw $matchFail("src/syntax/parser.pf", 4475);
                 })(pExpr(st1, $addI(prec, 1)));
               }
             }
@@ -9060,124 +9171,124 @@
     }
     function pCallPostfix(st, left, minPrec) {
       const start = $field(A, "exprSpan")(left);
-      return (($match$4527) => {
-        if ($match$4527.$t === "PErr") {
-          const e = $match$4527;
+      return (($match$4639) => {
+        if ($match$4639.$t === "PErr") {
+          const e = $match$4639;
           return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
         }
-        if ($match$4527.$t === "POk") {
-          const args = $match$4527;
+        if ($match$4639.$t === "POk") {
+          const args = $match$4639;
           return (() => {
             const f = freshId(args.f[0]);
             const expr = $field(A, "eCall")(f.f[1], left, args.f[1], spanFromStartToPrev(start, args.f[0]));
             return pInfix(f.f[0], expr, minPrec);
           })();
         }
-        throw $matchFail("src/syntax/parser.pf", 4527);
+        throw $matchFail("src/syntax/parser.pf", 4639);
       })(pExprList(advance(st), ")", []));
     }
     function pIndexPostfix(st, left, minPrec) {
       const start = $field(A, "exprSpan")(left);
-      return (($match$4572) => {
-        if ($match$4572.$t === "PErr") {
-          const e = $match$4572;
+      return (($match$4684) => {
+        if ($match$4684.$t === "PErr") {
+          const e = $match$4684;
           return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
         }
-        if ($match$4572.$t === "POk") {
-          const ix = $match$4572;
+        if ($match$4684.$t === "POk") {
+          const ix = $match$4684;
           return (() => {
-            return (($match$4583) => {
-              if ($match$4583.$t === "PErr") {
-                const e = $match$4583;
+            return (($match$4695) => {
+              if ($match$4695.$t === "PErr") {
+                const e = $match$4695;
                 return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
               }
-              if ($match$4583.$t === "POk") {
-                const close = $match$4583;
+              if ($match$4695.$t === "POk") {
+                const close = $match$4695;
                 return (() => {
                   const f = freshId(close.f[0]);
                   const expr = $field(A, "eIndex")(f.f[1], left, ix.f[1], spanFromStartToPrev(start, close.f[0]));
                   return pInfix(f.f[0], expr, minPrec);
                 })();
               }
-              throw $matchFail("src/syntax/parser.pf", 4583);
+              throw $matchFail("src/syntax/parser.pf", 4695);
             })(expectOp(ix.f[0], "]", "after index expression"));
           })();
         }
-        throw $matchFail("src/syntax/parser.pf", 4572);
+        throw $matchFail("src/syntax/parser.pf", 4684);
       })(pExpr(advance(st), 1));
     }
     function pFieldPostfix(st, left, minPrec) {
       const start = $field(A, "exprSpan")(left);
-      return (($match$4628) => {
-        if ($match$4628.$t === "PErr") {
-          const e = $match$4628;
+      return (($match$4740) => {
+        if ($match$4740.$t === "PErr") {
+          const e = $match$4740;
           return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
         }
-        if ($match$4628.$t === "POk") {
-          const name = $match$4628;
+        if ($match$4740.$t === "POk") {
+          const name = $match$4740;
           return (() => {
             const f = freshId(name.f[0]);
             const expr = $field(A, "eField")(f.f[1], left, name.f[1], spanFromStartToPrev(start, name.f[0]));
             return pInfix(f.f[0], expr, minPrec);
           })();
         }
-        throw $matchFail("src/syntax/parser.pf", 4628);
+        throw $matchFail("src/syntax/parser.pf", 4740);
       })(expectIdent(advance(st), "after '.'"));
     }
     function pTernary(st, left, minPrec) {
       const start = $field(A, "exprSpan")(left);
       const st1 = advance(st);
-      return (($match$4676) => {
-        if ($match$4676.$t === "PErr") {
-          const e = $match$4676;
+      return (($match$4788) => {
+        if ($match$4788.$t === "PErr") {
+          const e = $match$4788;
           return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
         }
-        if ($match$4676.$t === "POk") {
-          const thenE = $match$4676;
+        if ($match$4788.$t === "POk") {
+          const thenE = $match$4788;
           return (() => {
-            return (($match$4685) => {
-              if ($match$4685.$t === "PErr") {
-                const e = $match$4685;
+            return (($match$4797) => {
+              if ($match$4797.$t === "PErr") {
+                const e = $match$4797;
                 return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
               }
-              if ($match$4685.$t === "POk") {
-                const colon = $match$4685;
+              if ($match$4797.$t === "POk") {
+                const colon = $match$4797;
                 return (() => {
-                  return (($match$4696) => {
-                    if ($match$4696.$t === "PErr") {
-                      const e = $match$4696;
+                  return (($match$4808) => {
+                    if ($match$4808.$t === "PErr") {
+                      const e = $match$4808;
                       return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
                     }
-                    if ($match$4696.$t === "POk") {
-                      const elseE = $match$4696;
+                    if ($match$4808.$t === "POk") {
+                      const elseE = $match$4808;
                       return (() => {
                         const f = freshId(elseE.f[0]);
                         const expr = $field(A, "eIf")(f.f[1], left, thenE.f[1], elseE.f[1], spanFromStart(start, $field(A, "exprSpan")(elseE.f[1])));
                         return pInfix(f.f[0], expr, minPrec);
                       })();
                     }
-                    throw $matchFail("src/syntax/parser.pf", 4696);
+                    throw $matchFail("src/syntax/parser.pf", 4808);
                   })(pExpr(colon.f[0], 2));
                 })();
               }
-              throw $matchFail("src/syntax/parser.pf", 4685);
+              throw $matchFail("src/syntax/parser.pf", 4797);
             })(expectOp(thenE.f[0], ":", "in ternary expression"));
           })();
         }
-        throw $matchFail("src/syntax/parser.pf", 4676);
+        throw $matchFail("src/syntax/parser.pf", 4788);
       })(pExpr(st1, 1));
     }
     function pExprList(st, closeOp, acc) {
       if (atOp(st, closeOp)) {
         return ok(advance(st), $reverse(acc));
       } else {
-        return (($match$4754) => {
-          if ($match$4754.$t === "PErr") {
-            const e = $match$4754;
+        return (($match$4866) => {
+          if ($match$4866.$t === "PErr") {
+            const e = $match$4866;
             return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
           }
-          if ($match$4754.$t === "POk") {
-            const item = $match$4754;
+          if ($match$4866.$t === "POk") {
+            const item = $match$4866;
             return (() => {
               if (atOp(item.f[0], ",")) {
                 return pExprList(advance(item.f[0]), closeOp, $cons(item.f[1], acc));
@@ -9190,7 +9301,7 @@
               }
             })();
           }
-          throw $matchFail("src/syntax/parser.pf", 4754);
+          throw $matchFail("src/syntax/parser.pf", 4866);
         })(pExpr(st, 1));
       }
     }
@@ -9207,63 +9318,63 @@
         const st2 = advance(st);
         return ok(st2, $field(A, "eList")(id, [], mode, spanFromStartToPrev(start, st2)));
       } else {
-        return (($match$4860) => {
-          if ($match$4860.$t === "PErr") {
-            const e = $match$4860;
+        return (($match$4972) => {
+          if ($match$4972.$t === "PErr") {
+            const e = $match$4972;
             return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
           }
-          if ($match$4860.$t === "POk") {
-            const first = $match$4860;
+          if ($match$4972.$t === "POk") {
+            const first = $match$4972;
             return (() => {
               if (atKw(first.f[0], "for")) {
-                return (($match$4874) => {
-                  if ($match$4874.$t === "PErr") {
-                    const e = $match$4874;
+                return (($match$4986) => {
+                  if ($match$4986.$t === "PErr") {
+                    const e = $match$4986;
                     return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
                   }
-                  if ($match$4874.$t === "POk") {
-                    const gens = $match$4874;
+                  if ($match$4986.$t === "POk") {
+                    const gens = $match$4986;
                     return pCompAfterGens(gens.f[0], id, start, first.f[1], gens.f[1], mode);
                   }
-                  throw $matchFail("src/syntax/parser.pf", 4874);
+                  throw $matchFail("src/syntax/parser.pf", 4986);
                 })(pCompGens(first.f[0], []));
               } else {
                 return pListElems(first.f[0], id, mode, start, [first.f[1]]);
               }
             })();
           }
-          throw $matchFail("src/syntax/parser.pf", 4860);
+          throw $matchFail("src/syntax/parser.pf", 4972);
         })(pExpr(st, 1));
       }
     }
     function pCompAfterGens(st, id, start, body, gens, mode) {
       if (atKw(st, "where")) {
-        return (($match$4914) => {
-          if ($match$4914.$t === "PErr") {
-            const e = $match$4914;
+        return (($match$5026) => {
+          if ($match$5026.$t === "PErr") {
+            const e = $match$5026;
             return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
           }
-          if ($match$4914.$t === "POk") {
-            const g = $match$4914;
+          if ($match$5026.$t === "POk") {
+            const g = $match$5026;
             return pCompClose(g.f[0], id, start, body, gens, $makeVariant("Some", "Option", ["value"], [g.f[1]]), mode);
           }
-          throw $matchFail("src/syntax/parser.pf", 4914);
+          throw $matchFail("src/syntax/parser.pf", 5026);
         })(pExpr(advance(st), 1));
       } else {
         return pCompClose(st, id, start, body, gens, $makeVariant("None", "Option", [], []), mode);
       }
     }
     function pCompClose(st, id, start, body, gens, guard, mode) {
-      return (($match$4949) => {
-        if ($match$4949.$t === "PErr") {
-          const e = $match$4949;
+      return (($match$5061) => {
+        if ($match$5061.$t === "PErr") {
+          const e = $match$5061;
           return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
         }
-        if ($match$4949.$t === "POk") {
-          const close = $match$4949;
+        if ($match$5061.$t === "POk") {
+          const close = $match$5061;
           return ok(close.f[0], $field(A, "eComp")(id, body, gens, guard, mode, spanFromStartToPrev(start, close.f[0])));
         }
-        throw $matchFail("src/syntax/parser.pf", 4949);
+        throw $matchFail("src/syntax/parser.pf", 5061);
       })(expectOp(st, "]", "after list comprehension"));
     }
     function pListElems(st, id, mode, start, acc) {
@@ -9273,26 +9384,26 @@
           return ok(st2, $field(A, "eList")(id, $reverse(acc), mode, spanFromStartToPrev(start, st2)));
         } else {
           if (atOp(st, ",")) {
-            const $match$5005 = pExpr(advance(st), 1);
-            if ($match$5005.$t === "PErr") {
-              const e = $match$5005;
+            const $match$5117 = pExpr(advance(st), 1);
+            if ($match$5117.$t === "PErr") {
+              const e = $match$5117;
               return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
             }
-            if ($match$5005.$t === "POk") {
-              const item = $match$5005;
-              const $tc$5026$0 = item.f[0];
-              const $tc$5026$1 = id;
-              const $tc$5026$2 = mode;
-              const $tc$5026$3 = start;
-              const $tc$5026$4 = $cons(item.f[1], acc);
-              st = $tc$5026$0;
-              id = $tc$5026$1;
-              mode = $tc$5026$2;
-              start = $tc$5026$3;
-              acc = $tc$5026$4;
+            if ($match$5117.$t === "POk") {
+              const item = $match$5117;
+              const $tc$5138$0 = item.f[0];
+              const $tc$5138$1 = id;
+              const $tc$5138$2 = mode;
+              const $tc$5138$3 = start;
+              const $tc$5138$4 = $cons(item.f[1], acc);
+              st = $tc$5138$0;
+              id = $tc$5138$1;
+              mode = $tc$5138$2;
+              start = $tc$5138$3;
+              acc = $tc$5138$4;
               continue;
             }
-            throw $matchFail("src/syntax/parser.pf", 5005);
+            throw $matchFail("src/syntax/parser.pf", 5117);
           } else {
             return failHere(st, "Expected ',' or ']' in list literal.");
           }
@@ -9302,40 +9413,40 @@
     function pCompGens(st, acc) {
       if (atKw(st, "for")) {
         const st1 = advance(st);
-        return (($match$5044) => {
-          if ($match$5044.$t === "PErr") {
-            const e = $match$5044;
+        return (($match$5156) => {
+          if ($match$5156.$t === "PErr") {
+            const e = $match$5156;
             return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
           }
-          if ($match$5044.$t === "POk") {
-            const name = $match$5044;
+          if ($match$5156.$t === "POk") {
+            const name = $match$5156;
             return (() => {
-              return (($match$5053) => {
-                if ($match$5053.$t === "PErr") {
-                  const e = $match$5053;
+              return (($match$5165) => {
+                if ($match$5165.$t === "PErr") {
+                  const e = $match$5165;
                   return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
                 }
-                if ($match$5053.$t === "POk") {
-                  const arrow = $match$5053;
+                if ($match$5165.$t === "POk") {
+                  const arrow = $match$5165;
                   return (() => {
-                    return (($match$5064) => {
-                      if ($match$5064.$t === "PErr") {
-                        const e = $match$5064;
+                    return (($match$5176) => {
+                      if ($match$5176.$t === "PErr") {
+                        const e = $match$5176;
                         return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
                       }
-                      if ($match$5064.$t === "POk") {
-                        const src = $match$5064;
+                      if ($match$5176.$t === "POk") {
+                        const src = $match$5176;
                         return pCompGens(src.f[0], $cons($field(A, "mkGenClause")(name.f[1], src.f[1]), acc));
                       }
-                      throw $matchFail("src/syntax/parser.pf", 5064);
+                      throw $matchFail("src/syntax/parser.pf", 5176);
                     })(pExpr(arrow.f[0], 1));
                   })();
                 }
-                throw $matchFail("src/syntax/parser.pf", 5053);
+                throw $matchFail("src/syntax/parser.pf", 5165);
               })(expectOp(name.f[0], "<-", "after comprehension binding"));
             })();
           }
-          throw $matchFail("src/syntax/parser.pf", 5044);
+          throw $matchFail("src/syntax/parser.pf", 5156);
         })(expectIdent(st1, "after for"));
       } else {
         return ok(st, $reverse(acc));
@@ -9348,28 +9459,28 @@
         if (atIdent(st) && atOp(advance(st), "=")) {
           const fname = tokText(st);
           const valueStart = advance(advance(st));
-          return (($match$5132) => {
-            if ($match$5132.$t === "PErr") {
-              const e = $match$5132;
+          return (($match$5244) => {
+            if ($match$5244.$t === "PErr") {
+              const e = $match$5244;
               return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
             }
-            if ($match$5132.$t === "POk") {
-              const v = $match$5132;
+            if ($match$5244.$t === "POk") {
+              const v = $match$5244;
               return pRecordFieldTail(v.f[0], $cons($field(A, "mkField")($makeVariant("Some", "Option", ["value"], [fname]), v.f[1]), acc));
             }
-            throw $matchFail("src/syntax/parser.pf", 5132);
+            throw $matchFail("src/syntax/parser.pf", 5244);
           })(pExpr(valueStart, 1));
         } else {
-          return (($match$5155) => {
-            if ($match$5155.$t === "PErr") {
-              const e = $match$5155;
+          return (($match$5267) => {
+            if ($match$5267.$t === "PErr") {
+              const e = $match$5267;
               return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
             }
-            if ($match$5155.$t === "POk") {
-              const v = $match$5155;
+            if ($match$5267.$t === "POk") {
+              const v = $match$5267;
               return pRecordFieldTail(v.f[0], $cons($field(A, "mkField")($makeVariant("None", "Option", [], []), v.f[1]), acc));
             }
-            throw $matchFail("src/syntax/parser.pf", 5155);
+            throw $matchFail("src/syntax/parser.pf", 5267);
           })(pExpr(st, 1));
         }
       }
@@ -9387,16 +9498,16 @@
     }
     function pDict(st0, id, start) {
       const st1 = advance(st0);
-      return (($match$5212) => {
-        if ($match$5212.$t === "PErr") {
-          const e = $match$5212;
+      return (($match$5324) => {
+        if ($match$5324.$t === "PErr") {
+          const e = $match$5324;
           return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
         }
-        if ($match$5212.$t === "POk") {
-          const open = $match$5212;
+        if ($match$5324.$t === "POk") {
+          const open = $match$5324;
           return pDictEntries(open.f[0], id, start, []);
         }
-        throw $matchFail("src/syntax/parser.pf", 5212);
+        throw $matchFail("src/syntax/parser.pf", 5324);
       })(expectOp(st1, "{", "after dict"));
     }
     function pDictEntries(st, id, start, acc) {
@@ -9404,29 +9515,29 @@
         const st2 = advance(st);
         return ok(st2, $field(A, "eDict")(id, $reverse(acc), spanFromStartToPrev(start, st2)));
       } else {
-        return (($match$5253) => {
-          if ($match$5253.$t === "PErr") {
-            const e = $match$5253;
+        return (($match$5365) => {
+          if ($match$5365.$t === "PErr") {
+            const e = $match$5365;
             return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
           }
-          if ($match$5253.$t === "POk") {
-            const key = $match$5253;
+          if ($match$5365.$t === "POk") {
+            const key = $match$5365;
             return (() => {
-              return (($match$5262) => {
-                if ($match$5262.$t === "PErr") {
-                  const e = $match$5262;
+              return (($match$5374) => {
+                if ($match$5374.$t === "PErr") {
+                  const e = $match$5374;
                   return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
                 }
-                if ($match$5262.$t === "POk") {
-                  const arrow = $match$5262;
+                if ($match$5374.$t === "POk") {
+                  const arrow = $match$5374;
                   return (() => {
-                    return (($match$5273) => {
-                      if ($match$5273.$t === "PErr") {
-                        const e = $match$5273;
+                    return (($match$5385) => {
+                      if ($match$5385.$t === "PErr") {
+                        const e = $match$5385;
                         return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
                       }
-                      if ($match$5273.$t === "POk") {
-                        const val = $match$5273;
+                      if ($match$5385.$t === "POk") {
+                        const val = $match$5385;
                         return (() => {
                           const entry = $field(A, "mkDictEntry")(key.f[1], val.f[1]);
                           if (atOp(val.f[0], ",")) {
@@ -9440,81 +9551,81 @@
                           }
                         })();
                       }
-                      throw $matchFail("src/syntax/parser.pf", 5273);
+                      throw $matchFail("src/syntax/parser.pf", 5385);
                     })(pExpr(arrow.f[0], 1));
                   })();
                 }
-                throw $matchFail("src/syntax/parser.pf", 5262);
+                throw $matchFail("src/syntax/parser.pf", 5374);
               })(expectOp(key.f[0], "->", "in dict entry"));
             })();
           }
-          throw $matchFail("src/syntax/parser.pf", 5253);
+          throw $matchFail("src/syntax/parser.pf", 5365);
         })(pExpr(st, 1));
       }
     }
     function pArray(st0, id, start) {
       const st1 = advance(st0);
-      return (($match$5342) => {
-        if ($match$5342.$t === "PErr") {
-          const e = $match$5342;
+      return (($match$5454) => {
+        if ($match$5454.$t === "PErr") {
+          const e = $match$5454;
           return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
         }
-        if ($match$5342.$t === "POk") {
-          const open = $match$5342;
+        if ($match$5454.$t === "POk") {
+          const open = $match$5454;
           return (() => {
-            return (($match$5352) => {
-              if ($match$5352.$t === "PErr") {
-                const e = $match$5352;
+            return (($match$5464) => {
+              if ($match$5464.$t === "PErr") {
+                const e = $match$5464;
                 return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
               }
-              if ($match$5352.$t === "POk") {
-                const elems = $match$5352;
+              if ($match$5464.$t === "POk") {
+                const elems = $match$5464;
                 return ok(elems.f[0], $field(A, "eArray")(id, elems.f[1], spanFromStartToPrev(start, elems.f[0])));
               }
-              throw $matchFail("src/syntax/parser.pf", 5352);
+              throw $matchFail("src/syntax/parser.pf", 5464);
             })(pExprList(open.f[0], "}", []));
           })();
         }
-        throw $matchFail("src/syntax/parser.pf", 5342);
+        throw $matchFail("src/syntax/parser.pf", 5454);
       })(expectOp(st1, "{", "after array"));
     }
     function pLambda(st0, id, start) {
       const st1 = advance(st0);
       if (atOp(st1, "(")) {
-        return (($match$5388) => {
-          if ($match$5388.$t === "PErr") {
-            const e = $match$5388;
+        return (($match$5500) => {
+          if ($match$5500.$t === "PErr") {
+            const e = $match$5500;
             return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
           }
-          if ($match$5388.$t === "POk") {
-            const ps = $match$5388;
+          if ($match$5500.$t === "POk") {
+            const ps = $match$5500;
             return (() => {
-              return (($match$5399) => {
-                if ($match$5399.$t === "PErr") {
-                  const e = $match$5399;
+              return (($match$5511) => {
+                if ($match$5511.$t === "PErr") {
+                  const e = $match$5511;
                   return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
                 }
-                if ($match$5399.$t === "POk") {
-                  const arrow = $match$5399;
+                if ($match$5511.$t === "POk") {
+                  const arrow = $match$5511;
                   return pLambdaBody(arrow.f[0], id, start, ps.f[1]);
                 }
-                throw $matchFail("src/syntax/parser.pf", 5399);
+                throw $matchFail("src/syntax/parser.pf", 5511);
               })(expectOp(ps.f[0], "=>", "after lambda parameter list"));
             })();
           }
-          throw $matchFail("src/syntax/parser.pf", 5388);
+          throw $matchFail("src/syntax/parser.pf", 5500);
         })(pLambdaParenParams(advance(st1), []));
       } else {
-        return (($match$5419) => {
-          if ($match$5419.$t === "PErr") {
-            const e = $match$5419;
+        return (($match$5531) => {
+          if ($match$5531.$t === "PErr") {
+            const e = $match$5531;
             return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
           }
-          if ($match$5419.$t === "POk") {
-            const ps = $match$5419;
+          if ($match$5531.$t === "POk") {
+            const ps = $match$5531;
             return pLambdaBody(ps.f[0], id, start, ps.f[1]);
           }
-          throw $matchFail("src/syntax/parser.pf", 5419);
+          throw $matchFail("src/syntax/parser.pf", 5531);
         })(pLambdaBareParams(st1, []));
       }
     }
@@ -9522,13 +9633,13 @@
       if (atOp(st, ")")) {
         return ok(advance(st), $reverse(acc));
       } else {
-        return (($match$5451) => {
-          if ($match$5451.$t === "PErr") {
-            const e = $match$5451;
+        return (($match$5563) => {
+          if ($match$5563.$t === "PErr") {
+            const e = $match$5563;
             return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
           }
-          if ($match$5451.$t === "POk") {
-            const p = $match$5451;
+          if ($match$5563.$t === "POk") {
+            const p = $match$5563;
             return (() => {
               if (atOp(p.f[0], ",")) {
                 return pLambdaParenParams(advance(p.f[0]), $cons(p.f[1], acc));
@@ -9541,7 +9652,7 @@
               }
             })();
           }
-          throw $matchFail("src/syntax/parser.pf", 5451);
+          throw $matchFail("src/syntax/parser.pf", 5563);
         })(expectParamName(st, "in lambda parameter list"));
       }
     }
@@ -9553,13 +9664,13 @@
           return ok(advance(st), $reverse(acc));
         }
       } else {
-        return (($match$5527) => {
-          if ($match$5527.$t === "PErr") {
-            const e = $match$5527;
+        return (($match$5639) => {
+          if ($match$5639.$t === "PErr") {
+            const e = $match$5639;
             return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
           }
-          if ($match$5527.$t === "POk") {
-            const p = $match$5527;
+          if ($match$5639.$t === "POk") {
+            const p = $match$5639;
             return (() => {
               if (atOp(p.f[0], ",")) {
                 return pLambdaBareParams(advance(p.f[0]), $cons(p.f[1], acc));
@@ -9572,82 +9683,142 @@
               }
             })();
           }
-          throw $matchFail("src/syntax/parser.pf", 5527);
+          throw $matchFail("src/syntax/parser.pf", 5639);
         })(expectParamName(st, "in lambda parameter list"));
       }
     }
     function pLambdaBody(st, id, start, params) {
       if (atOp(st, "{")) {
-        return (($match$5583) => {
-          if ($match$5583.$t === "PErr") {
-            const e = $match$5583;
+        return (($match$5695) => {
+          if ($match$5695.$t === "PErr") {
+            const e = $match$5695;
             return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
           }
-          if ($match$5583.$t === "POk") {
-            const b = $match$5583;
+          if ($match$5695.$t === "POk") {
+            const b = $match$5695;
             return (() => {
               const bf = freshId(b.f[0]);
               const blockExpr = $field(A, "eBlock")(bf.f[1], b.f[1].f[0], b.f[1].f[1]);
               return ok(bf.f[0], $field(A, "eLambda")(id, params, blockExpr, spanFromStartToPrev(start, bf.f[0])));
             })();
           }
-          throw $matchFail("src/syntax/parser.pf", 5583);
+          throw $matchFail("src/syntax/parser.pf", 5695);
         })(pBlock(st));
       } else {
-        return (($match$5625) => {
-          if ($match$5625.$t === "PErr") {
-            const e = $match$5625;
+        return (($match$5737) => {
+          if ($match$5737.$t === "PErr") {
+            const e = $match$5737;
             return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
           }
-          if ($match$5625.$t === "POk") {
-            const body = $match$5625;
+          if ($match$5737.$t === "POk") {
+            const body = $match$5737;
             return ok(body.f[0], $field(A, "eLambda")(id, params, body.f[1], spanFromStart(start, $field(A, "exprSpan")(body.f[1]))));
           }
-          throw $matchFail("src/syntax/parser.pf", 5625);
+          throw $matchFail("src/syntax/parser.pf", 5737);
         })(pExpr(st, 1));
       }
     }
-    function pIfExpr(st0, id, start) {
+    function pAsyncProcLambda(st0, id, start) {
       const st1 = advance(st0);
-      return (($match$5659) => {
-        if ($match$5659.$t === "PErr") {
-          const e = $match$5659;
+      if (atKw(st1, "proc")) {
+        return pProcLambda(st1, id, start, true);
+      } else {
+        return failHere(st1, "Expected proc after async in procedure lambda.");
+      }
+    }
+    function pProcLambda(st0, id, start, isAsync) {
+      const st1 = advance(st0);
+      return (($match$5793) => {
+        if ($match$5793.$t === "PErr") {
+          const e = $match$5793;
           return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
         }
-        if ($match$5659.$t === "POk") {
-          const cond = $match$5659;
+        if ($match$5793.$t === "POk") {
+          const params = $match$5793;
           return (() => {
-            return (($match$5668) => {
-              if ($match$5668.$t === "PErr") {
-                const e = $match$5668;
+            return (($match$5801) => {
+              if ($match$5801.$t === "PErr") {
+                const e = $match$5801;
                 return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
               }
-              if ($match$5668.$t === "POk") {
-                const thenKw = $match$5668;
+              if ($match$5801.$t === "POk") {
+                const arrow = $match$5801;
                 return (() => {
-                  return (($match$5679) => {
-                    if ($match$5679.$t === "PErr") {
-                      const e = $match$5679;
+                  return (($match$5812) => {
+                    if ($match$5812.$t === "PErr") {
+                      const e = $match$5812;
                       return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
                     }
-                    if ($match$5679.$t === "POk") {
-                      const tb = $match$5679;
+                    if ($match$5812.$t === "POk") {
+                      const ret = $match$5812;
                       return (() => {
-                        return (($match$5688) => {
-                          if ($match$5688.$t === "PErr") {
-                            const e = $match$5688;
+                        return (($match$5821) => {
+                          if ($match$5821.$t === "PErr") {
+                            const e = $match$5821;
                             return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
                           }
-                          if ($match$5688.$t === "POk") {
-                            const elseKw = $match$5688;
+                          if ($match$5821.$t === "POk") {
+                            const body = $match$5821;
                             return (() => {
-                              return (($match$5699) => {
-                                if ($match$5699.$t === "PErr") {
-                                  const e = $match$5699;
+                              return ok(body.f[0], $field(A, "eProcLambda")(id, params.f[1], ret.f[1], body.f[1].f[0], isAsync, spanFromStartToPrev(start, body.f[0])));
+                            })();
+                          }
+                          throw $matchFail("src/syntax/parser.pf", 5821);
+                        })(pBlock(ret.f[0]));
+                      })();
+                    }
+                    throw $matchFail("src/syntax/parser.pf", 5812);
+                  })(pTypeExpr(arrow.f[0]));
+                })();
+              }
+              throw $matchFail("src/syntax/parser.pf", 5801);
+            })(expectOp(params.f[0], "->", "after procedure lambda parameters"));
+          })();
+        }
+        throw $matchFail("src/syntax/parser.pf", 5793);
+      })(pTypedParams(st1));
+    }
+    function pIfExpr(st0, id, start) {
+      const st1 = advance(st0);
+      return (($match$5861) => {
+        if ($match$5861.$t === "PErr") {
+          const e = $match$5861;
+          return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
+        }
+        if ($match$5861.$t === "POk") {
+          const cond = $match$5861;
+          return (() => {
+            return (($match$5870) => {
+              if ($match$5870.$t === "PErr") {
+                const e = $match$5870;
+                return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
+              }
+              if ($match$5870.$t === "POk") {
+                const thenKw = $match$5870;
+                return (() => {
+                  return (($match$5881) => {
+                    if ($match$5881.$t === "PErr") {
+                      const e = $match$5881;
+                      return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
+                    }
+                    if ($match$5881.$t === "POk") {
+                      const tb = $match$5881;
+                      return (() => {
+                        return (($match$5890) => {
+                          if ($match$5890.$t === "PErr") {
+                            const e = $match$5890;
+                            return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
+                          }
+                          if ($match$5890.$t === "POk") {
+                            const elseKw = $match$5890;
+                            return (() => {
+                              return (($match$5901) => {
+                                if ($match$5901.$t === "PErr") {
+                                  const e = $match$5901;
                                   return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
                                 }
-                                if ($match$5699.$t === "POk") {
-                                  const eb = $match$5699;
+                                if ($match$5901.$t === "POk") {
+                                  const eb = $match$5901;
                                   return (() => {
                                     const tf = freshId(eb.f[0]);
                                     const thenExpr = $field(A, "eBlock")(tf.f[1], tb.f[1].f[0], tb.f[1].f[1]);
@@ -9656,84 +9827,84 @@
                                     return ok(ef.f[0], $field(A, "eIf")(id, cond.f[1], thenExpr, elseExpr, spanFromStartToPrev(start, ef.f[0])));
                                   })();
                                 }
-                                throw $matchFail("src/syntax/parser.pf", 5699);
+                                throw $matchFail("src/syntax/parser.pf", 5901);
                               })(pBlock(elseKw.f[0]));
                             })();
                           }
-                          throw $matchFail("src/syntax/parser.pf", 5688);
+                          throw $matchFail("src/syntax/parser.pf", 5890);
                         })(expectKw(tb.f[0], "else", "after expression if then block"));
                       })();
                     }
-                    throw $matchFail("src/syntax/parser.pf", 5679);
+                    throw $matchFail("src/syntax/parser.pf", 5881);
                   })(pBlock(thenKw.f[0]));
                 })();
               }
-              throw $matchFail("src/syntax/parser.pf", 5668);
+              throw $matchFail("src/syntax/parser.pf", 5870);
             })(expectKw(cond.f[0], "then", "after if condition"));
           })();
         }
-        throw $matchFail("src/syntax/parser.pf", 5659);
+        throw $matchFail("src/syntax/parser.pf", 5861);
       })(pExpr(st1, 1));
     }
     function pMatch(st0, id, start) {
       const st1 = advance(st0);
-      return (($match$5770) => {
-        if ($match$5770.$t === "PErr") {
-          const e = $match$5770;
+      return (($match$5972) => {
+        if ($match$5972.$t === "PErr") {
+          const e = $match$5972;
           return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
         }
-        if ($match$5770.$t === "POk") {
-          const subj = $match$5770;
+        if ($match$5972.$t === "POk") {
+          const subj = $match$5972;
           return (() => {
-            return (($match$5779) => {
-              if ($match$5779.$t === "PErr") {
-                const e = $match$5779;
+            return (($match$5981) => {
+              if ($match$5981.$t === "PErr") {
+                const e = $match$5981;
                 return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
               }
-              if ($match$5779.$t === "POk") {
-                const withKw = $match$5779;
+              if ($match$5981.$t === "POk") {
+                const withKw = $match$5981;
                 return (() => {
                   const armSt = withInMatchArms(withKw.f[0], true);
-                  return (($match$5796) => {
-                    if ($match$5796.$t === "PErr") {
-                      const e = $match$5796;
+                  return (($match$5998) => {
+                    if ($match$5998.$t === "PErr") {
+                      const e = $match$5998;
                       return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
                     }
-                    if ($match$5796.$t === "POk") {
-                      const arms = $match$5796;
+                    if ($match$5998.$t === "POk") {
+                      const arms = $match$5998;
                       return (() => {
                         const outSt = withInMatchArms(arms.f[0], st0.f[4]);
                         return ok(outSt, $field(A, "eMatch")(id, subj.f[1], arms.f[1], spanFromStartToPrev(start, outSt)));
                       })();
                     }
-                    throw $matchFail("src/syntax/parser.pf", 5796);
+                    throw $matchFail("src/syntax/parser.pf", 5998);
                   })(pMatchArms(armSt, []));
                 })();
               }
-              throw $matchFail("src/syntax/parser.pf", 5779);
+              throw $matchFail("src/syntax/parser.pf", 5981);
             })(expectKw(subj.f[0], "with", "after match subject"));
           })();
         }
-        throw $matchFail("src/syntax/parser.pf", 5770);
+        throw $matchFail("src/syntax/parser.pf", 5972);
       })(pExpr(st1, 1));
     }
     function pMatchArms(st, acc) {
       while (true) {
         if (atOp(st, "|")) {
-          const $match$5836 = pMatchArm(st);
-          if ($match$5836.$t === "PErr") {
-            const e = $match$5836;
+          const $match$6038 = pMatchArm(st);
+          if ($match$6038.$t === "PErr") {
+            const e = $match$6038;
             return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
           }
-          if ($match$5836.$t === "POk") {
-            const arm = $match$5836;
-            const $tc$5851$0 = arm.f[0];
-            const $tc$5851$1 = $cons(arm.f[1], acc);
-            st = $tc$5851$0;
-            acc = $tc$5851$1;
+          if ($match$6038.$t === "POk") {
+            const arm = $match$6038;
+            const $tc$6053$0 = arm.f[0];
+            const $tc$6053$1 = $cons(arm.f[1], acc);
+            st = $tc$6053$0;
+            acc = $tc$6053$1;
             continue;
           }
-          throw $matchFail("src/syntax/parser.pf", 5836);
+          throw $matchFail("src/syntax/parser.pf", 6038);
         } else {
           if ($eqI($length(acc), 0)) {
             return failHere(st, "Expected at least one match arm.");
@@ -9745,58 +9916,58 @@
     }
     function pMatchArm(st) {
       const st1 = advance(st);
-      return (($match$5877) => {
-        if ($match$5877.$t === "PErr") {
-          const e = $match$5877;
+      return (($match$6079) => {
+        if ($match$6079.$t === "PErr") {
+          const e = $match$6079;
           return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
         }
-        if ($match$5877.$t === "POk") {
-          const pat = $match$5877;
+        if ($match$6079.$t === "POk") {
+          const pat = $match$6079;
           return pMatchArmAfterPattern(pat.f[0], pat.f[1]);
         }
-        throw $matchFail("src/syntax/parser.pf", 5877);
+        throw $matchFail("src/syntax/parser.pf", 6079);
       })(pPattern(st1));
     }
     function pMatchArmAfterPattern(st, pattern) {
       if (atKw(st, "where")) {
-        return (($match$5896) => {
-          if ($match$5896.$t === "PErr") {
-            const e = $match$5896;
+        return (($match$6098) => {
+          if ($match$6098.$t === "PErr") {
+            const e = $match$6098;
             return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
           }
-          if ($match$5896.$t === "POk") {
-            const g = $match$5896;
+          if ($match$6098.$t === "POk") {
+            const g = $match$6098;
             return pMatchArmAfterGuard(g.f[0], pattern, $makeVariant("Some", "Option", ["value"], [g.f[1]]));
           }
-          throw $matchFail("src/syntax/parser.pf", 5896);
+          throw $matchFail("src/syntax/parser.pf", 6098);
         })(pExpr(advance(st), 1));
       } else {
         return pMatchArmAfterGuard(st, pattern, $makeVariant("None", "Option", [], []));
       }
     }
     function pMatchArmAfterGuard(st, pattern, guard) {
-      return (($match$5923) => {
-        if ($match$5923.$t === "PErr") {
-          const e = $match$5923;
+      return (($match$6125) => {
+        if ($match$6125.$t === "PErr") {
+          const e = $match$6125;
           return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
         }
-        if ($match$5923.$t === "POk") {
-          const arrow = $match$5923;
+        if ($match$6125.$t === "POk") {
+          const arrow = $match$6125;
           return (() => {
-            return (($match$5933) => {
-              if ($match$5933.$t === "PErr") {
-                const e = $match$5933;
+            return (($match$6135) => {
+              if ($match$6135.$t === "PErr") {
+                const e = $match$6135;
                 return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
               }
-              if ($match$5933.$t === "POk") {
-                const body = $match$5933;
+              if ($match$6135.$t === "POk") {
+                const body = $match$6135;
                 return ok(body.f[0], $field(A, "mkMatchArm")(pattern, guard, body.f[1]));
               }
-              throw $matchFail("src/syntax/parser.pf", 5933);
+              throw $matchFail("src/syntax/parser.pf", 6135);
             })(pExpr(arrow.f[0], 1));
           })();
         }
-        throw $matchFail("src/syntax/parser.pf", 5923);
+        throw $matchFail("src/syntax/parser.pf", 6125);
       })(expectOp(st, "->", "after match pattern"));
     }
     function pPattern(st) {
@@ -9843,16 +10014,16 @@
         if (atEllipsis(st)) {
           return failHere(st, "A list rest pattern must follow at least one explicit element.");
         } else {
-          return (($match$6108) => {
-            if ($match$6108.$t === "PErr") {
-              const e = $match$6108;
+          return (($match$6310) => {
+            if ($match$6310.$t === "PErr") {
+              const e = $match$6310;
               return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
             }
-            if ($match$6108.$t === "POk") {
-              const elem = $match$6108;
+            if ($match$6310.$t === "POk") {
+              const elem = $match$6310;
               return pListPatternTail(elem.f[0], $cons(elem.f[1], acc));
             }
-            throw $matchFail("src/syntax/parser.pf", 6108);
+            throw $matchFail("src/syntax/parser.pf", 6310);
           })(pPatElem(st));
         }
       }
@@ -9865,43 +10036,43 @@
           if (atOp(st, ",")) {
             const st1 = advance(st);
             if (atEllipsis(st1)) {
-              const $match$6156 = pPatElem(consumeEllipsis(st1));
-              if ($match$6156.$t === "PErr") {
-                const e = $match$6156;
+              const $match$6358 = pPatElem(consumeEllipsis(st1));
+              if ($match$6358.$t === "PErr") {
+                const e = $match$6358;
                 return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
               }
-              if ($match$6156.$t === "POk") {
-                const rest = $match$6156;
+              if ($match$6358.$t === "POk") {
+                const rest = $match$6358;
                 return (() => {
-                  return (($match$6166) => {
-                    if ($match$6166.$t === "PErr") {
-                      const e = $match$6166;
+                  return (($match$6368) => {
+                    if ($match$6368.$t === "PErr") {
+                      const e = $match$6368;
                       return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
                     }
-                    if ($match$6166.$t === "POk") {
-                      const close = $match$6166;
+                    if ($match$6368.$t === "POk") {
+                      const close = $match$6368;
                       return ok(close.f[0], $field(A, "pList")($reverse(acc), $makeVariant("Some", "Option", ["value"], [rest.f[1]])));
                     }
-                    throw $matchFail("src/syntax/parser.pf", 6166);
+                    throw $matchFail("src/syntax/parser.pf", 6368);
                   })(expectOp(rest.f[0], "]", "after list rest pattern"));
                 })();
               }
-              throw $matchFail("src/syntax/parser.pf", 6156);
+              throw $matchFail("src/syntax/parser.pf", 6358);
             } else {
-              const $match$6191 = pPatElem(st1);
-              if ($match$6191.$t === "PErr") {
-                const e = $match$6191;
+              const $match$6393 = pPatElem(st1);
+              if ($match$6393.$t === "PErr") {
+                const e = $match$6393;
                 return $makeVariant("PErr", "PResult", ["diags"], [e.f[0]]);
               }
-              if ($match$6191.$t === "POk") {
-                const elem = $match$6191;
-                const $tc$6206$0 = elem.f[0];
-                const $tc$6206$1 = $cons(elem.f[1], acc);
-                st = $tc$6206$0;
-                acc = $tc$6206$1;
+              if ($match$6393.$t === "POk") {
+                const elem = $match$6393;
+                const $tc$6408$0 = elem.f[0];
+                const $tc$6408$1 = $cons(elem.f[1], acc);
+                st = $tc$6408$0;
+                acc = $tc$6408$1;
                 continue;
               }
-              throw $matchFail("src/syntax/parser.pf", 6191);
+              throw $matchFail("src/syntax/parser.pf", 6393);
             }
           } else {
             return failHere(st, "Expected ',' or ']' in list pattern.");
@@ -15171,6 +15342,19 @@
             return exprOut(addTypedNode(bo.f[0], x.f[0], typ), typ);
           })();
         }
+        if ($match$6056.$t === "EProcLambda") {
+          const x = $match$6056;
+          return (() => {
+            const ps = typedParamsTypes(st, x.f[1], []);
+            const ret = inferTypeExpr(ps.f[0], x.f[2]);
+            const env1 = bindParams(env, typedParamNames(x.f[1]), ps.f[1]);
+            const bo = inferBody(ret.f[0], env1, x.f[3], path);
+            const st1 = unify(bo.f[0], ret.f[1], bo.f[1], path, x.f[5]);
+            const raw = $makeVariant("TProc", "Type", ["params", "ret", "isAsync"], [ps.f[1], ret.f[1], x.f[4]]);
+            const typ = apply(st1.f[1], raw);
+            return exprOut(addTypedNode(st1, x.f[0], typ), typ);
+          })();
+        }
         if ($match$6056.$t === "EBlock") {
           const x = $match$6056;
           return (() => {
@@ -15190,18 +15374,18 @@
           const x = $match$6056;
           return (() => {
             const bound = bindCompGens(st, env, x.f[2], path);
-            const guardSt = (($match$6589) => {
-              if ($match$6589.$t === "None") {
+            const guardSt = (($match$6659) => {
+              if ($match$6659.$t === "None") {
                 return bound.f[0];
               }
-              if ($match$6589.$t === "Some") {
-                const g = $match$6589;
+              if ($match$6659.$t === "Some") {
+                const g = $match$6659;
                 return (() => {
                   const go = cgenExpr(bound.f[0], bound.f[1], g.f[0], path);
                   return unify(go.f[0], go.f[1], TBool, path, $field(A, "exprSpan")(g.f[0]));
                 })();
               }
-              throw $matchFail("src/check/types.pf", 6589);
+              throw $matchFail("src/check/types.pf", 6659);
             })(x.f[3]);
             const bo = cgenExpr(guardSt, bound.f[1], x.f[1], path);
             const typ = $makeVariant("TList", "Type", ["elem"], [bo.f[1]]);
@@ -15218,42 +15402,42 @@
         if ($match$6056.$t === "EField") {
           const x = $match$6056;
           return (() => {
-            return (($match$6671) => {
-              if ($match$6671.$t === "NsMember") {
-                const m = $match$6671;
+            return (($match$6741) => {
+              if ($match$6741.$t === "NsMember") {
+                const m = $match$6741;
                 return (() => {
-                  return (($match$6680) => {
-                    if ($match$6680.$t === "TScheme") {
-                      const s = $match$6680;
+                  return (($match$6750) => {
+                    if ($match$6750.$t === "TScheme") {
+                      const s = $match$6750;
                       return (() => {
                         const inst = instantiate(st, s.f[0]);
                         const typ = inst.f[1];
                         return exprOut(addTypedNode(inst.f[0], x.f[0], typ), typ);
                       })();
                     }
-                    if ($match$6680.$t === "TMono") {
-                      const mo = $match$6680;
+                    if ($match$6750.$t === "TMono") {
+                      const mo = $match$6750;
                       return exprOut(addTypedNode(st, x.f[0], mo.f[0]), mo.f[0]);
                     }
                     if (true) {
                       return exprOut(addTypedNode(addTypeDiag(st, path, x.f[3], $concatS($concatS("Namespace member '", x.f[2]), "' is not a value.")), x.f[0], TUnknown), TUnknown);
                     }
-                    throw $matchFail("src/check/types.pf", 6680);
+                    throw $matchFail("src/check/types.pf", 6750);
                   })(m.f[0]);
                 })();
               }
-              if ($match$6671.$t === "NsMissing") {
-                const ms = $match$6671;
+              if ($match$6741.$t === "NsMissing") {
+                const ms = $match$6741;
                 return exprOut(addTypedNode(addTypeDiag(st, path, x.f[3], $concatS($concatS($concatS($concatS("Namespace '", ms.f[0]), "' has no export '"), x.f[2]), "'.")), x.f[0], TUnknown), TUnknown);
               }
-              if ($match$6671.$t === "NsNotNamespace") {
+              if ($match$6741.$t === "NsNotNamespace") {
                 return (() => {
                   const oo = cgenExpr(st, env, x.f[1], path);
                   const fo = inferFieldAccess(oo.f[0], oo.f[1], x.f[2], x.f[3], path);
                   return exprOut(addTypedNode(fo.f[0], x.f[0], fo.f[1]), fo.f[1]);
                 })();
               }
-              throw $matchFail("src/check/types.pf", 6671);
+              throw $matchFail("src/check/types.pf", 6741);
             })(namespaceLookup(env, x.f[1], x.f[2]));
           })();
         }
@@ -15312,12 +15496,12 @@
       })(e);
     }
     function bindCompGens(st, env, gens, path) {
-      return (($match$7006) => {
-        if ($match$7006.$t === "None") {
+      return (($match$7076) => {
+        if ($match$7076.$t === "None") {
           return envOut(st, env);
         }
-        if ($match$7006.$t === "Some") {
-          const cell = $match$7006;
+        if ($match$7076.$t === "Some") {
+          const cell = $match$7076;
           return (() => {
             const p = cell.f[0];
             const elem = freshVar(st);
@@ -15327,42 +15511,42 @@
             return bindCompGens(st1, env1, p.f[1], path);
           })();
         }
-        throw $matchFail("src/check/types.pf", 7006);
+        throw $matchFail("src/check/types.pf", 7076);
       })($field(Compat, "uncons")(gens));
     }
     function inferBody(st, env, stmts, path) {
       return inferBodyLoop(st, env, stmts, TUnit, path);
     }
     function inferBodyLoop(st, env, stmts, lastT, path) {
-      return (($match$7079) => {
-        if ($match$7079.$t === "None") {
+      return (($match$7149) => {
+        if ($match$7149.$t === "None") {
           return bodyOut(st, lastT);
         }
-        if ($match$7079.$t === "Some") {
-          const cell = $match$7079;
+        if ($match$7149.$t === "Some") {
+          const cell = $match$7149;
           return (() => {
             const p = cell.f[0];
-            return (($match$7092) => {
-              if ($match$7092.$t === "SExpr") {
-                const sx = $match$7092;
+            return (($match$7162) => {
+              if ($match$7162.$t === "SExpr") {
+                const sx = $match$7162;
                 return (() => {
                   const eo = cgenExpr(st, env, sx.f[1], path);
                   return inferBodyLoop(eo.f[0], env, p.f[1], eo.f[1], path);
                 })();
               }
-              if ($match$7092.$t === "SIf") {
-                const sx = $match$7092;
+              if ($match$7162.$t === "SIf") {
+                const sx = $match$7162;
                 return (() => {
                   if ($eqI($length(p.f[1]), 0)) {
                     const co = cgenExpr(st, env, sx.f[1], path);
                     const st1 = unify(co.f[0], co.f[1], TBool, path, $field(A, "exprSpan")(sx.f[1]));
                     const thenOut = inferBody(st1, env, sx.f[2], path);
-                    return (($match$7152) => {
-                      if ($match$7152.$t === "None") {
+                    return (($match$7222) => {
+                      if ($match$7222.$t === "None") {
                         return bodyOut(addTypedNode(thenOut.f[0], sx.f[0], TUnit), TUnit);
                       }
-                      if ($match$7152.$t === "Some") {
-                        const es = $match$7152;
+                      if ($match$7222.$t === "Some") {
+                        const es = $match$7222;
                         return (() => {
                           const elseOut = inferBody(thenOut.f[0], env, es.f[0], path);
                           const j = freshVar(elseOut.f[0]);
@@ -15372,7 +15556,7 @@
                           return bodyOut(addTypedNode(st3, sx.f[0], typ), typ);
                         })();
                       }
-                      throw $matchFail("src/check/types.pf", 7152);
+                      throw $matchFail("src/check/types.pf", 7222);
                     })(sx.f[3]);
                   } else {
                     const so = cgenStmt(st, env, p.f[0], path);
@@ -15380,21 +15564,21 @@
                   }
                 })();
               }
-              if ($match$7092.$t === "SReturn") {
-                const sr = $match$7092;
+              if ($match$7162.$t === "SReturn") {
+                const sr = $match$7162;
                 return (() => {
-                  return (($match$7242) => {
-                    if ($match$7242.$t === "None") {
+                  return (($match$7312) => {
+                    if ($match$7312.$t === "None") {
                       return inferBodyLoop(st, env, p.f[1], TUnit, path);
                     }
-                    if ($match$7242.$t === "Some") {
-                      const rv = $match$7242;
+                    if ($match$7312.$t === "Some") {
+                      const rv = $match$7312;
                       return (() => {
                         const eo = cgenExpr(st, env, rv.f[0], path);
                         return inferBodyLoop(eo.f[0], env, p.f[1], eo.f[1], path);
                       })();
                     }
-                    throw $matchFail("src/check/types.pf", 7242);
+                    throw $matchFail("src/check/types.pf", 7312);
                   })(sr.f[1]);
                 })();
               }
@@ -15404,20 +15588,20 @@
                   return inferBodyLoop(so.f[0], so.f[1], p.f[1], TUnit, path);
                 })();
               }
-              throw $matchFail("src/check/types.pf", 7092);
+              throw $matchFail("src/check/types.pf", 7162);
             })(p.f[0]);
           })();
         }
-        throw $matchFail("src/check/types.pf", 7079);
+        throw $matchFail("src/check/types.pf", 7149);
       })($field(Compat, "uncons")(stmts));
     }
     function strContains(xs, value) {
-      return (($match$7297) => {
-        if ($match$7297.$t === "None") {
+      return (($match$7367) => {
+        if ($match$7367.$t === "None") {
           return false;
         }
-        if ($match$7297.$t === "Some") {
-          const cell = $match$7297;
+        if ($match$7367.$t === "Some") {
+          const cell = $match$7367;
           return (() => {
             const p = cell.f[0];
             if (p.f[0] === value) {
@@ -15427,7 +15611,7 @@
             }
           })();
         }
-        throw $matchFail("src/check/types.pf", 7297);
+        throw $matchFail("src/check/types.pf", 7367);
       })($field(Compat, "uncons")(xs));
     }
     function strAdd(xs, value) {
@@ -15438,33 +15622,33 @@
       }
     }
     function strUnion(a, b) {
-      return (($match$7335) => {
-        if ($match$7335.$t === "None") {
+      return (($match$7405) => {
+        if ($match$7405.$t === "None") {
           return a;
         }
-        if ($match$7335.$t === "Some") {
-          const cell = $match$7335;
+        if ($match$7405.$t === "Some") {
+          const cell = $match$7405;
           return (() => {
             const p = cell.f[0];
             return strUnion(strAdd(a, p.f[0]), p.f[1]);
           })();
         }
-        throw $matchFail("src/check/types.pf", 7335);
+        throw $matchFail("src/check/types.pf", 7405);
       })($field(Compat, "uncons")(b));
     }
     function addNames(bound, names) {
-      return (($match$7357) => {
-        if ($match$7357.$t === "None") {
+      return (($match$7427) => {
+        if ($match$7427.$t === "None") {
           return bound;
         }
-        if ($match$7357.$t === "Some") {
-          const cell = $match$7357;
+        if ($match$7427.$t === "Some") {
+          const cell = $match$7427;
           return (() => {
             const p = cell.f[0];
             return addNames(strAdd(bound, p.f[0]), p.f[1]);
           })();
         }
-        throw $matchFail("src/check/types.pf", 7357);
+        throw $matchFail("src/check/types.pf", 7427);
       })($field(Compat, "uncons")(names));
     }
     function addTopRef(name, topNames, bound, refs) {
@@ -15479,44 +15663,44 @@
       }
     }
     function scanExprList(exprs, topNames, bound, refs) {
-      return (($match$7399) => {
-        if ($match$7399.$t === "None") {
+      return (($match$7469) => {
+        if ($match$7469.$t === "None") {
           return refs;
         }
-        if ($match$7399.$t === "Some") {
-          const cell = $match$7399;
+        if ($match$7469.$t === "Some") {
+          const cell = $match$7469;
           return (() => {
             const p = cell.f[0];
             const refs1 = scanExpr(p.f[0], topNames, bound, refs);
             return scanExprList(p.f[1], topNames, bound, refs1);
           })();
         }
-        throw $matchFail("src/check/types.pf", 7399);
+        throw $matchFail("src/check/types.pf", 7469);
       })($field(Compat, "uncons")(exprs));
     }
     function scanFields(fields, topNames, bound, refs) {
-      return (($match$7427) => {
-        if ($match$7427.$t === "None") {
+      return (($match$7497) => {
+        if ($match$7497.$t === "None") {
           return refs;
         }
-        if ($match$7427.$t === "Some") {
-          const cell = $match$7427;
+        if ($match$7497.$t === "Some") {
+          const cell = $match$7497;
           return (() => {
             const p = cell.f[0];
             const refs1 = scanExpr($field(p.f[0], "value"), topNames, bound, refs);
             return scanFields(p.f[1], topNames, bound, refs1);
           })();
         }
-        throw $matchFail("src/check/types.pf", 7427);
+        throw $matchFail("src/check/types.pf", 7497);
       })($field(Compat, "uncons")(fields));
     }
     function scanDictEntries(entries, topNames, bound, refs) {
-      return (($match$7456) => {
-        if ($match$7456.$t === "None") {
+      return (($match$7526) => {
+        if ($match$7526.$t === "None") {
           return refs;
         }
-        if ($match$7456.$t === "Some") {
-          const cell = $match$7456;
+        if ($match$7526.$t === "Some") {
+          const cell = $match$7526;
           return (() => {
             const p = cell.f[0];
             const refs1 = scanExpr($field(p.f[0], "key"), topNames, bound, refs);
@@ -15524,40 +15708,40 @@
             return scanDictEntries(p.f[1], topNames, bound, refs2);
           })();
         }
-        throw $matchFail("src/check/types.pf", 7456);
+        throw $matchFail("src/check/types.pf", 7526);
       })($field(Compat, "uncons")(entries));
     }
     function scanFmtParts(parts, topNames, bound, refs) {
-      return (($match$7494) => {
-        if ($match$7494.$t === "None") {
+      return (($match$7564) => {
+        if ($match$7564.$t === "None") {
           return refs;
         }
-        if ($match$7494.$t === "Some") {
-          const cell = $match$7494;
+        if ($match$7564.$t === "Some") {
+          const cell = $match$7564;
           return (() => {
             const p = cell.f[0];
-            return (($match$7504) => {
-              if ($match$7504.$t === "FmtLit") {
+            return (($match$7574) => {
+              if ($match$7574.$t === "FmtLit") {
                 return scanFmtParts(p.f[1], topNames, bound, refs);
               }
-              if ($match$7504.$t === "FmtExpr") {
-                const part = $match$7504;
+              if ($match$7574.$t === "FmtExpr") {
+                const part = $match$7574;
                 return (() => {
                   const refs1 = scanExpr(part.f[0], topNames, bound, refs);
                   return scanFmtParts(p.f[1], topNames, bound, refs1);
                 })();
               }
-              throw $matchFail("src/check/types.pf", 7504);
+              throw $matchFail("src/check/types.pf", 7574);
             })(p.f[0]);
           })();
         }
-        throw $matchFail("src/check/types.pf", 7494);
+        throw $matchFail("src/check/types.pf", 7564);
       })($field(Compat, "uncons")(parts));
     }
     function addPatElemBound(bound, elem) {
-      return (($match$7534) => {
-        if ($match$7534.$t === "PeBind") {
-          const p = $match$7534;
+      return (($match$7604) => {
+        if ($match$7604.$t === "PeBind") {
+          const p = $match$7604;
           return (() => {
             if (p.f[0] === "_") {
               return bound;
@@ -15566,100 +15750,100 @@
             }
           })();
         }
-        if ($match$7534.$t === "PeWild") {
+        if ($match$7604.$t === "PeWild") {
           return bound;
         }
-        throw $matchFail("src/check/types.pf", 7534);
+        throw $matchFail("src/check/types.pf", 7604);
       })(elem);
     }
     function addPatElemsBound(bound, elems) {
-      return (($match$7553) => {
-        if ($match$7553.$t === "None") {
+      return (($match$7623) => {
+        if ($match$7623.$t === "None") {
           return bound;
         }
-        if ($match$7553.$t === "Some") {
-          const cell = $match$7553;
+        if ($match$7623.$t === "Some") {
+          const cell = $match$7623;
           return (() => {
             const p = cell.f[0];
             return addPatElemsBound(addPatElemBound(bound, p.f[0]), p.f[1]);
           })();
         }
-        throw $matchFail("src/check/types.pf", 7553);
+        throw $matchFail("src/check/types.pf", 7623);
       })($field(Compat, "uncons")(elems));
     }
     function addPatternBound(bound, pattern) {
-      return (($match$7575) => {
-        if ($match$7575.$t === "PWild") {
+      return (($match$7645) => {
+        if ($match$7645.$t === "PWild") {
           return bound;
         }
-        if ($match$7575.$t === "PVariant") {
-          const p = $match$7575;
+        if ($match$7645.$t === "PVariant") {
+          const p = $match$7645;
           return (() => {
-            return (($match$7579) => {
-              if ($match$7579.$t === "None") {
+            return (($match$7649) => {
+              if ($match$7649.$t === "None") {
                 return bound;
               }
-              if ($match$7579.$t === "Some") {
-                const name = $match$7579;
+              if ($match$7649.$t === "Some") {
+                const name = $match$7649;
                 return strAdd(bound, name.f[0]);
               }
-              throw $matchFail("src/check/types.pf", 7579);
+              throw $matchFail("src/check/types.pf", 7649);
             })(p.f[1]);
           })();
         }
-        if ($match$7575.$t === "PList") {
-          const p = $match$7575;
+        if ($match$7645.$t === "PList") {
+          const p = $match$7645;
           return (() => {
             const bound1 = addPatElemsBound(bound, p.f[0]);
-            return (($match$7596) => {
-              if ($match$7596.$t === "None") {
+            return (($match$7666) => {
+              if ($match$7666.$t === "None") {
                 return bound1;
               }
-              if ($match$7596.$t === "Some") {
-                const rest = $match$7596;
+              if ($match$7666.$t === "Some") {
+                const rest = $match$7666;
                 return addPatElemBound(bound1, rest.f[0]);
               }
-              throw $matchFail("src/check/types.pf", 7596);
+              throw $matchFail("src/check/types.pf", 7666);
             })(p.f[1]);
           })();
         }
-        throw $matchFail("src/check/types.pf", 7575);
+        throw $matchFail("src/check/types.pf", 7645);
       })(pattern);
     }
     function scanMatchArms(arms, topNames, bound, refs) {
-      return (($match$7608) => {
-        if ($match$7608.$t === "None") {
+      return (($match$7678) => {
+        if ($match$7678.$t === "None") {
           return refs;
         }
-        if ($match$7608.$t === "Some") {
-          const cell = $match$7608;
+        if ($match$7678.$t === "Some") {
+          const cell = $match$7678;
           return (() => {
             const p = cell.f[0];
             const armBound = addPatternBound(bound, $field(p.f[0], "pattern"));
-            const refs1 = (($match$7625) => {
-              if ($match$7625.$t === "None") {
+            const refs1 = (($match$7695) => {
+              if ($match$7695.$t === "None") {
                 return refs;
               }
-              if ($match$7625.$t === "Some") {
-                const guard = $match$7625;
+              if ($match$7695.$t === "Some") {
+                const guard = $match$7695;
                 return scanExpr(guard.f[0], topNames, armBound, refs);
               }
-              throw $matchFail("src/check/types.pf", 7625);
+              throw $matchFail("src/check/types.pf", 7695);
             })($field(p.f[0], "guard"));
             const refs2 = scanExpr($field(p.f[0], "body"), topNames, armBound, refs1);
             return scanMatchArms(p.f[1], topNames, bound, refs2);
           })();
         }
-        throw $matchFail("src/check/types.pf", 7608);
+        throw $matchFail("src/check/types.pf", 7678);
       })($field(Compat, "uncons")(arms));
     }
     function scanCompGens(gens, topNames, bound, refs) {
-      return (($match$7657) => {
-        if ($match$7657.$t === "None") {
+      return (($match$7727) => {
+        if ($match$7727.$t === "None") {
           return $makeRecord("NameScan", ["refs", "bound"], [refs, bound]);
         }
-        if ($match$7657.$t === "Some") {
-          const cell = $match$7657;
+        if ($match$7727.$t === "Some") {
+          const cell = $match$7727;
           return (() => {
             const p = cell.f[0];
             const refs1 = scanExpr($field(p.f[0], "source"), topNames, bound, refs);
@@ -15667,73 +15851,39 @@
             return scanCompGens(p.f[1], topNames, bound1, refs1);
           })();
         }
-        throw $matchFail("src/check/types.pf", 7657);
+        throw $matchFail("src/check/types.pf", 7727);
       })($field(Compat, "uncons")(gens));
     }
     function scanExpr(expr, topNames, bound, refs) {
       while (true) {
-        const $match$7695 = expr;
-        if ($match$7695.$t === "EInt") {
+        const $match$7765 = expr;
+        if ($match$7765.$t === "EInt") {
           return refs;
         }
-        if ($match$7695.$t === "EFloat") {
+        if ($match$7765.$t === "EFloat") {
           return refs;
         }
-        if ($match$7695.$t === "EBool") {
+        if ($match$7765.$t === "EBool") {
           return refs;
         }
-        if ($match$7695.$t === "EStr") {
+        if ($match$7765.$t === "EStr") {
           return refs;
         }
-        if ($match$7695.$t === "EChar") {
+        if ($match$7765.$t === "EChar") {
           return refs;
         }
-        if ($match$7695.$t === "EByte") {
+        if ($match$7765.$t === "EByte") {
           return refs;
         }
-        if ($match$7695.$t === "EVar") {
-          const x = $match$7695;
+        if ($match$7765.$t === "EVar") {
+          const x = $match$7765;
           return addTopRef(x.f[1], topNames, bound, refs);
         }
-        if ($match$7695.$t === "EUnary") {
-          const x = $match$7695;
-          const $tc$7716$0 = x.f[2];
-          const $tc$7716$1 = topNames;
-          const $tc$7716$2 = bound;
-          const $tc$7716$3 = refs;
-          expr = $tc$7716$0;
-          topNames = $tc$7716$1;
-          bound = $tc$7716$2;
-          refs = $tc$7716$3;
-          continue;
-        }
-        if ($match$7695.$t === "EBinary") {
-          const x = $match$7695;
-          return (() => {
-            const refs1 = scanExpr(x.f[2], topNames, bound, refs);
-            return scanExpr(x.f[3], topNames, bound, refs1);
-          })();
-        }
-        if ($match$7695.$t === "EIf") {
-          const x = $match$7695;
-          return (() => {
-            const refs1 = scanExpr(x.f[1], topNames, bound, refs);
-            const refs2 = scanExpr(x.f[2], topNames, bound, refs1);
-            return scanExpr(x.f[3], topNames, bound, refs2);
-          })();
-        }
-        if ($match$7695.$t === "ECall") {
-          const x = $match$7695;
-          return (() => {
-            const refs1 = scanExpr(x.f[1], topNames, bound, refs);
-            return scanExprList(x.f[2], topNames, bound, refs1);
-          })();
-        }
-        if ($match$7695.$t === "ELambda") {
-          const x = $match$7695;
+        if ($match$7765.$t === "EUnary") {
+          const x = $match$7765;
           const $tc$7786$0 = x.f[2];
           const $tc$7786$1 = topNames;
-          const $tc$7786$2 = addNames(bound, x.f[1]);
+          const $tc$7786$2 = bound;
           const $tc$7786$3 = refs;
           expr = $tc$7786$0;
           topNames = $tc$7786$1;
@@ -15741,89 +15891,130 @@
           refs = $tc$7786$3;
           continue;
         }
-        if ($match$7695.$t === "EBlock") {
-          const x = $match$7695;
+        if ($match$7765.$t === "EBinary") {
+          const x = $match$7765;
+          return (() => {
+            const refs1 = scanExpr(x.f[2], topNames, bound, refs);
+            return scanExpr(x.f[3], topNames, bound, refs1);
+          })();
+        }
+        if ($match$7765.$t === "EIf") {
+          const x = $match$7765;
+          return (() => {
+            const refs1 = scanExpr(x.f[1], topNames, bound, refs);
+            const refs2 = scanExpr(x.f[2], topNames, bound, refs1);
+            return scanExpr(x.f[3], topNames, bound, refs2);
+          })();
+        }
+        if ($match$7765.$t === "ECall") {
+          const x = $match$7765;
+          return (() => {
+            const refs1 = scanExpr(x.f[1], topNames, bound, refs);
+            return scanExprList(x.f[2], topNames, bound, refs1);
+          })();
+        }
+        if ($match$7765.$t === "ELambda") {
+          const x = $match$7765;
+          const $tc$7856$0 = x.f[2];
+          const $tc$7856$1 = topNames;
+          const $tc$7856$2 = addNames(bound, x.f[1]);
+          const $tc$7856$3 = refs;
+          expr = $tc$7856$0;
+          topNames = $tc$7856$1;
+          bound = $tc$7856$2;
+          refs = $tc$7856$3;
+          continue;
+        }
+        if ($match$7765.$t === "EProcLambda") {
+          const x = $match$7765;
+          return (() => {
+            const out = scanStmtList(x.f[3], topNames, addNames(bound, typedParamNames(x.f[1])), refs);
+            return out.f[0];
+          })();
+        }
+        if ($match$7765.$t === "EBlock") {
+          const x = $match$7765;
           return (() => {
             const out = scanStmtList(x.f[1], topNames, bound, refs);
             return out.f[0];
           })();
         }
-        if ($match$7695.$t === "EList") {
-          const x = $match$7695;
+        if ($match$7765.$t === "EList") {
+          const x = $match$7765;
           return scanExprList(x.f[1], topNames, bound, refs);
         }
-        if ($match$7695.$t === "EComp") {
-          const x = $match$7695;
+        if ($match$7765.$t === "EComp") {
+          const x = $match$7765;
           return (() => {
             const gens = scanCompGens(x.f[2], topNames, bound, refs);
             const refs1 = scanExpr(x.f[1], topNames, gens.f[1], gens.f[0]);
-            return (($match$7825) => {
-              if ($match$7825.$t === "None") {
+            return (($match$7913) => {
+              if ($match$7913.$t === "None") {
                 return refs1;
               }
-              if ($match$7825.$t === "Some") {
-                const guard = $match$7825;
+              if ($match$7913.$t === "Some") {
+                const guard = $match$7913;
                 return scanExpr(guard.f[0], topNames, gens.f[1], refs1);
               }
-              throw $matchFail("src/check/types.pf", 7825);
+              throw $matchFail("src/check/types.pf", 7913);
             })(x.f[3]);
           })();
         }
-        if ($match$7695.$t === "ERecord") {
-          const x = $match$7695;
+        if ($match$7765.$t === "ERecord") {
+          const x = $match$7765;
           return scanFields(x.f[2], topNames, bound, refs);
         }
-        if ($match$7695.$t === "EField") {
-          const x = $match$7695;
-          const $tc$7851$0 = x.f[1];
-          const $tc$7851$1 = topNames;
-          const $tc$7851$2 = bound;
-          const $tc$7851$3 = refs;
-          expr = $tc$7851$0;
-          topNames = $tc$7851$1;
-          bound = $tc$7851$2;
-          refs = $tc$7851$3;
+        if ($match$7765.$t === "EField") {
+          const x = $match$7765;
+          const $tc$7939$0 = x.f[1];
+          const $tc$7939$1 = topNames;
+          const $tc$7939$2 = bound;
+          const $tc$7939$3 = refs;
+          expr = $tc$7939$0;
+          topNames = $tc$7939$1;
+          bound = $tc$7939$2;
+          refs = $tc$7939$3;
           continue;
         }
-        if ($match$7695.$t === "EIndex") {
-          const x = $match$7695;
+        if ($match$7765.$t === "EIndex") {
+          const x = $match$7765;
           return (() => {
             const refs1 = scanExpr(x.f[1], topNames, bound, refs);
             return scanExpr(x.f[2], topNames, bound, refs1);
           })();
         }
-        if ($match$7695.$t === "EMatch") {
-          const x = $match$7695;
+        if ($match$7765.$t === "EMatch") {
+          const x = $match$7765;
           return (() => {
             const refs1 = scanExpr(x.f[1], topNames, bound, refs);
             return scanMatchArms(x.f[2], topNames, bound, refs1);
           })();
         }
-        if ($match$7695.$t === "EDict") {
-          const x = $match$7695;
+        if ($match$7765.$t === "EDict") {
+          const x = $match$7765;
           return scanDictEntries(x.f[1], topNames, bound, refs);
         }
-        if ($match$7695.$t === "EArray") {
-          const x = $match$7695;
+        if ($match$7765.$t === "EArray") {
+          const x = $match$7765;
           return scanExprList(x.f[1], topNames, bound, refs);
         }
-        if ($match$7695.$t === "EAwait") {
-          const x = $match$7695;
-          const $tc$7906$0 = x.f[1];
-          const $tc$7906$1 = topNames;
-          const $tc$7906$2 = bound;
-          const $tc$7906$3 = refs;
-          expr = $tc$7906$0;
-          topNames = $tc$7906$1;
-          bound = $tc$7906$2;
-          refs = $tc$7906$3;
+        if ($match$7765.$t === "EAwait") {
+          const x = $match$7765;
+          const $tc$7994$0 = x.f[1];
+          const $tc$7994$1 = topNames;
+          const $tc$7994$2 = bound;
+          const $tc$7994$3 = refs;
+          expr = $tc$7994$0;
+          topNames = $tc$7994$1;
+          bound = $tc$7994$2;
+          refs = $tc$7994$3;
           continue;
         }
-        if ($match$7695.$t === "EFmt") {
-          const x = $match$7695;
+        if ($match$7765.$t === "EFmt") {
+          const x = $match$7765;
           return scanFmtParts(x.f[1], topNames, bound, refs);
         }
-        throw $matchFail("src/check/types.pf", 7695);
+        throw $matchFail("src/check/types.pf", 7765);
       }
     }
     function scanStmtBranch(stmts, topNames, bound, refs) {
@@ -15832,31 +16023,31 @@
     }
     function scanStmt(stmt, topNames, bound, refs) {
       while (true) {
-        const $match$7927 = stmt;
-        if ($match$7927.$t === "SLet") {
-          const x = $match$7927;
+        const $match$8015 = stmt;
+        if ($match$8015.$t === "SLet") {
+          const x = $match$8015;
           return (() => {
             const refs1 = scanExpr(x.f[2], topNames, bound, refs);
             return $makeRecord("NameScan", ["refs", "bound"], [refs1, strAdd(bound, x.f[1])]);
           })();
         }
-        if ($match$7927.$t === "SVar") {
-          const x = $match$7927;
+        if ($match$8015.$t === "SVar") {
+          const x = $match$8015;
           return (() => {
             const refs1 = scanExpr(x.f[2], topNames, bound, refs);
             return $makeRecord("NameScan", ["refs", "bound"], [refs1, strAdd(bound, x.f[1])]);
           })();
         }
-        if ($match$7927.$t === "SAssign") {
-          const x = $match$7927;
+        if ($match$8015.$t === "SAssign") {
+          const x = $match$8015;
           return (() => {
             const refs1 = addTopRef(x.f[1], topNames, bound, refs);
             const refs2 = scanExpr(x.f[2], topNames, bound, refs1);
             return $makeRecord("NameScan", ["refs", "bound"], [refs2, bound]);
           })();
         }
-        if ($match$7927.$t === "SIndexAssign") {
-          const x = $match$7927;
+        if ($match$8015.$t === "SIndexAssign") {
+          const x = $match$8015;
           return (() => {
             const refs1 = scanExpr(x.f[1], topNames, bound, refs);
             const refs2 = scanExpr(x.f[2], topNames, bound, refs1);
@@ -15864,211 +16055,211 @@
             return $makeRecord("NameScan", ["refs", "bound"], [refs3, bound]);
           })();
         }
-        if ($match$7927.$t === "SFun") {
-          const x = $match$7927;
+        if ($match$8015.$t === "SFun") {
+          const x = $match$8015;
           return (() => {
             const bodyBound = addNames(strAdd(bound, x.f[1]), x.f[2]);
             const bodyOut = scanStmtList(x.f[3], topNames, bodyBound, refs);
             return $makeRecord("NameScan", ["refs", "bound"], [bodyOut.f[0], strAdd(bound, x.f[1])]);
           })();
         }
-        if ($match$7927.$t === "SType") {
+        if ($match$8015.$t === "SType") {
           return $makeRecord("NameScan", ["refs", "bound"], [refs, bound]);
         }
-        if ($match$7927.$t === "SExpr") {
-          const x = $match$7927;
+        if ($match$8015.$t === "SExpr") {
+          const x = $match$8015;
           return $makeRecord("NameScan", ["refs", "bound"], [scanExpr(x.f[1], topNames, bound, refs), bound]);
         }
-        if ($match$7927.$t === "SReturn") {
-          const x = $match$7927;
+        if ($match$8015.$t === "SReturn") {
+          const x = $match$8015;
           return (() => {
-            return (($match$8054) => {
-              if ($match$8054.$t === "None") {
+            return (($match$8142) => {
+              if ($match$8142.$t === "None") {
                 return $makeRecord("NameScan", ["refs", "bound"], [refs, bound]);
               }
-              if ($match$8054.$t === "Some") {
-                const value = $match$8054;
+              if ($match$8142.$t === "Some") {
+                const value = $match$8142;
                 return $makeRecord("NameScan", ["refs", "bound"], [scanExpr(value.f[0], topNames, bound, refs), bound]);
               }
-              throw $matchFail("src/check/types.pf", 8054);
+              throw $matchFail("src/check/types.pf", 8142);
             })(x.f[1]);
           })();
         }
-        if ($match$7927.$t === "SIf") {
-          const x = $match$7927;
+        if ($match$8015.$t === "SIf") {
+          const x = $match$8015;
           return (() => {
             const refs1 = scanExpr(x.f[1], topNames, bound, refs);
             const refs2 = scanStmtBranch(x.f[2], topNames, bound, refs1);
-            const refs3 = (($match$8087) => {
-              if ($match$8087.$t === "None") {
+            const refs3 = (($match$8175) => {
+              if ($match$8175.$t === "None") {
                 return refs2;
               }
-              if ($match$8087.$t === "Some") {
-                const branch = $match$8087;
+              if ($match$8175.$t === "Some") {
+                const branch = $match$8175;
                 return scanStmtBranch(branch.f[0], topNames, bound, refs2);
               }
-              throw $matchFail("src/check/types.pf", 8087);
+              throw $matchFail("src/check/types.pf", 8175);
             })(x.f[3]);
             return $makeRecord("NameScan", ["refs", "bound"], [refs3, bound]);
           })();
         }
-        if ($match$7927.$t === "SWhile") {
-          const x = $match$7927;
+        if ($match$8015.$t === "SWhile") {
+          const x = $match$8015;
           return (() => {
             const refs1 = scanExpr(x.f[1], topNames, bound, refs);
             const refs2 = scanStmtBranch(x.f[2], topNames, bound, refs1);
             return $makeRecord("NameScan", ["refs", "bound"], [refs2, bound]);
           })();
         }
-        if ($match$7927.$t === "SImport") {
+        if ($match$8015.$t === "SImport") {
           return $makeRecord("NameScan", ["refs", "bound"], [refs, bound]);
         }
-        if ($match$7927.$t === "SExport") {
-          const x = $match$7927;
-          const $tc$8133$0 = x.f[1];
-          const $tc$8133$1 = topNames;
-          const $tc$8133$2 = bound;
-          const $tc$8133$3 = refs;
-          stmt = $tc$8133$0;
-          topNames = $tc$8133$1;
-          bound = $tc$8133$2;
-          refs = $tc$8133$3;
+        if ($match$8015.$t === "SExport") {
+          const x = $match$8015;
+          const $tc$8221$0 = x.f[1];
+          const $tc$8221$1 = topNames;
+          const $tc$8221$2 = bound;
+          const $tc$8221$3 = refs;
+          stmt = $tc$8221$0;
+          topNames = $tc$8221$1;
+          bound = $tc$8221$2;
+          refs = $tc$8221$3;
           continue;
         }
-        if ($match$7927.$t === "SExtern") {
-          const x = $match$7927;
+        if ($match$8015.$t === "SExtern") {
+          const x = $match$8015;
           return $makeRecord("NameScan", ["refs", "bound"], [refs, strAdd(bound, $field(x.f[1], "name"))]);
         }
-        throw $matchFail("src/check/types.pf", 7927);
+        throw $matchFail("src/check/types.pf", 8015);
       }
     }
     function scanStmtList(stmts, topNames, bound, refs) {
-      return (($match$8144) => {
-        if ($match$8144.$t === "None") {
+      return (($match$8232) => {
+        if ($match$8232.$t === "None") {
           return $makeRecord("NameScan", ["refs", "bound"], [refs, bound]);
         }
-        if ($match$8144.$t === "Some") {
-          const cell = $match$8144;
+        if ($match$8232.$t === "Some") {
+          const cell = $match$8232;
           return (() => {
             const p = cell.f[0];
             const one = scanStmt(p.f[0], topNames, bound, refs);
             return scanStmtList(p.f[1], topNames, one.f[1], one.f[0]);
           })();
         }
-        throw $matchFail("src/check/types.pf", 8144);
+        throw $matchFail("src/check/types.pf", 8232);
       })($field(Compat, "uncons")(stmts));
     }
     function bindingNameOf(stmt) {
       while (true) {
-        const $match$8176 = stmt;
-        if ($match$8176.$t === "SLet") {
-          const x = $match$8176;
+        const $match$8264 = stmt;
+        if ($match$8264.$t === "SLet") {
+          const x = $match$8264;
           return $makeVariant("Some", "Option", ["value"], [x.f[1]]);
         }
-        if ($match$8176.$t === "SVar") {
-          const x = $match$8176;
+        if ($match$8264.$t === "SVar") {
+          const x = $match$8264;
           return $makeVariant("Some", "Option", ["value"], [x.f[1]]);
         }
-        if ($match$8176.$t === "SFun") {
-          const x = $match$8176;
+        if ($match$8264.$t === "SFun") {
+          const x = $match$8264;
           return $makeVariant("Some", "Option", ["value"], [x.f[1]]);
         }
-        if ($match$8176.$t === "SExport") {
-          const x = $match$8176;
-          const $tc$8190$0 = x.f[1];
-          stmt = $tc$8190$0;
+        if ($match$8264.$t === "SExport") {
+          const x = $match$8264;
+          const $tc$8278$0 = x.f[1];
+          stmt = $tc$8278$0;
           continue;
         }
         if (true) {
           return $makeVariant("None", "Option", [], []);
         }
-        throw $matchFail("src/check/types.pf", 8176);
+        throw $matchFail("src/check/types.pf", 8264);
       }
     }
     function collectRawBindings(stmts, acc) {
-      return (($match$8194) => {
-        if ($match$8194.$t === "None") {
+      return (($match$8282) => {
+        if ($match$8282.$t === "None") {
           return $reverse(acc);
         }
-        if ($match$8194.$t === "Some") {
-          const cell = $match$8194;
+        if ($match$8282.$t === "Some") {
+          const cell = $match$8282;
           return (() => {
             const p = cell.f[0];
-            return (($match$8206) => {
-              if ($match$8206.$t === "None") {
+            return (($match$8294) => {
+              if ($match$8294.$t === "None") {
                 return collectRawBindings(p.f[1], acc);
               }
-              if ($match$8206.$t === "Some") {
-                const name = $match$8206;
+              if ($match$8294.$t === "Some") {
+                const name = $match$8294;
                 return collectRawBindings(p.f[1], $cons($makeRecord("BindingDecl", ["name", "stmt", "deps"], [name.f[0], p.f[0], []]), acc));
               }
-              throw $matchFail("src/check/types.pf", 8206);
+              throw $matchFail("src/check/types.pf", 8294);
             })(bindingNameOf(p.f[0]));
           })();
         }
-        throw $matchFail("src/check/types.pf", 8194);
+        throw $matchFail("src/check/types.pf", 8282);
       })($field(Compat, "uncons")(stmts));
     }
     function bindingNames(bindings, acc) {
-      return (($match$8232) => {
-        if ($match$8232.$t === "None") {
+      return (($match$8320) => {
+        if ($match$8320.$t === "None") {
           return $reverse(acc);
         }
-        if ($match$8232.$t === "Some") {
-          const cell = $match$8232;
+        if ($match$8320.$t === "Some") {
+          const cell = $match$8320;
           return (() => {
             const p = cell.f[0];
             return bindingNames(p.f[1], $cons($field(p.f[0], "name"), acc));
           })();
         }
-        throw $matchFail("src/check/types.pf", 8232);
+        throw $matchFail("src/check/types.pf", 8320);
       })($field(Compat, "uncons")(bindings));
     }
     function bindingDeps(stmt, topNames) {
       while (true) {
-        const $match$8257 = stmt;
-        if ($match$8257.$t === "SFun") {
-          const x = $match$8257;
+        const $match$8345 = stmt;
+        if ($match$8345.$t === "SFun") {
+          const x = $match$8345;
           return (() => {
             const out = scanStmtList(x.f[3], topNames, addNames([], x.f[2]), []);
             return out.f[0];
           })();
         }
-        if ($match$8257.$t === "SLet") {
-          const x = $match$8257;
+        if ($match$8345.$t === "SLet") {
+          const x = $match$8345;
           return scanExpr(x.f[2], topNames, [], []);
         }
-        if ($match$8257.$t === "SVar") {
-          const x = $match$8257;
+        if ($match$8345.$t === "SVar") {
+          const x = $match$8345;
           return scanExpr(x.f[2], topNames, [], []);
         }
-        if ($match$8257.$t === "SExport") {
-          const x = $match$8257;
-          const $tc$8293$0 = x.f[1];
-          const $tc$8293$1 = topNames;
-          stmt = $tc$8293$0;
-          topNames = $tc$8293$1;
+        if ($match$8345.$t === "SExport") {
+          const x = $match$8345;
+          const $tc$8381$0 = x.f[1];
+          const $tc$8381$1 = topNames;
+          stmt = $tc$8381$0;
+          topNames = $tc$8381$1;
           continue;
         }
         if (true) {
           return [];
         }
-        throw $matchFail("src/check/types.pf", 8257);
+        throw $matchFail("src/check/types.pf", 8345);
       }
     }
     function fillBindingDeps(bindings, topNames, acc) {
-      return (($match$8297) => {
-        if ($match$8297.$t === "None") {
+      return (($match$8385) => {
+        if ($match$8385.$t === "None") {
           return $reverse(acc);
         }
-        if ($match$8297.$t === "Some") {
-          const cell = $match$8297;
+        if ($match$8385.$t === "Some") {
+          const cell = $match$8385;
           return (() => {
             const p = cell.f[0];
             return fillBindingDeps(p.f[1], topNames, $cons($makeRecord("BindingDecl", ["name", "stmt", "deps"], [$field(p.f[0], "name"), $field(p.f[0], "stmt"), bindingDeps($field(p.f[0], "stmt"), topNames)]), acc));
           })();
         }
-        throw $matchFail("src/check/types.pf", 8297);
+        throw $matchFail("src/check/types.pf", 8385);
       })($field(Compat, "uncons")(bindings));
     }
     function collectBindings(stmts) {
@@ -16077,12 +16268,12 @@
       return fillBindingDeps(raw, names, []);
     }
     function findBinding(bindings, name) {
-      return (($match$8350) => {
-        if ($match$8350.$t === "None") {
+      return (($match$8438) => {
+        if ($match$8438.$t === "None") {
           return $makeVariant("None", "Option", [], []);
         }
-        if ($match$8350.$t === "Some") {
-          const cell = $match$8350;
+        if ($match$8438.$t === "Some") {
+          const cell = $match$8438;
           return (() => {
             const p = cell.f[0];
             if ($field(p.f[0], "name") === name) {
@@ -16092,35 +16283,35 @@
             }
           })();
         }
-        throw $matchFail("src/check/types.pf", 8350);
+        throw $matchFail("src/check/types.pf", 8438);
       })($field(Compat, "uncons")(bindings));
     }
     function depsForName(bindings, name) {
-      return (($match$8378) => {
-        if ($match$8378.$t === "None") {
+      return (($match$8466) => {
+        if ($match$8466.$t === "None") {
           return [];
         }
-        if ($match$8378.$t === "Some") {
-          const binding = $match$8378;
+        if ($match$8466.$t === "Some") {
+          const binding = $match$8466;
           return $field(binding.f[0], "deps");
         }
-        throw $matchFail("src/check/types.pf", 8378);
+        throw $matchFail("src/check/types.pf", 8466);
       })(findBinding(bindings, name));
     }
     function finishDeps(deps, bindings, visited, order) {
-      return (($match$8389) => {
-        if ($match$8389.$t === "None") {
+      return (($match$8477) => {
+        if ($match$8477.$t === "None") {
           return $makeRecord("DfsOut", ["visited", "order"], [visited, order]);
         }
-        if ($match$8389.$t === "Some") {
-          const cell = $match$8389;
+        if ($match$8477.$t === "Some") {
+          const cell = $match$8477;
           return (() => {
             const p = cell.f[0];
             const one = finishDfs(p.f[0], bindings, visited, order);
             return finishDeps(p.f[1], bindings, one.f[0], one.f[1]);
           })();
         }
-        throw $matchFail("src/check/types.pf", 8389);
+        throw $matchFail("src/check/types.pf", 8477);
       })($field(Compat, "uncons")(deps));
     }
     function finishDfs(name, bindings, visited, order) {
@@ -16133,28 +16324,28 @@
       }
     }
     function finishAll(names, bindings, visited, order) {
-      return (($match$8455) => {
-        if ($match$8455.$t === "None") {
+      return (($match$8543) => {
+        if ($match$8543.$t === "None") {
           return $makeRecord("DfsOut", ["visited", "order"], [visited, order]);
         }
-        if ($match$8455.$t === "Some") {
-          const cell = $match$8455;
+        if ($match$8543.$t === "Some") {
+          const cell = $match$8543;
           return (() => {
             const p = cell.f[0];
             const one = finishDfs(p.f[0], bindings, visited, order);
             return finishAll(p.f[1], bindings, one.f[0], one.f[1]);
           })();
         }
-        throw $matchFail("src/check/types.pf", 8455);
+        throw $matchFail("src/check/types.pf", 8543);
       })($field(Compat, "uncons")(names));
     }
     function reverseDepsForName(bindings, name, acc) {
-      return (($match$8487) => {
-        if ($match$8487.$t === "None") {
+      return (($match$8575) => {
+        if ($match$8575.$t === "None") {
           return $reverse(acc);
         }
-        if ($match$8487.$t === "Some") {
-          const cell = $match$8487;
+        if ($match$8575.$t === "Some") {
+          const cell = $match$8575;
           return (() => {
             const p = cell.f[0];
             const acc1 = strContains($field(p.f[0], "deps"), name) ? (() => {
@@ -16165,23 +16356,23 @@
             return reverseDepsForName(p.f[1], name, acc1);
           })();
         }
-        throw $matchFail("src/check/types.pf", 8487);
+        throw $matchFail("src/check/types.pf", 8575);
       })($field(Compat, "uncons")(bindings));
     }
     function collectReverseDeps(deps, bindings, visited, members) {
-      return (($match$8527) => {
-        if ($match$8527.$t === "None") {
+      return (($match$8615) => {
+        if ($match$8615.$t === "None") {
           return $makeRecord("ComponentOut", ["visited", "members"], [visited, members]);
         }
-        if ($match$8527.$t === "Some") {
-          const cell = $match$8527;
+        if ($match$8615.$t === "Some") {
+          const cell = $match$8615;
           return (() => {
             const p = cell.f[0];
             const one = collectReverseDfs(p.f[0], bindings, visited, members);
             return collectReverseDeps(p.f[1], bindings, one.f[0], one.f[1]);
           })();
         }
-        throw $matchFail("src/check/types.pf", 8527);
+        throw $matchFail("src/check/types.pf", 8615);
       })($field(Compat, "uncons")(deps));
     }
     function collectReverseDfs(name, bindings, visited, members) {
@@ -16195,12 +16386,12 @@
       }
     }
     function collectComponents(order, bindings, visited, groups) {
-      return (($match$8592) => {
-        if ($match$8592.$t === "None") {
+      return (($match$8680) => {
+        if ($match$8680.$t === "None") {
           return $makeRecord("ComponentsOut", ["visited", "groups"], [visited, groups]);
         }
-        if ($match$8592.$t === "Some") {
-          const cell = $match$8592;
+        if ($match$8680.$t === "Some") {
+          const cell = $match$8680;
           return (() => {
             const p = cell.f[0];
             if (strContains(visited, p.f[0])) {
@@ -16211,7 +16402,7 @@
             }
           })();
         }
-        throw $matchFail("src/check/types.pf", 8592);
+        throw $matchFail("src/check/types.pf", 8680);
       })($field(Compat, "uncons")(order));
     }
     function bindingGroups(bindings) {
@@ -16221,12 +16412,12 @@
       return components.f[1];
     }
     function bindingsInGroup(bindings, names, acc) {
-      return (($match$8665) => {
-        if ($match$8665.$t === "None") {
+      return (($match$8753) => {
+        if ($match$8753.$t === "None") {
           return $reverse(acc);
         }
-        if ($match$8665.$t === "Some") {
-          const cell = $match$8665;
+        if ($match$8753.$t === "Some") {
+          const cell = $match$8753;
           return (() => {
             const p = cell.f[0];
             const acc1 = strContains(names, $field(p.f[0], "name")) ? (() => {
@@ -16237,14 +16428,14 @@
             return bindingsInGroup(p.f[1], names, acc1);
           })();
         }
-        throw $matchFail("src/check/types.pf", 8665);
+        throw $matchFail("src/check/types.pf", 8753);
       })($field(Compat, "uncons")(bindings));
     }
     function predeclareBinding(st, env, stmt) {
       while (true) {
-        const $match$8704 = stmt;
-        if ($match$8704.$t === "SFun") {
-          const s = $match$8704;
+        const $match$8792 = stmt;
+        if ($match$8792.$t === "SFun") {
+          const s = $match$8792;
           return (() => {
             const ps = freshTypeList(st, $length(s.f[2]));
             const ret = freshVar(ps.f[0]);
@@ -16252,63 +16443,63 @@
             return envOut(ret.f[0], putEnv(env, s.f[1], $makeVariant("TMono", "TcEntry", ["t"], [typ])));
           })();
         }
-        if ($match$8704.$t === "SLet") {
-          const s = $match$8704;
+        if ($match$8792.$t === "SLet") {
+          const s = $match$8792;
           return (() => {
             const typ = freshVar(st);
             return envOut(typ.f[0], putEnv(env, s.f[1], $makeVariant("TMono", "TcEntry", ["t"], [typ.f[1]])));
           })();
         }
-        if ($match$8704.$t === "SVar") {
-          const s = $match$8704;
+        if ($match$8792.$t === "SVar") {
+          const s = $match$8792;
           return (() => {
             const typ = freshVar(st);
             return envOut(typ.f[0], putEnv(env, s.f[1], $makeVariant("TMono", "TcEntry", ["t"], [typ.f[1]])));
           })();
         }
-        if ($match$8704.$t === "SExport") {
-          const s = $match$8704;
-          const $tc$8782$0 = st;
-          const $tc$8782$1 = env;
-          const $tc$8782$2 = s.f[1];
-          st = $tc$8782$0;
-          env = $tc$8782$1;
-          stmt = $tc$8782$2;
+        if ($match$8792.$t === "SExport") {
+          const s = $match$8792;
+          const $tc$8870$0 = st;
+          const $tc$8870$1 = env;
+          const $tc$8870$2 = s.f[1];
+          st = $tc$8870$0;
+          env = $tc$8870$1;
+          stmt = $tc$8870$2;
           continue;
         }
         if (true) {
           return envOut(st, env);
         }
-        throw $matchFail("src/check/types.pf", 8704);
+        throw $matchFail("src/check/types.pf", 8792);
       }
     }
     function predeclareBindings(st, env, bindings) {
-      return (($match$8789) => {
-        if ($match$8789.$t === "None") {
+      return (($match$8877) => {
+        if ($match$8877.$t === "None") {
           return envOut(st, env);
         }
-        if ($match$8789.$t === "Some") {
-          const cell = $match$8789;
+        if ($match$8877.$t === "Some") {
+          const cell = $match$8877;
           return (() => {
             const p = cell.f[0];
             const one = predeclareBinding(st, env, $field(p.f[0], "stmt"));
             return predeclareBindings(one.f[0], one.f[1], p.f[1]);
           })();
         }
-        throw $matchFail("src/check/types.pf", 8789);
+        throw $matchFail("src/check/types.pf", 8877);
       })($field(Compat, "uncons")(bindings));
     }
     function inferExternStmt(st, env, stmt, path) {
-      return (($match$8821) => {
-        if ($match$8821.$t === "SExtern") {
-          const x = $match$8821;
+      return (($match$8909) => {
+        if ($match$8909.$t === "SExtern") {
+          const x = $match$8909;
           return inferExtern(st, env, x.f[0], x.f[1], path);
         }
-        if ($match$8821.$t === "SExport") {
-          const x = $match$8821;
+        if ($match$8909.$t === "SExport") {
+          const x = $match$8909;
           return (() => {
-            return (($match$8833) => {
-              if ($match$8833.$t === "SExtern") {
+            return (($match$8921) => {
+              if ($match$8921.$t === "SExtern") {
                 return (() => {
                   const inner = inferExternStmt(st, env, x.f[1], path);
                   return envOut(addTypedNode(inner.f[0], x.f[0], TUnit), inner.f[1]);
@@ -16317,30 +16508,30 @@
               if (true) {
                 return envOut(st, env);
               }
-              throw $matchFail("src/check/types.pf", 8833);
+              throw $matchFail("src/check/types.pf", 8921);
             })(x.f[1]);
           })();
         }
         if (true) {
           return envOut(st, env);
         }
-        throw $matchFail("src/check/types.pf", 8821);
+        throw $matchFail("src/check/types.pf", 8909);
       })(stmt);
     }
     function inferExterns(st, env, stmts, path) {
-      return (($match$8868) => {
-        if ($match$8868.$t === "None") {
+      return (($match$8956) => {
+        if ($match$8956.$t === "None") {
           return envOut(st, env);
         }
-        if ($match$8868.$t === "Some") {
-          const cell = $match$8868;
+        if ($match$8956.$t === "Some") {
+          const cell = $match$8956;
           return (() => {
             const p = cell.f[0];
             const one = inferExternStmt(st, env, p.f[0], path);
             return inferExterns(one.f[0], one.f[1], p.f[1], path);
           })();
         }
-        throw $matchFail("src/check/types.pf", 8868);
+        throw $matchFail("src/check/types.pf", 8956);
       })($field(Compat, "uncons")(stmts));
     }
     function inferFunctionAgainstPredecl(st, env, id, params, body, kind, span, paramTypes, returnType, path) {
@@ -16351,27 +16542,27 @@
       return envOut(addTypedNode(st1, id, apply(st1.f[1], typ)), env);
     }
     function inferPredeclaredFunction(st, env, id, name, params, body, kind, span, path) {
-      return (($match$8944) => {
-        if ($match$8944.$t === "None") {
+      return (($match$9032) => {
+        if ($match$9032.$t === "None") {
           return (() => {
             const fallback = inferFunctionDecl(st, env, id, name, params, body, kind, span, path);
             return envOut(fallback.f[0], env);
           })();
         }
-        if ($match$8944.$t === "Some") {
-          const entry = $match$8944;
+        if ($match$9032.$t === "Some") {
+          const entry = $match$9032;
           return (() => {
-            return (($match$8969) => {
-              if ($match$8969.$t === "TMono") {
-                const mono = $match$8969;
+            return (($match$9057) => {
+              if ($match$9057.$t === "TMono") {
+                const mono = $match$9057;
                 return (() => {
-                  return (($match$8973) => {
-                    if ($match$8973.$t === "TFun") {
-                      const f = $match$8973;
+                  return (($match$9061) => {
+                    if ($match$9061.$t === "TFun") {
+                      const f = $match$9061;
                       return inferFunctionAgainstPredecl(st, env, id, params, body, kind, span, f.f[0], f.f[1], path);
                     }
-                    if ($match$8973.$t === "TProc") {
-                      const p = $match$8973;
+                    if ($match$9061.$t === "TProc") {
+                      const p = $match$9061;
                       return inferFunctionAgainstPredecl(st, env, id, params, body, kind, span, p.f[0], p.f[1], path);
                     }
                     if (true) {
@@ -16380,7 +16571,7 @@
                         return envOut(fallback.f[0], env);
                       })();
                     }
-                    throw $matchFail("src/check/types.pf", 8973);
+                    throw $matchFail("src/check/types.pf", 9061);
                   })(mono.f[0]);
                 })();
               }
@@ -16390,75 +16581,75 @@
                   return envOut(fallback.f[0], env);
                 })();
               }
-              throw $matchFail("src/check/types.pf", 8969);
+              throw $matchFail("src/check/types.pf", 9057);
             })(entry.f[0]);
           })();
         }
-        throw $matchFail("src/check/types.pf", 8944);
+        throw $matchFail("src/check/types.pf", 9032);
       })(lookupEnv(env, name));
     }
     function inferPredeclaredValue(st, env, id, name, init, span, path) {
       const value = cgenExpr(st, env, init, path);
-      const st1 = (($match$9053) => {
-        if ($match$9053.$t === "None") {
+      const st1 = (($match$9141) => {
+        if ($match$9141.$t === "None") {
           return value.f[0];
         }
-        if ($match$9053.$t === "Some") {
-          const entry = $match$9053;
+        if ($match$9141.$t === "Some") {
+          const entry = $match$9141;
           return (() => {
-            return (($match$9061) => {
-              if ($match$9061.$t === "TMono") {
-                const mono = $match$9061;
+            return (($match$9149) => {
+              if ($match$9149.$t === "TMono") {
+                const mono = $match$9149;
                 return unify(value.f[0], mono.f[0], value.f[1], path, span);
               }
               if (true) {
                 return value.f[0];
               }
-              throw $matchFail("src/check/types.pf", 9061);
+              throw $matchFail("src/check/types.pf", 9149);
             })(entry.f[0]);
           })();
         }
-        throw $matchFail("src/check/types.pf", 9053);
+        throw $matchFail("src/check/types.pf", 9141);
       })(lookupEnv(env, name));
-      const typ = (($match$9078) => {
-        if ($match$9078.$t === "None") {
+      const typ = (($match$9166) => {
+        if ($match$9166.$t === "None") {
           return value.f[1];
         }
-        if ($match$9078.$t === "Some") {
-          const entry = $match$9078;
+        if ($match$9166.$t === "Some") {
+          const entry = $match$9166;
           return (() => {
-            return (($match$9086) => {
-              if ($match$9086.$t === "TMono") {
-                const mono = $match$9086;
+            return (($match$9174) => {
+              if ($match$9174.$t === "TMono") {
+                const mono = $match$9174;
                 return apply(st1.f[1], mono.f[0]);
               }
               if (true) {
                 return value.f[1];
               }
-              throw $matchFail("src/check/types.pf", 9086);
+              throw $matchFail("src/check/types.pf", 9174);
             })(entry.f[0]);
           })();
         }
-        throw $matchFail("src/check/types.pf", 9078);
+        throw $matchFail("src/check/types.pf", 9166);
       })(lookupEnv(env, name));
       return envOut(addTypedNode(st1, id, typ), env);
     }
     function inferGroupBinding(st, env, stmt, path) {
-      return (($match$9109) => {
-        if ($match$9109.$t === "SFun") {
-          const s = $match$9109;
+      return (($match$9197) => {
+        if ($match$9197.$t === "SFun") {
+          const s = $match$9197;
           return inferPredeclaredFunction(st, env, s.f[0], s.f[1], s.f[2], s.f[3], s.f[4], s.f[5], path);
         }
-        if ($match$9109.$t === "SLet") {
-          const s = $match$9109;
+        if ($match$9197.$t === "SLet") {
+          const s = $match$9197;
           return inferPredeclaredValue(st, env, s.f[0], s.f[1], s.f[2], s.f[3], path);
         }
-        if ($match$9109.$t === "SVar") {
-          const s = $match$9109;
+        if ($match$9197.$t === "SVar") {
+          const s = $match$9197;
           return inferPredeclaredValue(st, env, s.f[0], s.f[1], s.f[2], s.f[3], path);
         }
-        if ($match$9109.$t === "SExport") {
-          const s = $match$9109;
+        if ($match$9197.$t === "SExport") {
+          const s = $match$9197;
           return (() => {
             const inner = inferGroupBinding(st, env, s.f[1], path);
             return envOut(addTypedNode(inner.f[0], s.f[0], TUnit), env);
@@ -16467,32 +16658,32 @@
         if (true) {
           return envOut(st, env);
         }
-        throw $matchFail("src/check/types.pf", 9109);
+        throw $matchFail("src/check/types.pf", 9197);
       })(stmt);
     }
     function inferGroupMembers(st, env, bindings, path) {
-      return (($match$9180) => {
-        if ($match$9180.$t === "None") {
+      return (($match$9268) => {
+        if ($match$9268.$t === "None") {
           return envOut(st, env);
         }
-        if ($match$9180.$t === "Some") {
-          const cell = $match$9180;
+        if ($match$9268.$t === "Some") {
+          const cell = $match$9268;
           return (() => {
             const p = cell.f[0];
             const one = inferGroupBinding(st, env, $field(p.f[0], "stmt"), path);
             return inferGroupMembers(one.f[0], env, p.f[1], path);
           })();
         }
-        throw $matchFail("src/check/types.pf", 9180);
+        throw $matchFail("src/check/types.pf", 9268);
       })($field(Compat, "uncons")(bindings));
     }
     function envFreeVarsExceptNamesFromEntries(entries, excluded, acc) {
-      return (($match$9213) => {
-        if ($match$9213.$t === "None") {
+      return (($match$9301) => {
+        if ($match$9301.$t === "None") {
           return acc;
         }
-        if ($match$9213.$t === "Some") {
-          const cell = $match$9213;
+        if ($match$9301.$t === "Some") {
+          const cell = $match$9301;
           return (() => {
             const p = cell.f[0];
             const binding = p.f[0];
@@ -16504,7 +16695,7 @@
             return envFreeVarsExceptNamesFromEntries(p.f[1], excluded, acc1);
           })();
         }
-        throw $matchFail("src/check/types.pf", 9213);
+        throw $matchFail("src/check/types.pf", 9301);
       })($field(Compat, "uncons")(entries));
     }
     function envFreeVarsExceptNames(env, excluded) {
@@ -16512,57 +16703,57 @@
     }
     function bindingIsGeneric(stmt) {
       while (true) {
-        const $match$9264 = stmt;
-        if ($match$9264.$t === "SFun") {
-          const s = $match$9264;
+        const $match$9352 = stmt;
+        if ($match$9352.$t === "SFun") {
+          const s = $match$9352;
           return isGenericKind(s.f[4]);
         }
-        if ($match$9264.$t === "SExport") {
-          const s = $match$9264;
-          const $tc$9273$0 = s.f[1];
-          stmt = $tc$9273$0;
+        if ($match$9352.$t === "SExport") {
+          const s = $match$9352;
+          const $tc$9361$0 = s.f[1];
+          stmt = $tc$9361$0;
           continue;
         }
         if (true) {
           return false;
         }
-        throw $matchFail("src/check/types.pf", 9264);
+        throw $matchFail("src/check/types.pf", 9352);
       }
     }
     function solvedBindingType(st, env, name) {
-      return (($match$9277) => {
-        if ($match$9277.$t === "None") {
+      return (($match$9365) => {
+        if ($match$9365.$t === "None") {
           return TUnknown;
         }
-        if ($match$9277.$t === "Some") {
-          const entry = $match$9277;
+        if ($match$9365.$t === "Some") {
+          const entry = $match$9365;
           return (() => {
-            return (($match$9284) => {
-              if ($match$9284.$t === "TMono") {
-                const mono = $match$9284;
+            return (($match$9372) => {
+              if ($match$9372.$t === "TMono") {
+                const mono = $match$9372;
                 return apply(st.f[1], mono.f[0]);
               }
-              if ($match$9284.$t === "TScheme") {
-                const scheme = $match$9284;
+              if ($match$9372.$t === "TScheme") {
+                const scheme = $match$9372;
                 return apply(st.f[1], scheme.f[0].f[2]);
               }
               if (true) {
                 return TUnknown;
               }
-              throw $matchFail("src/check/types.pf", 9284);
+              throw $matchFail("src/check/types.pf", 9372);
             })(entry.f[0]);
           })();
         }
-        throw $matchFail("src/check/types.pf", 9277);
+        throw $matchFail("src/check/types.pf", 9365);
       })(lookupEnv(env, name));
     }
     function nonGenericGroupVars(st, env, bindings, acc) {
-      return (($match$9304) => {
-        if ($match$9304.$t === "None") {
+      return (($match$9392) => {
+        if ($match$9392.$t === "None") {
           return acc;
         }
-        if ($match$9304.$t === "Some") {
-          const cell = $match$9304;
+        if ($match$9392.$t === "Some") {
+          const cell = $match$9392;
           return (() => {
             const p = cell.f[0];
             const acc1 = bindingIsGeneric($field(p.f[0], "stmt")) ? (() => {
@@ -16573,7 +16764,7 @@
             return nonGenericGroupVars(st, env, p.f[1], acc1);
           })();
         }
-        throw $matchFail("src/check/types.pf", 9304);
+        throw $matchFail("src/check/types.pf", 9392);
       })($field(Compat, "uncons")(bindings));
     }
     function groupLockedVars(st, env, names, bindings) {
@@ -16588,12 +16779,12 @@
       return mkScheme(vars, [], solved);
     }
     function finalizeGroupEntries(st, baseEnv, outEnv, bindings, locked) {
-      return (($match$9393) => {
-        if ($match$9393.$t === "None") {
+      return (($match$9481) => {
+        if ($match$9481.$t === "None") {
           return outEnv;
         }
-        if ($match$9393.$t === "Some") {
-          const cell = $match$9393;
+        if ($match$9481.$t === "Some") {
+          const cell = $match$9481;
           return (() => {
             const p = cell.f[0];
             const solved = solvedBindingType(st, baseEnv, $field(p.f[0], "name"));
@@ -16605,46 +16796,46 @@
             return finalizeGroupEntries(st, baseEnv, putEnv(outEnv, $field(p.f[0], "name"), entry), p.f[1], locked);
           })();
         }
-        throw $matchFail("src/check/types.pf", 9393);
+        throw $matchFail("src/check/types.pf", 9481);
       })($field(Compat, "uncons")(bindings));
     }
     function groupIsRecursive(names, bindings) {
-      return (($match$9447) => {
-        if ($match$9447.$t === "None") {
+      return (($match$9535) => {
+        if ($match$9535.$t === "None") {
           return false;
         }
-        if ($match$9447.$t === "Some") {
-          const cell = $match$9447;
+        if ($match$9535.$t === "Some") {
+          const cell = $match$9535;
           return (() => {
             const p = cell.f[0];
-            return (($match$9457) => {
-              if ($match$9457.$t === "Some") {
+            return (($match$9545) => {
+              if ($match$9545.$t === "Some") {
                 return true;
               }
-              if ($match$9457.$t === "None") {
+              if ($match$9545.$t === "None") {
                 return strContains(depsForName(bindings, p.f[0]), p.f[0]);
               }
-              throw $matchFail("src/check/types.pf", 9457);
+              throw $matchFail("src/check/types.pf", 9545);
             })($field(Compat, "uncons")(p.f[1]));
           })();
         }
-        throw $matchFail("src/check/types.pf", 9447);
+        throw $matchFail("src/check/types.pf", 9535);
       })($field(Compat, "uncons")(names));
     }
     function inferDirectGroupMembers(st, env, bindings, path) {
-      return (($match$9476) => {
-        if ($match$9476.$t === "None") {
+      return (($match$9564) => {
+        if ($match$9564.$t === "None") {
           return envOut(st, env);
         }
-        if ($match$9476.$t === "Some") {
-          const cell = $match$9476;
+        if ($match$9564.$t === "Some") {
+          const cell = $match$9564;
           return (() => {
             const p = cell.f[0];
             const one = cgenStmt(st, env, $field(p.f[0], "stmt"), path);
             return inferDirectGroupMembers(one.f[0], one.f[1], p.f[1], path);
           })();
         }
-        throw $matchFail("src/check/types.pf", 9476);
+        throw $matchFail("src/check/types.pf", 9564);
       })($field(Compat, "uncons")(bindings));
     }
     function inferOneBindingGroup(st, env, names, members, bindings, path) {
@@ -16659,12 +16850,12 @@
       }
     }
     function inferBindingGroups(st, env, groups, bindings, path) {
-      return (($match$9563) => {
-        if ($match$9563.$t === "None") {
+      return (($match$9651) => {
+        if ($match$9651.$t === "None") {
           return envOut(st, env);
         }
-        if ($match$9563.$t === "Some") {
-          const cell = $match$9563;
+        if ($match$9651.$t === "Some") {
+          const cell = $match$9651;
           return (() => {
             const p = cell.f[0];
             const members = bindingsInGroup(bindings, p.f[0], []);
@@ -16672,58 +16863,58 @@
             return inferBindingGroups(checked.f[0], checked.f[1], p.f[1], bindings, path);
           })();
         }
-        throw $matchFail("src/check/types.pf", 9563);
+        throw $matchFail("src/check/types.pf", 9651);
       })($field(Compat, "uncons")(groups));
     }
     function isGroupedBinding(stmt) {
       while (true) {
-        const $match$9606 = stmt;
-        if ($match$9606.$t === "SFun") {
+        const $match$9694 = stmt;
+        if ($match$9694.$t === "SFun") {
           return true;
         }
-        if ($match$9606.$t === "SLet") {
+        if ($match$9694.$t === "SLet") {
           return true;
         }
-        if ($match$9606.$t === "SVar") {
+        if ($match$9694.$t === "SVar") {
           return true;
         }
-        if ($match$9606.$t === "SExport") {
-          const s = $match$9606;
-          const $tc$9614$0 = s.f[1];
-          stmt = $tc$9614$0;
+        if ($match$9694.$t === "SExport") {
+          const s = $match$9694;
+          const $tc$9702$0 = s.f[1];
+          stmt = $tc$9702$0;
           continue;
         }
         if (true) {
           return false;
         }
-        throw $matchFail("src/check/types.pf", 9606);
+        throw $matchFail("src/check/types.pf", 9694);
       }
     }
     function isExternBinding(stmt) {
       while (true) {
-        const $match$9618 = stmt;
-        if ($match$9618.$t === "SExtern") {
+        const $match$9706 = stmt;
+        if ($match$9706.$t === "SExtern") {
           return true;
         }
-        if ($match$9618.$t === "SExport") {
-          const s = $match$9618;
-          const $tc$9624$0 = s.f[1];
-          stmt = $tc$9624$0;
+        if ($match$9706.$t === "SExport") {
+          const s = $match$9706;
+          const $tc$9712$0 = s.f[1];
+          stmt = $tc$9712$0;
           continue;
         }
         if (true) {
           return false;
         }
-        throw $matchFail("src/check/types.pf", 9618);
+        throw $matchFail("src/check/types.pf", 9706);
       }
     }
     function inferResidualStmts(st, env, stmts, path) {
-      return (($match$9628) => {
-        if ($match$9628.$t === "None") {
+      return (($match$9716) => {
+        if ($match$9716.$t === "None") {
           return envOut(st, env);
         }
-        if ($match$9628.$t === "Some") {
-          const cell = $match$9628;
+        if ($match$9716.$t === "Some") {
+          const cell = $match$9716;
           return (() => {
             const p = cell.f[0];
             const one = isGroupedBinding(p.f[0]) ? (() => {
@@ -16738,32 +16929,32 @@
             return inferResidualStmts(one.f[0], one.f[1], p.f[1], path);
           })();
         }
-        throw $matchFail("src/check/types.pf", 9628);
+        throw $matchFail("src/check/types.pf", 9716);
       })($field(Compat, "uncons")(stmts));
     }
     function isGenericKind(kind) {
-      return (($match$9684) => {
-        if ($match$9684.$t === "PureFn") {
-          const k = $match$9684;
+      return (($match$9772) => {
+        if ($match$9772.$t === "PureFn") {
+          const k = $match$9772;
           return k.f[1];
         }
-        if ($match$9684.$t === "ProcFn") {
-          const k = $match$9684;
+        if ($match$9772.$t === "ProcFn") {
+          const k = $match$9772;
           return k.f[1];
         }
-        throw $matchFail("src/check/types.pf", 9684);
+        throw $matchFail("src/check/types.pf", 9772);
       })(kind);
     }
     function rawFunctionType(kind, params, ret) {
-      return (($match$9692) => {
-        if ($match$9692.$t === "PureFn") {
+      return (($match$9780) => {
+        if ($match$9780.$t === "PureFn") {
           return $makeVariant("TFun", "Type", ["params", "ret"], [params, ret]);
         }
-        if ($match$9692.$t === "ProcFn") {
-          const k = $match$9692;
+        if ($match$9780.$t === "ProcFn") {
+          const k = $match$9780;
           return $makeVariant("TProc", "Type", ["params", "ret", "isAsync"], [params, ret, k.f[0]]);
         }
-        throw $matchFail("src/check/types.pf", 9692);
+        throw $matchFail("src/check/types.pf", 9780);
       })(kind);
     }
     function inferFunctionDecl(st, env, id, name, params, body, kind, span, path) {
@@ -16780,209 +16971,220 @@
       return envOut(st2, putEnv(env, name, entry));
     }
     function inferTypeExpr(st, te) {
-      return (($match$9788) => {
-        if ($match$9788.$t === "TyName") {
-          const n = $match$9788;
+      return (($match$9876) => {
+        if ($match$9876.$t === "TyName") {
+          const n = $match$9876;
           return (() => {
             const args = inferTypeExprList(st, n.f[1], []);
             const typ = builtinTyName(n.f[0], args.f[1]);
             return $makeRecord("Pair", ["key", "value"], [args.f[0], typ]);
           })();
         }
-        if ($match$9788.$t === "TyFun") {
-          const f = $match$9788;
+        if ($match$9876.$t === "TyFun") {
+          const f = $match$9876;
           return (() => {
             const ps = inferTypeExprList(st, f.f[0], []);
             const ret = inferTypeExpr(ps.f[0], f.f[1]);
             return $makeRecord("Pair", ["key", "value"], [ret.f[0], $makeVariant("TFun", "Type", ["params", "ret"], [ps.f[1], ret.f[1]])]);
           })();
         }
-        throw $matchFail("src/check/types.pf", 9788);
+        if ($match$9876.$t === "TyProc") {
+          const p = $match$9876;
+          return (() => {
+            const ps = inferTypeExprList(st, p.f[0], []);
+            const ret = inferTypeExpr(ps.f[0], p.f[1]);
+            return $makeRecord("Pair", ["key", "value"], [ret.f[0], $makeVariant("TProc", "Type", ["params", "ret", "isAsync"], [ps.f[1], ret.f[1], p.f[2]])]);
+          })();
+        }
+        throw $matchFail("src/check/types.pf", 9876);
       })(te);
     }
     function inferTypeExprList(st, tes, acc) {
-      return (($match$9836) => {
-        if ($match$9836.$t === "None") {
+      return (($match$9950) => {
+        if ($match$9950.$t === "None") {
           return $makeRecord("Pair", ["key", "value"], [st, $reverse(acc)]);
         }
-        if ($match$9836.$t === "Some") {
-          const cell = $match$9836;
+        if ($match$9950.$t === "Some") {
+          const cell = $match$9950;
           return (() => {
             const p = cell.f[0];
             const one = inferTypeExpr(st, p.f[0]);
             return inferTypeExprList(one.f[0], p.f[1], $cons(one.f[1], acc));
           })();
         }
-        throw $matchFail("src/check/types.pf", 9836);
+        throw $matchFail("src/check/types.pf", 9950);
       })($field(Compat, "uncons")(tes));
     }
     function typedParamsTypes(st, params, acc) {
-      return (($match$9870) => {
-        if ($match$9870.$t === "None") {
+      return (($match$9984) => {
+        if ($match$9984.$t === "None") {
           return $makeRecord("Pair", ["key", "value"], [st, $reverse(acc)]);
         }
-        if ($match$9870.$t === "Some") {
-          const cell = $match$9870;
+        if ($match$9984.$t === "Some") {
+          const cell = $match$9984;
           return (() => {
             const p = cell.f[0];
             const one = inferTypeExpr(st, $field(p.f[0], "typeExpr"));
             return typedParamsTypes(one.f[0], p.f[1], $cons(one.f[1], acc));
           })();
         }
-        throw $matchFail("src/check/types.pf", 9870);
+        throw $matchFail("src/check/types.pf", 9984);
       })($field(Compat, "uncons")(params));
+    }
+    function typedParamNames(params) {
+      return $map((param) => $field(param, "name"), params);
     }
     function inferExtern(st, env, id, decl, path) {
       const params = typedParamsTypes(st, $field(decl, "params"), []);
       const ret = inferTypeExpr(params.f[0], $field(decl, "ret"));
-      const typ = (($match$9919) => {
-        if ($match$9919.$t === "ExternFunction") {
+      const typ = (($match$10041) => {
+        if ($match$10041.$t === "ExternFunction") {
           return $makeVariant("TFun", "Type", ["params", "ret"], [params.f[1], ret.f[1]]);
         }
-        if ($match$9919.$t === "ExternProc") {
-          const k = $match$9919;
+        if ($match$10041.$t === "ExternProc") {
+          const k = $match$10041;
           return $makeVariant("TProc", "Type", ["params", "ret", "isAsync"], [params.f[1], ret.f[1], k.f[0]]);
         }
-        throw $matchFail("src/check/types.pf", 9919);
+        throw $matchFail("src/check/types.pf", 10041);
       })($field(decl, "kind"));
       return envOut(addTypedNode(ret.f[0], id, typ), putEnv(env, $field(decl, "name"), $makeVariant("TMono", "TcEntry", ["t"], [typ])));
     }
     function cgenStmt(st, env, s, path) {
-      return (($match$9952) => {
-        if ($match$9952.$t === "SLet") {
-          const x = $match$9952;
+      return (($match$10074) => {
+        if ($match$10074.$t === "SLet") {
+          const x = $match$10074;
           return (() => {
             const eo = cgenExpr(st, env, x.f[2], path);
             return envOut(addTypedNode(eo.f[0], x.f[0], eo.f[1]), putEnv(env, x.f[1], $makeVariant("TMono", "TcEntry", ["t"], [eo.f[1]])));
           })();
         }
-        if ($match$9952.$t === "SVar") {
-          const x = $match$9952;
+        if ($match$10074.$t === "SVar") {
+          const x = $match$10074;
           return (() => {
             const eo = cgenExpr(st, env, x.f[2], path);
             return envOut(addTypedNode(eo.f[0], x.f[0], eo.f[1]), putEnv(env, x.f[1], $makeVariant("TMono", "TcEntry", ["t"], [eo.f[1]])));
           })();
         }
-        if ($match$9952.$t === "SAssign") {
-          const x = $match$9952;
+        if ($match$10074.$t === "SAssign") {
+          const x = $match$10074;
           return (() => {
-            return (($match$10011) => {
-              if ($match$10011.$t === "None") {
+            return (($match$10133) => {
+              if ($match$10133.$t === "None") {
                 return envOut(addTypeDiag(st, path, x.f[3], $concatS($concatS("Unknown assignment target '", x.f[1]), "'.")), env);
               }
-              if ($match$10011.$t === "Some") {
-                const e = $match$10011;
+              if ($match$10133.$t === "Some") {
+                const e = $match$10133;
                 return (() => {
                   const rhs = cgenExpr(st, env, x.f[2], path);
-                  const target = (($match$10041) => {
-                    if ($match$10041.$t === "TMono") {
-                      const m = $match$10041;
+                  const target = (($match$10163) => {
+                    if ($match$10163.$t === "TMono") {
+                      const m = $match$10163;
                       return m.f[0];
                     }
-                    if ($match$10041.$t === "TScheme") {
-                      const sc = $match$10041;
+                    if ($match$10163.$t === "TScheme") {
+                      const sc = $match$10163;
                       return sc.f[0].f[2];
                     }
                     if (true) {
                       return TUnknown;
                     }
-                    throw $matchFail("src/check/types.pf", 10041);
+                    throw $matchFail("src/check/types.pf", 10163);
                   })(e.f[0]);
                   const st1 = unify(rhs.f[0], target, rhs.f[1], path, x.f[3]);
                   return envOut(addTypedNode(st1, x.f[0], TUnit), env);
                 })();
               }
-              throw $matchFail("src/check/types.pf", 10011);
+              throw $matchFail("src/check/types.pf", 10133);
             })(lookupEnv(env, x.f[1]));
           })();
         }
-        if ($match$9952.$t === "SIndexAssign") {
-          const x = $match$9952;
+        if ($match$10074.$t === "SIndexAssign") {
+          const x = $match$10074;
           return (() => {
             const oo = cgenExpr(st, env, x.f[1], path);
             const io = cgenExpr(oo.f[0], env, x.f[2], path);
             const st1 = unify(io.f[0], io.f[1], TInt, path, $field(A, "exprSpan")(x.f[2]));
             const slot = inferIndexAccess(st1, oo.f[1], x.f[4], path);
             const rhs = cgenExpr(slot.f[0], env, x.f[3], path);
-            const expected = (($match$10123) => {
-              if ($match$10123.$t === "TNamed") {
-                const opt = $match$10123;
+            const expected = (($match$10245) => {
+              if ($match$10245.$t === "TNamed") {
+                const opt = $match$10245;
                 return (() => {
-                  return (($match$10127) => {
-                    if ($match$10127.$t === "None") {
+                  return (($match$10249) => {
+                    if ($match$10249.$t === "None") {
                       return TUnknown;
                     }
-                    if ($match$10127.$t === "Some") {
-                      const v = $match$10127;
+                    if ($match$10249.$t === "Some") {
+                      const v = $match$10249;
                       return v.f[0];
                     }
-                    throw $matchFail("src/check/types.pf", 10127);
+                    throw $matchFail("src/check/types.pf", 10249);
                   })($field(Compat, "listAt")(opt.f[1], 0));
                 })();
               }
               if (true) {
                 return TUnknown;
               }
-              throw $matchFail("src/check/types.pf", 10123);
+              throw $matchFail("src/check/types.pf", 10245);
             })(slot.f[1]);
             const st2 = unify(rhs.f[0], expected, rhs.f[1], path, $field(A, "exprSpan")(x.f[3]));
             return envOut(addTypedNode(st2, x.f[0], TUnit), env);
           })();
         }
-        if ($match$9952.$t === "SFun") {
-          const x = $match$9952;
+        if ($match$10074.$t === "SFun") {
+          const x = $match$10074;
           return inferFunctionDecl(st, env, x.f[0], x.f[1], x.f[2], x.f[3], x.f[4], x.f[5], path);
         }
-        if ($match$9952.$t === "SType") {
-          const x = $match$9952;
+        if ($match$10074.$t === "SType") {
+          const x = $match$10074;
           return envOut(addTypedNode(st, x.f[0], TUnit), env);
         }
-        if ($match$9952.$t === "SExpr") {
-          const x = $match$9952;
+        if ($match$10074.$t === "SExpr") {
+          const x = $match$10074;
           return (() => {
             const eo = cgenExpr(st, env, x.f[1], path);
             return envOut(addTypedNode(eo.f[0], x.f[0], eo.f[1]), env);
           })();
         }
-        if ($match$9952.$t === "SReturn") {
-          const x = $match$9952;
+        if ($match$10074.$t === "SReturn") {
+          const x = $match$10074;
           return (() => {
-            return (($match$10212) => {
-              if ($match$10212.$t === "None") {
+            return (($match$10334) => {
+              if ($match$10334.$t === "None") {
                 return envOut(addTypedNode(st, x.f[0], TUnit), env);
               }
-              if ($match$10212.$t === "Some") {
-                const rv = $match$10212;
+              if ($match$10334.$t === "Some") {
+                const rv = $match$10334;
                 return (() => {
                   const eo = cgenExpr(st, env, rv.f[0], path);
                   return envOut(addTypedNode(eo.f[0], x.f[0], eo.f[1]), env);
                 })();
               }
-              throw $matchFail("src/check/types.pf", 10212);
+              throw $matchFail("src/check/types.pf", 10334);
             })(x.f[1]);
           })();
         }
-        if ($match$9952.$t === "SIf") {
-          const x = $match$9952;
+        if ($match$10074.$t === "SIf") {
+          const x = $match$10074;
           return (() => {
             const co = cgenExpr(st, env, x.f[1], path);
             const st1 = unify(co.f[0], co.f[1], TBool, path, $field(A, "exprSpan")(x.f[1]));
             const thenOut = inferBody(st1, env, x.f[2], path);
-            const elseOut = (($match$10277) => {
-              if ($match$10277.$t === "None") {
+            const elseOut = (($match$10399) => {
+              if ($match$10399.$t === "None") {
                 return bodyOut(thenOut.f[0], TUnit);
               }
-              if ($match$10277.$t === "Some") {
-                const es = $match$10277;
+              if ($match$10399.$t === "Some") {
+                const es = $match$10399;
                 return inferBody(thenOut.f[0], env, es.f[0], path);
               }
-              throw $matchFail("src/check/types.pf", 10277);
+              throw $matchFail("src/check/types.pf", 10399);
             })(x.f[3]);
             return envOut(addTypedNode(elseOut.f[0], x.f[0], TUnit), env);
           })();
         }
-        if ($match$9952.$t === "SWhile") {
-          const x = $match$9952;
+        if ($match$10074.$t === "SWhile") {
+          const x = $match$10074;
           return (() => {
             const co = cgenExpr(st, env, x.f[1], path);
             const st1 = unify(co.f[0], co.f[1], TBool, path, $field(A, "exprSpan")(x.f[1]));
@@ -16990,140 +17192,140 @@
             return envOut(addTypedNode(bo.f[0], x.f[0], TUnit), env);
           })();
         }
-        if ($match$9952.$t === "SImport") {
-          const x = $match$9952;
+        if ($match$10074.$t === "SImport") {
+          const x = $match$10074;
           return envOut(addTypedNode(st, x.f[0], TUnit), env);
         }
-        if ($match$9952.$t === "SExport") {
-          const x = $match$9952;
+        if ($match$10074.$t === "SExport") {
+          const x = $match$10074;
           return (() => {
             const inner = cgenStmt(st, env, x.f[1], path);
             return envOut(addTypedNode(inner.f[0], x.f[0], TUnit), inner.f[1]);
           })();
         }
-        if ($match$9952.$t === "SExtern") {
-          const x = $match$9952;
+        if ($match$10074.$t === "SExtern") {
+          const x = $match$10074;
           return inferExtern(st, env, x.f[0], x.f[1], path);
         }
-        throw $matchFail("src/check/types.pf", 9952);
+        throw $matchFail("src/check/types.pf", 10074);
       })(s);
     }
     function inferStmts(st, env, stmts, path) {
-      return (($match$10389) => {
-        if ($match$10389.$t === "None") {
+      return (($match$10511) => {
+        if ($match$10511.$t === "None") {
           return envOut(st, env);
         }
-        if ($match$10389.$t === "Some") {
-          const cell = $match$10389;
+        if ($match$10511.$t === "Some") {
+          const cell = $match$10511;
           return (() => {
             const p = cell.f[0];
             const out1 = cgenStmt(st, env, p.f[0], path);
             return inferStmts(out1.f[0], out1.f[1], p.f[1], path);
           })();
         }
-        throw $matchFail("src/check/types.pf", 10389);
+        throw $matchFail("src/check/types.pf", 10511);
       })($field(Compat, "uncons")(stmts));
     }
     function exportedNameOf(stmt) {
-      return (($match$10422) => {
-        if ($match$10422.$t === "SLet") {
-          const s = $match$10422;
+      return (($match$10544) => {
+        if ($match$10544.$t === "SLet") {
+          const s = $match$10544;
           return $makeVariant("Some", "Option", ["value"], [s.f[1]]);
         }
-        if ($match$10422.$t === "SVar") {
-          const s = $match$10422;
+        if ($match$10544.$t === "SVar") {
+          const s = $match$10544;
           return $makeVariant("Some", "Option", ["value"], [s.f[1]]);
         }
-        if ($match$10422.$t === "SFun") {
-          const s = $match$10422;
+        if ($match$10544.$t === "SFun") {
+          const s = $match$10544;
           return $makeVariant("Some", "Option", ["value"], [s.f[1]]);
         }
-        if ($match$10422.$t === "SType") {
-          const s = $match$10422;
+        if ($match$10544.$t === "SType") {
+          const s = $match$10544;
           return (() => {
-            return (($match$10434) => {
-              if ($match$10434.$t === "RecordDecl") {
-                const r = $match$10434;
+            return (($match$10556) => {
+              if ($match$10556.$t === "RecordDecl") {
+                const r = $match$10556;
                 return $makeVariant("Some", "Option", ["value"], [r.f[0]]);
               }
-              if ($match$10434.$t === "UnionDecl") {
-                const u = $match$10434;
+              if ($match$10556.$t === "UnionDecl") {
+                const u = $match$10556;
                 return $makeVariant("Some", "Option", ["value"], [u.f[0]]);
               }
-              throw $matchFail("src/check/types.pf", 10434);
+              throw $matchFail("src/check/types.pf", 10556);
             })(s.f[1]);
           })();
         }
         if (true) {
           return $makeVariant("None", "Option", [], []);
         }
-        throw $matchFail("src/check/types.pf", 10422);
+        throw $matchFail("src/check/types.pf", 10544);
       })(stmt);
     }
     function stmtIsGenericExport(stmt) {
-      return (($match$10447) => {
-        if ($match$10447.$t === "SFun") {
-          const s = $match$10447;
+      return (($match$10569) => {
+        if ($match$10569.$t === "SFun") {
+          const s = $match$10569;
           return isGenericKind(s.f[4]);
         }
         if (true) {
           return false;
         }
-        throw $matchFail("src/check/types.pf", 10447);
+        throw $matchFail("src/check/types.pf", 10569);
       })(stmt);
     }
     function typeHasFreeVars(t) {
       return $gtI($length(freeVars(t)), 0);
     }
     function widenVariantsDeep(t) {
-      return (($match$10465) => {
-        if ($match$10465.$t === "TVariant") {
-          const v = $match$10465;
+      return (($match$10587) => {
+        if ($match$10587.$t === "TVariant") {
+          const v = $match$10587;
           return $makeVariant("TNamed", "Type", ["tname", "args"], [v.f[1], $map(widenVariantsDeep, v.f[2])]);
         }
-        if ($match$10465.$t === "TList") {
-          const x = $match$10465;
+        if ($match$10587.$t === "TList") {
+          const x = $match$10587;
           return $makeVariant("TList", "Type", ["elem"], [widenVariantsDeep(x.f[0])]);
         }
-        if ($match$10465.$t === "TArray") {
-          const x = $match$10465;
+        if ($match$10587.$t === "TArray") {
+          const x = $match$10587;
           return $makeVariant("TArray", "Type", ["elem"], [widenVariantsDeep(x.f[0])]);
         }
-        if ($match$10465.$t === "TDict") {
-          const x = $match$10465;
+        if ($match$10587.$t === "TDict") {
+          const x = $match$10587;
           return $makeVariant("TDict", "Type", ["keyT", "valT"], [widenVariantsDeep(x.f[0]), widenVariantsDeep(x.f[1])]);
         }
-        if ($match$10465.$t === "TFun") {
-          const f = $match$10465;
+        if ($match$10587.$t === "TFun") {
+          const f = $match$10587;
           return $makeVariant("TFun", "Type", ["params", "ret"], [$map(widenVariantsDeep, f.f[0]), widenVariantsDeep(f.f[1])]);
         }
-        if ($match$10465.$t === "TProc") {
-          const pr = $match$10465;
+        if ($match$10587.$t === "TProc") {
+          const pr = $match$10587;
           return $makeVariant("TProc", "Type", ["params", "ret", "isAsync"], [$map(widenVariantsDeep, pr.f[0]), widenVariantsDeep(pr.f[1]), pr.f[2]]);
         }
-        if ($match$10465.$t === "TNamed") {
-          const n = $match$10465;
+        if ($match$10587.$t === "TNamed") {
+          const n = $match$10587;
           return $makeVariant("TNamed", "Type", ["tname", "args"], [n.f[0], $map(widenVariantsDeep, n.f[1])]);
         }
         if (true) {
           return t;
         }
-        throw $matchFail("src/check/types.pf", 10465);
+        throw $matchFail("src/check/types.pf", 10587);
       })(t);
     }
     function substMapWithoutVars(m, vars) {
-      return (($match$10527) => {
-        if ($match$10527.$t === "None") {
+      return (($match$10649) => {
+        if ($match$10649.$t === "None") {
           return m;
         }
-        if ($match$10527.$t === "Some") {
-          const cell = $match$10527;
+        if ($match$10649.$t === "Some") {
+          const cell = $match$10649;
           return (() => {
             const p = cell.f[0];
             return substMapWithoutVars($field(IMI, "imiRemove")(m, p.f[0]), p.f[1]);
           })();
         }
-        throw $matchFail("src/check/types.pf", 10527);
+        throw $matchFail("src/check/types.pf", 10649);
       })($field(Compat, "uncons")(vars));
     }
     function applySchemeForExport(st, scheme) {
@@ -17131,30 +17333,30 @@
       return apply($makeRecord("Subst", ["m"], [m]), scheme.f[2]);
     }
     function exportSchemeFor(st, env, stmt, path) {
-      return (($match$10566) => {
-        if ($match$10566.$t === "None") {
+      return (($match$10688) => {
+        if ($match$10688.$t === "None") {
           return $makeRecord("Pair", ["key", "value"], [st, $makeVariant("None", "Option", [], [])]);
         }
-        if ($match$10566.$t === "Some") {
-          const n = $match$10566;
+        if ($match$10688.$t === "Some") {
+          const n = $match$10688;
           return (() => {
-            return (($match$10574) => {
-              if ($match$10574.$t === "None") {
+            return (($match$10696) => {
+              if ($match$10696.$t === "None") {
                 return $makeRecord("Pair", ["key", "value"], [st, $makeVariant("Some", "Option", ["value"], [$makeRecord("Pair", ["key", "value"], [n.f[0], mkScheme([], [], $makeVariant("TNamed", "Type", ["tname", "args"], [n.f[0], []]))])])]);
               }
-              if ($match$10574.$t === "Some") {
-                const entry = $match$10574;
+              if ($match$10696.$t === "Some") {
+                const entry = $match$10696;
                 return (() => {
-                  return (($match$10595) => {
-                    if ($match$10595.$t === "TScheme") {
-                      const s = $match$10595;
+                  return (($match$10717) => {
+                    if ($match$10717.$t === "TScheme") {
+                      const s = $match$10717;
                       return (() => {
                         const solved = widenVariantsDeep(applySchemeForExport(st, s.f[0]));
                         return $makeRecord("Pair", ["key", "value"], [st, $makeVariant("Some", "Option", ["value"], [$makeRecord("Pair", ["key", "value"], [n.f[0], mkScheme(s.f[0].f[0], s.f[0].f[1], solved)])])]);
                       })();
                     }
-                    if ($match$10595.$t === "TMono") {
-                      const m = $match$10595;
+                    if ($match$10717.$t === "TMono") {
+                      const m = $match$10717;
                       return (() => {
                         const solved = defaultResidualSlots(widenVariantsDeep(apply(st.f[1], m.f[0])));
                         const st1 = checkExportGround(st, stmt, path, n.f[0], solved);
@@ -17164,40 +17366,40 @@
                     if (true) {
                       return $makeRecord("Pair", ["key", "value"], [st, $makeVariant("Some", "Option", ["value"], [$makeRecord("Pair", ["key", "value"], [n.f[0], mkScheme([], [], TUnknown)])])]);
                     }
-                    throw $matchFail("src/check/types.pf", 10595);
+                    throw $matchFail("src/check/types.pf", 10717);
                   })(entry.f[0]);
                 })();
               }
-              throw $matchFail("src/check/types.pf", 10574);
+              throw $matchFail("src/check/types.pf", 10696);
             })(lookupEnv(env, n.f[0]));
           })();
         }
-        throw $matchFail("src/check/types.pf", 10566);
+        throw $matchFail("src/check/types.pf", 10688);
       })(exportedNameOf(stmt));
     }
     function collectExportsLoop(st, env, stmts, path, acc) {
-      return (($match$10671) => {
-        if ($match$10671.$t === "None") {
+      return (($match$10793) => {
+        if ($match$10793.$t === "None") {
           return $makeRecord("Pair", ["key", "value"], [st, acc]);
         }
-        if ($match$10671.$t === "Some") {
-          const cell = $match$10671;
+        if ($match$10793.$t === "Some") {
+          const cell = $match$10793;
           return (() => {
             const p = cell.f[0];
-            return (($match$10683) => {
-              if ($match$10683.$t === "SExport") {
-                const e = $match$10683;
+            return (($match$10805) => {
+              if ($match$10805.$t === "SExport") {
+                const e = $match$10805;
                 return (() => {
                   const one = exportSchemeFor(st, env, e.f[1], path);
-                  const acc1 = (($match$10695) => {
-                    if ($match$10695.$t === "None") {
+                  const acc1 = (($match$10817) => {
+                    if ($match$10817.$t === "None") {
                       return acc;
                     }
-                    if ($match$10695.$t === "Some") {
-                      const pair = $match$10695;
+                    if ($match$10817.$t === "Some") {
+                      const pair = $match$10817;
                       return $field(IMS, "imsPut")(acc, pair.f[0].f[0], pair.f[0].f[1]);
                     }
-                    throw $matchFail("src/check/types.pf", 10695);
+                    throw $matchFail("src/check/types.pf", 10817);
                   })(one.f[1]);
                   return collectExportsLoop(one.f[0], env, p.f[1], path, acc1);
                 })();
@@ -17205,11 +17407,11 @@
               if (true) {
                 return collectExportsLoop(st, env, p.f[1], path, acc);
               }
-              throw $matchFail("src/check/types.pf", 10683);
+              throw $matchFail("src/check/types.pf", 10805);
             })(p.f[0]);
           })();
         }
-        throw $matchFail("src/check/types.pf", 10671);
+        throw $matchFail("src/check/types.pf", 10793);
       })($field(Compat, "uncons")(stmts));
     }
     function collectExports(st, env, stmts, path) {
@@ -17288,12 +17490,14 @@
     exports["cgenStmt"] = cgenStmt;
     exports["inferModule"] = inferModule;
   });
-  $registerSchemas([{name: "NKValue", union: "NameKind", fields: [], variant: true}, {name: "NKFunction", union: "NameKind", fields: [], variant: true}, {name: "NKProc", union: "NameKind", fields: ["isAsync"], variant: true}, {name: "NKType", union: "NameKind", fields: [], variant: true}, {name: "NKNamespace", union: "NameKind", fields: ["table"], variant: true}, {name: "CtxPure", union: "PurityCtx", fields: [], variant: true}, {name: "CtxProc", union: "PurityCtx", fields: ["isAsync"], variant: true}, {name: "CtxTop", union: "PurityCtx", fields: [], variant: true}, {name: "PurityResult", union: null, fields: ["diags"], variant: false}, {name: "PuritySt", union: null, fields: ["path", "env", "diags"], variant: false}, {name: "ArmOut", union: null, fields: ["st", "env"], variant: false}]);
-  $maps["src/check/purity"] = {"../syntax/ast": "src/syntax/ast", "./diag": "src/check/diag", "./iface": "src/check/iface", "../data/imaps": "src/data/imaps", "../compat": "src/compat"};
+  $registerSchemas([{name: "NKValue", union: "NameKind", fields: [], variant: true}, {name: "NKFunction", union: "NameKind", fields: [], variant: true}, {name: "NKProc", union: "NameKind", fields: ["isAsync"], variant: true}, {name: "NKType", union: "NameKind", fields: [], variant: true}, {name: "NKNamespace", union: "NameKind", fields: ["table"], variant: true}, {name: "CtxPure", union: "PurityCtx", fields: [], variant: true}, {name: "CtxProc", union: "PurityCtx", fields: ["isAsync"], variant: true}, {name: "CtxTop", union: "PurityCtx", fields: [], variant: true}, {name: "PurityResult", union: null, fields: ["diags"], variant: false}, {name: "PuritySt", union: null, fields: ["path", "env", "types", "diags"], variant: false}, {name: "ArmOut", union: null, fields: ["st", "env"], variant: false}]);
+  $maps["src/check/purity"] = {"../syntax/ast": "src/syntax/ast", "./diag": "src/check/diag", "./iface": "src/check/iface", "./types": "src/check/types", "../data/imapi": "src/data/imapi", "../data/imaps": "src/data/imaps", "../compat": "src/compat"};
   $mods["src/check/purity"] = ((exports, $require) => {
     const A = $require("../syntax/ast");
     const D = $require("./diag");
     const I = $require("./iface");
+    const TY = $require("./types");
+    const IMI = $require("../data/imapi");
     const IMS = $require("../data/imaps");
     const Compat = $require("../compat");
     const NKValue = $makeVariant("NKValue", "NameKind", [], []);
@@ -17337,20 +17541,20 @@
     function mkPurityResult(diags) {
       return $makeRecord("PurityResult", ["diags"], [diags]);
     }
-    function mkState(path, env, diags) {
-      return $makeRecord("PuritySt", ["path", "env", "diags"], [path, env, diags]);
+    function mkState(path, env, types, diags) {
+      return $makeRecord("PuritySt", ["path", "env", "types", "diags"], [path, env, types, diags]);
     }
     function withEnv(st, env) {
-      return $makeRecord("PuritySt", ["path", "env", "diags"], [st.f[0], env, st.f[2]]);
+      return $makeRecord("PuritySt", ["path", "env", "types", "diags"], [st.f[0], env, st.f[2], st.f[3]]);
     }
     function withDiags(st, diags) {
-      return $makeRecord("PuritySt", ["path", "env", "diags"], [st.f[0], st.f[1], diags]);
+      return $makeRecord("PuritySt", ["path", "env", "types", "diags"], [st.f[0], st.f[1], st.f[2], diags]);
     }
     function armOut(st, env) {
       return $makeRecord("ArmOut", ["st", "env"], [st, env]);
     }
     function addDiag(st, span, message) {
-      return withDiags(st, $cons($field(D, "err")($makeVariant("PurityD", "DiagCode", [], []), message, st.f[0], span), st.f[2]));
+      return withDiags(st, $cons($field(D, "err")($makeVariant("PurityD", "DiagCode", [], []), message, st.f[0], span), st.f[3]));
     }
     function bindName(st, name, kind) {
       return withEnv(st, $field(IMS, "imsPut")(st.f[1], name, kind));
@@ -17362,114 +17566,114 @@
       return $field(IMS, "imsGet")(st.f[1], name);
     }
     function ctxAllowsEffects(ctx) {
-      return (($match$126) => {
-        if ($match$126.$t === "CtxPure") {
-          return false;
-        }
-        if ($match$126.$t === "CtxProc") {
-          return true;
-        }
-        if ($match$126.$t === "CtxTop") {
-          return true;
-        }
-        throw $matchFail("src/check/purity.pf", 126);
-      })(ctx);
-    }
-    function ctxAllowsAwait(ctx) {
       return (($match$133) => {
-        if ($match$133.$t === "CtxProc") {
-          const c = $match$133;
-          return c.f[0];
-        }
         if ($match$133.$t === "CtxPure") {
           return false;
         }
+        if ($match$133.$t === "CtxProc") {
+          return true;
+        }
         if ($match$133.$t === "CtxTop") {
-          return false;
+          return true;
         }
         throw $matchFail("src/check/purity.pf", 133);
       })(ctx);
     }
+    function ctxAllowsAwait(ctx) {
+      return (($match$140) => {
+        if ($match$140.$t === "CtxProc") {
+          const c = $match$140;
+          return c.f[0];
+        }
+        if ($match$140.$t === "CtxPure") {
+          return false;
+        }
+        if ($match$140.$t === "CtxTop") {
+          return false;
+        }
+        throw $matchFail("src/check/purity.pf", 140);
+      })(ctx);
+    }
     function pureContextForLazy(mode, ctx) {
-      return (($match$141) => {
-        if ($match$141.$t === "LazyList") {
+      return (($match$148) => {
+        if ($match$148.$t === "LazyList") {
           return CtxPure;
         }
-        if ($match$141.$t === "StrictList") {
+        if ($match$148.$t === "StrictList") {
           return ctx;
         }
-        throw $matchFail("src/check/purity.pf", 141);
+        throw $matchFail("src/check/purity.pf", 148);
       })(mode);
     }
     function kindFromExportKind(kind) {
-      return (($match$147) => {
-        if ($match$147.$t === "KFun") {
+      return (($match$154) => {
+        if ($match$154.$t === "KFun") {
           return NKFunction;
         }
-        if ($match$147.$t === "KProc") {
+        if ($match$154.$t === "KProc") {
           return $makeVariant("NKProc", "NameKind", ["isAsync"], [false]);
         }
-        if ($match$147.$t === "KValue") {
+        if ($match$154.$t === "KValue") {
           return NKValue;
         }
-        if ($match$147.$t === "KMutable") {
+        if ($match$154.$t === "KMutable") {
           return NKValue;
         }
-        if ($match$147.$t === "KType") {
+        if ($match$154.$t === "KType") {
           return NKType;
         }
-        if ($match$147.$t === "KOpaqueType") {
+        if ($match$154.$t === "KOpaqueType") {
           return NKType;
         }
-        throw $matchFail("src/check/purity.pf", 147);
+        throw $matchFail("src/check/purity.pf", 154);
       })(kind);
     }
     function tableFromKindEntries(entries, table) {
-      return (($match$158) => {
-        if ($match$158.$t === "None") {
+      return (($match$165) => {
+        if ($match$165.$t === "None") {
           return table;
         }
-        if ($match$158.$t === "Some") {
-          const cell = $match$158;
+        if ($match$165.$t === "Some") {
+          const cell = $match$165;
           return (() => {
             const p = cell.f[0].f[0];
             const table1 = $field(IMS, "imsPut")(table, $field(p, "key"), kindFromExportKind($field(p, "value")));
             return tableFromKindEntries(cell.f[0].f[1], table1);
           })();
         }
-        throw $matchFail("src/check/purity.pf", 158);
+        throw $matchFail("src/check/purity.pf", 165);
       })($field(Compat, "uncons")(entries));
     }
     function tableFromVariants(variants, table) {
-      return (($match$189) => {
-        if ($match$189.$t === "None") {
+      return (($match$196) => {
+        if ($match$196.$t === "None") {
           return table;
         }
-        if ($match$189.$t === "Some") {
-          const cell = $match$189;
+        if ($match$196.$t === "Some") {
+          const cell = $match$196;
           return (() => {
             const v = cell.f[0].f[0];
             const table1 = $field(IMS, "imsPut")(table, $field(v, "vname"), NKFunction);
             return tableFromVariants(cell.f[0].f[1], table1);
           })();
         }
-        throw $matchFail("src/check/purity.pf", 189);
+        throw $matchFail("src/check/purity.pf", 196);
       })($field(Compat, "uncons")(variants));
     }
     function tableFromUnionEntries(entries, table) {
-      return (($match$217) => {
-        if ($match$217.$t === "None") {
+      return (($match$224) => {
+        if ($match$224.$t === "None") {
           return table;
         }
-        if ($match$217.$t === "Some") {
-          const cell = $match$217;
+        if ($match$224.$t === "Some") {
+          const cell = $match$224;
           return (() => {
             const p = cell.f[0].f[0];
             const table1 = tableFromVariants($field(p, "value"), table);
             return tableFromUnionEntries(cell.f[0].f[1], table1);
           })();
         }
-        throw $matchFail("src/check/purity.pf", 217);
+        throw $matchFail("src/check/purity.pf", 224);
       })($field(Compat, "uncons")(entries));
     }
     function tableFromIface(iface) {
@@ -17477,12 +17681,12 @@
       return tableFromUnionEntries($field(IMS, "imsEntries")($field(iface, "unions")), table1);
     }
     function variantKindInVariants(variants, name) {
-      return (($match$264) => {
-        if ($match$264.$t === "None") {
+      return (($match$271) => {
+        if ($match$271.$t === "None") {
           return $makeVariant("None", "Option", [], []);
         }
-        if ($match$264.$t === "Some") {
-          const cell = $match$264;
+        if ($match$271.$t === "Some") {
+          const cell = $match$271;
           return (() => {
             const v = cell.f[0].f[0];
             if ($field(v, "vname") === name) {
@@ -17492,55 +17696,55 @@
             }
           })();
         }
-        throw $matchFail("src/check/purity.pf", 264);
+        throw $matchFail("src/check/purity.pf", 271);
       })($field(Compat, "uncons")(variants));
     }
     function variantKindInUnionEntries(entries, name) {
-      return (($match$292) => {
-        if ($match$292.$t === "None") {
+      return (($match$299) => {
+        if ($match$299.$t === "None") {
           return $makeVariant("None", "Option", [], []);
         }
-        if ($match$292.$t === "Some") {
-          const cell = $match$292;
+        if ($match$299.$t === "Some") {
+          const cell = $match$299;
           return (() => {
             const p = cell.f[0].f[0];
-            return (($match$303) => {
-              if ($match$303.$t === "Some") {
-                const k = $match$303;
+            return (($match$310) => {
+              if ($match$310.$t === "Some") {
+                const k = $match$310;
                 return $makeVariant("Some", "Option", ["value"], [k.f[0]]);
               }
-              if ($match$303.$t === "None") {
+              if ($match$310.$t === "None") {
                 return variantKindInUnionEntries(cell.f[0].f[1], name);
               }
-              throw $matchFail("src/check/purity.pf", 303);
+              throw $matchFail("src/check/purity.pf", 310);
             })(variantKindInVariants($field(p, "value"), name));
           })();
         }
-        throw $matchFail("src/check/purity.pf", 292);
+        throw $matchFail("src/check/purity.pf", 299);
       })($field(Compat, "uncons")(entries));
     }
     function lookupIfaceNameKind(iface, name) {
-      return (($match$321) => {
-        if ($match$321.$t === "Some") {
-          const k = $match$321;
+      return (($match$328) => {
+        if ($match$328.$t === "Some") {
+          const k = $match$328;
           return $makeVariant("Some", "Option", ["value"], [kindFromExportKind(k.f[0])]);
         }
-        if ($match$321.$t === "None") {
+        if ($match$328.$t === "None") {
           return variantKindInUnionEntries($field(IMS, "imsEntries")($field(iface, "unions")), name);
         }
-        throw $matchFail("src/check/purity.pf", 321);
+        throw $matchFail("src/check/purity.pf", 328);
       })($field(I, "lookupKind")(iface, name));
     }
     function ifacePathMatches(rawPath, iface) {
       return $field(iface, "path") === rawPath;
     }
     function ifaceForImportLoop(entries, rawPath) {
-      return (($match$348) => {
-        if ($match$348.$t === "None") {
+      return (($match$355) => {
+        if ($match$355.$t === "None") {
           return $makeVariant("None", "Option", [], []);
         }
-        if ($match$348.$t === "Some") {
-          const cell = $match$348;
+        if ($match$355.$t === "Some") {
+          const cell = $match$355;
           return (() => {
             const p = cell.f[0].f[0];
             const iface = $field(p, "value");
@@ -17551,56 +17755,56 @@
             }
           })();
         }
-        throw $matchFail("src/check/purity.pf", 348);
+        throw $matchFail("src/check/purity.pf", 355);
       })($field(Compat, "uncons")(entries));
     }
     function ifaceForImport(rawPath, deps) {
-      return (($match$379) => {
-        if ($match$379.$t === "Some") {
-          const iface = $match$379;
+      return (($match$386) => {
+        if ($match$386.$t === "Some") {
+          const iface = $match$386;
           return $makeVariant("Some", "Option", ["value"], [iface.f[0]]);
         }
-        if ($match$379.$t === "None") {
+        if ($match$386.$t === "None") {
           return ifaceForImportLoop($field(IMS, "imsEntries")(deps), rawPath);
         }
-        throw $matchFail("src/check/purity.pf", 379);
+        throw $matchFail("src/check/purity.pf", 386);
       })($field(IMS, "imsGet")(deps, rawPath));
     }
     function importAliasName(importName) {
-      return (($match$397) => {
-        if ($match$397.$t === "Some") {
-          const a = $match$397;
+      return (($match$404) => {
+        if ($match$404.$t === "Some") {
+          const a = $match$404;
           return a.f[0];
         }
-        if ($match$397.$t === "None") {
+        if ($match$404.$t === "None") {
           return $field(importName, "name");
         }
-        throw $matchFail("src/check/purity.pf", 397);
+        throw $matchFail("src/check/purity.pf", 404);
       })($field(importName, "alias"));
     }
     function bindNamedImports(st, iface, names) {
-      return (($match$406) => {
-        if ($match$406.$t === "None") {
+      return (($match$413) => {
+        if ($match$413.$t === "None") {
           return st;
         }
-        if ($match$406.$t === "Some") {
-          const cell = $match$406;
+        if ($match$413.$t === "Some") {
+          const cell = $match$413;
           return (() => {
             const item = cell.f[0].f[0];
             const localName = importAliasName(item);
-            return (($match$421) => {
-              if ($match$421.$t === "Some") {
-                const k = $match$421;
+            return (($match$428) => {
+              if ($match$428.$t === "Some") {
+                const k = $match$428;
                 return bindNamedImports(bindName(st, localName, k.f[0]), iface, cell.f[0].f[1]);
               }
-              if ($match$421.$t === "None") {
+              if ($match$428.$t === "None") {
                 return bindNamedImports(bindName(st, localName, NKValue), iface, cell.f[0].f[1]);
               }
-              throw $matchFail("src/check/purity.pf", 421);
+              throw $matchFail("src/check/purity.pf", 428);
             })(lookupIfaceNameKind(iface, $field(item, "name")));
           })();
         }
-        throw $matchFail("src/check/purity.pf", 406);
+        throw $matchFail("src/check/purity.pf", 413);
       })($field(Compat, "uncons")(names));
     }
     function bindStarImports(st, iface) {
@@ -17609,363 +17813,388 @@
       return bindStarEntries(st, entries);
     }
     function bindStarEntries(st, entries) {
-      return (($match$468) => {
-        if ($match$468.$t === "None") {
+      return (($match$475) => {
+        if ($match$475.$t === "None") {
           return st;
         }
-        if ($match$468.$t === "Some") {
-          const cell = $match$468;
+        if ($match$475.$t === "Some") {
+          const cell = $match$475;
           return (() => {
             const p = cell.f[0].f[0];
             return bindStarEntries(bindName(st, $field(p, "key"), $field(p, "value")), cell.f[0].f[1]);
           })();
         }
-        throw $matchFail("src/check/purity.pf", 468);
+        throw $matchFail("src/check/purity.pf", 475);
       })($field(Compat, "uncons")(entries));
     }
     function bindImportStmt(st, stmt, deps) {
-      return (($match$494) => {
-        if ($match$494.$t === "SImport") {
-          const s = $match$494;
+      return (($match$501) => {
+        if ($match$501.$t === "SImport") {
+          const s = $match$501;
           return (() => {
-            return (($match$497) => {
-              if ($match$497.$t === "None") {
+            return (($match$504) => {
+              if ($match$504.$t === "None") {
                 return st;
               }
-              if ($match$497.$t === "Some") {
-                const ifaceCell = $match$497;
+              if ($match$504.$t === "Some") {
+                const ifaceCell = $match$504;
                 return (() => {
                   const iface = ifaceCell.f[0];
-                  return (($match$508) => {
-                    if ($match$508.$t === "INames") {
-                      const spec = $match$508;
+                  return (($match$515) => {
+                    if ($match$515.$t === "INames") {
+                      const spec = $match$515;
                       return bindNamedImports(st, iface, spec.f[0]);
                     }
-                    if ($match$508.$t === "INamespace") {
-                      const spec = $match$508;
+                    if ($match$515.$t === "INamespace") {
+                      const spec = $match$515;
                       return bindName(st, spec.f[0], $makeVariant("NKNamespace", "NameKind", ["table"], [tableFromIface(iface)]));
                     }
-                    if ($match$508.$t === "IStar") {
+                    if ($match$515.$t === "IStar") {
                       return bindStarImports(st, iface);
                     }
-                    throw $matchFail("src/check/purity.pf", 508);
+                    throw $matchFail("src/check/purity.pf", 515);
                   })(s.f[1]);
                 })();
               }
-              throw $matchFail("src/check/purity.pf", 497);
+              throw $matchFail("src/check/purity.pf", 504);
             })(ifaceForImport(s.f[2], deps));
           })();
         }
         if (true) {
           return st;
         }
-        throw $matchFail("src/check/purity.pf", 494);
+        throw $matchFail("src/check/purity.pf", 501);
       })(stmt);
     }
     function bindImportStmts(st, stmts, deps) {
       while (true) {
-        const $match$535 = $field(Compat, "uncons")(stmts);
-        if ($match$535.$t === "None") {
+        const $match$542 = $field(Compat, "uncons")(stmts);
+        if ($match$542.$t === "None") {
           return st;
         }
-        if ($match$535.$t === "Some") {
-          const cell = $match$535;
-          const $tc$553$0 = bindImportStmt(st, cell.f[0].f[0], deps);
-          const $tc$553$1 = cell.f[0].f[1];
-          const $tc$553$2 = deps;
-          st = $tc$553$0;
-          stmts = $tc$553$1;
-          deps = $tc$553$2;
+        if ($match$542.$t === "Some") {
+          const cell = $match$542;
+          const $tc$560$0 = bindImportStmt(st, cell.f[0].f[0], deps);
+          const $tc$560$1 = cell.f[0].f[1];
+          const $tc$560$2 = deps;
+          st = $tc$560$0;
+          stmts = $tc$560$1;
+          deps = $tc$560$2;
           continue;
         }
-        throw $matchFail("src/check/purity.pf", 535);
+        throw $matchFail("src/check/purity.pf", 542);
       }
     }
     function nameOfTypeDecl(decl) {
-      return (($match$556) => {
-        if ($match$556.$t === "RecordDecl") {
-          const r = $match$556;
+      return (($match$563) => {
+        if ($match$563.$t === "RecordDecl") {
+          const r = $match$563;
           return r.f[0];
         }
-        if ($match$556.$t === "UnionDecl") {
-          const u = $match$556;
+        if ($match$563.$t === "UnionDecl") {
+          const u = $match$563;
           return u.f[0];
         }
-        throw $matchFail("src/check/purity.pf", 556);
+        throw $matchFail("src/check/purity.pf", 563);
       })(decl);
     }
     function variantsOfTypeDecl(decl) {
-      return (($match$564) => {
-        if ($match$564.$t === "RecordDecl") {
+      return (($match$571) => {
+        if ($match$571.$t === "RecordDecl") {
           return [];
         }
-        if ($match$564.$t === "UnionDecl") {
-          const u = $match$564;
+        if ($match$571.$t === "UnionDecl") {
+          const u = $match$571;
           return u.f[1];
         }
-        throw $matchFail("src/check/purity.pf", 564);
+        throw $matchFail("src/check/purity.pf", 571);
       })(decl);
     }
     function kindOfFnKind(kind) {
-      return (($match$571) => {
-        if ($match$571.$t === "PureFn") {
+      return (($match$578) => {
+        if ($match$578.$t === "PureFn") {
           return NKFunction;
         }
-        if ($match$571.$t === "ProcFn") {
-          const p = $match$571;
+        if ($match$578.$t === "ProcFn") {
+          const p = $match$578;
           return $makeVariant("NKProc", "NameKind", ["isAsync"], [p.f[0]]);
         }
-        throw $matchFail("src/check/purity.pf", 571);
+        throw $matchFail("src/check/purity.pf", 578);
       })(kind);
     }
     function kindOfExternKind(kind) {
-      return (($match$579) => {
-        if ($match$579.$t === "ExternFunction") {
+      return (($match$586) => {
+        if ($match$586.$t === "ExternFunction") {
           return NKFunction;
         }
-        if ($match$579.$t === "ExternProc") {
-          const p = $match$579;
+        if ($match$586.$t === "ExternProc") {
+          const p = $match$586;
           return $makeVariant("NKProc", "NameKind", ["isAsync"], [p.f[0]]);
         }
-        throw $matchFail("src/check/purity.pf", 579);
+        throw $matchFail("src/check/purity.pf", 586);
       })(kind);
     }
     function bindVariantDecls(st, variants) {
-      return (($match$587) => {
-        if ($match$587.$t === "None") {
+      return (($match$594) => {
+        if ($match$594.$t === "None") {
           return st;
         }
-        if ($match$587.$t === "Some") {
-          const cell = $match$587;
+        if ($match$594.$t === "Some") {
+          const cell = $match$594;
           return (() => {
             const v = cell.f[0].f[0];
             return bindVariantDecls(bindName(st, $field(v, "vname"), NKFunction), cell.f[0].f[1]);
           })();
         }
-        throw $matchFail("src/check/purity.pf", 587);
+        throw $matchFail("src/check/purity.pf", 594);
       })($field(Compat, "uncons")(variants));
     }
     function prebindOne(st, stmt) {
       while (true) {
-        const $match$612 = stmt;
-        if ($match$612.$t === "SLet") {
-          const s = $match$612;
+        const $match$619 = stmt;
+        if ($match$619.$t === "SLet") {
+          const s = $match$619;
           return bindName(st, s.f[1], NKValue);
         }
-        if ($match$612.$t === "SVar") {
-          const s = $match$612;
+        if ($match$619.$t === "SVar") {
+          const s = $match$619;
           return bindName(st, s.f[1], NKValue);
         }
-        if ($match$612.$t === "SFun") {
-          const s = $match$612;
+        if ($match$619.$t === "SFun") {
+          const s = $match$619;
           return bindName(st, s.f[1], kindOfFnKind(s.f[4]));
         }
-        if ($match$612.$t === "SExtern") {
-          const s = $match$612;
+        if ($match$619.$t === "SExtern") {
+          const s = $match$619;
           return bindName(st, $field(s.f[1], "name"), kindOfExternKind($field(s.f[1], "kind")));
         }
-        if ($match$612.$t === "SType") {
-          const s = $match$612;
+        if ($match$619.$t === "SType") {
+          const s = $match$619;
           return (() => {
             const st1 = bindName(st, nameOfTypeDecl(s.f[1]), NKType);
             return bindVariantDecls(st1, variantsOfTypeDecl(s.f[1]));
           })();
         }
-        if ($match$612.$t === "SExport") {
-          const e = $match$612;
-          const $tc$668$0 = st;
-          const $tc$668$1 = e.f[1];
-          st = $tc$668$0;
-          stmt = $tc$668$1;
+        if ($match$619.$t === "SExport") {
+          const e = $match$619;
+          const $tc$675$0 = st;
+          const $tc$675$1 = e.f[1];
+          st = $tc$675$0;
+          stmt = $tc$675$1;
           continue;
         }
         if (true) {
           return st;
         }
-        throw $matchFail("src/check/purity.pf", 612);
+        throw $matchFail("src/check/purity.pf", 619);
       }
     }
     function prebindLocalDecls(st, stmts) {
       while (true) {
-        const $match$672 = $field(Compat, "uncons")(stmts);
-        if ($match$672.$t === "None") {
+        const $match$679 = $field(Compat, "uncons")(stmts);
+        if ($match$679.$t === "None") {
           return st;
         }
-        if ($match$672.$t === "Some") {
-          const cell = $match$672;
-          const $tc$688$0 = prebindOne(st, cell.f[0].f[0]);
-          const $tc$688$1 = cell.f[0].f[1];
-          st = $tc$688$0;
-          stmts = $tc$688$1;
+        if ($match$679.$t === "Some") {
+          const cell = $match$679;
+          const $tc$695$0 = prebindOne(st, cell.f[0].f[0]);
+          const $tc$695$1 = cell.f[0].f[1];
+          st = $tc$695$0;
+          stmts = $tc$695$1;
           continue;
         }
-        throw $matchFail("src/check/purity.pf", 672);
+        throw $matchFail("src/check/purity.pf", 679);
       }
     }
     function bindParams(st, params) {
       while (true) {
-        const $match$691 = $field(Compat, "uncons")(params);
-        if ($match$691.$t === "None") {
+        const $match$698 = $field(Compat, "uncons")(params);
+        if ($match$698.$t === "None") {
           return st;
         }
-        if ($match$691.$t === "Some") {
-          const cell = $match$691;
-          const $tc$708$0 = bindName(st, cell.f[0].f[0], NKValue);
-          const $tc$708$1 = cell.f[0].f[1];
-          st = $tc$708$0;
-          params = $tc$708$1;
+        if ($match$698.$t === "Some") {
+          const cell = $match$698;
+          const $tc$715$0 = bindName(st, cell.f[0].f[0], NKValue);
+          const $tc$715$1 = cell.f[0].f[1];
+          st = $tc$715$0;
+          params = $tc$715$1;
           continue;
         }
-        throw $matchFail("src/check/purity.pf", 691);
+        throw $matchFail("src/check/purity.pf", 698);
       }
     }
     function lookupNamespaceField(st, objectExpr, fname) {
-      return (($match$711) => {
-        if ($match$711.$t === "EVar") {
-          const e = $match$711;
+      return (($match$718) => {
+        if ($match$718.$t === "EVar") {
+          const e = $match$718;
           return (() => {
-            return (($match$714) => {
-              if ($match$714.$t === "Some") {
-                const k = $match$714;
+            return (($match$721) => {
+              if ($match$721.$t === "Some") {
+                const k = $match$721;
                 return (() => {
-                  return (($match$721) => {
-                    if ($match$721.$t === "NKNamespace") {
-                      const ns = $match$721;
+                  return (($match$728) => {
+                    if ($match$728.$t === "NKNamespace") {
+                      const ns = $match$728;
                       return $field(IMS, "imsGet")(ns.f[0], fname);
                     }
                     if (true) {
                       return $makeVariant("None", "Option", [], []);
                     }
-                    throw $matchFail("src/check/purity.pf", 721);
+                    throw $matchFail("src/check/purity.pf", 728);
                   })(k.f[0]);
                 })();
               }
-              if ($match$714.$t === "None") {
+              if ($match$721.$t === "None") {
                 return $makeVariant("None", "Option", [], []);
               }
-              throw $matchFail("src/check/purity.pf", 714);
+              throw $matchFail("src/check/purity.pf", 721);
             })(lookupName(st, e.f[1]));
           })();
         }
         if (true) {
           return $makeVariant("None", "Option", [], []);
         }
-        throw $matchFail("src/check/purity.pf", 711);
+        throw $matchFail("src/check/purity.pf", 718);
       })(objectExpr);
     }
     function kindOfNamedExpr(st, expr) {
-      return (($match$737) => {
-        if ($match$737.$t === "EVar") {
-          const e = $match$737;
+      return (($match$744) => {
+        if ($match$744.$t === "EVar") {
+          const e = $match$744;
           return lookupName(st, e.f[1]);
         }
-        if ($match$737.$t === "EField") {
-          const e = $match$737;
+        if ($match$744.$t === "EField") {
+          const e = $match$744;
           return lookupNamespaceField(st, e.f[1], e.f[2]);
         }
         if (true) {
           return $makeVariant("None", "Option", [], []);
         }
-        throw $matchFail("src/check/purity.pf", 737);
+        throw $matchFail("src/check/purity.pf", 744);
       })(expr);
     }
     function nameOfNamedExpr(expr) {
-      return (($match$754) => {
-        if ($match$754.$t === "EVar") {
-          const e = $match$754;
+      return (($match$761) => {
+        if ($match$761.$t === "EVar") {
+          const e = $match$761;
           return e.f[1];
         }
-        if ($match$754.$t === "EField") {
-          const e = $match$754;
+        if ($match$761.$t === "EField") {
+          const e = $match$761;
           return e.f[2];
         }
         if (true) {
           return "<expression>";
         }
-        throw $matchFail("src/check/purity.pf", 754);
+        throw $matchFail("src/check/purity.pf", 761);
       })(expr);
-    }
-    function procValueDiag(st, span, name) {
-      return addDiag(st, span, $concatS($concatS("Procedure '", name), "' cannot be used as a value; procs are second-class and may only appear in call position."));
     }
     function procCallDiag(st, span, name) {
       return addDiag(st, span, $concatS($concatS("Pure code cannot call procedure '", name), "'."));
     }
     function checkNamedValueUse(st, ctx, expr) {
-      return (($match$785) => {
-        if ($match$785.$t === "Some") {
-          const k = $match$785;
-          return (() => {
-            return (($match$791) => {
-              if ($match$791.$t === "NKProc") {
-                return procValueDiag(st, $field(A, "exprSpan")(expr), nameOfNamedExpr(expr));
-              }
-              if (true) {
-                return checkExprObjectPart(st, ctx, expr);
-              }
-              throw $matchFail("src/check/purity.pf", 791);
-            })(k.f[0]);
-          })();
-        }
-        if ($match$785.$t === "None") {
-          return checkExprObjectPart(st, ctx, expr);
-        }
-        throw $matchFail("src/check/purity.pf", 785);
-      })(kindOfNamedExpr(st, expr));
+      return checkExprObjectPart(st, ctx, expr);
     }
     function checkExprObjectPart(st, ctx, expr) {
-      return (($match$817) => {
-        if ($match$817.$t === "EField") {
-          const e = $match$817;
+      return (($match$788) => {
+        if ($match$788.$t === "EField") {
+          const e = $match$788;
           return checkExpr(st, ctx, e.f[1]);
         }
         if (true) {
           return st;
         }
-        throw $matchFail("src/check/purity.pf", 817);
+        throw $matchFail("src/check/purity.pf", 788);
       })(expr);
+    }
+    function inferredExprIsProc(st, expr) {
+      return (($match$799) => {
+        if ($match$799.$t === "None") {
+          return false;
+        }
+        if ($match$799.$t === "Some") {
+          const found = $match$799;
+          return (() => {
+            return (($match$811) => {
+              if ($match$811.$t === "TProc") {
+                return true;
+              }
+              if (true) {
+                return false;
+              }
+              throw $matchFail("src/check/purity.pf", 811);
+            })(found.f[0]);
+          })();
+        }
+        throw $matchFail("src/check/purity.pf", 799);
+      })($field(IMI, "imiGet")(st.f[2], $field(A, "exprId")(expr)));
+    }
+    function namedExprIsProc(st, expr) {
+      return (($match$819) => {
+        if ($match$819.$t === "Some") {
+          const k = $match$819;
+          return (() => {
+            return (($match$825) => {
+              if ($match$825.$t === "NKProc") {
+                return true;
+              }
+              if (true) {
+                return false;
+              }
+              throw $matchFail("src/check/purity.pf", 825);
+            })(k.f[0]);
+          })();
+        }
+        if ($match$819.$t === "None") {
+          return false;
+        }
+        throw $matchFail("src/check/purity.pf", 819);
+      })(kindOfNamedExpr(st, expr));
+    }
+    function exprIsProc(st, expr) {
+      return inferredExprIsProc(st, expr) || namedExprIsProc(st, expr);
     }
     function checkExprList(st, ctx, exprs) {
       while (true) {
-        const $match$828 = $field(Compat, "uncons")(exprs);
-        if ($match$828.$t === "None") {
+        const $match$845 = $field(Compat, "uncons")(exprs);
+        if ($match$845.$t === "None") {
           return st;
         }
-        if ($match$828.$t === "Some") {
-          const cell = $match$828;
-          const $tc$846$0 = checkExpr(st, ctx, cell.f[0].f[0]);
-          const $tc$846$1 = ctx;
-          const $tc$846$2 = cell.f[0].f[1];
-          st = $tc$846$0;
-          ctx = $tc$846$1;
-          exprs = $tc$846$2;
+        if ($match$845.$t === "Some") {
+          const cell = $match$845;
+          const $tc$863$0 = checkExpr(st, ctx, cell.f[0].f[0]);
+          const $tc$863$1 = ctx;
+          const $tc$863$2 = cell.f[0].f[1];
+          st = $tc$863$0;
+          ctx = $tc$863$1;
+          exprs = $tc$863$2;
           continue;
         }
-        throw $matchFail("src/check/purity.pf", 828);
+        throw $matchFail("src/check/purity.pf", 845);
       }
     }
     function checkFieldExprs(st, ctx, fields) {
-      return (($match$849) => {
-        if ($match$849.$t === "None") {
+      return (($match$866) => {
+        if ($match$866.$t === "None") {
           return st;
         }
-        if ($match$849.$t === "Some") {
-          const cell = $match$849;
+        if ($match$866.$t === "Some") {
+          const cell = $match$866;
           return (() => {
             const f = cell.f[0].f[0];
             return checkFieldExprs(checkExpr(st, ctx, $field(f, "value")), ctx, cell.f[0].f[1]);
           })();
         }
-        throw $matchFail("src/check/purity.pf", 849);
+        throw $matchFail("src/check/purity.pf", 866);
       })($field(Compat, "uncons")(fields));
     }
     function checkDictEntries(st, ctx, entries) {
-      return (($match$875) => {
-        if ($match$875.$t === "None") {
+      return (($match$892) => {
+        if ($match$892.$t === "None") {
           return st;
         }
-        if ($match$875.$t === "Some") {
-          const cell = $match$875;
+        if ($match$892.$t === "Some") {
+          const cell = $match$892;
           return (() => {
             const e = cell.f[0].f[0];
             const st1 = checkExpr(st, ctx, $field(e, "key"));
@@ -17973,108 +18202,69 @@
             return checkDictEntries(st2, ctx, cell.f[0].f[1]);
           })();
         }
-        throw $matchFail("src/check/purity.pf", 875);
+        throw $matchFail("src/check/purity.pf", 892);
       })($field(Compat, "uncons")(entries));
     }
     function checkFmtParts(st, ctx, parts) {
-      return (($match$910) => {
-        if ($match$910.$t === "None") {
+      return (($match$927) => {
+        if ($match$927.$t === "None") {
           return st;
         }
-        if ($match$910.$t === "Some") {
-          const cell = $match$910;
+        if ($match$927.$t === "Some") {
+          const cell = $match$927;
           return (() => {
             const p = cell.f[0].f[0];
-            return (($match$921) => {
-              if ($match$921.$t === "FmtLit") {
+            return (($match$938) => {
+              if ($match$938.$t === "FmtLit") {
                 return checkFmtParts(st, ctx, cell.f[0].f[1]);
               }
-              if ($match$921.$t === "FmtExpr") {
-                const f = $match$921;
+              if ($match$938.$t === "FmtExpr") {
+                const f = $match$938;
                 return checkFmtParts(checkExpr(st, ctx, f.f[0]), ctx, cell.f[0].f[1]);
               }
-              throw $matchFail("src/check/purity.pf", 921);
+              throw $matchFail("src/check/purity.pf", 938);
             })(p);
           })();
         }
-        throw $matchFail("src/check/purity.pf", 910);
+        throw $matchFail("src/check/purity.pf", 927);
       })($field(Compat, "uncons")(parts));
     }
     function checkCall(st, ctx, expr) {
-      return (($match$945) => {
-        if ($match$945.$t === "ECall") {
-          const c = $match$945;
+      return (($match$962) => {
+        if ($match$962.$t === "ECall") {
+          const c = $match$962;
           return (() => {
-            return (($match$948) => {
-              if ($match$948.$t === "Some") {
-                const k = $match$948;
-                return (() => {
-                  return (($match$955) => {
-                    if ($match$955.$t === "NKProc") {
-                      return (() => {
-                        const st1 = ctxAllowsEffects(ctx) ? st : procCallDiag(st, c.f[3], nameOfNamedExpr(c.f[1]));
-                        return checkExprList(st1, ctx, c.f[2]);
-                      })();
-                    }
-                    if (true) {
-                      return checkExprList(st, ctx, c.f[2]);
-                    }
-                    throw $matchFail("src/check/purity.pf", 955);
-                  })(k.f[0]);
-                })();
-              }
-              if ($match$948.$t === "None") {
-                return (() => {
-                  const st1 = checkExpr(st, ctx, c.f[1]);
-                  return checkExprList(st1, ctx, c.f[2]);
-                })();
-              }
-              throw $matchFail("src/check/purity.pf", 948);
-            })(kindOfNamedExpr(st, c.f[1]));
+            const st1 = checkExpr(st, ctx, c.f[1]);
+            const st2 = exprIsProc(st1, c.f[1]) && !ctxAllowsEffects(ctx) ? (() => {
+              return procCallDiag(st1, c.f[3], nameOfNamedExpr(c.f[1]));
+            })() : (() => {
+              return st1;
+            })();
+            return checkExprList(st2, ctx, c.f[2]);
           })();
         }
         if (true) {
           return st;
         }
-        throw $matchFail("src/check/purity.pf", 945);
+        throw $matchFail("src/check/purity.pf", 962);
       })(expr);
     }
     function checkPipe(st, ctx, lhs, rhs, span) {
       const st1 = checkExpr(st, ctx, lhs);
-      return (($match$1013) => {
-        if ($match$1013.$t === "Some") {
-          const k = $match$1013;
-          return (() => {
-            return (($match$1019) => {
-              if ($match$1019.$t === "NKProc") {
-                return (() => {
-                  if (ctxAllowsEffects(ctx)) {
-                    return st1;
-                  } else {
-                    return procCallDiag(st1, span, nameOfNamedExpr(rhs));
-                  }
-                })();
-              }
-              if (true) {
-                return checkExpr(st1, ctx, rhs);
-              }
-              throw $matchFail("src/check/purity.pf", 1019);
-            })(k.f[0]);
-          })();
-        }
-        if ($match$1013.$t === "None") {
-          return checkExpr(st1, ctx, rhs);
-        }
-        throw $matchFail("src/check/purity.pf", 1013);
-      })(kindOfNamedExpr(st1, rhs));
+      const st2 = checkExpr(st1, ctx, rhs);
+      if (exprIsProc(st2, rhs) && !ctxAllowsEffects(ctx)) {
+        return procCallDiag(st2, span, nameOfNamedExpr(rhs));
+      } else {
+        return st2;
+      }
     }
     function checkCompGens(st, ctx, gens) {
-      return (($match$1050) => {
-        if ($match$1050.$t === "None") {
+      return (($match$1041) => {
+        if ($match$1041.$t === "None") {
           return st;
         }
-        if ($match$1050.$t === "Some") {
-          const cell = $match$1050;
+        if ($match$1041.$t === "Some") {
+          const cell = $match$1041;
           return (() => {
             const g = cell.f[0].f[0];
             const st1 = checkExpr(st, ctx, $field(g, "source"));
@@ -18082,7 +18272,7 @@
             return checkCompGens(st2, ctx, cell.f[0].f[1]);
           })();
         }
-        throw $matchFail("src/check/purity.pf", 1050);
+        throw $matchFail("src/check/purity.pf", 1041);
       })($field(Compat, "uncons")(gens));
     }
     function checkComprehension(st, ctx, body, gens, guard, mode) {
@@ -18090,157 +18280,157 @@
       const compCtx = pureContextForLazy(mode, ctx);
       const st1 = checkCompGens(st, compCtx, gens);
       const st2 = checkExpr(st1, compCtx, body);
-      const st3 = (($match$1105) => {
-        if ($match$1105.$t === "Some") {
-          const g = $match$1105;
+      const st3 = (($match$1096) => {
+        if ($match$1096.$t === "Some") {
+          const g = $match$1096;
           return checkExpr(st2, compCtx, g.f[0]);
         }
-        if ($match$1105.$t === "None") {
+        if ($match$1096.$t === "None") {
           return st2;
         }
-        throw $matchFail("src/check/purity.pf", 1105);
+        throw $matchFail("src/check/purity.pf", 1096);
       })(guard);
       return withEnv(st3, oldEnv);
     }
     function bindPatElem(st, elem) {
-      return (($match$1121) => {
-        if ($match$1121.$t === "PeBind") {
-          const p = $match$1121;
+      return (($match$1112) => {
+        if ($match$1112.$t === "PeBind") {
+          const p = $match$1112;
           return bindName(st, p.f[0], NKValue);
         }
-        if ($match$1121.$t === "PeWild") {
+        if ($match$1112.$t === "PeWild") {
           return st;
         }
-        throw $matchFail("src/check/purity.pf", 1121);
+        throw $matchFail("src/check/purity.pf", 1112);
       })(elem);
     }
     function bindPatElems(st, elems) {
       while (true) {
-        const $match$1132 = $field(Compat, "uncons")(elems);
-        if ($match$1132.$t === "None") {
+        const $match$1123 = $field(Compat, "uncons")(elems);
+        if ($match$1123.$t === "None") {
           return st;
         }
-        if ($match$1132.$t === "Some") {
-          const cell = $match$1132;
-          const $tc$1148$0 = bindPatElem(st, cell.f[0].f[0]);
-          const $tc$1148$1 = cell.f[0].f[1];
-          st = $tc$1148$0;
-          elems = $tc$1148$1;
+        if ($match$1123.$t === "Some") {
+          const cell = $match$1123;
+          const $tc$1139$0 = bindPatElem(st, cell.f[0].f[0]);
+          const $tc$1139$1 = cell.f[0].f[1];
+          st = $tc$1139$0;
+          elems = $tc$1139$1;
           continue;
         }
-        throw $matchFail("src/check/purity.pf", 1132);
+        throw $matchFail("src/check/purity.pf", 1123);
       }
     }
     function bindPattern(st, pattern) {
-      return (($match$1151) => {
-        if ($match$1151.$t === "PWild") {
+      return (($match$1142) => {
+        if ($match$1142.$t === "PWild") {
           return st;
         }
-        if ($match$1151.$t === "PVariant") {
-          const p = $match$1151;
+        if ($match$1142.$t === "PVariant") {
+          const p = $match$1142;
           return (() => {
-            return (($match$1155) => {
-              if ($match$1155.$t === "Some") {
-                const b = $match$1155;
+            return (($match$1146) => {
+              if ($match$1146.$t === "Some") {
+                const b = $match$1146;
                 return bindName(st, b.f[0], NKValue);
               }
-              if ($match$1155.$t === "None") {
+              if ($match$1146.$t === "None") {
                 return st;
               }
-              throw $matchFail("src/check/purity.pf", 1155);
+              throw $matchFail("src/check/purity.pf", 1146);
             })(p.f[1]);
           })();
         }
-        if ($match$1151.$t === "PList") {
-          const p = $match$1151;
+        if ($match$1142.$t === "PList") {
+          const p = $match$1142;
           return (() => {
             const st1 = bindPatElems(st, p.f[0]);
-            return (($match$1173) => {
-              if ($match$1173.$t === "Some") {
-                const r = $match$1173;
+            return (($match$1164) => {
+              if ($match$1164.$t === "Some") {
+                const r = $match$1164;
                 return bindPatElem(st1, r.f[0]);
               }
-              if ($match$1173.$t === "None") {
+              if ($match$1164.$t === "None") {
                 return st1;
               }
-              throw $matchFail("src/check/purity.pf", 1173);
+              throw $matchFail("src/check/purity.pf", 1164);
             })(p.f[1]);
           })();
         }
-        throw $matchFail("src/check/purity.pf", 1151);
+        throw $matchFail("src/check/purity.pf", 1142);
       })(pattern);
     }
     function checkArm(st, ctx, arm) {
       const oldEnv = st.f[1];
       const st1 = bindPattern(st, $field(arm, "pattern"));
-      const st2 = (($match$1194) => {
-        if ($match$1194.$t === "Some") {
-          const g = $match$1194;
+      const st2 = (($match$1185) => {
+        if ($match$1185.$t === "Some") {
+          const g = $match$1185;
           return checkExpr(st1, ctx, g.f[0]);
         }
-        if ($match$1194.$t === "None") {
+        if ($match$1185.$t === "None") {
           return st1;
         }
-        throw $matchFail("src/check/purity.pf", 1194);
+        throw $matchFail("src/check/purity.pf", 1185);
       })($field(arm, "guard"));
       const st3 = checkExpr(st2, ctx, $field(arm, "body"));
       return withEnv(st3, oldEnv);
     }
     function checkArms(st, ctx, arms) {
       while (true) {
-        const $match$1218 = $field(Compat, "uncons")(arms);
-        if ($match$1218.$t === "None") {
+        const $match$1209 = $field(Compat, "uncons")(arms);
+        if ($match$1209.$t === "None") {
           return st;
         }
-        if ($match$1218.$t === "Some") {
-          const cell = $match$1218;
-          const $tc$1236$0 = checkArm(st, ctx, cell.f[0].f[0]);
-          const $tc$1236$1 = ctx;
-          const $tc$1236$2 = cell.f[0].f[1];
-          st = $tc$1236$0;
-          ctx = $tc$1236$1;
-          arms = $tc$1236$2;
+        if ($match$1209.$t === "Some") {
+          const cell = $match$1209;
+          const $tc$1227$0 = checkArm(st, ctx, cell.f[0].f[0]);
+          const $tc$1227$1 = ctx;
+          const $tc$1227$2 = cell.f[0].f[1];
+          st = $tc$1227$0;
+          ctx = $tc$1227$1;
+          arms = $tc$1227$2;
           continue;
         }
-        throw $matchFail("src/check/purity.pf", 1218);
+        throw $matchFail("src/check/purity.pf", 1209);
       }
     }
     function checkExpr(st, ctx, expr) {
       while (true) {
-        const $match$1239 = expr;
-        if ($match$1239.$t === "EInt") {
+        const $match$1230 = expr;
+        if ($match$1230.$t === "EInt") {
           return st;
         }
-        if ($match$1239.$t === "EFloat") {
+        if ($match$1230.$t === "EFloat") {
           return st;
         }
-        if ($match$1239.$t === "EBool") {
+        if ($match$1230.$t === "EBool") {
           return st;
         }
-        if ($match$1239.$t === "EStr") {
+        if ($match$1230.$t === "EStr") {
           return st;
         }
-        if ($match$1239.$t === "EChar") {
+        if ($match$1230.$t === "EChar") {
           return st;
         }
-        if ($match$1239.$t === "EByte") {
+        if ($match$1230.$t === "EByte") {
           return st;
         }
-        if ($match$1239.$t === "EVar") {
+        if ($match$1230.$t === "EVar") {
           return checkNamedValueUse(st, ctx, expr);
         }
-        if ($match$1239.$t === "EUnary") {
-          const e = $match$1239;
-          const $tc$1257$0 = st;
-          const $tc$1257$1 = ctx;
-          const $tc$1257$2 = e.f[2];
-          st = $tc$1257$0;
-          ctx = $tc$1257$1;
-          expr = $tc$1257$2;
+        if ($match$1230.$t === "EUnary") {
+          const e = $match$1230;
+          const $tc$1248$0 = st;
+          const $tc$1248$1 = ctx;
+          const $tc$1248$2 = e.f[2];
+          st = $tc$1248$0;
+          ctx = $tc$1248$1;
+          expr = $tc$1248$2;
           continue;
         }
-        if ($match$1239.$t === "EBinary") {
-          const e = $match$1239;
+        if ($match$1230.$t === "EBinary") {
+          const e = $match$1230;
           return (() => {
             if (e.f[1] === "|>") {
               return checkPipe(st, ctx, e.f[2], e.f[3], e.f[4]);
@@ -18250,74 +18440,78 @@
             }
           })();
         }
-        if ($match$1239.$t === "EIf") {
-          const e = $match$1239;
+        if ($match$1230.$t === "EIf") {
+          const e = $match$1230;
           return (() => {
             const st1 = checkExpr(st, ctx, e.f[1]);
             const st2 = checkExpr(st1, ctx, e.f[2]);
             return checkExpr(st2, ctx, e.f[3]);
           })();
         }
-        if ($match$1239.$t === "ECall") {
+        if ($match$1230.$t === "ECall") {
           return checkCall(st, ctx, expr);
         }
-        if ($match$1239.$t === "ELambda") {
-          const e = $match$1239;
+        if ($match$1230.$t === "ELambda") {
+          const e = $match$1230;
           return checkLambda(st, e.f[1], e.f[2]);
         }
-        if ($match$1239.$t === "EBlock") {
-          const e = $match$1239;
+        if ($match$1230.$t === "EProcLambda") {
+          const e = $match$1230;
+          return checkProcLambda(st, e.f[1], e.f[3], e.f[4]);
+        }
+        if ($match$1230.$t === "EBlock") {
+          const e = $match$1230;
           return checkScopedStmtList(st, ctx, e.f[1]);
         }
-        if ($match$1239.$t === "EList") {
-          const e = $match$1239;
+        if ($match$1230.$t === "EList") {
+          const e = $match$1230;
           return checkExprList(st, pureContextForLazy(e.f[2], ctx), e.f[1]);
         }
-        if ($match$1239.$t === "EComp") {
-          const e = $match$1239;
+        if ($match$1230.$t === "EComp") {
+          const e = $match$1230;
           return checkComprehension(st, ctx, e.f[1], e.f[2], e.f[3], e.f[4]);
         }
-        if ($match$1239.$t === "ERecord") {
-          const e = $match$1239;
+        if ($match$1230.$t === "ERecord") {
+          const e = $match$1230;
           return checkFieldExprs(st, ctx, e.f[2]);
         }
-        if ($match$1239.$t === "EField") {
+        if ($match$1230.$t === "EField") {
           return checkNamedValueUse(st, ctx, expr);
         }
-        if ($match$1239.$t === "EIndex") {
-          const e = $match$1239;
+        if ($match$1230.$t === "EIndex") {
+          const e = $match$1230;
           return (() => {
             const st1 = checkExpr(st, ctx, e.f[1]);
             return checkExpr(st1, ctx, e.f[2]);
           })();
         }
-        if ($match$1239.$t === "EMatch") {
-          const e = $match$1239;
+        if ($match$1230.$t === "EMatch") {
+          const e = $match$1230;
           return (() => {
             const st1 = checkExpr(st, ctx, e.f[1]);
             return checkArms(st1, ctx, e.f[2]);
           })();
         }
-        if ($match$1239.$t === "EDict") {
-          const e = $match$1239;
+        if ($match$1230.$t === "EDict") {
+          const e = $match$1230;
           return checkDictEntries(st, ctx, e.f[1]);
         }
-        if ($match$1239.$t === "EArray") {
-          const e = $match$1239;
+        if ($match$1230.$t === "EArray") {
+          const e = $match$1230;
           return checkExprList(st, ctx, e.f[1]);
         }
-        if ($match$1239.$t === "EAwait") {
-          const e = $match$1239;
+        if ($match$1230.$t === "EAwait") {
+          const e = $match$1230;
           return (() => {
             const st1 = ctxAllowsAwait(ctx) ? st : addDiag(st, e.f[2], "await is only allowed inside async proc bodies.");
             return checkExpr(st1, ctx, e.f[1]);
           })();
         }
-        if ($match$1239.$t === "EFmt") {
-          const e = $match$1239;
+        if ($match$1230.$t === "EFmt") {
+          const e = $match$1230;
           return checkFmtParts(st, ctx, e.f[1]);
         }
-        throw $matchFail("src/check/purity.pf", 1239);
+        throw $matchFail("src/check/purity.pf", 1230);
       }
     }
     function checkLambda(st, params, body) {
@@ -18326,16 +18520,25 @@
       const st2 = checkExpr(st1, CtxPure, body);
       return withEnv(st2, oldEnv);
     }
+    function typedParamNames(params) {
+      return $map((param) => $field(param, "name"), params);
+    }
+    function checkProcLambda(st, params, body, isAsync) {
+      const oldEnv = st.f[1];
+      const st1 = bindParams(st, typedParamNames(params));
+      const st2 = checkScopedStmtList(st1, $makeVariant("CtxProc", "PurityCtx", ["isAsync"], [isAsync]), body);
+      return withEnv(st2, oldEnv);
+    }
     function checkMaybeExpr(st, ctx, value) {
-      return (($match$1452) => {
-        if ($match$1452.$t === "Some") {
-          const v = $match$1452;
+      return (($match$1483) => {
+        if ($match$1483.$t === "Some") {
+          const v = $match$1483;
           return checkExpr(st, ctx, v.f[0]);
         }
-        if ($match$1452.$t === "None") {
+        if ($match$1483.$t === "None") {
           return st;
         }
-        throw $matchFail("src/check/purity.pf", 1452);
+        throw $matchFail("src/check/purity.pf", 1483);
       })(value);
     }
     function checkPureOnlyStmt(st, ctx, span, message) {
@@ -18346,15 +18549,15 @@
       }
     }
     function ctxForFnKind(kind) {
-      return (($match$1476) => {
-        if ($match$1476.$t === "PureFn") {
+      return (($match$1507) => {
+        if ($match$1507.$t === "PureFn") {
           return CtxPure;
         }
-        if ($match$1476.$t === "ProcFn") {
-          const p = $match$1476;
+        if ($match$1507.$t === "ProcFn") {
+          const p = $match$1507;
           return $makeVariant("CtxProc", "PurityCtx", ["isAsync"], [p.f[0]]);
         }
-        throw $matchFail("src/check/purity.pf", 1476);
+        throw $matchFail("src/check/purity.pf", 1507);
       })(kind);
     }
     function checkFunctionBody(st, kind, params, body) {
@@ -18365,27 +18568,27 @@
     }
     function checkStmt(st, ctx, stmt) {
       while (true) {
-        const $match$1506 = stmt;
-        if ($match$1506.$t === "SLet") {
-          const s = $match$1506;
+        const $match$1537 = stmt;
+        if ($match$1537.$t === "SLet") {
+          const s = $match$1537;
           return checkExpr(st, ctx, s.f[2]);
         }
-        if ($match$1506.$t === "SVar") {
-          const s = $match$1506;
+        if ($match$1537.$t === "SVar") {
+          const s = $match$1537;
           return (() => {
             const st1 = checkPureOnlyStmt(st, ctx, s.f[3], "var bindings are not allowed in pure functions or fn lambdas.");
             return checkExpr(st1, ctx, s.f[2]);
           })();
         }
-        if ($match$1506.$t === "SAssign") {
-          const s = $match$1506;
+        if ($match$1537.$t === "SAssign") {
+          const s = $match$1537;
           return (() => {
             const st1 = checkPureOnlyStmt(st, ctx, s.f[3], "Assignment is not allowed in pure functions or fn lambdas.");
             return checkExpr(st1, ctx, s.f[2]);
           })();
         }
-        if ($match$1506.$t === "SIndexAssign") {
-          const s = $match$1506;
+        if ($match$1537.$t === "SIndexAssign") {
+          const s = $match$1537;
           return (() => {
             const st1 = checkPureOnlyStmt(st, ctx, s.f[4], "Index assignment is not allowed in pure functions or fn lambdas.");
             const st2 = checkExpr(st1, ctx, s.f[1]);
@@ -18393,82 +18596,82 @@
             return checkExpr(st3, ctx, s.f[3]);
           })();
         }
-        if ($match$1506.$t === "SFun") {
-          const s = $match$1506;
+        if ($match$1537.$t === "SFun") {
+          const s = $match$1537;
           return checkFunctionBody(st, s.f[4], s.f[2], s.f[3]);
         }
-        if ($match$1506.$t === "SType") {
+        if ($match$1537.$t === "SType") {
           return st;
         }
-        if ($match$1506.$t === "SExpr") {
-          const s = $match$1506;
+        if ($match$1537.$t === "SExpr") {
+          const s = $match$1537;
           return checkExpr(st, ctx, s.f[1]);
         }
-        if ($match$1506.$t === "SReturn") {
-          const s = $match$1506;
+        if ($match$1537.$t === "SReturn") {
+          const s = $match$1537;
           return checkMaybeExpr(st, ctx, s.f[1]);
         }
-        if ($match$1506.$t === "SIf") {
-          const s = $match$1506;
+        if ($match$1537.$t === "SIf") {
+          const s = $match$1537;
           return (() => {
             const st1 = checkExpr(st, ctx, s.f[1]);
             const st2 = checkScopedStmtList(st1, ctx, s.f[2]);
-            return (($match$1613) => {
-              if ($match$1613.$t === "Some") {
-                const e = $match$1613;
+            return (($match$1644) => {
+              if ($match$1644.$t === "Some") {
+                const e = $match$1644;
                 return checkScopedStmtList(st2, ctx, e.f[0]);
               }
-              if ($match$1613.$t === "None") {
+              if ($match$1644.$t === "None") {
                 return st2;
               }
-              throw $matchFail("src/check/purity.pf", 1613);
+              throw $matchFail("src/check/purity.pf", 1644);
             })(s.f[3]);
           })();
         }
-        if ($match$1506.$t === "SWhile") {
-          const s = $match$1506;
+        if ($match$1537.$t === "SWhile") {
+          const s = $match$1537;
           return (() => {
             const st1 = checkPureOnlyStmt(st, ctx, s.f[3], "while loops are not allowed in pure functions or fn lambdas.");
             const st2 = checkExpr(st1, ctx, s.f[1]);
             return checkScopedStmtList(st2, ctx, s.f[2]);
           })();
         }
-        if ($match$1506.$t === "SImport") {
+        if ($match$1537.$t === "SImport") {
           return st;
         }
-        if ($match$1506.$t === "SExport") {
-          const s = $match$1506;
-          const $tc$1653$0 = st;
-          const $tc$1653$1 = ctx;
-          const $tc$1653$2 = s.f[1];
-          st = $tc$1653$0;
-          ctx = $tc$1653$1;
-          stmt = $tc$1653$2;
+        if ($match$1537.$t === "SExport") {
+          const s = $match$1537;
+          const $tc$1684$0 = st;
+          const $tc$1684$1 = ctx;
+          const $tc$1684$2 = s.f[1];
+          st = $tc$1684$0;
+          ctx = $tc$1684$1;
+          stmt = $tc$1684$2;
           continue;
         }
-        if ($match$1506.$t === "SExtern") {
+        if ($match$1537.$t === "SExtern") {
           return st;
         }
-        throw $matchFail("src/check/purity.pf", 1506);
+        throw $matchFail("src/check/purity.pf", 1537);
       }
     }
     function checkStmtListLoop(st, ctx, stmts) {
       while (true) {
-        const $match$1657 = $field(Compat, "uncons")(stmts);
-        if ($match$1657.$t === "None") {
+        const $match$1688 = $field(Compat, "uncons")(stmts);
+        if ($match$1688.$t === "None") {
           return st;
         }
-        if ($match$1657.$t === "Some") {
-          const cell = $match$1657;
-          const $tc$1675$0 = checkStmt(st, ctx, cell.f[0].f[0]);
-          const $tc$1675$1 = ctx;
-          const $tc$1675$2 = cell.f[0].f[1];
-          st = $tc$1675$0;
-          ctx = $tc$1675$1;
-          stmts = $tc$1675$2;
+        if ($match$1688.$t === "Some") {
+          const cell = $match$1688;
+          const $tc$1706$0 = checkStmt(st, ctx, cell.f[0].f[0]);
+          const $tc$1706$1 = ctx;
+          const $tc$1706$2 = cell.f[0].f[1];
+          st = $tc$1706$0;
+          ctx = $tc$1706$1;
+          stmts = $tc$1706$2;
           continue;
         }
-        throw $matchFail("src/check/purity.pf", 1657);
+        throw $matchFail("src/check/purity.pf", 1688);
       }
     }
     function checkScopedStmtList(st, ctx, stmts) {
@@ -18477,18 +18680,18 @@
       const st2 = checkStmtListLoop(st1, ctx, stmts);
       return withEnv(st2, oldEnv);
     }
-    function bindModuleNames(ast, deps) {
-      const st0 = mkState($field(ast, "path"), $field(IMS, "imsEmpty")(), []);
+    function bindModuleNames(ast, deps, types) {
+      const st0 = mkState($field(ast, "path"), $field(IMS, "imsEmpty")(), types, []);
       const st1 = bindImportStmts(st0, $field(ast, "stmts"), deps);
       return prebindLocalDecls(st1, $field(ast, "stmts"));
     }
-    function checkModule(ast, deps) {
-      const st0 = bindModuleNames(ast, deps);
+    function checkModule(ast, deps, types) {
+      const st0 = bindModuleNames(ast, deps, types);
       const st1 = checkStmtListLoop(st0, CtxTop, $field(ast, "stmts"));
-      return mkPurityResult($reverse(st1.f[2]));
+      return mkPurityResult($reverse(st1.f[3]));
     }
-    function checkPurity(ast, deps) {
-      return checkModule(ast, deps);
+    function checkPurity(ast, deps, types) {
+      return checkModule(ast, deps, types);
     }
     exports["NKValue"] = NKValue;
     exports["NKFunction"] = NKFunction;
@@ -19280,6 +19483,10 @@
           expr = $tc$1205$2;
           continue;
         }
+        if ($match$1133.$t === "EProcLambda") {
+          const e = $match$1133;
+          return checkStmtList(st, infer, e.f[3]);
+        }
         if ($match$1133.$t === "EBlock") {
           const e = $match$1133;
           return checkStmtList(st, infer, e.f[1]);
@@ -19293,15 +19500,15 @@
           return (() => {
             const st1 = checkGenClauses(st, infer, e.f[2]);
             const st2 = checkExpr(st1, infer, e.f[1]);
-            return (($match$1233) => {
-              if ($match$1233.$t === "Some") {
-                const g = $match$1233;
+            return (($match$1239) => {
+              if ($match$1239.$t === "Some") {
+                const g = $match$1239;
                 return checkExpr(st2, infer, g.f[0]);
               }
-              if ($match$1233.$t === "None") {
+              if ($match$1239.$t === "None") {
                 return st2;
               }
-              throw $matchFail("src/check/exhaust.pf", 1233);
+              throw $matchFail("src/check/exhaust.pf", 1239);
             })(e.f[3]);
           })();
         }
@@ -19311,12 +19518,12 @@
         }
         if ($match$1133.$t === "EField") {
           const e = $match$1133;
-          const $tc$1255$0 = st;
-          const $tc$1255$1 = infer;
-          const $tc$1255$2 = e.f[1];
-          st = $tc$1255$0;
-          infer = $tc$1255$1;
-          expr = $tc$1255$2;
+          const $tc$1261$0 = st;
+          const $tc$1261$1 = infer;
+          const $tc$1261$2 = e.f[1];
+          st = $tc$1261$0;
+          infer = $tc$1261$1;
+          expr = $tc$1261$2;
           continue;
         }
         if ($match$1133.$t === "EIndex") {
@@ -19344,12 +19551,12 @@
         }
         if ($match$1133.$t === "EAwait") {
           const e = $match$1133;
-          const $tc$1314$0 = st;
-          const $tc$1314$1 = infer;
-          const $tc$1314$2 = e.f[1];
-          st = $tc$1314$0;
-          infer = $tc$1314$1;
-          expr = $tc$1314$2;
+          const $tc$1320$0 = st;
+          const $tc$1320$1 = infer;
+          const $tc$1320$2 = e.f[1];
+          st = $tc$1320$0;
+          infer = $tc$1320$1;
+          expr = $tc$1320$2;
           continue;
         }
         if ($match$1133.$t === "EFmt") {
@@ -19360,118 +19567,118 @@
       }
     }
     function checkMaybeExpr(st, infer, value) {
-      return (($match$1323) => {
-        if ($match$1323.$t === "None") {
+      return (($match$1329) => {
+        if ($match$1329.$t === "None") {
           return st;
         }
-        if ($match$1323.$t === "Some") {
-          const v = $match$1323;
+        if ($match$1329.$t === "Some") {
+          const v = $match$1329;
           return checkExpr(st, infer, v.f[0]);
         }
-        throw $matchFail("src/check/exhaust.pf", 1323);
+        throw $matchFail("src/check/exhaust.pf", 1329);
       })(value);
     }
     function checkStmt(st, infer, stmt) {
       while (true) {
-        const $match$1334 = stmt;
-        if ($match$1334.$t === "SLet") {
-          const s = $match$1334;
+        const $match$1340 = stmt;
+        if ($match$1340.$t === "SLet") {
+          const s = $match$1340;
           return checkExpr(st, infer, s.f[2]);
         }
-        if ($match$1334.$t === "SVar") {
-          const s = $match$1334;
+        if ($match$1340.$t === "SVar") {
+          const s = $match$1340;
           return checkExpr(st, infer, s.f[2]);
         }
-        if ($match$1334.$t === "SAssign") {
-          const s = $match$1334;
+        if ($match$1340.$t === "SAssign") {
+          const s = $match$1340;
           return checkExpr(st, infer, s.f[2]);
         }
-        if ($match$1334.$t === "SIndexAssign") {
-          const s = $match$1334;
+        if ($match$1340.$t === "SIndexAssign") {
+          const s = $match$1340;
           return (() => {
             const st1 = checkExpr(st, infer, s.f[1]);
             const st2 = checkExpr(st1, infer, s.f[2]);
             return checkExpr(st2, infer, s.f[3]);
           })();
         }
-        if ($match$1334.$t === "SFun") {
-          const s = $match$1334;
+        if ($match$1340.$t === "SFun") {
+          const s = $match$1340;
           return checkStmtList(st, infer, s.f[3]);
         }
-        if ($match$1334.$t === "SType") {
+        if ($match$1340.$t === "SType") {
           return st;
         }
-        if ($match$1334.$t === "SExpr") {
-          const s = $match$1334;
+        if ($match$1340.$t === "SExpr") {
+          const s = $match$1340;
           return checkExpr(st, infer, s.f[1]);
         }
-        if ($match$1334.$t === "SReturn") {
-          const s = $match$1334;
+        if ($match$1340.$t === "SReturn") {
+          const s = $match$1340;
           return checkMaybeExpr(st, infer, s.f[1]);
         }
-        if ($match$1334.$t === "SIf") {
-          const s = $match$1334;
+        if ($match$1340.$t === "SIf") {
+          const s = $match$1340;
           return (() => {
             const st1 = checkExpr(st, infer, s.f[1]);
             const st2 = checkStmtList(st1, infer, s.f[2]);
             return checkMaybeStmtList(st2, infer, s.f[3]);
           })();
         }
-        if ($match$1334.$t === "SWhile") {
-          const s = $match$1334;
+        if ($match$1340.$t === "SWhile") {
+          const s = $match$1340;
           return (() => {
             const st1 = checkExpr(st, infer, s.f[1]);
             return checkStmtList(st1, infer, s.f[2]);
           })();
         }
-        if ($match$1334.$t === "SImport") {
+        if ($match$1340.$t === "SImport") {
           return st;
         }
-        if ($match$1334.$t === "SExport") {
-          const s = $match$1334;
-          const $tc$1438$0 = st;
-          const $tc$1438$1 = infer;
-          const $tc$1438$2 = s.f[1];
-          st = $tc$1438$0;
-          infer = $tc$1438$1;
-          stmt = $tc$1438$2;
+        if ($match$1340.$t === "SExport") {
+          const s = $match$1340;
+          const $tc$1444$0 = st;
+          const $tc$1444$1 = infer;
+          const $tc$1444$2 = s.f[1];
+          st = $tc$1444$0;
+          infer = $tc$1444$1;
+          stmt = $tc$1444$2;
           continue;
         }
-        if ($match$1334.$t === "SExtern") {
+        if ($match$1340.$t === "SExtern") {
           return st;
         }
-        throw $matchFail("src/check/exhaust.pf", 1334);
+        throw $matchFail("src/check/exhaust.pf", 1340);
       }
     }
     function checkStmtList(st, infer, stmts) {
       while (true) {
-        const $match$1442 = $field(Compat, "uncons")(stmts);
-        if ($match$1442.$t === "None") {
+        const $match$1448 = $field(Compat, "uncons")(stmts);
+        if ($match$1448.$t === "None") {
           return st;
         }
-        if ($match$1442.$t === "Some") {
-          const cell = $match$1442;
-          const $tc$1460$0 = checkStmt(st, infer, cell.f[0].f[0]);
-          const $tc$1460$1 = infer;
-          const $tc$1460$2 = cell.f[0].f[1];
-          st = $tc$1460$0;
-          infer = $tc$1460$1;
-          stmts = $tc$1460$2;
+        if ($match$1448.$t === "Some") {
+          const cell = $match$1448;
+          const $tc$1466$0 = checkStmt(st, infer, cell.f[0].f[0]);
+          const $tc$1466$1 = infer;
+          const $tc$1466$2 = cell.f[0].f[1];
+          st = $tc$1466$0;
+          infer = $tc$1466$1;
+          stmts = $tc$1466$2;
           continue;
         }
-        throw $matchFail("src/check/exhaust.pf", 1442);
+        throw $matchFail("src/check/exhaust.pf", 1448);
       }
     }
     function checkMaybeStmtList(st, infer, stmts) {
-      return (($match$1463) => {
-        if ($match$1463.$t === "None") {
+      return (($match$1469) => {
+        if ($match$1469.$t === "None") {
           return st;
         }
-        if ($match$1463.$t === "Some") {
-          const body = $match$1463;
+        if ($match$1469.$t === "Some") {
+          const body = $match$1469;
           return checkStmtList(st, infer, body.f[0]);
         }
-        throw $matchFail("src/check/exhaust.pf", 1463);
+        throw $matchFail("src/check/exhaust.pf", 1469);
       })(stmts);
     }
     function checkModule(ast, infer, deps) {
@@ -19598,7 +19805,7 @@
     }
     function checkModule(ast, deps) {
       const infer = $field(TY, "inferModule")(ast, deps);
-      const purity = $field(P, "checkModule")(ast, deps);
+      const purity = $field(P, "checkModule")(ast, deps, infer.f[0]);
       const exhaust = runExhaust(ast, infer, deps);
       const d1 = appendList(infer.f[2], purity.f[0]);
       const d2 = appendList(d1, exhaust.f[0]);
@@ -19612,73 +19819,73 @@
       return $field(IMS, "imsGet")(ifaces, key);
     }
     function ifaceForBuiltin(ifaces, name, rawPath) {
-      return (($match$303) => {
-        if ($match$303.$t === "Some") {
-          const iface = $match$303;
+      return (($match$305) => {
+        if ($match$305.$t === "Some") {
+          const iface = $match$305;
           return $makeVariant("Some", "Option", ["value"], [iface.f[0]]);
         }
-        if ($match$303.$t === "None") {
+        if ($match$305.$t === "None") {
           return (() => {
-            return (($match$312) => {
-              if ($match$312.$t === "Some") {
-                const iface2 = $match$312;
+            return (($match$314) => {
+              if ($match$314.$t === "Some") {
+                const iface2 = $match$314;
                 return $makeVariant("Some", "Option", ["value"], [iface2.f[0]]);
               }
-              if ($match$312.$t === "None") {
+              if ($match$314.$t === "None") {
                 return (() => {
-                  return (($match$323) => {
-                    if ($match$323.$t === "Some") {
-                      const iface3 = $match$323;
+                  return (($match$325) => {
+                    if ($match$325.$t === "Some") {
+                      const iface3 = $match$325;
                       return $makeVariant("Some", "Option", ["value"], [iface3.f[0]]);
                     }
-                    if ($match$323.$t === "None") {
+                    if ($match$325.$t === "None") {
                       return $makeVariant("None", "Option", [], []);
                     }
-                    throw $matchFail("src/check/check.pf", 323);
+                    throw $matchFail("src/check/check.pf", 325);
                   })(tryIfaceKey(ifaces, rawPath));
                 })();
               }
-              throw $matchFail("src/check/check.pf", 312);
+              throw $matchFail("src/check/check.pf", 314);
             })(tryIfaceKey(ifaces, $concatS("$builtin/", name)));
           })();
         }
-        throw $matchFail("src/check/check.pf", 303);
+        throw $matchFail("src/check/check.pf", 305);
       })(tryIfaceKey(ifaces, name));
     }
     function ifaceForUserPath(ifaces, path, rawPath) {
-      return (($match$336) => {
-        if ($match$336.$t === "Some") {
-          const iface = $match$336;
+      return (($match$338) => {
+        if ($match$338.$t === "Some") {
+          const iface = $match$338;
           return $makeVariant("Some", "Option", ["value"], [iface.f[0]]);
         }
-        if ($match$336.$t === "None") {
+        if ($match$338.$t === "None") {
           return (() => {
-            return (($match$345) => {
-              if ($match$345.$t === "Some") {
-                const iface2 = $match$345;
+            return (($match$347) => {
+              if ($match$347.$t === "Some") {
+                const iface2 = $match$347;
                 return $makeVariant("Some", "Option", ["value"], [iface2.f[0]]);
               }
-              if ($match$345.$t === "None") {
+              if ($match$347.$t === "None") {
                 return $makeVariant("None", "Option", [], []);
               }
-              throw $matchFail("src/check/check.pf", 345);
+              throw $matchFail("src/check/check.pf", 347);
             })(tryIfaceKey(ifaces, rawPath));
           })();
         }
-        throw $matchFail("src/check/check.pf", 336);
+        throw $matchFail("src/check/check.pf", 338);
       })(tryIfaceKey(ifaces, path));
     }
     function ifaceForEdge(ifaces, edge) {
-      return (($match$357) => {
-        if ($match$357.$t === "BuiltinPath") {
-          const b = $match$357;
+      return (($match$359) => {
+        if ($match$359.$t === "BuiltinPath") {
+          const b = $match$359;
           return ifaceForBuiltin(ifaces, b.f[0], $field(edge, "rawPath"));
         }
-        if ($match$357.$t === "UserPath") {
-          const u = $match$357;
+        if ($match$359.$t === "UserPath") {
+          const u = $match$359;
           return ifaceForUserPath(ifaces, u.f[0], $field(edge, "rawPath"));
         }
-        throw $matchFail("src/check/check.pf", 357);
+        throw $matchFail("src/check/check.pf", 359);
       })($field(edge, "resolved"));
     }
     function putDepAlias(deps, edge, iface) {
@@ -19686,28 +19893,28 @@
       return $field(IMS, "imsPut")(deps1, $field(M, "resolvedPathToStr")($field(edge, "resolved")), iface);
     }
     function depsForEdges(globalIfaces, edges, acc) {
-      return (($match$396) => {
-        if ($match$396.$t === "None") {
+      return (($match$398) => {
+        if ($match$398.$t === "None") {
           return acc;
         }
-        if ($match$396.$t === "Some") {
-          const cell = $match$396;
+        if ($match$398.$t === "Some") {
+          const cell = $match$398;
           return (() => {
             const edge = cell.f[0].f[0];
             const rest = cell.f[0].f[1];
-            return (($match$411) => {
-              if ($match$411.$t === "Some") {
-                const iface = $match$411;
+            return (($match$413) => {
+              if ($match$413.$t === "Some") {
+                const iface = $match$413;
                 return depsForEdges(globalIfaces, rest, putDepAlias(acc, edge, iface.f[0]));
               }
-              if ($match$411.$t === "None") {
+              if ($match$413.$t === "None") {
                 return depsForEdges(globalIfaces, rest, acc);
               }
-              throw $matchFail("src/check/check.pf", 411);
+              throw $matchFail("src/check/check.pf", 413);
             })(ifaceForEdge(globalIfaces, edge));
           })();
         }
-        throw $matchFail("src/check/check.pf", 396);
+        throw $matchFail("src/check/check.pf", 398);
       })($field(Compat, "uncons")(edges));
     }
     function depsForRawModule(globalIfaces, raw) {
@@ -19719,24 +19926,24 @@
       return $field(IMS, "imsPut")(ifaces2, $field($field(raw, "ast"), "path"), $field(unit, "iface"));
     }
     function resolvedUserFailed(edge, failedPaths) {
-      return (($match$472) => {
-        if ($match$472.$t === "BuiltinPath") {
+      return (($match$474) => {
+        if ($match$474.$t === "BuiltinPath") {
           return false;
         }
-        if ($match$472.$t === "UserPath") {
-          const u = $match$472;
+        if ($match$474.$t === "UserPath") {
+          const u = $match$474;
           return strListContains(failedPaths, u.f[0]) || strListContains(failedPaths, $field(edge, "rawPath"));
         }
-        throw $matchFail("src/check/check.pf", 472);
+        throw $matchFail("src/check/check.pf", 474);
       })($field(edge, "resolved"));
     }
     function firstFailedDependency(edges, failedPaths) {
-      return (($match$489) => {
-        if ($match$489.$t === "None") {
+      return (($match$491) => {
+        if ($match$491.$t === "None") {
           return $makeVariant("None", "Option", [], []);
         }
-        if ($match$489.$t === "Some") {
-          const cell = $match$489;
+        if ($match$491.$t === "Some") {
+          const cell = $match$491;
           return (() => {
             const edge = cell.f[0].f[0];
             if (resolvedUserFailed(edge, failedPaths)) {
@@ -19746,30 +19953,30 @@
             }
           })();
         }
-        throw $matchFail("src/check/check.pf", 489);
+        throw $matchFail("src/check/check.pf", 491);
       })($field(Compat, "uncons")(edges));
     }
     function firstMissingInterface(edges, ifaces) {
-      return (($match$517) => {
-        if ($match$517.$t === "None") {
+      return (($match$519) => {
+        if ($match$519.$t === "None") {
           return $makeVariant("None", "Option", [], []);
         }
-        if ($match$517.$t === "Some") {
-          const cell = $match$517;
+        if ($match$519.$t === "Some") {
+          const cell = $match$519;
           return (() => {
             const edge = cell.f[0].f[0];
-            return (($match$528) => {
-              if ($match$528.$t === "Some") {
+            return (($match$530) => {
+              if ($match$530.$t === "Some") {
                 return firstMissingInterface(cell.f[0].f[1], ifaces);
               }
-              if ($match$528.$t === "None") {
+              if ($match$530.$t === "None") {
                 return $makeVariant("Some", "Option", ["value"], [edge]);
               }
-              throw $matchFail("src/check/check.pf", 528);
+              throw $matchFail("src/check/check.pf", 530);
             })(ifaceForEdge(ifaces, edge));
           })();
         }
-        throw $matchFail("src/check/check.pf", 517);
+        throw $matchFail("src/check/check.pf", 519);
       })($field(Compat, "uncons")(edges));
     }
     function failedDependencyDiag(raw, edge) {
@@ -19786,18 +19993,18 @@
       return addUniqueStr(f1, $field($field(raw, "ast"), "path"));
     }
     function checkedGraphLoop(mods, ifaces, checkedAcc, diagAcc, failedPaths) {
-      return (($match$612) => {
-        if ($match$612.$t === "None") {
+      return (($match$614) => {
+        if ($match$614.$t === "None") {
           return mkCheckGraphResult($reverse(checkedAcc), ifaces, diagAcc);
         }
-        if ($match$612.$t === "Some") {
-          const cell = $match$612;
+        if ($match$614.$t === "Some") {
+          const cell = $match$614;
           return (() => {
             const raw = cell.f[0].f[0];
             const rest = cell.f[0].f[1];
-            return (($match$633) => {
-              if ($match$633.$t === "Some") {
-                const badDep = $match$633;
+            return (($match$635) => {
+              if ($match$635.$t === "Some") {
+                const badDep = $match$635;
                 return (() => {
                   const diag = failedDependencyDiag(raw, badDep.f[0]);
                   const unit = skipUnit(raw, diag);
@@ -19805,11 +20012,11 @@
                   return checkedGraphLoop(rest, ifaces, $cons(unit, checkedAcc), appendOne(diagAcc, diag), failed2);
                 })();
               }
-              if ($match$633.$t === "None") {
+              if ($match$635.$t === "None") {
                 return (() => {
-                  return (($match$671) => {
-                    if ($match$671.$t === "Some") {
-                      const missing = $match$671;
+                  return (($match$673) => {
+                    if ($match$673.$t === "Some") {
+                      const missing = $match$673;
                       return (() => {
                         const diag = missingInterfaceDiag(raw, missing.f[0]);
                         const unit = skipUnit(raw, diag);
@@ -19817,7 +20024,7 @@
                         return checkedGraphLoop(rest, ifaces, $cons(unit, checkedAcc), appendOne(diagAcc, diag), failed2);
                       })();
                     }
-                    if ($match$671.$t === "None") {
+                    if ($match$673.$t === "None") {
                       return (() => {
                         const deps = depsForRawModule(ifaces, raw);
                         const unit = checkModule($field(raw, "ast"), deps);
@@ -19831,15 +20038,15 @@
                         }
                       })();
                     }
-                    throw $matchFail("src/check/check.pf", 671);
+                    throw $matchFail("src/check/check.pf", 673);
                   })(firstMissingInterface($field(raw, "edges"), ifaces));
                 })();
               }
-              throw $matchFail("src/check/check.pf", 633);
+              throw $matchFail("src/check/check.pf", 635);
             })(firstFailedDependency($field(raw, "edges"), failedPaths));
           })();
         }
-        throw $matchFail("src/check/check.pf", 612);
+        throw $matchFail("src/check/check.pf", 614);
       })($field(Compat, "uncons")(mods));
     }
     function checkGraph(mods, builtinIfaces) {
@@ -19849,16 +20056,16 @@
       return checkGraph(mods, $field(IMS, "imsEmpty")());
     }
     function checkTopo(topo, builtinIfaces) {
-      return (($match$787) => {
-        if ($match$787.$t === "TopoOk") {
-          const ok = $match$787;
+      return (($match$789) => {
+        if ($match$789.$t === "TopoOk") {
+          const ok = $match$789;
           return checkGraph(ok.f[0], builtinIfaces);
         }
-        if ($match$787.$t === "TopoErr") {
-          const bad = $match$787;
+        if ($match$789.$t === "TopoErr") {
+          const bad = $match$789;
           return mkCheckGraphResult([], builtinIfaces, bad.f[0]);
         }
-        throw $matchFail("src/check/check.pf", 787);
+        throw $matchFail("src/check/check.pf", 789);
       })(topo);
     }
     exports["mkCheckedUnit"] = mkCheckedUnit;
@@ -22227,33 +22434,38 @@
       const lambdaCtx = addLocals(ctx, params);
       return $field(J, "jsArrow")(params, $field(J, "jsExprBody")(emitExpr(lambdaCtx, body0)), false);
     }
+    function emitProcLambda(ctx, params, body0, isAsync) {
+      const names = $map((param) => $field(param, "name"), params);
+      const lambdaCtx = withAsyncDepth(addLocals(ctx, names), $addI(ctx.f[2], isAsync ? 1 : 0));
+      return $field(J, "jsArrow")(names, $field(J, "jsBlockBody")(emitResultStmtList(lambdaCtx, body0)), isAsync);
+    }
     function emitList(ctx, mode, elems) {
-      return (($match$2241) => {
-        if ($match$2241.$t === "StrictList") {
+      return (($match$2277) => {
+        if ($match$2277.$t === "StrictList") {
           return (() => {
             return $field(J, "jsArr")($map((elem) => emitExpr(ctx, elem), elems));
           })();
         }
-        if ($match$2241.$t === "LazyList") {
+        if ($match$2277.$t === "LazyList") {
           return (() => {
             return hostCall("$lazyList", [$field(J, "jsArr")($map((elem) => (() => {
               return $field(J, "jsArrow")([], $field(J, "jsExprBody")(emitExpr(ctx, elem)), false);
             })(), elems))]);
           })();
         }
-        throw $matchFail("src/compile/emit.pf", 2241);
+        throw $matchFail("src/compile/emit.pf", 2277);
       })(mode);
     }
     function compVarNames(gens) {
       return $map((gen) => $field(gen, "gvar"), gens);
     }
     function emitCompSources(ctx, gens, priorNames) {
-      return (($match$2293) => {
-        if ($match$2293.$t === "None") {
+      return (($match$2329) => {
+        if ($match$2329.$t === "None") {
           return [];
         }
-        if ($match$2293.$t === "Some") {
-          const cell = $match$2293;
+        if ($match$2329.$t === "Some") {
+          const cell = $match$2329;
           return (() => {
             const gen = cell.f[0].f[0];
             const sourceCtx = addLocals(ctx, priorNames);
@@ -22261,41 +22473,41 @@
             return $cons(sourceThunk, emitCompSources(ctx, cell.f[0].f[1], appendOneString(priorNames, $field(gen, "gvar"))));
           })();
         }
-        throw $matchFail("src/compile/emit.pf", 2293);
+        throw $matchFail("src/compile/emit.pf", 2329);
       })($field(Compat, "uncons")(gens));
     }
     function compGuardExpr(ctx, guard) {
-      return (($match$2340) => {
-        if ($match$2340.$t === "None") {
+      return (($match$2376) => {
+        if ($match$2376.$t === "None") {
           return $field(J, "jsBool")(true);
         }
-        if ($match$2340.$t === "Some") {
-          const found = $match$2340;
+        if ($match$2376.$t === "Some") {
+          const found = $match$2376;
           return emitExpr(ctx, found.f[0]);
         }
-        throw $matchFail("src/compile/emit.pf", 2340);
+        throw $matchFail("src/compile/emit.pf", 2376);
       })(guard);
     }
     function emitComp(ctx, gens, guard, body0, mode) {
       const names = compVarNames(gens);
       const bodyCtx = addLocals(ctx, names);
       const sources = emitCompSources(ctx, gens, []);
-      const intrinsic = (($match$2368) => {
-        if ($match$2368.$t === "StrictList") {
+      const intrinsic = (($match$2404) => {
+        if ($match$2404.$t === "StrictList") {
           return "$compStrict";
         }
-        if ($match$2368.$t === "LazyList") {
+        if ($match$2404.$t === "LazyList") {
           return "$compLazy";
         }
-        throw $matchFail("src/compile/emit.pf", 2368);
+        throw $matchFail("src/compile/emit.pf", 2404);
       })(mode);
       return hostCall(intrinsic, [$field(J, "jsArr")(sources), $field(J, "jsArr")($map((name) => $field(J, "jsStr")(name), names)), $field(J, "jsArrow")(names, $field(J, "jsExprBody")(compGuardExpr(bodyCtx, guard)), false), $field(J, "jsArrow")(names, $field(J, "jsExprBody")(emitExpr(bodyCtx, body0)), false)]);
     }
     function emitRecord(ctx, id, tname, fields) {
       const values = $map((field) => emitExpr(ctx, $field(field, "value")), fields);
-      return (($match$2428) => {
-        if ($match$2428.$t === "TVariant") {
-          const variant = $match$2428;
+      return (($match$2464) => {
+        if ($match$2464.$t === "TVariant") {
+          const variant = $match$2464;
           return (() => {
             return variantObject(variant.f[0], variant.f[1], schemaFieldNames(ctx, variant.f[0]), values);
           })();
@@ -22305,16 +22517,16 @@
             return recordObject(tname, schemaFieldNames(ctx, tname), values);
           })();
         }
-        throw $matchFail("src/compile/emit.pf", 2428);
+        throw $matchFail("src/compile/emit.pf", 2464);
       })(typeOfId(ctx, id));
     }
     function stringIndexOf(names, value, index) {
-      return (($match$2459) => {
-        if ($match$2459.$t === "None") {
+      return (($match$2495) => {
+        if ($match$2495.$t === "None") {
           return $makeVariant("None", "Option", [], []);
         }
-        if ($match$2459.$t === "Some") {
-          const cell = $match$2459;
+        if ($match$2495.$t === "Some") {
+          const cell = $match$2495;
           return (() => {
             if (cell.f[0].f[0] === value) {
               return $makeVariant("Some", "Option", ["value"], [index]);
@@ -22323,71 +22535,71 @@
             }
           })();
         }
-        throw $matchFail("src/compile/emit.pf", 2459);
+        throw $matchFail("src/compile/emit.pf", 2495);
       })($field(Compat, "uncons")(names));
     }
     function emitFieldBySchema(ctx, object, schemaName, fieldName) {
-      return (($match$2487) => {
-        if ($match$2487.$t === "Some") {
-          const fields = $match$2487;
+      return (($match$2523) => {
+        if ($match$2523.$t === "Some") {
+          const fields = $match$2523;
           return (() => {
-            return (($match$2493) => {
-              if ($match$2493.$t === "Some") {
-                const index = $match$2493;
+            return (($match$2529) => {
+              if ($match$2529.$t === "Some") {
+                const index = $match$2529;
                 return (() => {
                   return $field(J, "jsIndex")($field(J, "jsMember")(object, "f"), $field(J, "jsNum")($str(index.f[0])));
                 })();
               }
-              if ($match$2493.$t === "None") {
+              if ($match$2529.$t === "None") {
                 return hostCall("$field", [object, $field(J, "jsStr")(fieldName)]);
               }
-              throw $matchFail("src/compile/emit.pf", 2493);
+              throw $matchFail("src/compile/emit.pf", 2529);
             })(stringIndexOf(fields.f[0], fieldName, 0));
           })();
         }
-        if ($match$2487.$t === "None") {
+        if ($match$2523.$t === "None") {
           return hostCall("$field", [object, $field(J, "jsStr")(fieldName)]);
         }
-        throw $matchFail("src/compile/emit.pf", 2487);
+        throw $matchFail("src/compile/emit.pf", 2523);
       })(schemaFieldsFor(ctx, schemaName));
     }
     function emitField(ctx, object0, fname) {
       const object = emitExpr(ctx, object0);
-      return (($match$2543) => {
-        if ($match$2543.$t === "TNamed") {
-          const named = $match$2543;
+      return (($match$2579) => {
+        if ($match$2579.$t === "TNamed") {
+          const named = $match$2579;
           return emitFieldBySchema(ctx, object, named.f[0], fname);
         }
-        if ($match$2543.$t === "TVariant") {
-          const variant = $match$2543;
+        if ($match$2579.$t === "TVariant") {
+          const variant = $match$2579;
           return emitFieldBySchema(ctx, object, variant.f[0], fname);
         }
         if (true) {
           return hostCall("$field", [object, $field(J, "jsStr")(fname)]);
         }
-        throw $matchFail("src/compile/emit.pf", 2543);
+        throw $matchFail("src/compile/emit.pf", 2579);
       })(typeOfExpr(ctx, object0));
     }
     function emitIndex(ctx, object0, index0) {
       const object = emitExpr(ctx, object0);
       const index = emitExpr(ctx, index0);
-      return (($match$2583) => {
-        if ($match$2583.$t === "TArray") {
+      return (($match$2619) => {
+        if ($match$2619.$t === "TArray") {
           return hostCall("$arrGet", [object, index]);
         }
-        if ($match$2583.$t === "TDict") {
+        if ($match$2619.$t === "TDict") {
           return hostCall("$dictGet", [object, index]);
         }
-        if ($match$2583.$t === "TList") {
+        if ($match$2619.$t === "TList") {
           return hostCall("$nth", [object, index]);
         }
-        if ($match$2583.$t === "TStr") {
+        if ($match$2619.$t === "TStr") {
           return hostCall("$strAt", [object, index]);
         }
         if (true) {
           return hostCall("$index", [object, index]);
         }
-        throw $matchFail("src/compile/emit.pf", 2583);
+        throw $matchFail("src/compile/emit.pf", 2619);
       })(typeOfExpr(ctx, object0));
     }
     function emitDict(ctx, entries) {
@@ -22399,223 +22611,223 @@
       return hostCall("$newArray", [$field(J, "jsArr")($map((elem) => emitExpr(ctx, elem), elems))]);
     }
     function emitFmtPart(ctx, part) {
-      return (($match$2666) => {
-        if ($match$2666.$t === "FmtLit") {
-          const lit = $match$2666;
+      return (($match$2702) => {
+        if ($match$2702.$t === "FmtLit") {
+          const lit = $match$2702;
           return $field(J, "jsStr")(lit.f[0]);
         }
-        if ($match$2666.$t === "FmtExpr") {
-          const expr = $match$2666;
+        if ($match$2702.$t === "FmtExpr") {
+          const expr = $match$2702;
           return (() => {
             return hostCall("$str", [emitExpr(ctx, expr.f[0])]);
           })();
         }
-        throw $matchFail("src/compile/emit.pf", 2666);
+        throw $matchFail("src/compile/emit.pf", 2702);
       })(part);
     }
     function concatStringExprs(parts) {
-      return (($match$2686) => {
-        if ($match$2686.$t === "None") {
+      return (($match$2722) => {
+        if ($match$2722.$t === "None") {
           return $field(J, "jsStr")("");
         }
-        if ($match$2686.$t === "Some") {
-          const first = $match$2686;
+        if ($match$2722.$t === "Some") {
+          const first = $match$2722;
           return (() => {
             return $reduce((acc, part) => hostCall("$concatS", [acc, part]), first.f[0].f[0], first.f[0].f[1]);
           })();
         }
-        throw $matchFail("src/compile/emit.pf", 2686);
+        throw $matchFail("src/compile/emit.pf", 2722);
       })($field(Compat, "uncons")(parts));
     }
     function emitFmt(ctx, parts) {
       return concatStringExprs($map((part) => emitFmtPart(ctx, part), parts));
     }
     function patternBoundNames(pattern) {
-      return (($match$2726) => {
-        if ($match$2726.$t === "PWild") {
+      return (($match$2762) => {
+        if ($match$2762.$t === "PWild") {
           return [];
         }
-        if ($match$2726.$t === "PVariant") {
-          const p = $match$2726;
+        if ($match$2762.$t === "PVariant") {
+          const p = $match$2762;
           return (() => {
-            return (($match$2730) => {
-              if ($match$2730.$t === "None") {
+            return (($match$2766) => {
+              if ($match$2766.$t === "None") {
                 return [];
               }
-              if ($match$2730.$t === "Some") {
-                const name = $match$2730;
+              if ($match$2766.$t === "Some") {
+                const name = $match$2766;
                 return [name.f[0]];
               }
-              throw $matchFail("src/compile/emit.pf", 2730);
+              throw $matchFail("src/compile/emit.pf", 2766);
             })(p.f[1]);
           })();
         }
-        if ($match$2726.$t === "PList") {
-          const p = $match$2726;
+        if ($match$2762.$t === "PList") {
+          const p = $match$2762;
           return (() => {
             const elemNames = $reduce((acc, elem) => (() => {
-              return (($match$2741) => {
-                if ($match$2741.$t === "PeBind") {
-                  const b = $match$2741;
+              return (($match$2777) => {
+                if ($match$2777.$t === "PeBind") {
+                  const b = $match$2777;
                   return appendOneString(acc, b.f[0]);
                 }
-                if ($match$2741.$t === "PeWild") {
+                if ($match$2777.$t === "PeWild") {
                   return acc;
                 }
-                throw $matchFail("src/compile/emit.pf", 2741);
+                throw $matchFail("src/compile/emit.pf", 2777);
               })(elem);
             })(), [], p.f[0]);
-            return (($match$2756) => {
-              if ($match$2756.$t === "None") {
+            return (($match$2792) => {
+              if ($match$2792.$t === "None") {
                 return elemNames;
               }
-              if ($match$2756.$t === "Some") {
-                const rest = $match$2756;
+              if ($match$2792.$t === "Some") {
+                const rest = $match$2792;
                 return (() => {
-                  return (($match$2761) => {
-                    if ($match$2761.$t === "PeBind") {
-                      const b = $match$2761;
+                  return (($match$2797) => {
+                    if ($match$2797.$t === "PeBind") {
+                      const b = $match$2797;
                       return appendOneString(elemNames, b.f[0]);
                     }
-                    if ($match$2761.$t === "PeWild") {
+                    if ($match$2797.$t === "PeWild") {
                       return elemNames;
                     }
-                    throw $matchFail("src/compile/emit.pf", 2761);
+                    throw $matchFail("src/compile/emit.pf", 2797);
                   })(rest.f[0]);
                 })();
               }
-              throw $matchFail("src/compile/emit.pf", 2756);
+              throw $matchFail("src/compile/emit.pf", 2792);
             })(p.f[1]);
           })();
         }
-        throw $matchFail("src/compile/emit.pf", 2726);
+        throw $matchFail("src/compile/emit.pf", 2762);
       })(pattern);
     }
     function emitListPatternBindings(ctx, subject, elems, index) {
-      return (($match$2774) => {
-        if ($match$2774.$t === "None") {
+      return (($match$2810) => {
+        if ($match$2810.$t === "None") {
           return [];
         }
-        if ($match$2774.$t === "Some") {
-          const cell = $match$2774;
+        if ($match$2810.$t === "Some") {
+          const cell = $match$2810;
           return (() => {
             const rest = emitListPatternBindings(ctx, subject, cell.f[0].f[1], $addI(index, 1));
-            return (($match$2792) => {
-              if ($match$2792.$t === "PeWild") {
+            return (($match$2828) => {
+              if ($match$2828.$t === "PeWild") {
                 return rest;
               }
-              if ($match$2792.$t === "PeBind") {
-                const bind = $match$2792;
+              if ($match$2828.$t === "PeBind") {
+                const bind = $match$2828;
                 return (() => {
                   return $cons($field(J, "jsConst")(bind.f[0], hostCall("$nthU", [subject, $field(J, "jsNum")($str(index))])), rest);
                 })();
               }
-              throw $matchFail("src/compile/emit.pf", 2792);
+              throw $matchFail("src/compile/emit.pf", 2828);
             })(cell.f[0].f[0]);
           })();
         }
-        throw $matchFail("src/compile/emit.pf", 2774);
+        throw $matchFail("src/compile/emit.pf", 2810);
       })($field(Compat, "uncons")(elems));
     }
     function emitRestBinding(subject, rest, count) {
-      return (($match$2821) => {
-        if ($match$2821.$t === "None") {
+      return (($match$2857) => {
+        if ($match$2857.$t === "None") {
           return [];
         }
-        if ($match$2821.$t === "Some") {
-          const found = $match$2821;
+        if ($match$2857.$t === "Some") {
+          const found = $match$2857;
           return (() => {
-            return (($match$2825) => {
-              if ($match$2825.$t === "PeWild") {
+            return (($match$2861) => {
+              if ($match$2861.$t === "PeWild") {
                 return [];
               }
-              if ($match$2825.$t === "PeBind") {
-                const bind = $match$2825;
+              if ($match$2861.$t === "PeBind") {
+                const bind = $match$2861;
                 return (() => {
                   return [$field(J, "jsConst")(bind.f[0], hostCall("$listRest", [subject, $field(J, "jsNum")($str(count))]))];
                 })();
               }
-              throw $matchFail("src/compile/emit.pf", 2825);
+              throw $matchFail("src/compile/emit.pf", 2861);
             })(found.f[0]);
           })();
         }
-        throw $matchFail("src/compile/emit.pf", 2821);
+        throw $matchFail("src/compile/emit.pf", 2857);
       })(rest);
     }
     function emitArmPlan(ctx, subject, pattern) {
       const armCtx = addLocals(ctx, patternBoundNames(pattern));
-      return (($match$2858) => {
-        if ($match$2858.$t === "PWild") {
+      return (($match$2894) => {
+        if ($match$2894.$t === "PWild") {
           return (() => {
             return $makeRecord("EmitArmPlan", ["condition", "bindings", "armCtx"], [$field(J, "jsBool")(true), [], armCtx]);
           })();
         }
-        if ($match$2858.$t === "PVariant") {
-          const p = $match$2858;
+        if ($match$2894.$t === "PVariant") {
+          const p = $match$2894;
           return (() => {
-            const bindings = (($match$2870) => {
-              if ($match$2870.$t === "None") {
+            const bindings = (($match$2906) => {
+              if ($match$2906.$t === "None") {
                 return [];
               }
-              if ($match$2870.$t === "Some") {
-                const bind = $match$2870;
+              if ($match$2906.$t === "Some") {
+                const bind = $match$2906;
                 return [$field(J, "jsConst")(bind.f[0], subject)];
               }
-              throw $matchFail("src/compile/emit.pf", 2870);
+              throw $matchFail("src/compile/emit.pf", 2906);
             })(p.f[1]);
             return $makeRecord("EmitArmPlan", ["condition", "bindings", "armCtx"], [$field(J, "jsBin")("===", $field(J, "jsMember")(subject, "$t"), $field(J, "jsStr")(p.f[0])), bindings, armCtx]);
           })();
         }
-        if ($match$2858.$t === "PList") {
-          const p = $match$2858;
+        if ($match$2894.$t === "PList") {
+          const p = $match$2894;
           return (() => {
             const count = $length(p.f[0]);
-            const condition = (($match$2906) => {
-              if ($match$2906.$t === "None") {
+            const condition = (($match$2942) => {
+              if ($match$2942.$t === "None") {
                 return hostCall("$listExactLen", [subject, $field(J, "jsNum")($str(count))]);
               }
-              if ($match$2906.$t === "Some") {
+              if ($match$2942.$t === "Some") {
                 return hostCall("$listMinLen", [subject, $field(J, "jsNum")($str(count))]);
               }
-              throw $matchFail("src/compile/emit.pf", 2906);
+              throw $matchFail("src/compile/emit.pf", 2942);
             })(p.f[1]);
             const elementBindings = emitListPatternBindings(ctx, subject, p.f[0], 0);
             const bindings = appendJsStmts(elementBindings, emitRestBinding(subject, p.f[1], count));
             return $makeRecord("EmitArmPlan", ["condition", "bindings", "armCtx"], [condition, bindings, armCtx]);
           })();
         }
-        throw $matchFail("src/compile/emit.pf", 2858);
+        throw $matchFail("src/compile/emit.pf", 2894);
       })(pattern);
     }
     function emitArmReturn(plan, arm) {
       const result = $field(J, "jsRet")(emitExpr(plan.f[2], $field(arm, "body")));
-      return (($match$2967) => {
-        if ($match$2967.$t === "None") {
+      return (($match$3003) => {
+        if ($match$3003.$t === "None") {
           return appendJsStmts(plan.f[1], [result]);
         }
-        if ($match$2967.$t === "Some") {
-          const guard = $match$2967;
+        if ($match$3003.$t === "Some") {
+          const guard = $match$3003;
           return (() => {
             return appendJsStmts(plan.f[1], [$field(J, "jsIf")(emitExpr(plan.f[2], guard.f[0]), [result], [])]);
           })();
         }
-        throw $matchFail("src/compile/emit.pf", 2967);
+        throw $matchFail("src/compile/emit.pf", 3003);
       })($field(arm, "guard"));
     }
     function emitMatchArms(ctx, subject, arms) {
-      return (($match$2997) => {
-        if ($match$2997.$t === "None") {
+      return (($match$3033) => {
+        if ($match$3033.$t === "None") {
           return [];
         }
-        if ($match$2997.$t === "Some") {
-          const cell = $match$2997;
+        if ($match$3033.$t === "Some") {
+          const cell = $match$3033;
           return (() => {
             const arm = cell.f[0].f[0];
             const plan = emitArmPlan(ctx, subject, $field(arm, "pattern"));
             return $cons($field(J, "jsIf")(plan.f[0], emitArmReturn(plan, arm), []), emitMatchArms(ctx, subject, cell.f[0].f[1]));
           })();
         }
-        throw $matchFail("src/compile/emit.pf", 2997);
+        throw $matchFail("src/compile/emit.pf", 3033);
       })($field(Compat, "uncons")(arms));
     }
     function emitMatch(ctx, id, subject0, arms0) {
@@ -22629,37 +22841,37 @@
       const blockCtx = addLocals(ctx, boundNamesOfStmts(stmts));
       const split = splitLastStmt(stmts);
       const prefix = emitStmtList(blockCtx, split.f[0]);
-      return (($match$3113) => {
-        if ($match$3113.$t === "None") {
+      return (($match$3149) => {
+        if ($match$3149.$t === "None") {
           return appendJsStmts(prefix, [$field(J, "jsRet")($field(J, "jsNull")())]);
         }
-        if ($match$3113.$t === "Some") {
-          const last = $match$3113;
+        if ($match$3149.$t === "Some") {
+          const last = $match$3149;
           return (() => {
-            return (($match$3127) => {
-              if ($match$3127.$t === "SExpr") {
-                const s = $match$3127;
+            return (($match$3163) => {
+              if ($match$3163.$t === "SExpr") {
+                const s = $match$3163;
                 return (() => {
                   return appendJsStmts(prefix, [$field(J, "jsRet")(emitExpr(blockCtx, s.f[1]))]);
                 })();
               }
-              if ($match$3127.$t === "SIf") {
-                const s = $match$3127;
+              if ($match$3163.$t === "SIf") {
+                const s = $match$3163;
                 return (() => {
-                  const elseJs = (($match$3145) => {
-                    if ($match$3145.$t === "None") {
+                  const elseJs = (($match$3181) => {
+                    if ($match$3181.$t === "None") {
                       return [$field(J, "jsRet")($field(J, "jsNull")())];
                     }
-                    if ($match$3145.$t === "Some") {
-                      const e = $match$3145;
+                    if ($match$3181.$t === "Some") {
+                      const e = $match$3181;
                       return emitBlockResult(blockCtx, e.f[0]);
                     }
-                    throw $matchFail("src/compile/emit.pf", 3145);
+                    throw $matchFail("src/compile/emit.pf", 3181);
                   })(s.f[3]);
                   return appendJsStmts(prefix, [$field(J, "jsIf")(emitExpr(blockCtx, s.f[1]), emitBlockResult(blockCtx, s.f[2]), elseJs)]);
                 })();
               }
-              if ($match$3127.$t === "SReturn") {
+              if ($match$3163.$t === "SReturn") {
                 return (() => {
                   return appendJsStmts(prefix, emitStmt(blockCtx, last.f[0]));
                 })();
@@ -22669,123 +22881,127 @@
                   return appendJsStmts(appendJsStmts(prefix, emitStmt(blockCtx, last.f[0])), [$field(J, "jsRet")($field(J, "jsNull")())]);
                 })();
               }
-              throw $matchFail("src/compile/emit.pf", 3127);
+              throw $matchFail("src/compile/emit.pf", 3163);
             })(last.f[0]);
           })();
         }
-        throw $matchFail("src/compile/emit.pf", 3113);
+        throw $matchFail("src/compile/emit.pf", 3149);
       })(split.f[1]);
     }
     function emitBlockExpr(ctx, stmts) {
       return $field(J, "jsCall")($field(J, "jsArrow")([], $field(J, "jsBlockBody")(emitBlockResult(ctx, stmts)), false), []);
     }
     function emitExpr(ctx, expr) {
-      return (($match$3230) => {
-        if ($match$3230.$t === "EInt") {
-          const e = $match$3230;
+      return (($match$3266) => {
+        if ($match$3266.$t === "EInt") {
+          const e = $match$3266;
           return emitIntLiteral(e.f[1]);
         }
-        if ($match$3230.$t === "EFloat") {
-          const e = $match$3230;
+        if ($match$3266.$t === "EFloat") {
+          const e = $match$3266;
           return $field(J, "jsNum")(e.f[1]);
         }
-        if ($match$3230.$t === "EBool") {
-          const e = $match$3230;
+        if ($match$3266.$t === "EBool") {
+          const e = $match$3266;
           return $field(J, "jsBool")(e.f[1]);
         }
-        if ($match$3230.$t === "EStr") {
-          const e = $match$3230;
+        if ($match$3266.$t === "EStr") {
+          const e = $match$3266;
           return $field(J, "jsStr")(e.f[1]);
         }
-        if ($match$3230.$t === "EChar") {
-          const e = $match$3230;
+        if ($match$3266.$t === "EChar") {
+          const e = $match$3266;
           return $field(J, "jsStr")(e.f[1]);
         }
-        if ($match$3230.$t === "EByte") {
-          const e = $match$3230;
+        if ($match$3266.$t === "EByte") {
+          const e = $match$3266;
           return $field(J, "jsNum")($str(e.f[1]));
         }
-        if ($match$3230.$t === "EVar") {
-          const e = $match$3230;
+        if ($match$3266.$t === "EVar") {
+          const e = $match$3266;
           return emitVar(ctx, e.f[1]);
         }
-        if ($match$3230.$t === "EUnary") {
-          const e = $match$3230;
+        if ($match$3266.$t === "EUnary") {
+          const e = $match$3266;
           return emitUnary(ctx, e.f[1], e.f[2]);
         }
-        if ($match$3230.$t === "EBinary") {
-          const e = $match$3230;
+        if ($match$3266.$t === "EBinary") {
+          const e = $match$3266;
           return specializeBin(ctx, e.f[1], e.f[2], e.f[3]);
         }
-        if ($match$3230.$t === "EIf") {
-          const e = $match$3230;
+        if ($match$3266.$t === "EIf") {
+          const e = $match$3266;
           return (() => {
             return $field(J, "jsCond")(emitExpr(ctx, e.f[1]), emitExpr(ctx, e.f[2]), emitExpr(ctx, e.f[3]));
           })();
         }
-        if ($match$3230.$t === "ECall") {
-          const e = $match$3230;
+        if ($match$3266.$t === "ECall") {
+          const e = $match$3266;
           return emitCall(ctx, e.f[0], e.f[1], e.f[2]);
         }
-        if ($match$3230.$t === "ELambda") {
-          const e = $match$3230;
+        if ($match$3266.$t === "ELambda") {
+          const e = $match$3266;
           return emitLambda(ctx, e.f[1], e.f[2]);
         }
-        if ($match$3230.$t === "EBlock") {
-          const e = $match$3230;
+        if ($match$3266.$t === "EProcLambda") {
+          const e = $match$3266;
+          return emitProcLambda(ctx, e.f[1], e.f[3], e.f[4]);
+        }
+        if ($match$3266.$t === "EBlock") {
+          const e = $match$3266;
           return emitBlockExpr(ctx, e.f[1]);
         }
-        if ($match$3230.$t === "EList") {
-          const e = $match$3230;
+        if ($match$3266.$t === "EList") {
+          const e = $match$3266;
           return emitList(ctx, e.f[2], e.f[1]);
         }
-        if ($match$3230.$t === "EComp") {
-          const e = $match$3230;
+        if ($match$3266.$t === "EComp") {
+          const e = $match$3266;
           return emitComp(ctx, e.f[2], e.f[3], e.f[1], e.f[4]);
         }
-        if ($match$3230.$t === "ERecord") {
-          const e = $match$3230;
+        if ($match$3266.$t === "ERecord") {
+          const e = $match$3266;
           return emitRecord(ctx, e.f[0], e.f[1], e.f[2]);
         }
-        if ($match$3230.$t === "EField") {
-          const e = $match$3230;
+        if ($match$3266.$t === "EField") {
+          const e = $match$3266;
           return emitField(ctx, e.f[1], e.f[2]);
         }
-        if ($match$3230.$t === "EIndex") {
-          const e = $match$3230;
+        if ($match$3266.$t === "EIndex") {
+          const e = $match$3266;
           return emitIndex(ctx, e.f[1], e.f[2]);
         }
-        if ($match$3230.$t === "EMatch") {
-          const e = $match$3230;
+        if ($match$3266.$t === "EMatch") {
+          const e = $match$3266;
           return emitMatch(ctx, e.f[0], e.f[1], e.f[2]);
         }
-        if ($match$3230.$t === "EDict") {
-          const e = $match$3230;
+        if ($match$3266.$t === "EDict") {
+          const e = $match$3266;
           return emitDict(ctx, e.f[1]);
         }
-        if ($match$3230.$t === "EArray") {
-          const e = $match$3230;
+        if ($match$3266.$t === "EArray") {
+          const e = $match$3266;
           return emitArray(ctx, e.f[1]);
         }
-        if ($match$3230.$t === "EAwait") {
-          const e = $match$3230;
+        if ($match$3266.$t === "EAwait") {
+          const e = $match$3266;
           return $field(J, "jsAwait")(emitExpr(ctx, e.f[1]));
         }
-        if ($match$3230.$t === "EFmt") {
-          const e = $match$3230;
+        if ($match$3266.$t === "EFmt") {
+          const e = $match$3266;
           return emitFmt(ctx, e.f[1]);
         }
-        throw $matchFail("src/compile/emit.pf", 3230);
+        throw $matchFail("src/compile/emit.pf", 3266);
       })(expr);
     }
     function selfCallArgs(name, expr) {
-      return (($match$3400) => {
-        if ($match$3400.$t === "ECall") {
-          const call = $match$3400;
+      return (($match$3445) => {
+        if ($match$3445.$t === "ECall") {
+          const call = $match$3445;
           return (() => {
-            return (($match$3403) => {
-              if ($match$3403.$t === "EVar") {
-                const callee = $match$3403;
+            return (($match$3448) => {
+              if ($match$3448.$t === "EVar") {
+                const callee = $match$3448;
                 return (() => {
                   return callee.f[1] === name ? $makeVariant("Some", "Option", ["value"], [call.f[2]]) : $makeVariant("None", "Option", [], []);
                 })();
@@ -22793,149 +23009,149 @@
               if (true) {
                 return $makeVariant("None", "Option", [], []);
               }
-              throw $matchFail("src/compile/emit.pf", 3403);
+              throw $matchFail("src/compile/emit.pf", 3448);
             })(call.f[1]);
           })();
         }
         if (true) {
           return $makeVariant("None", "Option", [], []);
         }
-        throw $matchFail("src/compile/emit.pf", 3400);
+        throw $matchFail("src/compile/emit.pf", 3445);
       })(expr);
     }
     function tailCallsInArms(name, arms) {
-      return (($match$3422) => {
-        if ($match$3422.$t === "None") {
+      return (($match$3467) => {
+        if ($match$3467.$t === "None") {
           return [];
         }
-        if ($match$3422.$t === "Some") {
-          const cell = $match$3422;
+        if ($match$3467.$t === "Some") {
+          const cell = $match$3467;
           return (() => {
             return appendInts(tailCallsInExpr(name, $field(cell.f[0].f[0], "body")), tailCallsInArms(name, cell.f[0].f[1]));
           })();
         }
-        throw $matchFail("src/compile/emit.pf", 3422);
+        throw $matchFail("src/compile/emit.pf", 3467);
       })($field(Compat, "uncons")(arms));
     }
     function tailCallsInExpr(name, expr) {
-      return (($match$3447) => {
-        if ($match$3447.$t === "Some") {
+      return (($match$3492) => {
+        if ($match$3492.$t === "Some") {
           return [$field(A, "exprId")(expr)];
         }
-        if ($match$3447.$t === "None") {
+        if ($match$3492.$t === "None") {
           return (() => {
-            return (($match$3458) => {
-              if ($match$3458.$t === "EIf") {
-                const e = $match$3458;
+            return (($match$3503) => {
+              if ($match$3503.$t === "EIf") {
+                const e = $match$3503;
                 return (() => {
                   return appendInts(tailCallsInExpr(name, e.f[2]), tailCallsInExpr(name, e.f[3]));
                 })();
               }
-              if ($match$3458.$t === "EMatch") {
-                const e = $match$3458;
+              if ($match$3503.$t === "EMatch") {
+                const e = $match$3503;
                 return tailCallsInArms(name, e.f[2]);
               }
               if (true) {
                 return [];
               }
-              throw $matchFail("src/compile/emit.pf", 3458);
+              throw $matchFail("src/compile/emit.pf", 3503);
             })(expr);
           })();
         }
-        throw $matchFail("src/compile/emit.pf", 3447);
+        throw $matchFail("src/compile/emit.pf", 3492);
       })(selfCallArgs(name, expr));
     }
     function tailCallsInLastStmt(name, stmt) {
       while (true) {
-        const $match$3483 = stmt;
-        if ($match$3483.$t === "SReturn") {
-          const s = $match$3483;
+        const $match$3528 = stmt;
+        if ($match$3528.$t === "SReturn") {
+          const s = $match$3528;
           return (() => {
-            return (($match$3486) => {
-              if ($match$3486.$t === "None") {
+            return (($match$3531) => {
+              if ($match$3531.$t === "None") {
                 return [];
               }
-              if ($match$3486.$t === "Some") {
-                const value = $match$3486;
+              if ($match$3531.$t === "Some") {
+                const value = $match$3531;
                 return tailCallsInExpr(name, value.f[0]);
               }
-              throw $matchFail("src/compile/emit.pf", 3486);
+              throw $matchFail("src/compile/emit.pf", 3531);
             })(s.f[1]);
           })();
         }
-        if ($match$3483.$t === "SExpr") {
-          const s = $match$3483;
+        if ($match$3528.$t === "SExpr") {
+          const s = $match$3528;
           return tailCallsInExpr(name, s.f[1]);
         }
-        if ($match$3483.$t === "SIf") {
-          const s = $match$3483;
+        if ($match$3528.$t === "SIf") {
+          const s = $match$3528;
           return (() => {
-            const elseCalls = (($match$3502) => {
-              if ($match$3502.$t === "None") {
+            const elseCalls = (($match$3547) => {
+              if ($match$3547.$t === "None") {
                 return [];
               }
-              if ($match$3502.$t === "Some") {
-                const e = $match$3502;
+              if ($match$3547.$t === "Some") {
+                const e = $match$3547;
                 return tailCallsOf(name, e.f[0]);
               }
-              throw $matchFail("src/compile/emit.pf", 3502);
+              throw $matchFail("src/compile/emit.pf", 3547);
             })(s.f[3]);
             return appendInts(tailCallsOf(name, s.f[2]), elseCalls);
           })();
         }
-        if ($match$3483.$t === "SExport") {
-          const s = $match$3483;
-          const $tc$3525$0 = name;
-          const $tc$3525$1 = s.f[1];
-          name = $tc$3525$0;
-          stmt = $tc$3525$1;
+        if ($match$3528.$t === "SExport") {
+          const s = $match$3528;
+          const $tc$3570$0 = name;
+          const $tc$3570$1 = s.f[1];
+          name = $tc$3570$0;
+          stmt = $tc$3570$1;
           continue;
         }
         if (true) {
           return [];
         }
-        throw $matchFail("src/compile/emit.pf", 3483);
+        throw $matchFail("src/compile/emit.pf", 3528);
       }
     }
     function tailCallsOf(name, body) {
       const split = splitLastStmt(body);
-      return (($match$3533) => {
-        if ($match$3533.$t === "None") {
+      return (($match$3578) => {
+        if ($match$3578.$t === "None") {
           return [];
         }
-        if ($match$3533.$t === "Some") {
-          const last = $match$3533;
+        if ($match$3578.$t === "Some") {
+          const last = $match$3578;
           return tailCallsInLastStmt(name, last.f[0]);
         }
-        throw $matchFail("src/compile/emit.pf", 3533);
+        throw $matchFail("src/compile/emit.pf", 3578);
       })(split.f[1]);
     }
     function emitTailTemps(ctx, args, callId, index) {
-      return (($match$3545) => {
-        if ($match$3545.$t === "None") {
+      return (($match$3590) => {
+        if ($match$3590.$t === "None") {
           return [];
         }
-        if ($match$3545.$t === "Some") {
-          const cell = $match$3545;
+        if ($match$3590.$t === "Some") {
+          const cell = $match$3590;
           return (() => {
             return $cons($field(J, "jsConst")(tailTemp(callId, index), emitExpr(ctx, cell.f[0].f[0])), emitTailTemps(ctx, cell.f[0].f[1], callId, $addI(index, 1)));
           })();
         }
-        throw $matchFail("src/compile/emit.pf", 3545);
+        throw $matchFail("src/compile/emit.pf", 3590);
       })($field(Compat, "uncons")(args));
     }
     function emitTailAssignments(params, callId, index) {
-      return (($match$3580) => {
-        if ($match$3580.$t === "None") {
+      return (($match$3625) => {
+        if ($match$3625.$t === "None") {
           return [];
         }
-        if ($match$3580.$t === "Some") {
-          const cell = $match$3580;
+        if ($match$3625.$t === "Some") {
+          const cell = $match$3625;
           return (() => {
             return $cons($field(J, "jsAssign")($field(J, "jsId")(cell.f[0].f[0]), $field(J, "jsId")(tailTemp(callId, index))), emitTailAssignments(cell.f[0].f[1], callId, $addI(index, 1)));
           })();
         }
-        throw $matchFail("src/compile/emit.pf", 3580);
+        throw $matchFail("src/compile/emit.pf", 3625);
       })($field(Compat, "uncons")(params));
     }
     function emitTailCall(ctx, params, expr, args) {
@@ -22946,33 +23162,33 @@
     }
     function emitTailArmBody(ctx, name, params, plan, arm) {
       const result = emitTailExpr(plan.f[2], name, params, $field(arm, "body"));
-      return (($match$3656) => {
-        if ($match$3656.$t === "None") {
+      return (($match$3701) => {
+        if ($match$3701.$t === "None") {
           return appendJsStmts(plan.f[1], result);
         }
-        if ($match$3656.$t === "Some") {
-          const guard = $match$3656;
+        if ($match$3701.$t === "Some") {
+          const guard = $match$3701;
           return (() => {
             return appendJsStmts(plan.f[1], [$field(J, "jsIf")(emitExpr(plan.f[2], guard.f[0]), result, [])]);
           })();
         }
-        throw $matchFail("src/compile/emit.pf", 3656);
+        throw $matchFail("src/compile/emit.pf", 3701);
       })($field(arm, "guard"));
     }
     function emitTailMatchArms(ctx, name, params, subject, arms) {
-      return (($match$3684) => {
-        if ($match$3684.$t === "None") {
+      return (($match$3729) => {
+        if ($match$3729.$t === "None") {
           return [];
         }
-        if ($match$3684.$t === "Some") {
-          const cell = $match$3684;
+        if ($match$3729.$t === "Some") {
+          const cell = $match$3729;
           return (() => {
             const arm = cell.f[0].f[0];
             const plan = emitArmPlan(ctx, subject, $field(arm, "pattern"));
             return $cons($field(J, "jsIf")(plan.f[0], emitTailArmBody(ctx, name, params, plan, arm), []), emitTailMatchArms(ctx, name, params, subject, cell.f[0].f[1]));
           })();
         }
-        throw $matchFail("src/compile/emit.pf", 3684);
+        throw $matchFail("src/compile/emit.pf", 3729);
       })($field(Compat, "uncons")(arms));
     }
     function emitTailMatch(ctx, name, params, id, subject0, arms0) {
@@ -22983,22 +23199,22 @@
       return $cons($field(J, "jsConst")(subjectName, emitExpr(ctx, subject0)), appendJsStmts(arms, [fail]));
     }
     function emitTailExpr(ctx, name, params, expr) {
-      return (($match$3783) => {
-        if ($match$3783.$t === "Some") {
-          const args = $match$3783;
+      return (($match$3828) => {
+        if ($match$3828.$t === "Some") {
+          const args = $match$3828;
           return emitTailCall(ctx, params, expr, args.f[0]);
         }
-        if ($match$3783.$t === "None") {
+        if ($match$3828.$t === "None") {
           return (() => {
-            return (($match$3796) => {
-              if ($match$3796.$t === "EIf") {
-                const e = $match$3796;
+            return (($match$3841) => {
+              if ($match$3841.$t === "EIf") {
+                const e = $match$3841;
                 return (() => {
                   return [$field(J, "jsIf")(emitExpr(ctx, e.f[1]), emitTailExpr(ctx, name, params, e.f[2]), emitTailExpr(ctx, name, params, e.f[3]))];
                 })();
               }
-              if ($match$3796.$t === "EMatch") {
-                const e = $match$3796;
+              if ($match$3841.$t === "EMatch") {
+                const e = $match$3841;
                 return (() => {
                   return emitTailMatch(ctx, name, params, e.f[0], e.f[1], e.f[2]);
                 })();
@@ -23006,61 +23222,61 @@
               if (true) {
                 return [$field(J, "jsRet")(emitExpr(ctx, expr))];
               }
-              throw $matchFail("src/compile/emit.pf", 3796);
+              throw $matchFail("src/compile/emit.pf", 3841);
             })(expr);
           })();
         }
-        throw $matchFail("src/compile/emit.pf", 3783);
+        throw $matchFail("src/compile/emit.pf", 3828);
       })(selfCallArgs(name, expr));
     }
     function emitTailLastStmt(ctx, name, params, stmt) {
       while (true) {
-        const $match$3847 = stmt;
-        if ($match$3847.$t === "SReturn") {
-          const s = $match$3847;
+        const $match$3892 = stmt;
+        if ($match$3892.$t === "SReturn") {
+          const s = $match$3892;
           return (() => {
-            return (($match$3850) => {
-              if ($match$3850.$t === "None") {
+            return (($match$3895) => {
+              if ($match$3895.$t === "None") {
                 return [$field(J, "jsRet")($field(J, "jsNull")())];
               }
-              if ($match$3850.$t === "Some") {
-                const value = $match$3850;
+              if ($match$3895.$t === "Some") {
+                const value = $match$3895;
                 return emitTailExpr(ctx, name, params, value.f[0]);
               }
-              throw $matchFail("src/compile/emit.pf", 3850);
+              throw $matchFail("src/compile/emit.pf", 3895);
             })(s.f[1]);
           })();
         }
-        if ($match$3847.$t === "SExpr") {
-          const s = $match$3847;
+        if ($match$3892.$t === "SExpr") {
+          const s = $match$3892;
           return emitTailExpr(ctx, name, params, s.f[1]);
         }
-        if ($match$3847.$t === "SIf") {
-          const s = $match$3847;
+        if ($match$3892.$t === "SIf") {
+          const s = $match$3892;
           return (() => {
-            const elseJs = (($match$3876) => {
-              if ($match$3876.$t === "None") {
+            const elseJs = (($match$3921) => {
+              if ($match$3921.$t === "None") {
                 return [];
               }
-              if ($match$3876.$t === "Some") {
-                const e = $match$3876;
+              if ($match$3921.$t === "Some") {
+                const e = $match$3921;
                 return emitTailStmtList(ctx, name, params, e.f[0]);
               }
-              throw $matchFail("src/compile/emit.pf", 3876);
+              throw $matchFail("src/compile/emit.pf", 3921);
             })(s.f[3]);
             return [$field(J, "jsIf")(emitExpr(ctx, s.f[1]), emitTailStmtList(ctx, name, params, s.f[2]), elseJs)];
           })();
         }
-        if ($match$3847.$t === "SExport") {
-          const s = $match$3847;
-          const $tc$3912$0 = ctx;
-          const $tc$3912$1 = name;
-          const $tc$3912$2 = params;
-          const $tc$3912$3 = s.f[1];
-          ctx = $tc$3912$0;
-          name = $tc$3912$1;
-          params = $tc$3912$2;
-          stmt = $tc$3912$3;
+        if ($match$3892.$t === "SExport") {
+          const s = $match$3892;
+          const $tc$3957$0 = ctx;
+          const $tc$3957$1 = name;
+          const $tc$3957$2 = params;
+          const $tc$3957$3 = s.f[1];
+          ctx = $tc$3957$0;
+          name = $tc$3957$1;
+          params = $tc$3957$2;
+          stmt = $tc$3957$3;
           continue;
         }
         if (true) {
@@ -23068,41 +23284,41 @@
             return appendJsStmts(emitStmt(ctx, stmt), [$field(J, "jsRet")($field(J, "jsNull")())]);
           })();
         }
-        throw $matchFail("src/compile/emit.pf", 3847);
+        throw $matchFail("src/compile/emit.pf", 3892);
       }
     }
     function emitTailStmtList(ctx, name, params, stmts) {
       const bodyCtx = addLocals(ctx, boundNamesOfStmts(stmts));
       const split = splitLastStmt(stmts);
       const prefix = emitStmtList(bodyCtx, split.f[0]);
-      return (($match$3947) => {
-        if ($match$3947.$t === "None") {
+      return (($match$3992) => {
+        if ($match$3992.$t === "None") {
           return appendJsStmts(prefix, [$field(J, "jsRet")($field(J, "jsNull")())]);
         }
-        if ($match$3947.$t === "Some") {
-          const last = $match$3947;
+        if ($match$3992.$t === "Some") {
+          const last = $match$3992;
           return (() => {
             return appendJsStmts(prefix, emitTailLastStmt(bodyCtx, name, params, last.f[0]));
           })();
         }
-        throw $matchFail("src/compile/emit.pf", 3947);
+        throw $matchFail("src/compile/emit.pf", 3992);
       })(split.f[1]);
     }
     function emitIndexAssign(ctx, object1, index1, value1) {
       const object = emitExpr(ctx, object1);
       const index = emitExpr(ctx, index1);
       const value = emitExpr(ctx, value1);
-      const call = (($match$3989) => {
-        if ($match$3989.$t === "TArray") {
+      const call = (($match$4034) => {
+        if ($match$4034.$t === "TArray") {
           return hostCall("$arrSet", [object, index, value]);
         }
-        if ($match$3989.$t === "TDict") {
+        if ($match$4034.$t === "TDict") {
           return hostCall("$dictSet", [object, index, value]);
         }
         if (true) {
           return hostCall("$indexSet", [object, index, value]);
         }
-        throw $matchFail("src/compile/emit.pf", 3989);
+        throw $matchFail("src/compile/emit.pf", 4034);
       })(typeOfExpr(ctx, object1));
       return [$field(J, "jsExprStmt")(call)];
     }
@@ -23110,37 +23326,37 @@
       const bodyCtx = addLocals(ctx, boundNamesOfStmts(stmts));
       const split = splitLastStmt(stmts);
       const prefix = emitStmtList(bodyCtx, split.f[0]);
-      return (($match$4040) => {
-        if ($match$4040.$t === "None") {
+      return (($match$4085) => {
+        if ($match$4085.$t === "None") {
           return appendJsStmts(prefix, [$field(J, "jsRet")($field(J, "jsNull")())]);
         }
-        if ($match$4040.$t === "Some") {
-          const last = $match$4040;
+        if ($match$4085.$t === "Some") {
+          const last = $match$4085;
           return (() => {
-            return (($match$4054) => {
-              if ($match$4054.$t === "SExpr") {
-                const s = $match$4054;
+            return (($match$4099) => {
+              if ($match$4099.$t === "SExpr") {
+                const s = $match$4099;
                 return (() => {
                   return appendJsStmts(prefix, [$field(J, "jsRet")(emitExpr(bodyCtx, s.f[1]))]);
                 })();
               }
-              if ($match$4054.$t === "SIf") {
-                const s = $match$4054;
+              if ($match$4099.$t === "SIf") {
+                const s = $match$4099;
                 return (() => {
-                  const elseJs = (($match$4072) => {
-                    if ($match$4072.$t === "None") {
+                  const elseJs = (($match$4117) => {
+                    if ($match$4117.$t === "None") {
                       return [$field(J, "jsRet")($field(J, "jsNull")())];
                     }
-                    if ($match$4072.$t === "Some") {
-                      const e = $match$4072;
+                    if ($match$4117.$t === "Some") {
+                      const e = $match$4117;
                       return emitResultStmtList(bodyCtx, e.f[0]);
                     }
-                    throw $matchFail("src/compile/emit.pf", 4072);
+                    throw $matchFail("src/compile/emit.pf", 4117);
                   })(s.f[3]);
                   return appendJsStmts(prefix, [$field(J, "jsIf")(emitExpr(bodyCtx, s.f[1]), emitResultStmtList(bodyCtx, s.f[2]), elseJs)]);
                 })();
               }
-              if ($match$4054.$t === "SReturn") {
+              if ($match$4099.$t === "SReturn") {
                 return (() => {
                   return appendJsStmts(prefix, emitStmt(bodyCtx, last.f[0]));
                 })();
@@ -23150,35 +23366,35 @@
                   return appendJsStmts(appendJsStmts(prefix, emitStmt(bodyCtx, last.f[0])), [$field(J, "jsRet")($field(J, "jsNull")())]);
                 })();
               }
-              throw $matchFail("src/compile/emit.pf", 4054);
+              throw $matchFail("src/compile/emit.pf", 4099);
             })(last.f[0]);
           })();
         }
-        throw $matchFail("src/compile/emit.pf", 4040);
+        throw $matchFail("src/compile/emit.pf", 4085);
       })(split.f[1]);
     }
     function memoFlag(kind) {
-      return (($match$4139) => {
-        if ($match$4139.$t === "PureFn") {
-          const k = $match$4139;
+      return (($match$4184) => {
+        if ($match$4184.$t === "PureFn") {
+          const k = $match$4184;
           return k.f[0];
         }
-        if ($match$4139.$t === "ProcFn") {
+        if ($match$4184.$t === "ProcFn") {
           return false;
         }
-        throw $matchFail("src/compile/emit.pf", 4139);
+        throw $matchFail("src/compile/emit.pf", 4184);
       })(kind);
     }
     function asyncFlag(kind) {
-      return (($match$4146) => {
-        if ($match$4146.$t === "PureFn") {
+      return (($match$4191) => {
+        if ($match$4191.$t === "PureFn") {
           return false;
         }
-        if ($match$4146.$t === "ProcFn") {
-          const k = $match$4146;
+        if ($match$4191.$t === "ProcFn") {
+          const k = $match$4191;
           return k.f[0];
         }
-        throw $matchFail("src/compile/emit.pf", 4146);
+        throw $matchFail("src/compile/emit.pf", 4191);
       })(kind);
     }
     function emitFn(ctx, name, params, body0, kind) {
@@ -23203,35 +23419,6 @@
       }
     }
     function emitVariantDecls(unionName, variants) {
-      return (($match$4292) => {
-        if ($match$4292.$t === "None") {
-          return [];
-        }
-        if ($match$4292.$t === "Some") {
-          const cell = $match$4292;
-          return (() => {
-            return appendJsStmts(emitVariantDecl(unionName, cell.f[0].f[0]), emitVariantDecls(unionName, cell.f[0].f[1]));
-          })();
-        }
-        throw $matchFail("src/compile/emit.pf", 4292);
-      })($field(Compat, "uncons")(variants));
-    }
-    function emitTypeDecl(decl) {
-      return (($match$4316) => {
-        if ($match$4316.$t === "RecordDecl") {
-          return [];
-        }
-        if ($match$4316.$t === "UnionDecl") {
-          const u = $match$4316;
-          return emitVariantDecls(u.f[0], u.f[1]);
-        }
-        throw $matchFail("src/compile/emit.pf", 4316);
-      })(decl);
-    }
-    function requireExpr(path) {
-      return hostCall("$require", [$field(J, "jsStr")(path)]);
-    }
-    function emitNamedImports(temp, names) {
       return (($match$4337) => {
         if ($match$4337.$t === "None") {
           return [];
@@ -23239,56 +23426,85 @@
         if ($match$4337.$t === "Some") {
           const cell = $match$4337;
           return (() => {
+            return appendJsStmts(emitVariantDecl(unionName, cell.f[0].f[0]), emitVariantDecls(unionName, cell.f[0].f[1]));
+          })();
+        }
+        throw $matchFail("src/compile/emit.pf", 4337);
+      })($field(Compat, "uncons")(variants));
+    }
+    function emitTypeDecl(decl) {
+      return (($match$4361) => {
+        if ($match$4361.$t === "RecordDecl") {
+          return [];
+        }
+        if ($match$4361.$t === "UnionDecl") {
+          const u = $match$4361;
+          return emitVariantDecls(u.f[0], u.f[1]);
+        }
+        throw $matchFail("src/compile/emit.pf", 4361);
+      })(decl);
+    }
+    function requireExpr(path) {
+      return hostCall("$require", [$field(J, "jsStr")(path)]);
+    }
+    function emitNamedImports(temp, names) {
+      return (($match$4382) => {
+        if ($match$4382.$t === "None") {
+          return [];
+        }
+        if ($match$4382.$t === "Some") {
+          const cell = $match$4382;
+          return (() => {
             const item = cell.f[0].f[0];
-            const localName = (($match$4348) => {
-              if ($match$4348.$t === "None") {
+            const localName = (($match$4393) => {
+              if ($match$4393.$t === "None") {
                 return $field(item, "name");
               }
-              if ($match$4348.$t === "Some") {
-                const alias = $match$4348;
+              if ($match$4393.$t === "Some") {
+                const alias = $match$4393;
                 return alias.f[0];
               }
-              throw $matchFail("src/compile/emit.pf", 4348);
+              throw $matchFail("src/compile/emit.pf", 4393);
             })($field(item, "alias"));
             return $cons($field(J, "jsConst")(localName, $field(J, "jsMember")($field(J, "jsId")(temp), $field(item, "name"))), emitNamedImports(temp, cell.f[0].f[1]));
           })();
         }
-        throw $matchFail("src/compile/emit.pf", 4337);
+        throw $matchFail("src/compile/emit.pf", 4382);
       })($field(Compat, "uncons")(names));
     }
     function emitImport(id, spec0, rawPath) {
-      return (($match$4380) => {
-        if ($match$4380.$t === "INamespace") {
-          const spec = $match$4380;
+      return (($match$4425) => {
+        if ($match$4425.$t === "INamespace") {
+          const spec = $match$4425;
           return (() => {
             return [$field(J, "jsConst")(spec.f[0], requireExpr(rawPath))];
           })();
         }
-        if ($match$4380.$t === "INames") {
-          const spec = $match$4380;
+        if ($match$4425.$t === "INames") {
+          const spec = $match$4425;
           return (() => {
             const temp = importTemp(id);
             return $cons($field(J, "jsConst")(temp, requireExpr(rawPath)), emitNamedImports(temp, spec.f[0]));
           })();
         }
-        if ($match$4380.$t === "IStar") {
+        if ($match$4425.$t === "IStar") {
           return (() => {
             return [$field(J, "jsConst")(starTemp(id), requireExpr(rawPath))];
           })();
         }
-        throw $matchFail("src/compile/emit.pf", 4380);
+        throw $matchFail("src/compile/emit.pf", 4425);
       })(spec0);
     }
     function platformLabel(platform) {
-      return (($match$4427) => {
-        if ($match$4427.$t === "Some") {
-          const s = $match$4427;
+      return (($match$4472) => {
+        if ($match$4472.$t === "Some") {
+          const s = $match$4472;
           return s.f[0];
         }
-        if ($match$4427.$t === "None") {
+        if ($match$4472.$t === "None") {
           return "";
         }
-        throw $matchFail("src/compile/emit.pf", 4427);
+        throw $matchFail("src/compile/emit.pf", 4472);
       })(platform);
     }
     function isNodePlatform(platform) {
@@ -23301,15 +23517,15 @@
     function emitExternDecl(ctx, decl) {
       const params = $map((param) => $field(param, "name"), $field(decl, "params"));
       if ($field(ctx.f[1], "browserSafe") && isNodePlatform($field(decl, "platform"))) {
-        return [$field(J, "jsFun")($field(decl, "name"), params, browserExternBody(decl), (($match$4499) => {
-          if ($match$4499.$t === "ExternFunction") {
+        return [$field(J, "jsFun")($field(decl, "name"), params, browserExternBody(decl), (($match$4544) => {
+          if ($match$4544.$t === "ExternFunction") {
             return false;
           }
-          if ($match$4499.$t === "ExternProc") {
-            const p = $match$4499;
+          if ($match$4544.$t === "ExternProc") {
+            const p = $match$4544;
             return p.f[0];
           }
-          throw $matchFail("src/compile/emit.pf", 4499);
+          throw $matchFail("src/compile/emit.pf", 4544);
         })($field(decl, "kind")))];
       } else {
         return [$field(J, "jsConst")($field(decl, "name"), hostCall("$extern", [$field(J, "jsStr")(platformLabel($field(decl, "platform"))), $field(J, "jsStr")($field(decl, "name"))]))];
@@ -23317,105 +23533,105 @@
     }
     function emitStmt(ctx, stmt) {
       while (true) {
-        const $match$4532 = stmt;
-        if ($match$4532.$t === "SLet") {
-          const s = $match$4532;
+        const $match$4577 = stmt;
+        if ($match$4577.$t === "SLet") {
+          const s = $match$4577;
           return [$field(J, "jsConst")(s.f[1], emitExpr(ctx, s.f[2]))];
         }
-        if ($match$4532.$t === "SVar") {
-          const s = $match$4532;
+        if ($match$4577.$t === "SVar") {
+          const s = $match$4577;
           return [$field(J, "jsLet")(s.f[1], emitExpr(ctx, s.f[2]))];
         }
-        if ($match$4532.$t === "SAssign") {
-          const s = $match$4532;
+        if ($match$4577.$t === "SAssign") {
+          const s = $match$4577;
           return (() => {
             return [$field(J, "jsAssign")($field(J, "jsId")(s.f[1]), emitExpr(ctx, s.f[2]))];
           })();
         }
-        if ($match$4532.$t === "SIndexAssign") {
-          const s = $match$4532;
+        if ($match$4577.$t === "SIndexAssign") {
+          const s = $match$4577;
           return emitIndexAssign(ctx, s.f[1], s.f[2], s.f[3]);
         }
-        if ($match$4532.$t === "SFun") {
-          const s = $match$4532;
+        if ($match$4577.$t === "SFun") {
+          const s = $match$4577;
           return emitFn(ctx, s.f[1], s.f[2], s.f[3], s.f[4]);
         }
-        if ($match$4532.$t === "SType") {
-          const s = $match$4532;
+        if ($match$4577.$t === "SType") {
+          const s = $match$4577;
           return emitTypeDecl(s.f[1]);
         }
-        if ($match$4532.$t === "SExpr") {
-          const s = $match$4532;
+        if ($match$4577.$t === "SExpr") {
+          const s = $match$4577;
           return [$field(J, "jsExprStmt")(emitExpr(ctx, s.f[1]))];
         }
-        if ($match$4532.$t === "SReturn") {
-          const s = $match$4532;
+        if ($match$4577.$t === "SReturn") {
+          const s = $match$4577;
           return (() => {
-            return (($match$4606) => {
-              if ($match$4606.$t === "None") {
+            return (($match$4651) => {
+              if ($match$4651.$t === "None") {
                 return [$field(J, "jsRet")($field(J, "jsNull")())];
               }
-              if ($match$4606.$t === "Some") {
-                const value = $match$4606;
+              if ($match$4651.$t === "Some") {
+                const value = $match$4651;
                 return [$field(J, "jsRet")(emitExpr(ctx, value.f[0]))];
               }
-              throw $matchFail("src/compile/emit.pf", 4606);
+              throw $matchFail("src/compile/emit.pf", 4651);
             })(s.f[1]);
           })();
         }
-        if ($match$4532.$t === "SIf") {
-          const s = $match$4532;
+        if ($match$4577.$t === "SIf") {
+          const s = $match$4577;
           return (() => {
-            const elseJs = (($match$4627) => {
-              if ($match$4627.$t === "None") {
+            const elseJs = (($match$4672) => {
+              if ($match$4672.$t === "None") {
                 return [];
               }
-              if ($match$4627.$t === "Some") {
-                const e = $match$4627;
+              if ($match$4672.$t === "Some") {
+                const e = $match$4672;
                 return emitStmtList(addLocals(ctx, boundNamesOfStmts(e.f[0])), e.f[0]);
               }
-              throw $matchFail("src/compile/emit.pf", 4627);
+              throw $matchFail("src/compile/emit.pf", 4672);
             })(s.f[3]);
             return [$field(J, "jsIf")(emitExpr(ctx, s.f[1]), emitStmtList(addLocals(ctx, boundNamesOfStmts(s.f[2])), s.f[2]), elseJs)];
           })();
         }
-        if ($match$4532.$t === "SWhile") {
-          const s = $match$4532;
+        if ($match$4577.$t === "SWhile") {
+          const s = $match$4577;
           return (() => {
             return [$field(J, "jsWhile")(emitExpr(ctx, s.f[1]), emitStmtList(addLocals(ctx, boundNamesOfStmts(s.f[2])), s.f[2]))];
           })();
         }
-        if ($match$4532.$t === "SImport") {
-          const s = $match$4532;
+        if ($match$4577.$t === "SImport") {
+          const s = $match$4577;
           return emitImport(s.f[0], s.f[1], s.f[2]);
         }
-        if ($match$4532.$t === "SExport") {
-          const s = $match$4532;
-          const $tc$4699$0 = ctx;
-          const $tc$4699$1 = s.f[1];
-          ctx = $tc$4699$0;
-          stmt = $tc$4699$1;
+        if ($match$4577.$t === "SExport") {
+          const s = $match$4577;
+          const $tc$4744$0 = ctx;
+          const $tc$4744$1 = s.f[1];
+          ctx = $tc$4744$0;
+          stmt = $tc$4744$1;
           continue;
         }
-        if ($match$4532.$t === "SExtern") {
-          const s = $match$4532;
+        if ($match$4577.$t === "SExtern") {
+          const s = $match$4577;
           return emitExternDecl(ctx, s.f[1]);
         }
-        throw $matchFail("src/compile/emit.pf", 4532);
+        throw $matchFail("src/compile/emit.pf", 4577);
       }
     }
     function emitStmtList(ctx, stmts) {
-      return (($match$4707) => {
-        if ($match$4707.$t === "None") {
+      return (($match$4752) => {
+        if ($match$4752.$t === "None") {
           return [];
         }
-        if ($match$4707.$t === "Some") {
-          const cell = $match$4707;
+        if ($match$4752.$t === "Some") {
+          const cell = $match$4752;
           return (() => {
             return appendJsStmts(emitStmt(ctx, cell.f[0].f[0]), emitStmtList(ctx, cell.f[0].f[1]));
           })();
         }
-        throw $matchFail("src/compile/emit.pf", 4707);
+        throw $matchFail("src/compile/emit.pf", 4752);
       })($field(Compat, "uncons")(stmts));
     }
     function emitExprForTest(types, opts, expr) {

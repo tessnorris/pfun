@@ -34,7 +34,7 @@ function appendList(a, b) {
 	reduce(fn acc, x => cons(x, acc), b, reverse(a))
 }
 
-export function emptyDeps() {
+export generic function emptyDeps() {
 	IMS.imsEmpty()
 }
 
@@ -80,7 +80,8 @@ export function purityDiags(path, source) {
 	match parseSource(path, source) with
 	| SourceErr e -> e.diags
 	| SourceOk parsed -> {
-		let r = Purity.checkModule(parsed.module, emptyDeps());
+		let infer = Types.inferModule(parsed.module, emptyDeps());
+		let r = Purity.checkModule(parsed.module, emptyDeps(), infer.types);
 		r.diags
 	}
 }
@@ -154,7 +155,7 @@ export function typeDiagsWithBuiltins(path, source) {
 	}
 }
 
-export function checkUnitWithDeps(path, source, deps) {
+export generic function checkUnitWithDeps(path, source, deps) {
 	match parseSource(path, source) with
 	| SourceErr e -> Check.mkCheckedUnit(path, dummyModule(path), Types.mkInferResult(IMI.imiEmpty(), IMS.imsEmpty(), e.diags), Iface.emptyIface(path), e.diags)
 	| SourceOk parsed -> Check.checkModule(parsed.module, deps)

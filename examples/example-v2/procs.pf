@@ -1,0 +1,34 @@
+// First-class procedure values: pure transport, record storage, shared lexical
+// capture, effectful invocation, and distinct async procedure lambdas.
+
+import * from "async";
+import * from "io";
+
+type Handler = { generic action }
+
+// Pure code may pass and store a proc value. It may not invoke one.
+function makeHandler(action) {
+	Handler { action = action }
+}
+
+export async proc runProcLambdaExamples() {
+	println("");
+	println("--- Procedure lambdas and callbacks ---");
+
+	let prefix = "event";
+	var count = 0;
+	let onLine = proc (line: Str) -> Unit {
+		count = count + 1;
+		println(prefix ++ " " ++ str(count) ++ ": " ++ line);
+	};
+
+	let handler = makeHandler(onLine);
+	handler.action("first");
+	handler.action("second");
+
+	let delayed = async proc (value: Int) -> Int {
+		await sleep(0);
+		value + count
+	};
+	println("async result = " ++ str(await delayed(40)));
+}

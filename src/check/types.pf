@@ -2192,6 +2192,16 @@ export function cgenExpr(st, env, e, path) {
 		let typ = TFun { ps.types, bo.typ };
 		exprOut(addTypedNode(bo.st, x.id, typ), typ)
 	}
+	| EProcLambda x -> {
+		let ps = typedParamsTypes(st, x.params, []);
+		let ret = inferTypeExpr(ps.key, x.ret);
+		let env1 = bindParams(env, typedParamNames(x.params), ps.value);
+		let bo = inferBody(ret.key, env1, x.body, path);
+		let st1 = unify(bo.st, ret.value, bo.typ, path, x.span);
+		let raw = TProc { ps.value, ret.value, x.isAsync };
+		let typ = apply(st1.subst, raw);
+		exprOut(addTypedNode(st1, x.id, typ), typ)
+	}
 	| EBlock x -> {
 		let bo = inferBody(st, env, x.stmts, path);
 		exprOut(addTypedNode(bo.st, x.id, bo.typ), bo.typ)
@@ -2575,6 +2585,15 @@ function scanExpr(expr, topNames, bound, refs) {
 		addNames(bound, x.params),
 		refs
 	)
+	| EProcLambda x -> {
+		let out = scanStmtList(
+			x.body,
+			topNames,
+			addNames(bound, typedParamNames(x.params)),
+			refs
+		);
+		out.refs
+	}
 	| EBlock x -> {
 		let out = scanStmtList(
 			x.stmts,
@@ -3785,6 +3804,11 @@ function inferTypeExpr(st, te) {
 		let ret = inferTypeExpr(ps.key, f.ret);
 		Pair { ret.key, TFun { ps.value, ret.value } }
 	}
+	| TyProc p -> {
+		let ps = inferTypeExprList(st, p.params, []);
+		let ret = inferTypeExpr(ps.key, p.ret);
+		Pair { ret.key, TProc { ps.value, ret.value, p.isAsync } }
+	}
 }
 
 function inferTypeExprList(st, tes, acc) {
@@ -3805,6 +3829,10 @@ function typedParamsTypes(st, params, acc) {
 		let one = inferTypeExpr(st, p.key.typeExpr);
 		typedParamsTypes(one.key, p.value, cons(one.value, acc))
 	}
+}
+
+function typedParamNames(params) {
+	map(fn param => param.name, params)
 }
 
 // Takes SExtern payload fields, not the binder (Rule 2 widening).

@@ -55,8 +55,8 @@ export proc runTypeExamples() {
 	println("classify small = " ++ classifyShape(circle));
 	println("classify large = " ++ classifyShape(V2Circle { 20 }));
 
-	println("option = " ++ optionText(find([10, 20, 30], 30)));
-	println("missing option = " ++ optionText(find([10, 20, 30], 99)));
+	println("value at index 2 = " ++ optionText(nth([10, 20, 30], 2)));
+	println("value at index 99 = " ++ optionText(nth([10, 20, 30], 99)));
 
 	let intBox = V2Box { 42 };
 	let textBox = V2Box { "pfun" };

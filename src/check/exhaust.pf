@@ -482,6 +482,7 @@ function checkExpr(st, infer, expr) {
 		checkExprList(st1, infer, e.args)
 	}
 	| ELambda e -> checkExpr(st, infer, e.body)
+	| EProcLambda e -> checkStmtList(st, infer, e.body)
 	| EBlock e -> checkStmtList(st, infer, e.stmts)
 	| EList e -> checkExprList(st, infer, e.elems)
 	| EComp e -> {

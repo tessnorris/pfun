@@ -4,7 +4,15 @@ Status: working architecture draft
 Scope: language overview, compiler architecture, and implementation plan  
 Primary change from the previous draft: Pfun is specified as a compiled language only. The interpreter and REPL are removed from the core architecture.
 
-This revision additionally locks in: second-class procs with descriptor-based effects (2.6); typing commitments for exported bindings, field access, generic variant payloads, and proc types (2.7); `generic proc`; assignment as a statement; block-required `if`; no exported `var`; the `_b` hex byte suffix; full-expression format strings; split string/int maps (`imaps`/`imapi`); unboxed `Char`/`Byte`; a hybrid `Int` representation; the lazy-list forcing contract; the generated-glue TEA browser target; and the V1 bootstrap dialect plan.
+This revision additionally locks in: first-class proc values with effectful-only
+invocation (2.6); explicitly typed monomorphic proc lambdas; descriptor-based
+effect requests from pure code; typing commitments for exported bindings, field
+access, generic variant payloads, and proc types (2.7); `generic proc` for named
+declarations; assignment as a statement; block-required `if`; no exported
+`var`; the `_b` hex byte suffix; full-expression format strings; split
+string/int maps (`imaps`/`imapi`); unboxed `Char`/`Byte`; a hybrid `Int`
+representation; the lazy-list forcing contract; the generated-glue TEA browser
+target; and the completed V1 bootstrap dialect plan.
 
 ---
 
@@ -30,8 +38,11 @@ The core language philosophy is:
 4. **Monomorphic by default; generic by request.**  
    Normal functions are inferred once and must have one monomorphic type. `generic function` opts into polymorphism. Generic record fields create hidden type variables for the containing type.
 
-5. **Pure by default; procedures for effects; procs are second-class.**  
-   `function` is pure. `proc` is effectful. Procs are not values: a proc name may appear only as the callee of a call (or the right side of `|>`) inside another proc. Effectful intent travels through programs as plain data — descriptors with pure continuations — and is executed by exhaustive `match` dispatch in proc code.
+5. **Pure by default; procedures for effects; proc values are first-class.**
+   `function` and `fn` are pure. Named procs and proc lambdas are effectful
+   callables represented by `TProc`. Pure code may transport them but cannot
+   invoke them. Descriptors remain the preferred representation when pure code
+   is requesting an effect rather than registering a callback.
 
 6. **Strict evaluation by default.**  
    `let` evaluates its initializer once, immediately, in source order. Pfun does not use general lazy evaluation.
@@ -197,15 +208,24 @@ export extern function nativeThing(x: Str) -> Any
 
 Public modules that touch native JavaScript must return Pfun values, not raw DOM nodes, raw JS objects, `undefined`, host exceptions, or prototype-dependent objects.
 
-### 2.6 Procs are second-class; effects travel as descriptors
+### 2.6 Proc values are first-class; invocation is effectful
 
-Procs are not values. The complete set of legal appearances of a proc name:
+Named procs and anonymous proc lambdas are `TProc` values. Creating, binding,
+storing, passing, selecting, importing, exporting, and returning a proc value
+is pure. Calling one—directly or through `|>`—is legal only at top level or in
+a proc body. A call in `function` or `fn` context is a `PurityD`.
 
-1. As the callee of a call, inside a proc body or top-level proc context.
-2. As the right operand of `|>` in the same contexts (pipe desugars to a call).
-3. In `export proc` declarations and import lists (name plumbing, not value flow).
+Anonymous procedures are explicitly typed and monomorphic:
 
-Everything else — argument position, record field, list element, `let` initializer, return value — is a `PurityD`. There are no proc lambdas; `fn` lambdas are always pure. Consequently no effectful value can flow through a parameter or a data structure, and the name-based purity pass is a complete static analysis with no runtime check behind it.
+```pfun
+let handle = proc (message: Msg) -> Unit { dispatch(message); };
+let later = async proc (message: Msg) -> Unit { await dispatchLater(message); };
+```
+
+Their type-expression forms are `proc(T1, T2) -> R` and
+`async proc(T1, T2) -> R`. Captured `let` values are immutable; captured `var`
+bindings retain their shared lexical cell. Sync and async proc types do not
+unify. Named `generic proc` remains the only polymorphic proc form.
 
 Effectful *intent* still travels through pure code — as data. A descriptor union pairs each effect with a pure continuation that converts the effect's result into a message:
 
@@ -282,9 +302,14 @@ Note the model deliberately uses one slot per field rather than a shared named p
 
 Recursion is uniform: when a field's type mentions the enclosing generic type (`CBatch.cmds : List<Cmd<...>>`), the recursive occurrence is at the declaration's own slots — regular datatypes only, no non-uniform recursion.
 
-**T4 — Proc types never unify into value positions.**
+**T4 — Proc values flow normally; calls retain their effect.**
 
-Named procs and extern procs have `TProc` types (params, return, async flag). Unifying a `TProc` with a variable bound in a value position — a `TFun` parameter or return, a record or variant field, a list/array/dict element — is a `TypeD`. `TFun` has no async form; only procs are async. `generic proc` generalizes `TProc` signatures with the same scheme machinery as `generic function`; this is what lets `tea.pf` export `runCore` over app-instantiated `Cmd` types without violating T2.
+Named procs, extern procs, and proc lambdas have `TProc` types (parameters,
+return, async flag). `TProc` may inhabit parameters, returns, record and variant
+fields, and list/array/dict elements. It never unifies with `TFun`, and sync and
+async `TProc` values do not unify. `generic proc` generalizes named `TProc`
+signatures with the same scheme machinery as `generic function`; proc lambdas
+are monomorphic.
 
 ### 2.8 Totality: pure code cannot fail
 
@@ -307,7 +332,7 @@ The mechanisms behind class 2 and the static rules that support them:
 
 **The guard rule.** Exhaustiveness is computed treating `where`-guarded arms as absent: every variant (and every list length) needs unguarded coverage. Guards keep their expressive power; the guarantee keeps its teeth. Consequently `matchFail` is statically unreachable and is demoted to an internal assertion — if it ever fires, that is a compiler bug, not a program error.
 
-**`Equatable` and `Comparable`.** `==`/`!=` require both operand types `Equatable` (no function type anywhere inside — the error Elm only catches by crashing at runtime is a `TypeD` here; proc equality is already unwritable since procs are not values). `<`/`<=`/`>`/`>=` and `sort` require `Comparable`: `Int`, `Float`, `Str`, `Char`, `Byte`, `Bool`, and `List` of `Comparable` — records and variants are excluded in V2 and can be admitted later. Dict keys require `Equatable`. Both constraints ride the `HasField` machinery (2.7 T1): concrete types discharge immediately; constraints over quantified variables move into schemes and re-check per instantiation, so `generic function member(x, xs)` carries `Equatable(a)`.
+**`Equatable` and `Comparable`.** `==`/`!=` require both operand types `Equatable` (no `TFun` or `TProc` anywhere inside — the error Elm only catches by crashing at runtime is a `TypeD` here). `<`/`<=`/`>`/`>=` and `sort` require `Comparable`: `Int`, `Float`, `Str`, `Char`, `Byte`, `Bool`, and `List` of `Comparable` — records and variants are excluded in V2 and can be admitted later. Dict keys require `Equatable`. Both constraints ride the `HasField` machinery (2.7 T1): concrete types discharge immediately; constraints over quantified variables move into schemes and re-check per instantiation, so `generic function member(x, xs)` carries `Equatable(a)`.
 
 **Opaque type exports.** `export opaque type` is what turns smart constructors into proofs rather than conventions: importers cannot forge a `NonZero`, construct a validated value, or match through an invariant-bearing wrapper. This is Elm's `exposing (Type)` vs `exposing (Type(..))` distinction.
 
@@ -493,7 +518,9 @@ dictEntry      ::= expr "->" expr
 arrayExpr      ::= "array" "{" [expr {"," expr}] "}"
 
 lambdaExpr     ::= "fn" (params | "(" [params] ")") "=>" (expr | blockExpr)
-                 // lambdas are always pure functions; there are no proc lambdas
+                 | ["async"] "proc" "(" [typedParams] ")" "->" typeExpr blockExpr
+
+procTypeExpr   ::= ["async"] "proc" "(" [typeExpr {"," typeExpr}] ")" "->" typeExpr
 
 blockExpr      ::= "{" {stmt} "}"
 
@@ -515,7 +542,8 @@ Semantic notes:
 - `lazy` is not a general expression modifier. It is valid only before a list literal/comprehension.
 - Assignment is a statement, not an expression; `=` in expression position is a syntax error.
 - Mutation, assignment, `while`, `var`, proc calls, and `await` are grammatically accepted where the grammar allows them but rejected by purity/effect checks in pure contexts.
-- A proc name may appear only as the callee of a call or as the right operand of `|>`; any other appearance is a `PurityD`.
+- A proc value may appear in any value position. Calling one, including through
+  `|>`, requires proc or top-level context.
 - Evaluation order is strict, left-to-right, innermost-first.
 - `&&`, `||`, and ternary short-circuit.
 - `Int` is arbitrary precision.
@@ -866,7 +894,7 @@ Important V2 behavior:
 - generic record fields and generic variant payload fields become hidden type variables
 - field access produces deferred `HasField` constraints (2.7 T1)
 - exported non-generic bindings must be ground at end of module check (2.7 T2)
-- proc signatures are `TProc` types that never unify into value positions (2.7 T4)
+- named and anonymous proc signatures are first-class `TProc` values (2.7 T4)
 - `+` is numeric only
 - `++` is string only
 - `lazy [...]` still has logical type `List<T>`
@@ -877,15 +905,17 @@ Important V2 behavior:
 Purity checking enforces:
 
 - pure functions cannot call procs
-- a proc name may appear only as the callee of a call or as the right operand of `|>`, and only in proc context; every other appearance of a proc name is a `PurityD`
+- proc values may flow through pure code; invoking one requires proc context
 - pure functions cannot mutate, assign, use `while`, or use `var`
-- lambdas are pure functions; their bodies are pure contexts
+- `fn` lambdas are pure; proc-lambda bodies are proc contexts
 - `lazy` comprehension bodies and guards are pure contexts even inside procs
 - `await` only appears in async proc contexts; calling an async proc without `await` is legal fire-and-forget
 - extern procs are effectful
 - native boundary calls cannot leak into pure code unless wrapped by safe pure extern functions
 
-Because procs are second-class, name-kind resolution (`kindOf`) is a complete purity analysis: no effectful value can flow through a parameter or a data structure, and there is no runtime purity check behind the static pass.
+The pass combines name-kind information with the inferred node-type table so
+proc-valued bindings and fields remain statically visible. There is no runtime
+purity check behind the static pass.
 
 The grammar remains context-free; purity is an elaboration/checking pass.
 
@@ -1034,7 +1064,7 @@ No interpreter is introduced for playground execution.
 
 ## 6.21 TEA browser target
 
-Browser applications use The Elm Architecture with second-class procs: pure `init`/`update`/`view`/`subs`, effect descriptors (`Cmd`) carrying pure `toMsg` continuations, and one exhaustive `dispatch` proc per app. The main loop is neither user code nor `tea.pf` code: the linker driver generates a small glue module per app that imports `{ teaApp, dispatch }` from the entry module. The glue passes through `checkGraph` like any other module, so a misconfigured entry fails with ordinary `ImportD`/`TypeD`/`PurityD`/`ExhaustD` diagnostics — configuration errors, not compiler magic. See Phase 14b.
+Browser applications use The Elm Architecture with pure `init`/`update`/`view`/`subs`, effect descriptors (`Cmd`) carrying pure `toMsg` continuations, and one exhaustive `dispatch` proc per app. First-class proc values are available for callback-oriented APIs but do not replace the descriptor protocol. The main loop is neither user code nor `tea.pf` code: the linker driver generates a small glue module per app that imports `{ teaApp, dispatch }` from the entry module. The glue passes through `checkGraph` like any other module, so a misconfigured entry fails with ordinary `ImportD`/`TypeD`/`PurityD`/`ExhaustD` diagnostics — configuration errors, not compiler magic. See Phase 14b.
 
 ---
 
@@ -1185,9 +1215,12 @@ The V1 architecture's real linker replaces regex patching and target-specific em
 
 The host remains small, explicit, and conformance-tested. More library behavior should move to Pfun where practical.
 
-## 8.11 Procs demoted to second-class
+## 8.11 Proc values retained with a static invocation boundary
 
-V1 had first-class procs plus a runtime `inPureContext` check. V2 removes both: procs appear only in call position, effects travel as descriptors with pure continuations, and the name-based purity pass becomes statically sound with no runtime net.
+V1 used first-class procs plus a runtime `inPureContext` check. V2 keeps proc
+values but removes the runtime check: the compiler tracks `TProc` values and
+rejects their invocation from pure code. Descriptors remain available for
+effect requests expressed as data.
 
 ## 8.12 Assignment demoted to statement
 
@@ -1223,7 +1256,8 @@ Before rewriting major pieces, pin down the new language decisions with executab
 - exported non-generic bindings must be ground
 - `generic function` and `generic proc` polymorphic
 - generic record fields and generic variant payloads introduce independent hidden type variables
-- procs are second-class; no proc lambdas
+- proc values are first-class; explicitly typed proc lambdas are monomorphic
+- calling a proc value is legal only in proc or top-level context
 - assignment is a statement; `export var` is rejected
 - hex byte literals use `_b`
 - format string interpolations accept full expressions
@@ -1291,9 +1325,10 @@ Expected: `ParseD`, `var` cannot be exported.
 // proc_value_error.pf
 proc ping() { println("hi"); }
 let p = ping;
+function bad() { p(); }
 ```
 
-Expected: `PurityD`, proc names are not values.
+Expected: `PurityD`; carrying `p` is legal, invoking it from `function` is not.
 
 ```pfun
 // ambiguous_export_error.pf
@@ -2487,7 +2522,7 @@ Integration tests:
 
 This pass infers types, checks expressions, enforces monomorphic/generic function policy, and produces type tables.
 
-The algorithm is HM-*seeded* constraint inference, not textbook Hindley-Milner: unification and generalization are standard, but deferred constraints (`HasField`/`Equatable`/`Comparable`), constraint-carrying schemes, the groundedness rule, second-class `TProc`, and opacity all partition work differently than Algorithm W. Reach for the constraint lifecycle in this section, not a textbook, when implementation questions come up.
+The algorithm is HM-*seeded* constraint inference, not textbook Hindley-Milner: unification and generalization are standard, but deferred constraints (`HasField`/`Equatable`/`Comparable`), constraint-carrying schemes, the groundedness rule, first-class effectful `TProc`, and opacity all partition work differently than Algorithm W. Reach for the constraint lifecycle in this section, not a textbook, when implementation questions come up.
 
 ### Type representation
 
@@ -2522,7 +2557,9 @@ Notes:
 - `TLazyList` may exist internally if useful, but public unification should normally allow it where `TList` is expected.
 - Alternatively, use only `TList` in the checker and store laziness in emit metadata. The simpler V2 default is: checker type is `TList<T>`, AST mode controls emission.
 - `TNamed` carries hidden generic args for record types such as `Indexed<Str>` and for unions with generic payload fields such as `Option<Str>`.
-- `TProc` describes named procs and extern procs. It is second-class: unifying a `TProc` into a value position — a `TFun` parameter or return, a record/variant field, a list/array/dict element — is a `TypeD`. `TFun` has no async form; only procs are async.
+- `TProc` describes named procs, extern procs, and proc lambdas. It is a
+  first-class value type, distinct from `TFun`; its `isAsync` flag is part of
+  type identity.
 - `TUnknown` is for opaque imported/native cases and should be used sparingly.
 
 Recommended simplification:
@@ -2652,7 +2689,10 @@ Allocates a new type variable.
 function unify(st, a, b, span)
 ```
 
-Unifies two types, appending `TypeD` diagnostics on failure. Unification attempts to discharge pending `HasField` constraints whenever a variable resolves to a `TNamed`; it also rejects `TProc` in value positions.
+Unifies two types, appending `TypeD` diagnostics on failure. Unification
+attempts to discharge pending `HasField` constraints whenever a variable
+resolves to a `TNamed`; `TProc` unifies structurally only with a `TProc` having
+the same async flag.
 
 ```pfun
 function dischargeField(st, c)
@@ -2893,7 +2933,9 @@ Unit tests:
 - residual type variables in an exported non-generic binding are `TypeD`
 - `HasField` with two candidate record types stays pending until a use decides
 - generic scheme constraints are re-checked at instantiation
-- `TProc` in a parameter/field/element position is `TypeD`
+- `TProc` may inhabit parameters, returns, fields, and collection elements
+- sync and async `TProc` values do not unify
+- proc-lambda parameter and return annotations are enforced
 - generic variant payloads (`Option`, `Result`) instantiate per use
 - `generic proc` generalizes like `generic function`
 - mutually recursive functions check as one binding group
@@ -2984,15 +3026,19 @@ Determines whether function body is pure.
 
 ### Rules
 
-R1. A proc name may appear only as the callee of a call, or as the right operand of `|>`, and only in proc context. Every other appearance of a proc name — argument, record field, list element, `let` initializer, return value — is a `PurityD`.  
-R2. A proc is not called from pure context. Lambdas are pure functions, so lambda bodies are pure contexts.  
+R1. A proc value may be created, bound, passed, stored, selected, imported,
+exported, or returned in any context.
+R2. A proc value is not called from pure context. `fn` bodies are pure;
+`proc`-lambda bodies are proc contexts carrying their own async flag.
 R3. `var`, `SAssign`, `SIndexAssign`, array/dict mutation, and `while` are rejected in pure context.  
 R4. `await` only appears inside `async proc` bodies. Calling an async proc without `await` is legal in proc context and means fire-and-forget: the callee starts and control continues.  
 R5. `lazy` comprehension bodies and guards are pure contexts regardless of the enclosing context.  
 R6. Extern procs are effectful; extern functions are pure by declaration, and that claim is trusted at the boundary.  
 R7. Native wrapper modules must expose safe Pfun values only; this is partly type-level and partly package/lint-level.
 
-Because procs cannot flow into parameters or data, `kindOf` name resolution is a complete purity analysis: there is no channel by which an effect can reach a pure context undetected, and no runtime purity check exists.
+Purity consumes the inferred node-type side table. That lets it recognize a
+`TProc` after the value has flowed through a binding or field; there is no
+runtime purity check.
 
 ### Tests
 
@@ -3006,8 +3052,11 @@ Unit tests:
 - proc using mutation succeeds
 - await outside async fails
 - await inside async proc succeeds
-- proc name in argument position fails
-- proc name in a record field fails
+- proc name in argument position succeeds when it is only transported
+- proc value in a record field succeeds
+- direct and field-selected proc calls from pure code fail
+- proc-lambda mutation is checked in proc context
+- sync and async proc values do not unify
 - fire-and-forget async proc call accepted in proc context
 - `lazy` comprehension body calling a proc fails
 
@@ -3969,7 +4018,7 @@ Golden tests:
 
 ### Design
 
-Browser apps are The Elm Architecture restated under second-class procs. Three pieces:
+Browser apps use The Elm Architecture and descriptor-based effects. Three pieces:
 
 1. **A pure application record.** `init`/`update`/`view`/`subs` are pure functions; `update` returns a `Step` of new model plus a command descriptor.
 2. **Descriptors with pure continuations.** Effects are union values. Anything callable inside them (`toMsg`) is a pure function converting an effect's result into a message. Pure code constructs descriptors; nothing in pure code fires anything.
@@ -4325,7 +4374,7 @@ proc loadGraph(entryPath, env)
 export function loadGraphMem(files, entryPath, env)
 ```
 
-`loadGraph` is the effectful Node loader; it reads files with the `file` builtin. `loadGraphMem` is a pure loader over an in-memory map of path to source text; the playground uses it with stdlib sources embedded in its bundle. Both share the pure per-module step `parseOne(path, text, env)` (lex, parse, extract edges). Procs are second-class, so a file-reading capability cannot be passed as a parameter — the split into one effectful loader and one pure loader is the intended factoring, and the pure one is what tests use.
+`loadGraph` is the effectful Node loader; it reads files with the `file` builtin. `loadGraphMem` is a pure loader over an in-memory map of path to source text; the playground uses it with stdlib sources embedded in its bundle. Both share the pure per-module step `parseOne(path, text, env)` (lex, parse, extract edges). The split remains intentional for deterministic tests and browser embedding even though proc capabilities can now be transported as values.
 
 Pseudocode:
 
@@ -4772,7 +4821,10 @@ Patch the frozen V1 TypeScript compiler minimally so it *accepts* the compiler s
 4. `lazy [` parsed; constructed strictly (see checklist item 3).
 5. `_b` hex byte literals lexed.
 6. Assignment statements, block-required `if`, and `fn`-only lambdas are already within V1's accepted surface (V1 accepts a superset here); a dialect lint enforces the V2-legal subset.
-7. A dialect lint additionally rejects: `+` on strings, proc names outside call position, proc lambdas, `export var`, non-exhaustive matches by V2 rules.
+7. The historical bootstrap dialect lint additionally rejected `+` on strings,
+   proc names outside call position, proc lambdas, `export var`, and
+   non-exhaustive matches. Proc values and proc lambdas were added only after
+   the V1 compiler was retired.
 
 V1 stays frozen except for these front-end patches. It remains the reference oracle for the shared-semantics corpus (tests valid in both dialects), replacing the deleted interpreter in the differential-testing role.
 
@@ -4791,7 +4843,10 @@ Evaluation-order independence:
 Semantics intersection:
 
 6. `++` only for strings; never `+` on strings (V2 rejects; the lint rejects under V1 too).
-7. Only `fn` lambdas; proc names only in call position; assignment only as a statement; no `export var`.
+7. During the historical V1 dual-compile period, only `fn` lambdas and
+   call-position proc names were allowed. Post-cutover compiler sources may use
+   first-class proc values, though they still keep assignment statement-only
+   and reject `export var`.
 8. All matches exhaustive by V2 rules; do not lean on V1's permissiveness around variant-name collisions or tagged bindings.
 9. Sources must satisfy monomorphic-by-default and export groundedness: mark polymorphic helpers `generic`. V1 will not check this — stage2 will, so run stage2's checks early and often.
 10. Decimal or `_b` byte literals only.
@@ -5289,7 +5344,7 @@ Design questions that were open in earlier drafts, now decided.
    Laziness is a construction strategy, not a type identity; the forcing contract (Phase 15) is what makes this precise.
 
 2. **`generic proc` exists.**  
-   TEA requires library procs over app-instantiated descriptor unions (`runCore`, `reconcileSubs`, app `dispatch`); without `generic proc`, exported procs over `Cmd` cannot satisfy export groundedness (2.7 T2). It is pure signature generalization and does not weaken second-classness.
+   TEA requires library procs over app-instantiated descriptor unions (`runCore`, `reconcileSubs`, app `dispatch`); without `generic proc`, exported procs over `Cmd` cannot satisfy export groundedness (2.7 T2). It generalizes named proc signatures; anonymous proc values remain monomorphic.
 
 3. **Generic slots are per-field, not name-shared.**  
    Sharing by *name* across union variants was considered for `Cmd<Msg>` and rejected: a shared name shares the whole field type, not variables inside it, so `(Str -> Msg)` and `Msg` payloads can never share a slot. Multi-slot unions plus per-program unification cover this instead (Phase 14b, including the worked inference trace).
@@ -5339,7 +5394,7 @@ monomorphic by default
 generic by declaration
 ground at the module boundary
 total in pure code
-procs second-class
+proc values first-class; invocation effectful
 effects as descriptors
 extern-private
 statically checked

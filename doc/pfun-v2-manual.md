@@ -87,7 +87,7 @@ its capabilities:
 |---|---|---|---|---|
 | `function` | pure function | **No** | Yes | with `memo` |
 | `fn` | anonymous pure lambda | **No** | Yes | — |
-| `proc` | procedure | **Yes** | **No** | never |
+| `proc` | procedure / anonymous proc lambda | **Yes** | Yes | never |
 
 The rules that make the boundary real:
 
@@ -96,12 +96,12 @@ The rules that make the boundary real:
   purity diagnostic. **[Implemented]**
 - A `proc` may do anything: print, mutate, call other procedures, *and* call
   pure functions. Calls flow one way. **[Implemented]**
-- **Procs are second-class.** A proc's name may appear only as the callee of a
-  call or as the right operand of `|>`. It may not be passed as an argument,
-  stored in a record or list, bound with `let`, or returned. There are no proc
-  lambdas — `fn` is always pure. Consequently no effectful value can flow
-  through a parameter or a data structure, and the purity check is a complete
-  static analysis with no runtime net behind it. **[Implemented]**
+- **Proc values are first-class, but invocation is always effectful.** Pure code
+  may create, bind, store, pass, import, export, and return a proc value; it may
+  not call one. Anonymous proc values use explicitly typed
+  `proc (...) -> R { ... }` or `async proc (...) -> R { ... }` syntax. The
+  checker follows inferred `TProc` values through bindings and fields so the
+  call boundary remains static. **[Implemented]**
 
 Effectful *intent* still travels through pure code — as plain data. Pure code
 constructs **descriptor** values (a union pairing each effect with a pure
@@ -291,9 +291,9 @@ Two scalar refinements exist for totality:
 - Records — nominal, declared with `type` (chapter 7).
 - Unions — nominal sums with payload fields (chapter 8).
 - `Dict<K, V>` and `Array<T>` — mutable, procedural-only mutation (chapter 14).
-- Function types `(<params>) -> ret` — values. Proc types exist for checking
-  but **never inhabit value positions** (T4): unifying a proc type into a
-  function parameter, record field, or list element is a type error.
+- Function types `(<params>) -> ret` and procedure types
+  `proc(<params>) -> ret` / `async proc(<params>) -> ret` are values. Sync and
+  async proc types are distinct.
 
 ## 2.3 Monomorphic by default, `generic` by declaration **[Implemented]**
 
@@ -324,9 +324,9 @@ generic function tagged(item, suffix) {
 }
 ```
 
-`generic proc` generalizes a proc's signature the same way (procs remain
-call-only). It exists for library procs over per-application descriptor
-unions — see chapter 17.
+`generic proc` generalizes a named proc's signature the same way. Anonymous
+proc values remain monomorphic. It exists for library procs over
+per-application descriptor unions — see chapter 17.
 
 ## 2.4 Generic record and payload fields **[Implemented]**
 
@@ -500,9 +500,9 @@ Rules:
 raw |> trim |> parse |> render
 ```
 
-The right operand must be callable with exactly the piped value. In proc
-context the right operand may be a proc name (the pipe desugars to a call);
-this is one of only two places a proc name may appear (§11.1).
+The right operand must be callable with exactly the piped value. A proc value
+may be used on the right only in proc context because the pipe desugars to an
+effectful call.
 
 ## 3.8 Indexing and field access **[Partial]**
 
@@ -600,14 +600,55 @@ let double = fn x => scale(2, x);
 
 ## 5.2 Lambdas **[Implemented]**
 
-`fn params => expr` or `fn params => { block }`. Lambdas are always pure —
-there are no proc lambdas. They close over enclosing `let` bindings by value
-(strict evaluation means the value is fixed at capture).
+`fn params => expr` or `fn params => { block }` creates an inferred pure
+lambda. An anonymous procedure uses an explicit monomorphic signature and a
+block body:
 
 ```pfun
+import * from "async";
+import * from "io";
+
 let inRange = fn lo, hi => fn x => x >= lo && x <= hi;
 let isDigit = inRange(48, 57);
+
+type Handler = { generic action }
+
+// Pure code may pass and store a proc value. It may not invoke one.
+function makeHandler(action) {
+	Handler { action = action }
+}
+
+async proc demonstrateProcLambdas() {
+	let prefix = "event";
+	var count = 0;
+	let onLine = proc (line: Str) -> Unit {
+		count = count + 1;
+		println(prefix ++ " " ++ str(count) ++ ": " ++ line);
+	};
+
+	let handler = makeHandler(onLine);
+	handler.action("first");
+	handler.action("second");
+
+	let delayed = async proc (value: Int) -> Int {
+		await sleep(0);
+		value + count
+	};
+	println("async result = " ++ str(await delayed(40)));
+}
 ```
+
+Creating or transporting a proc lambda is pure; invoking it is not. Captured
+`let` values are immutable. A captured `var` is a shared lexical cell, so
+mutations are visible to the enclosing proc and later callback invocations.
+Sync and async proc lambdas have distinct `TProc` types. Proc lambdas are not
+generic; named `generic proc` declarations remain the polymorphic form.
+
+Here `makeHandler` is pure: it transports the proc value into a record without
+calling it. The two `handler.action` calls are legal because they occur inside
+an async proc, and both calls update the same captured `count` cell. The
+`delayed` value has an async proc type and must be invoked from proc context;
+`await` keeps its result in sequence with the surrounding example.
 
 ## 5.3 Memoized functions **[Implemented syntax, Planned runtime]**
 
@@ -968,15 +1009,10 @@ A proc may print, mutate, call procs and functions, and `await` (if
 order, and the conventional entry is a `main()` proc invoked at the bottom
 of the entry file.
 
-A proc's name may appear in exactly two expression positions:
-
-1. As the callee of a call.
-2. As the right operand of `|>` (which desugars to a call).
-
-Everything else — argument, record field, list element, `let` initializer,
-return value — is a purity error. This is what makes procs second-class and
-the purity analysis complete (chapter 17 shows the idiom that replaces
-passing procs around).
+Named procs and proc lambdas are ordinary `TProc` values. They may flow through
+pure code and data structures. Calling one directly or through `|>` is legal
+only in top-level or proc context; a call from `function` or `fn` produces a
+purity diagnostic.
 
 ## 11.2 Return **[Implemented]**
 
@@ -985,9 +1021,10 @@ is otherwise the result, exactly as in functions.
 
 ## 11.3 `generic proc` **[Implemented]**
 
-Generalizes a proc's *signature* the way `generic function` generalizes a
-function's; the proc remains call-only. Needed for library procs whose
-descriptor parameters are instantiated per application (chapter 17).
+Generalizes a named proc's *signature* the way `generic function` generalizes a
+function's. Proc lambdas are deliberately monomorphic. Generic named procs are
+needed for library procedures whose parameters are instantiated per
+application (chapter 17).
 
 # 12. Mutable bindings and assignment
 
@@ -1147,9 +1184,9 @@ scheduler and async host intrinsics are Phase 15**]**
 
 # 17. Effects as data: descriptors and dispatch
 
-This chapter is the V2 answer to "how do I abstract over effects if procs
-are not values?" — the pattern that replaces callbacks, effect handlers, and
-first-class procs in one move.
+Descriptors remain the preferred way for pure code to *request* effects as
+data. First-class proc values serve a different role: callbacks, handlers,
+timers, and routing tables whose eventual invocation occurs in proc context.
 
 ## 17.1 The descriptor union **[Implemented language support]**
 

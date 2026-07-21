@@ -16,7 +16,9 @@
 // - no head/tail/nth outside compat.pf
 // - no builtin Dict or mutable Array
 // - no list `+`
-// - no proc values, proc lambdas, async, lazy data, or float arithmetic
+// - compiler sources avoid proc lambdas even though the compiled language now
+//   supports first-class proc values; async, lazy data, and float arithmetic
+//   remain outside this module's implementation subset
 
 import * as MG from "../graph/modgraph";
 import * as Check from "../check/check";

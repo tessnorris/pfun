@@ -1,0 +1,30 @@
+import * from "io";
+import { step, later } from "./provider";
+
+type Handler = { generic action }
+
+function carry(action) {
+	action
+}
+
+function boxed(action) {
+	Handler { action = action }
+}
+
+async proc main() {
+	let offset = 3;
+	var total = 10;
+	let bump = proc (delta: Int) -> Int {
+		total = total + delta + offset;
+		total
+	};
+	let transported = carry(bump);
+	let handler = boxed(transported);
+
+	println("first=" ++ __str__(handler.action(2)));
+	println("second=" ++ __str__(handler.action(1)));
+	println("imported=" ++ __str__(step(4)));
+	println("async=" ++ __str__(await later(4)));
+}
+
+main();

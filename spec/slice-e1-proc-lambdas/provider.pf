@@ -1,0 +1,7 @@
+export let step = proc (value: Int) -> Int {
+	value + 1
+};
+
+export let later = async proc (value: Int) -> Int {
+	value + 3
+};

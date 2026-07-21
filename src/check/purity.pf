@@ -3,21 +3,21 @@
 // This pass enforces the V2 effect boundary over the syntax AST:
 //
 //   * functions and fn lambdas are pure contexts
-//   * procs are effectful contexts, but procs are second-class values
-//   * proc names may appear only in callee position, or as the direct right
-//     operand of a pipe expression
+//   * named procs and proc lambdas are first-class values
+//   * carrying a proc value is pure; invoking one requires proc context
 //   * var/assignment/while are procedural only
 //   * await is allowed only inside async proc bodies
 //   * lazy list contents and comprehension bodies are checked as pure contexts
 //
-// The checker deliberately does not resolve types. It only needs name-kind
-// information: function/proc/value/type/namespace. Dependency interfaces provide
-// imported name kinds; local declarations are pre-bound before their bodies are
-// checked so recursion and mutual references see the right callable kind.
+// Type inference runs first and supplies the callee side table used to identify
+// proc values after they have flowed through bindings, fields, and parameters.
+// Name-kind information remains useful for direct and imported proc names.
 
 import * as A from "../syntax/ast";
 import * as D from "./diag";
 import * as I from "./iface";
+import * as TY from "./types";
+import * as IMI from "../data/imapi";
 import * as IMS from "../data/imaps";
 import * as Compat from "../compat";
 
@@ -40,7 +40,7 @@ export type PurityCtx = {
 export type PurityResult = { diags }
 
 // Internal threaded state.
-type PuritySt = { path, env, diags }
+type PuritySt = { path, env, types, diags }
 
 type ArmOut = { st, env }
 
@@ -60,16 +60,16 @@ export function mkPurityResult(diags) {
 	PurityResult { diags }
 }
 
-function mkState(path, env, diags) {
-	PuritySt { path, env, diags }
+function mkState(path, env, types, diags) {
+	PuritySt { path, env, types, diags }
 }
 
 function withEnv(st, env) {
-	PuritySt { st.path, env, st.diags }
+	PuritySt { st.path, env, st.types, st.diags }
 }
 
 function withDiags(st, diags) {
-	PuritySt { st.path, st.env, diags }
+	PuritySt { st.path, st.env, st.types, diags }
 }
 
 function armOut(st, env) {
@@ -353,28 +353,42 @@ function nameOfNamedExpr(expr) {
 	| _ -> "<expression>"
 }
 
-function procValueDiag(st, span, name) {
-	addDiag(st, span, "Procedure '" ++ name ++ "' cannot be used as a value; procs are second-class and may only appear in call position.")
-}
-
 function procCallDiag(st, span, name) {
 	addDiag(st, span, "Pure code cannot call procedure '" ++ name ++ "'.")
 }
 
 function checkNamedValueUse(st, ctx, expr) {
-	match kindOfNamedExpr(st, expr) with
-	| Some k -> {
-		match k.value with
-		| NKProc _ -> procValueDiag(st, A.exprSpan(expr), nameOfNamedExpr(expr))
-		| _ -> checkExprObjectPart(st, ctx, expr)
-	}
-	| None -> checkExprObjectPart(st, ctx, expr)
+	checkExprObjectPart(st, ctx, expr)
 }
 
 function checkExprObjectPart(st, ctx, expr) {
 	match expr with
 	| EField e -> checkExpr(st, ctx, e.object)
 	| _ -> st
+}
+
+function inferredExprIsProc(st, expr) {
+	match IMI.imiGet(st.types, A.exprId(expr)) with
+	| None -> false
+	| Some found -> {
+		match found.value with
+		| TProc _ -> true
+		| _ -> false
+	}
+}
+
+function namedExprIsProc(st, expr) {
+	match kindOfNamedExpr(st, expr) with
+	| Some k -> {
+		match k.value with
+		| NKProc _ -> true
+		| _ -> false
+	}
+	| None -> false
+}
+
+function exprIsProc(st, expr) {
+	inferredExprIsProc(st, expr) || namedExprIsProc(st, expr)
 }
 
 // ── expression checking ───────────────────────────────────────────────────
@@ -419,35 +433,25 @@ function checkFmtParts(st, ctx, parts) {
 function checkCall(st, ctx, expr) {
 	match expr with
 	| ECall c -> {
-		match kindOfNamedExpr(st, c.callee) with
-		| Some k -> {
-			match k.value with
-			| NKProc _ -> {
-				let st1 = ctxAllowsEffects(ctx) ? st : procCallDiag(st, c.span, nameOfNamedExpr(c.callee));
-				checkExprList(st1, ctx, c.args)
-			}
-			| _ -> checkExprList(st, ctx, c.args)
-		}
-		| None -> {
-			let st1 = checkExpr(st, ctx, c.callee);
-			checkExprList(st1, ctx, c.args)
-		}
+		let st1 = checkExpr(st, ctx, c.callee);
+		let st2 = if exprIsProc(st1, c.callee) && !ctxAllowsEffects(ctx) then {
+			procCallDiag(st1, c.span, nameOfNamedExpr(c.callee))
+		} else {
+			st1
+		};
+		checkExprList(st2, ctx, c.args)
 	}
 	| _ -> st
 }
 
 function checkPipe(st, ctx, lhs, rhs, span) {
 	let st1 = checkExpr(st, ctx, lhs);
-	match kindOfNamedExpr(st1, rhs) with
-	| Some k -> {
-		match k.value with
-		| NKProc _ -> {
-			if ctxAllowsEffects(ctx) then { st1 }
-			else { procCallDiag(st1, span, nameOfNamedExpr(rhs)) }
-		}
-		| _ -> checkExpr(st1, ctx, rhs)
+	let st2 = checkExpr(st1, ctx, rhs);
+	if exprIsProc(st2, rhs) && !ctxAllowsEffects(ctx) then {
+		procCallDiag(st2, span, nameOfNamedExpr(rhs))
+	} else {
+		st2
 	}
-	| None -> checkExpr(st1, ctx, rhs)
 }
 
 function checkCompGens(st, ctx, gens) {
@@ -540,6 +544,7 @@ function checkExpr(st, ctx, expr) {
 	}
 	| ECall _ -> checkCall(st, ctx, expr)
 	| ELambda e -> checkLambda(st, e.params, e.body)
+	| EProcLambda e -> checkProcLambda(st, e.params, e.body, e.isAsync)
 	| EBlock e -> checkScopedStmtList(st, ctx, e.stmts)
 	| EList e -> checkExprList(st, pureContextForLazy(e.mode, ctx), e.elems)
 	| EComp e -> checkComprehension(st, ctx, e.body, e.gens, e.guard, e.mode)
@@ -566,6 +571,17 @@ function checkLambda(st, params, body) {
 	let oldEnv = st.env;
 	let st1 = bindParams(st, params);
 	let st2 = checkExpr(st1, CtxPure, body);
+	withEnv(st2, oldEnv)
+}
+
+function typedParamNames(params) {
+	map(fn param => param.name, params)
+}
+
+function checkProcLambda(st, params, body, isAsync) {
+	let oldEnv = st.env;
+	let st1 = bindParams(st, typedParamNames(params));
+	let st2 = checkScopedStmtList(st1, CtxProc { isAsync }, body);
 	withEnv(st2, oldEnv)
 }
 
@@ -650,19 +666,19 @@ function checkScopedStmtList(st, ctx, stmts) {
 
 // ── public entry points ───────────────────────────────────────────────────
 
-function bindModuleNames(ast, deps) {
-	let st0 = mkState(ast.path, IMS.imsEmpty(), []);
+function bindModuleNames(ast, deps, types) {
+	let st0 = mkState(ast.path, IMS.imsEmpty(), types, []);
 	let st1 = bindImportStmts(st0, ast.stmts, deps);
 	prebindLocalDecls(st1, ast.stmts)
 }
 
-export generic function checkModule(ast, deps) {
-	let st0 = bindModuleNames(ast, deps);
+export generic function checkModule(ast, deps, types) {
+	let st0 = bindModuleNames(ast, deps, types);
 	let st1 = checkStmtListLoop(st0, CtxTop, ast.stmts);
 	mkPurityResult(reverse(st1.diags))
 }
 
 // Alias matching the phase name; useful in tests and later check/check.pf glue.
-export generic function checkPurity(ast, deps) {
-	checkModule(ast, deps)
+export generic function checkPurity(ast, deps, types) {
+	checkModule(ast, deps, types)
 }

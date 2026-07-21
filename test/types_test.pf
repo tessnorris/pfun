@@ -157,6 +157,43 @@ function testExpressionLambdaBodyInfers() {
 	H.assertOkDiags(H.typeDiags("lambda_expr.pf", src))
 }
 
+//![test("typed proc lambda can be stored transported and called")]
+function testProcLambdaTransportAndCall() {
+	let src =
+		"type Handler = { generic action };\n"
+		++ "function carry(action) { Handler { action = action } }\n"
+		++ "let step = proc (x: Int) -> Int { x + 1; };\n"
+		++ "let handler = carry(step);\n"
+		++ "proc run() { let y = handler.action(2) + 1; y; }";
+	H.assertOkDiags(H.typeDiags("proc_lambda_transport.pf", src))
+}
+
+//![test("proc lambda return annotation is enforced")]
+function testProcLambdaReturnMismatchFails() {
+	let src = "let bad = proc (x: Int) -> Str { x + 1; };";
+	H.assertHasDiag(H.typeDiags("proc_lambda_return_bad.pf", src))
+}
+
+//![test("sync and async proc values remain distinct")]
+function testProcLambdaAsyncMismatchFails() {
+	let src =
+		"let sync = proc () -> Unit { };\n"
+		++ "let later = async proc () -> Unit { };\n"
+		++ "let both = [sync, later];";
+	H.assertHasMessage(
+		H.typeDiags("proc_lambda_async_mismatch.pf", src),
+		"async"
+	)
+}
+
+//![test("proc lambda calls enforce exact arity")]
+function testProcLambdaArityFails() {
+	let src =
+		"let step = proc (x: Int) -> Int { x + 1; };\n"
+		++ "proc run() { step(); }";
+	H.assertHasMessage(H.typeDiags("proc_lambda_arity.pf", src), "argument")
+}
+
 //![test("trailing if block is the lambda value")]
 function testTrailingIfBlockIsLambdaValue() {
 	let src = "let g = fn x => { if x then { 1 } else { 2 } };\nlet y = g(true) + 1;";

@@ -1,0 +1,3 @@
+let syncAction = proc () -> Unit { };
+let asyncAction = async proc () -> Unit { };
+let incompatible = [syncAction, asyncAction];

@@ -1072,7 +1072,11 @@ function pTypedParamList(st, acc) {
 }
 
 function pTypeExpr(st) {
-	if atOp(st, "(") then {
+	if atKw(st, "proc") then {
+		pProcTypeExpr(st, false)
+	} else if atKw(st, "async") then {
+		pAsyncProcTypeExpr(st)
+	} else if atOp(st, "(") then {
 		pFunctionTypeExpr(st)
 	} else {
 		match expectIdent(st, "as type name") with
@@ -1084,6 +1088,34 @@ function pTypeExpr(st) {
 				| POk args -> ok(args.st, A.tyName(name.node, args.node))
 			} else {
 				ok(name.st, A.tyName(name.node, []))
+			}
+		}
+	}
+}
+
+function pAsyncProcTypeExpr(st) {
+	let st1 = advance(st);
+	if atKw(st1, "proc") then {
+		pProcTypeExpr(st1, true)
+	} else {
+		failHere(st1, "Expected proc after async in procedure type.")
+	}
+}
+
+function pProcTypeExpr(st, isAsync) {
+	let st1 = advance(st);
+	match expectOp(st1, "(", "to start procedure type") with
+	| PErr e -> PErr { e.diags }
+	| POk open -> {
+		match pTypeExprList(open.st, []) with
+		| PErr e -> PErr { e.diags }
+		| POk params -> {
+			match expectOp(params.st, "->", "after procedure type parameters") with
+			| PErr e -> PErr { e.diags }
+			| POk arrow -> {
+				match pTypeExpr(arrow.st) with
+				| PErr e -> PErr { e.diags }
+				| POk ret -> ok(ret.st, A.tyProc(params.node, ret.node, isAsync))
 			}
 		}
 	}
@@ -1189,7 +1221,9 @@ function pPrefix(st) {
 	} else if atKw(st, "fn") then {
 		pLambda(st0, id, start)
 	} else if atKw(st, "proc") then {
-		failHere(st, "Proc lambdas are not part of the bootstrap/V2 syntax.")
+		pProcLambda(st0, id, start, false)
+	} else if atKw(st, "async") then {
+		pAsyncProcLambda(st0, id, start)
 	} else if atKw(st, "match") then {
 		pMatch(st0, id, start)
 	} else if atKw(st, "if") then {
@@ -1530,6 +1564,46 @@ function pLambdaBody(st, id, start, params) {
 		match pExpr(st, 1) with
 		| PErr e -> PErr { e.diags }
 		| POk body -> ok(body.st, A.eLambda(id, params, body.node, spanFromStart(start, A.exprSpan(body.node))))
+	}
+}
+
+function pAsyncProcLambda(st0, id, start) {
+	let st1 = advance(st0);
+	if atKw(st1, "proc") then {
+		pProcLambda(st1, id, start, true)
+	} else {
+		failHere(st1, "Expected proc after async in procedure lambda.")
+	}
+}
+
+function pProcLambda(st0, id, start, isAsync) {
+	let st1 = advance(st0);
+	match pTypedParams(st1) with
+	| PErr e -> PErr { e.diags }
+	| POk params -> {
+		match expectOp(params.st, "->", "after procedure lambda parameters") with
+		| PErr e -> PErr { e.diags }
+		| POk arrow -> {
+			match pTypeExpr(arrow.st) with
+			| PErr e -> PErr { e.diags }
+			| POk ret -> {
+				match pBlock(ret.st) with
+				| PErr e -> PErr { e.diags }
+				| POk body -> {
+					ok(
+						body.st,
+						A.eProcLambda(
+							id,
+							params.node,
+							ret.node,
+							body.node.stmts,
+							isAsync,
+							spanFromStartToPrev(start, body.st)
+						)
+					)
+				}
+			}
+		}
 	}
 }
 

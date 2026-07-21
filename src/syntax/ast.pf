@@ -55,6 +55,7 @@ export type Expr = {
 
 	| ECall: id, callee, args, span
 	| ELambda: id, params, body, span
+	| EProcLambda: id, params, ret, body, isAsync, span
 	| EBlock: id, stmts, span
 
 	| EList: id, elems, mode, span
@@ -100,6 +101,7 @@ export type ImportSpec = {
 export type TypeExpr = {
 	| TyName: name, args
 	| TyFun: params, ret
+	| TyProc: params, ret, isAsync
 }
 
 export type ExternKind = {
@@ -183,6 +185,7 @@ function astTypeWitness() {
 		EIf { 0, baseExpr, baseExpr, baseExpr, sp },
 		ECall { 0, baseExpr, [baseExpr], sp },
 		ELambda { 0, ["x"], baseExpr, sp },
+		EProcLambda { 0, [typedParam], typeExpr, [baseStmt], false, sp },
 		EBlock { 0, [baseStmt], sp },
 		EList { 0, [baseExpr], StrictList, sp },
 		EComp { 0, baseExpr, [gen], Some { baseExpr }, LazyList, sp },
@@ -207,7 +210,8 @@ function astTypeWitness() {
 	];
 	let typeExprs = [
 		typeExpr,
-		TyFun { [typeExpr], typeExpr }
+		TyFun { [typeExpr], typeExpr },
+		TyProc { [typeExpr], typeExpr, false }
 	];
 	let externKinds = [ExternFunction, ExternProc { false }];
 	let statements = [
@@ -328,6 +332,10 @@ export function eLambda(id, params, body, span) {
 	ELambda { id, params, body, span }
 }
 
+export function eProcLambda(id, params, ret, body, isAsync, span) {
+	EProcLambda { id, params, ret, body, isAsync, span }
+}
+
 export function eBlock(id, stmts, span) {
 	EBlock { id, stmts, span }
 }
@@ -422,6 +430,10 @@ export function tyFun(params, ret) {
 	TyFun { params, ret }
 }
 
+export function tyProc(params, ret, isAsync) {
+	TyProc { params, ret, isAsync }
+}
+
 export function externFunction() {
 	ExternFunction
 }
@@ -510,6 +522,7 @@ export function exprId(expr) {
 	| EIf e -> e.id
 	| ECall e -> e.id
 	| ELambda e -> e.id
+	| EProcLambda e -> e.id
 	| EBlock e -> e.id
 	| EList e -> e.id
 	| EComp e -> e.id
@@ -537,6 +550,7 @@ export function exprSpan(expr) {
 	| EIf e -> e.span
 	| ECall e -> e.span
 	| ELambda e -> e.span
+	| EProcLambda e -> e.span
 	| EBlock e -> e.span
 	| EList e -> e.span
 	| EComp e -> e.span
@@ -766,6 +780,20 @@ let astSigLambdaFns = [
 	eLambda
 ];
 
+function astSigProcLambda(id, params, ret, body, isAsync, span) {
+	let ids = [0, id];
+	let paramLists = [astSigExternDecl.params, params];
+	let returns = [astSigTypeExpr, ret];
+	let bodies = [astSigStmts, body];
+	let asyncFlags = [false, isAsync];
+	let spans = [astSigSpan, span];
+	astSigExpr
+}
+let astSigProcLambdaFns = [
+	astSigProcLambda,
+	eProcLambda
+];
+
 function astSigBlock(id, stmts, span) {
 	let ids = [0, id];
 	let stmtLists = [astSigStmts, stmts];
@@ -903,6 +931,17 @@ function astSigTyName(name, args) {
 let astSigTyNameFns = [
 	astSigTyName,
 	tyName
+];
+
+function astSigTyProc(params, ret, isAsync) {
+	let paramLists = [astSigTypeExprs, params];
+	let returns = [astSigTypeExpr, ret];
+	let asyncFlags = [false, isAsync];
+	astSigTypeExpr
+}
+let astSigTyProcFns = [
+	astSigTyProc,
+	tyProc
 ];
 
 function astSigNamedStmt(id, name, value, span) {
@@ -1066,4 +1105,3 @@ let astSigSpanJoinFns = [
 	astSigSpanJoin,
 	spanJoin
 ];
-

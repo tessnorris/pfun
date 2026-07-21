@@ -1,8 +1,7 @@
 // test/check/purity_test.pf — Phase 8 purity/effect tests.
 //
-// These tests cover the architecture's purity rules for second-class procs,
-// mutation, await placement, fire-and-forget async calls, and lazy-comprehension
-// purity.
+// These tests cover first-class proc transport, effectful invocation, mutation,
+// await placement, fire-and-forget async calls, and lazy-comprehension purity.
 
 import * as Assert from "../src/test/assertions";
 import * as H from "./check_helpers";
@@ -57,16 +56,58 @@ function testAwaitInsideAsyncProcSucceeds() {
 	H.assertOkDiags(H.purityDiags("await_inside_async.pf", src))
 }
 
-//![test("proc name in argument position fails")]
-function testProcNameInArgumentPositionFails() {
+//![test("pure code may transport a proc value")]
+function testPureCodeMayTransportProcValue() {
 	let src = "proc ping() { 0; }\nfunction use(x) { x; }\nfunction bad() { use(ping); }";
-	H.assertHasMessage(H.purityDiags("proc_as_arg.pf", src), "proc")
+	H.assertOkDiags(H.purityDiags("proc_as_arg.pf", src))
 }
 
-//![test("proc name in record field fails")]
-function testProcNameInRecordFieldFails() {
+//![test("proc values may be stored in records")]
+function testProcValueInRecordSucceeds() {
 	let src = "proc ping() { 0; }\ntype Box = { f };\nlet b = Box { f = ping };";
-	H.assertHasMessage(H.purityDiags("proc_in_record.pf", src), "proc")
+	H.assertOkDiags(H.purityDiags("proc_in_record.pf", src))
+}
+
+//![test("pure code cannot invoke a proc lambda")]
+function testPureCodeCannotInvokeProcLambda() {
+	let src =
+		"let action = proc () -> Unit { };\n"
+		++ "function bad() { action(); }";
+	H.assertHasMessage(
+		H.purityDiags("pure_calls_proc_lambda.pf", src),
+		"Pure code"
+	)
+}
+
+//![test("proc context can invoke a proc lambda")]
+function testProcContextCanInvokeProcLambda() {
+	let src =
+		"let action = proc () -> Unit { };\n"
+		++ "proc run() { action(); }";
+	H.assertOkDiags(H.purityDiags("proc_calls_proc_lambda.pf", src))
+}
+
+//![test("proc lambda body has procedural mutation context")]
+function testProcLambdaBodyAllowsMutation() {
+	let src =
+		"function make() { "
+		++ "let action = proc () -> Int { var x = 0; x = x + 1; x; }; "
+		++ "action; }";
+	H.assertOkDiags(H.purityDiags("proc_lambda_mutation.pf", src))
+}
+
+//![test("await follows proc lambda async flag")]
+function testProcLambdaAwaitFollowsAsyncFlag() {
+	let good =
+		"async proc later() { 0; }\n"
+		++ "let action = async proc () -> Int { await later(); };";
+	let bad =
+		"async proc later() { 0; }\n"
+		++ "let action = proc () -> Int { await later(); };";
+	Assert.assertions([
+		Assert.assertEqual(0, length(H.purityDiags("async_proc_lambda.pf", good))),
+		Assert.assertTrue(length(H.purityDiags("sync_proc_lambda_await.pf", bad)) > 0)
+	])
 }
 
 //![test("fire and forget async proc accepted in proc context")]
