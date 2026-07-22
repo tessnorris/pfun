@@ -51,12 +51,28 @@ export type IfaceType = {
 // schemes, declaration lists) are owned by the modules that populate them,
 // and iface.pf itself never constrains them. `path` stays monomorphic (Str),
 // pinned by the grounding witness below.
-export type ModIface = { path, generic kinds, generic types, generic records, generic unions }
+export type ModIface = {
+	path,
+	kinds,
+	types,
+	records,
+	unions,
+	ownUnions,
+	unionMembers
+}
 
 // Small input shapes for the two public extractors in the architecture. The
 // eventual checker/builtin manifest may provide richer records with the same
 // fields; these helpers only require the fields they read.
-export type CheckedModule = { path, generic kinds, generic types, generic records, generic unions }
+export type CheckedModule = {
+	path,
+	kinds,
+	types,
+	records,
+	unions,
+	ownUnions,
+	unionMembers
+}
 
 export type BuiltinExport = { name, kind, generic scheme }
 export type BuiltinUnion = { name, generic variants }
@@ -82,31 +98,61 @@ export generic function nameType(name) { ITName { name } }
 
 
 export generic function mkIface(path, kinds, types, unions) {
-	ModIface {
-		path = path,
-		kinds = kinds,
-		types = types,
-		records = IMS.imsEmpty(),
-		unions = unions
-	}
+	mkIfaceFull(
+		path,
+		kinds,
+		types,
+		IMS.imsEmpty(),
+		unions,
+		unions,
+		defaultUnionMembers(IMS.imsEntries(unions), IMS.imsEmpty())
+	)
 }
 
 export generic function mkIfaceWithRecords(path, kinds, types, records, unions) {
-	ModIface { path, kinds, types, records, unions }
+	mkIfaceFull(
+		path,
+		kinds,
+		types,
+		records,
+		unions,
+		unions,
+		defaultUnionMembers(IMS.imsEntries(unions), IMS.imsEmpty())
+	)
+}
+
+export generic function mkIfaceFull(path, kinds, types, records, unions, ownUnions, unionMembers) {
+	ModIface { path, kinds, types, records, unions, ownUnions, unionMembers }
 }
 
 export generic function mkCheckedModule(path, kinds, types, unions) {
 	CheckedModule {
-		path = path,
-		kinds = kinds,
-		types = types,
+		path,
+		kinds,
+		types,
 		records = IMS.imsEmpty(),
-		unions = unions
+		unions,
+		ownUnions = unions,
+		unionMembers = defaultUnionMembers(
+			IMS.imsEntries(unions),
+			IMS.imsEmpty()
+		)
 	}
 }
 
 export generic function mkCheckedModuleWithRecords(path, kinds, types, records, unions) {
-	CheckedModule { path, kinds, types, records, unions }
+	CheckedModule {
+		path,
+		kinds,
+		types,
+		records,
+		unions,
+		ownUnions = unions,
+		unionMembers = defaultUnionMembers(
+			IMS.imsEntries(unions),
+			IMS.imsEmpty()
+		)
+	}
 }
 
 export generic function mkBuiltinExport(name, kind, scheme) {
@@ -121,11 +167,55 @@ export generic function mkBuiltinModule(path, exports, unions) {
 	BuiltinModule { path, exports, unions }
 }
 
+function defaultUnionMembers(entries, acc) {
+	match Compat.uncons(entries) with
+	| None -> acc
+	| Some cell -> defaultUnionMembers(
+		cell.value.value,
+		IMS.imsPut(
+			acc,
+			cell.value.key.key,
+			[cell.value.key.key]
+		)
+	)
+}
+
 // Grounding witness: pins the monomorphic string/kind fields of the plumbing
 // records without executing (see signature_grounding_test.pf for the idiom).
 function ifaceGroundingWitness() {
-	let iface = mkIfaceWithRecords("", IMS.imsEmpty(), IMS.imsEmpty(), IMS.imsEmpty(), IMS.imsEmpty());
-	let cm = mkCheckedModuleWithRecords("", IMS.imsEmpty(), IMS.imsEmpty(), IMS.imsEmpty(), IMS.imsEmpty());
+	let field = A.mkFieldDecl("value", false);
+	let variant = A.mkVariantDecl("GroundedVariant", [field]);
+	let kinds = IMS.imsPut(IMS.imsEmpty(), "value", KFun);
+	let types = IMS.imsPut(
+		IMS.imsEmpty(),
+		"value",
+		mkScheme([], [], ITUnknown)
+	);
+	let records = IMS.imsPut(IMS.imsEmpty(), "Record", [field]);
+	let unions = IMS.imsPut(IMS.imsEmpty(), "Union", [variant]);
+	let members = IMS.imsPut(
+		IMS.imsEmpty(),
+		"Union",
+		["Union"]
+	);
+	let iface = mkIfaceFull(
+		"",
+		kinds,
+		types,
+		records,
+		unions,
+		unions,
+		members
+	);
+	let cm = CheckedModule {
+		path = "",
+		kinds = kinds,
+		types = types,
+		records = records,
+		unions = unions,
+		ownUnions = unions,
+		unionMembers = members
+	};
 	let be = mkBuiltinExport("", KFun, mkScheme([0], [], ITUnknown));
 	let bu = mkBuiltinUnion("", []);
 	mkBuiltinModule(iface.path ++ cm.path ++ be.name ++ bu.name, [], [])
@@ -135,6 +225,22 @@ function ifaceGroundingWitness() {
 
 export generic function emptyIface(path) {
 	mkIface(path, IMS.imsEmpty(), IMS.imsEmpty(), IMS.imsEmpty())
+}
+
+export generic function copyIface(iface) {
+	mkIfaceFull(
+		iface.path,
+		iface.kinds,
+		iface.types,
+		iface.records,
+		iface.unions,
+		iface.ownUnions,
+		iface.unionMembers
+	)
+}
+
+export generic function normalizeIfaceMap(ifaces) {
+	IMS.imsMap(copyIface, ifaces)
 }
 
 export generic function lookupKind(iface, name) {
@@ -153,31 +259,69 @@ export generic function lookupUnion(iface, name) {
 	IMS.imsGet(iface.unions, name)
 }
 
+export generic function lookupOwnUnion(iface, name) {
+	IMS.imsGet(iface.ownUnions, name)
+}
+
+export generic function lookupUnionMembers(iface, name) {
+	IMS.imsGet(iface.unionMembers, name)
+}
+
 export generic function putKind(iface, name, kind) {
-	mkIfaceWithRecords(iface.path, IMS.imsPut(iface.kinds, name, kind), iface.types, iface.records, iface.unions)
+	mkIfaceFull(
+		iface.path,
+		IMS.imsPut(iface.kinds, name, kind),
+		iface.types,
+		iface.records,
+		iface.unions,
+		iface.ownUnions,
+		iface.unionMembers
+	)
 }
 
 export generic function putType(iface, name, scheme) {
-	mkIfaceWithRecords(iface.path, iface.kinds, IMS.imsPut(iface.types, name, scheme), iface.records, iface.unions)
+	mkIfaceFull(
+		iface.path,
+		iface.kinds,
+		IMS.imsPut(iface.types, name, scheme),
+		iface.records,
+		iface.unions,
+		iface.ownUnions,
+		iface.unionMembers
+	)
 }
 
 export generic function putRecord(iface, name, fields) {
-	mkIfaceWithRecords(
+	mkIfaceFull(
 		iface.path,
 		iface.kinds,
 		iface.types,
 		IMS.imsPut(iface.records, name, fields),
-		iface.unions
+		iface.unions,
+		iface.ownUnions,
+		iface.unionMembers
 	)
 }
 
 export generic function putUnion(iface, name, variants) {
-	mkIfaceWithRecords(
+	putCombinedUnion(
+		iface,
+		name,
+		variants,
+		variants,
+		[name]
+	)
+}
+
+export generic function putCombinedUnion(iface, name, variants, ownVariants, members) {
+	mkIfaceFull(
 		iface.path,
 		iface.kinds,
 		iface.types,
 		iface.records,
-		IMS.imsPut(iface.unions, name, variants)
+		IMS.imsPut(iface.unions, name, variants),
+		IMS.imsPut(iface.ownUnions, name, ownVariants),
+		IMS.imsPut(iface.unionMembers, name, members)
 	)
 }
 
@@ -214,7 +358,13 @@ function typeNameOfDecl(decl) {
 function putDeclShape(iface, decl) {
 	match decl with
 	| RecordDecl r -> putRecord(iface, r.tname, r.fields)
-	| UnionDecl u -> putUnion(iface, u.tname, u.variants)
+	| UnionDecl u -> putCombinedUnion(
+		iface,
+		u.tname,
+		u.variants,
+		u.variants,
+		cons(u.tname, u.includes)
+	)
 }
 
 function typeKind(isOpaque) {
@@ -271,7 +421,15 @@ export generic function ifaceOfAst(ast) {
 // ── extractors required by the architecture ────────────────────────────────
 
 export generic function ifaceOfChecked(cm) {
-	mkIfaceWithRecords(cm.path, cm.kinds, cm.types, cm.records, cm.unions)
+	mkIfaceFull(
+		cm.path,
+		cm.kinds,
+		cm.types,
+		cm.records,
+		cm.unions,
+		cm.ownUnions,
+		cm.unionMembers
+	)
 }
 
 function builtinExportsLoop(exports, iface) {

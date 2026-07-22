@@ -227,6 +227,14 @@ Their type-expression forms are `proc(T1, T2) -> R` and
 bindings retain their shared lexical cell. Sync and async proc types do not
 unify. Named `generic proc` remains the only polymorphic proc form.
 
+The callback-based `timer` module is the first host surface built on this
+model. `setTimer` accepts a sync `proc() -> Unit`; `setAsyncTimer` accepts an
+`async proc() -> Unit`; both return `Result<TimerHandle, NativeError>`.
+`clearTimer` returns `Result<Unit, NativeError>`. The split preserves the async
+flag as part of `TProc` identity. Timers are one-shot and platform-neutral,
+expected failures use `NativeTimerError`, and repeating application
+subscriptions remain descriptor-driven.
+
 Effectful *intent* still travels through pure code — as data. A descriptor union pairs each effect with a pure continuation that converts the effect's result into a message:
 
 ```pfun
@@ -311,6 +319,37 @@ async `TProc` values do not unify. `generic proc` generalizes named `TProc`
 signatures with the same scheme machinery as `generic function`; proc lambdas
 are monomorphic.
 
+**T5 — Combined unions provide nominal least upper bounds.**
+
+A union declaration may include other unions with `...Name`. Included unions
+retain their own nominal identity and constructors; inclusion only establishes
+a directional widening relation from the component to the combined union. The
+relation is transitive. Inference joins branches, match arms, list/array
+elements, and matching named containers at the unique least combined-union
+supertype. An equally specific pair of candidates is an ambiguity error.
+
+The flattened variant set drives exhaustiveness and shared-field constraints.
+Direct field access on a combined value is legal only when every flattened
+variant supplies a compatible field of that name. Unknown/non-union includes,
+duplicates, and cycles are declaration errors. A combined union never narrows
+implicitly to a component union.
+
+**T6 — One core `Result`; domain errors occupy its error slot.**
+
+`$builtin/core` is the sole owner of the ambient generic
+`Result<Value, Error>` and its `Ok`/`Err` constructors. Compiler packages,
+builtin modules, standard-library modules, and applications reuse that type;
+they do not create package-local result unions or redeclare `Ok`/`Err` to work
+around the program-global constructor namespace. A subsystem that needs
+structured failures declares a domain error union and places it in `Result`'s
+error slot. Combined unions provide the cross-subsystem error type when one
+operation can produce several domain errors.
+
+Only a semantically different state machine merits another outcome union. Its
+constructors must be globally distinct. The file module therefore retains the
+three-state `ReadResult`, but owns `ReadOk`/`ReadEof`/`ReadErr`; it does not
+duplicate core `Result` or its constructors.
+
 ### 2.8 Totality: pure code cannot fail
 
 Every runtime failure in the language falls into exactly one of four classes, and the first three are the whole story for pure code:
@@ -381,7 +420,7 @@ CHAR         ::= "'" (charchar | escape) "'"
 escape       ::= "\\" ("n" | "t" | "\\" | "\"" | "'" | "{" | "}")
 
 operators/punct:
-  + ++ - * / % = == != < > <= >= ! && || & | |> << >>
+  + ++ - * / % = == != < > <= >= ! && || & | |> |?> |!> << >>
   ( ) { } [ ] , ; : ? . -> => <-
 ```
 
@@ -419,7 +458,8 @@ whileStmt      ::= "while" "(" expr ")" block [";"]
 typeDecl       ::= "type" IDENT "=" "{" (recordBody | unionBody) "}" [";"]
 recordBody     ::= [fieldDecl {"," fieldDecl}]
 fieldDecl      ::= ["generic"] IDENT
-unionBody      ::= variant {variant}
+unionBody      ::= unionItem {unionItem}
+unionItem      ::= variant | "..." IDENT [","]
 variant        ::= "|" IDENT [":" variantField {"," variantField}]
 variantField   ::= ["generic"] IDENT
 
@@ -448,6 +488,7 @@ Notes:
 - `generic proc` generalizes a proc's signature the same way; it exists for library procs over app-instantiated descriptor unions (see 2.7 T4 and Phase 14b).
 - `generic` record fields create hidden type variables for the containing type.
 - `generic` variant payload fields create hidden type variables for the containing union. `Option`, `Result`, `Cmd`, and `Sub` are declared this way.
+- `...Name` includes another union's variants and establishes a directional nominal widening relation; includes may be transitive but not cyclic.
 - `export opaque type` exports the type's identity (and generic arity) but not its constructors, variants, or fields: outside the defining module the type cannot be constructed, matched, or field-accessed. This is the enforcement mechanism for smart-constructor invariants such as `NonZero` (2.8).
 - `extern` functions/procs are private and may not appear inside `export`.
 
@@ -456,7 +497,7 @@ Notes:
 Precedence, loosest to tightest:
 
 ```text
-1  pipe              |>
+1  pipelines         |> |?> |!>
 2  ternary           ? :                        right-assoc
 3  or                ||
 4  and               &&
@@ -474,7 +515,7 @@ Precedence, loosest to tightest:
 
 ```ebnf
 expr           ::= pipeExpr
-pipeExpr       ::= ternaryExpr {"|>" ternaryExpr}
+pipeExpr       ::= ternaryExpr {("|>" | "|?>" | "|!>") ternaryExpr}
 ternaryExpr    ::= orExpr ["?" expr ":" ternaryExpr]
 
 orExpr         ::= andExpr {"||" andExpr}
@@ -543,7 +584,12 @@ Semantic notes:
 - Assignment is a statement, not an expression; `=` in expression position is a syntax error.
 - Mutation, assignment, `while`, `var`, proc calls, and `await` are grammatically accepted where the grammar allows them but rejected by purity/effect checks in pure contexts.
 - A proc value may appear in any value position. Calling one, including through
-  `|>`, requires proc or top-level context.
+  `|>`, `|?>`, or `|!>`, requires proc or top-level context.
+- `|?>` is transparent until an `Option` appears, then short-circuits `None`,
+  maps raw stage returns into `Some`, and flattens `Option` returns. `|!>` does
+  the same for `Result`, `Err`, and `Ok`; differing stage error types join via
+  the smallest declared combined union. Neither operator performs recovery or
+  converts between wrapper families.
 - Evaluation order is strict, left-to-right, innermost-first.
 - `&&`, `||`, and ternary short-circuit.
 - `Int` is arbitrary precision.
@@ -879,7 +925,9 @@ It contains:
 
 - exported names and their kind
 - exported types
-- exported union variants
+- exported flattened union variants
+- constructors owned by each exported union
+- the transitive component membership of each exported union
 
 Every checker pass consumes dependency interfaces as plain data. No resolver callbacks. No hand-maintained import table variants.
 
@@ -2030,9 +2078,12 @@ export type FnKind = {
 ```pfun
 export type TypeDecl = {
   | RecordDecl: tname, fields
-  | UnionDecl: tname, variants
+  | UnionDecl: tname, variants, includes
 }
 ```
+
+`includes` is the ordered list of union names written as `...Name` in the
+declaration body. Expansion and cycle validation happen in the type checker.
 
 ```pfun
 export type FieldDecl = {
@@ -2446,7 +2497,9 @@ export type ModIface = {
   path,
   kinds,
   types,
-  unions
+  unions,
+  ownUnions,
+  unionMembers
 }
 ```
 
@@ -2455,7 +2508,9 @@ Fields:
 - `path`: resolved module path
 - `kinds`: `IMap Str ExportKind`
 - `types`: `IMap Str Scheme`
-- `unions`: `IMap Str (List VariantDecl)`, with field types resolved (generic fields recorded as references to the type's own slots; non-generic fields ground per the exported-declaration rule)
+- `unions`: flattened `IMap Str (List VariantDecl)`, with field types resolved (generic fields recorded as references to the type's own slots; non-generic fields ground per the exported-declaration rule)
+- `ownUnions`: `IMap Str (List VariantDecl)` containing only constructors declared directly by each union
+- `unionMembers`: `IMap Str (List Str)` containing each union's transitive nominal component closure, including itself
 
 ### Functions
 
@@ -2482,6 +2537,13 @@ export function lookupUnion(iface, name)
 ```
 
 Looks up union variants.
+
+```pfun
+export function lookupOwnUnion(iface, name)
+export function lookupUnionMembers(iface, name)
+```
+
+Looks up locally owned constructors and nominal component membership.
 
 ```pfun
 export function ifaceOfChecked(cm)
@@ -2639,6 +2701,7 @@ Threaded return value.
 export type InferResult = {
   types,
   exports,
+  unionShapes,
   diags
 }
 ```
@@ -2647,6 +2710,7 @@ Fields:
 
 - `types`: an `imapi` map (`Int` node id -> resolved type)
 - `exports`: `IMap Str Scheme`, exported names to schemes
+- `unionShapes`: flattened local union declarations after includes are expanded
 - `diags`: diagnostics
 
 ### Public function
@@ -3092,7 +3156,7 @@ export type ExhaustResult = {
 
 ### Guard rule
 
-Exhaustiveness is computed treating `where`-guarded arms as absent: every variant of a union subject, and every list length of a list subject, needs unguarded coverage (an unguarded arm or a wildcard). V1's conservative numeric/boolean guard-interval analysis is deleted — the rule is stricter, simpler, and sound, and it is what makes `matchFail` statically unreachable (demoted to an internal assertion).
+Exhaustiveness is computed treating `where`-guarded arms as absent: every flattened variant of a union subject (including variants inherited by a combined union), and every list length of a list subject, needs unguarded coverage (an unguarded arm or a wildcard). V1's conservative numeric/boolean guard-interval analysis is deleted — the rule is stricter, simpler, and sound, and it is what makes `matchFail` statically unreachable (demoted to an internal assertion).
 
 ### List coverage
 
@@ -3332,7 +3396,7 @@ export let coreTypes = [...]
 Core unions and records:
 
 - Option
-- Result
+- Result (the sole program-wide `Ok`/`Err` owner)
 - NonZero (opaque; smart constructor `nonZero` in the math module; erased to Int at runtime)
 - Pair
 - platform-neutral error/value types
@@ -3350,7 +3414,7 @@ export let builtinModules = [...]
 Modules such as:
 
 - io
-- file
+- file (`ReadResult` owns the distinct `ReadOk`/`ReadEof`/`ReadErr` streaming states and reuses core `Result` for ordinary failures)
 - math
 - json
 - async
@@ -5013,7 +5077,7 @@ export type Stmt = {
 }
 
 export type FnKind = { | PureFn: memo, isGeneric | ProcFn: isAsync, isGeneric }
-export type TypeDecl = { | RecordDecl: tname, fields | UnionDecl: tname, variants }
+export type TypeDecl = { | RecordDecl: tname, fields | UnionDecl: tname, variants, includes }
 export type FieldDecl = { fname, isGeneric }
 export type VariantDecl = { vname, fields }
 export type ImportSpec = { | INames: names | INamespace: alias | IStar }
@@ -5116,7 +5180,7 @@ export type Subst = { m }
 export type TcSt = { nextVar, subst, pending, diags }
 generic type TcOut = { st, val }
 
-export type InferResult = { types, exports, diags }
+export type InferResult = { types, exports, unionShapes, diags }
 
 export function inferModule(ast, deps)
 

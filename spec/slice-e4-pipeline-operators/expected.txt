@@ -1,0 +1,4 @@
+option some = Some 6
+option none = None
+result ok = Ok [[1, 2], [3, 4]]
+result err = ShapeError expected two rows

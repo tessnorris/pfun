@@ -7,12 +7,18 @@ proc checkPermission(readPath, writePath) {
 	let readResult = readFile(readPath);
 	match readResult with
 	| Ok value -> println("permission-read=Ok")
-	| Err error -> println("permission-read=" ++ error.message)
+	| Err error -> println(
+		"permission-read="
+			++ nativeErrorMessage(error.message)
+	)
 
 	let writeResult = writeFile(writePath, "must not be written");
 	match writeResult with
 	| Ok value -> println("permission-write=Ok")
-	| Err error -> println("permission-write=" ++ error.message)
+	| Err error -> println(
+		"permission-write="
+			++ nativeErrorMessage(error.message)
+	)
 }
 
 proc main() {

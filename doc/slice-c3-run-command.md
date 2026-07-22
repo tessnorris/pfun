@@ -21,6 +21,8 @@ There is no interpreter path.
 linked bundle to an OS temporary directory, launches a synchronous child Node
 process with inherited stdin/stdout/stderr and forwarded arguments, returns the
 child exit code, and removes the temporary directory in a `finally` block.
+Its current signature is `Result<Int, NativeError>`; failures use the
+`NativeProcessError` variant with operation `runNodeBundle`.
 
 The driver itself never writes a persistent artifact for `run`.
 

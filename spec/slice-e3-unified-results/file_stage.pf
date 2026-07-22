@@ -1,0 +1,14 @@
+export type FileStageError = {
+	| StageFileMissing: message, code
+	| StageFileDenied: message, code
+}
+
+export function loadStage(kind) {
+	if kind == 0 then {
+		Ok { 10 }
+	} else if kind == 1 then {
+		Err { StageFileMissing { "missing file", 404 } }
+	} else {
+		Err { StageFileDenied { "permission denied", 403 } }
+	}
+}

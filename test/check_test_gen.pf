@@ -45,12 +45,12 @@ function testDiagnosticsFromAllPassesAreBatched() {
 //![test("dependency interface is visible to importer")]
 function testDependencyInterfaceVisible() {
 	match H.rawSource("dep.pf", "export function one() { 1; }") with
-	| RawErr e -> Assert.assertions([Assert.assertEqual(0, length(e.diags))])
-	| RawOk dep -> {
+	| Err e -> Assert.assertions([Assert.assertEqual(0, length(e.message))])
+	| Ok dep -> {
 		match H.rawSource("main.pf", "import { one } from \"./dep\";\nlet x = one();") with
-		| RawErr bad -> Assert.assertions([Assert.assertEqual(0, length(bad.diags))])
-		| RawOk main -> {
-			let graph = Check.checkGraph([dep.raw, main.raw], H.emptyBuiltinIfaces());
+		| Err bad -> Assert.assertions([Assert.assertEqual(0, length(bad.message))])
+		| Ok main -> {
+			let graph = Check.checkGraph([dep.value, main.value], H.emptyBuiltinIfaces());
 			Assert.assertions([Assert.assertEqual(0, length(graph.diags))])
 		}
 	}
@@ -72,12 +72,12 @@ function testImportedRecordFieldAccess() {
 //![test("dependent of failed module is skipped once")]
 function testDependentOfFailedModuleSkippedOnce() {
 	match H.rawSource("baddep.pf", "export let bad = \"a\" + \"b\";") with
-	| RawErr e -> Assert.assertions([Assert.assertEqual(0, length(e.diags))])
-	| RawOk dep -> {
+	| Err e -> Assert.assertions([Assert.assertEqual(0, length(e.message))])
+	| Ok dep -> {
 		match H.rawSource("usesbad.pf", "import { bad } from \"./baddep\";\nlet x = bad;") with
-		| RawErr bad -> Assert.assertions([Assert.assertEqual(0, length(bad.diags))])
-		| RawOk main -> {
-			let graph = Check.checkGraph([dep.raw, main.raw], H.emptyBuiltinIfaces());
+		| Err bad -> Assert.assertions([Assert.assertEqual(0, length(bad.message))])
+		| Ok main -> {
+			let graph = Check.checkGraph([dep.value, main.value], H.emptyBuiltinIfaces());
 			Assert.assertions([
 				Assert.assertTrue(length(graph.diags) >= 2),
 				Assert.assertTrue(H.hasDiagContaining(graph.diags, "Skipping module"))
@@ -89,9 +89,9 @@ function testDependentOfFailedModuleSkippedOnce() {
 //![test("missing dependency interface skips module")]
 function testMissingDependencyInterfaceSkipsModule() {
 	match H.rawSource("usesmissing.pf", "import { nope } from \"./missing\";\nlet x = nope;") with
-	| RawErr bad -> Assert.assertions([Assert.assertEqual(0, length(bad.diags))])
-	| RawOk main -> {
-		let graph = Check.checkGraph([main.raw], H.emptyBuiltinIfaces());
+	| Err bad -> Assert.assertions([Assert.assertEqual(0, length(bad.message))])
+	| Ok main -> {
+		let graph = Check.checkGraph([main.value], H.emptyBuiltinIfaces());
 		Assert.assertions([
 			Assert.assertTrue(length(graph.diags) == 1),
 			Assert.assertTrue(H.hasDiagContaining(graph.diags, "no checked interface"))
@@ -102,9 +102,9 @@ function testMissingDependencyInterfaceSkipsModule() {
 //![test("checkTopo forwards graph diagnostics")]
 function testCheckTopoForwardsGraphDiagnostics() {
 	match H.rawSource("usesmissing2.pf", "import { nope } from \"./missing\";\nlet x = nope;") with
-	| RawErr bad -> Assert.assertions([Assert.assertEqual(0, length(bad.diags))])
-	| RawOk main -> {
-		let topo = ModGraph.toposort([main.raw]);
+	| Err bad -> Assert.assertions([Assert.assertEqual(0, length(bad.message))])
+	| Ok main -> {
+		let topo = ModGraph.toposort([main.value]);
 		let graph = Check.checkTopo(topo, H.emptyBuiltinIfaces());
 		Assert.assertions([Assert.assertTrue(length(graph.diags) > 0)])
 	}

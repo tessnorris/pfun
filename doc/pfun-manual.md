@@ -1166,10 +1166,9 @@ let area = match sq with
 
 ### 10.4 Matching multi-variant results
 
-The same constructor name may appear in more than one union (e.g. both `Result`
-and `ReadResult` have `Ok`/`Err`). `match` resolves which variants are required
-from the **type of the subject**: matching a `Result` requires `Ok | Err`, while
-matching a `ReadResult` requires `Ok | Eof | Err`. (See
+`Result` is the sole owner of `Ok`/`Err`. A semantically different outcome union
+uses distinct constructor names: matching the file module's three-state
+`ReadResult` requires `ReadOk | ReadEof | ReadErr`. (See
 [§20](#20-built-in-types).)
 
 ### 10.5 Match in pure vs. procedural code
@@ -1378,9 +1377,9 @@ proc readAllLines(path) {
         var handle = o.value;
         proc readLoop(lineNum) {          // nested helper proc
           match readLine(handle) with
-            | Ok  l -> { println($"  {lineNum}: {l.value}"); readLoop(lineNum + 1); }
-            | Eof _ -> 0
-            | Err e -> println("Read error: " + e.message);
+            | ReadOk  l -> { println($"  {lineNum}: {l.value}"); readLoop(lineNum + 1); }
+            | ReadEof _ -> 0
+            | ReadErr e -> println("Read error: " + e.message);
         }
         readLoop(1);
         fileClose(handle);
@@ -1669,13 +1668,13 @@ keeps error handling explicit and total.
 
 ```
 Result      = Ok  { value }   | Err { message }
-ReadResult  = Ok  { value }   | Eof | Err { message }
+ReadResult  = ReadOk { value } | ReadEof | ReadErr { message }
 ```
 
 `Result` is returned by file writes, `fileOpen`/`fileClose`, the database
 drivers, and HTTP calls. `ReadResult` is returned by the streaming file readers
-(`readChar`, `readLine`, `readByte`, …), which add an `Eof` case for a clean
-end‑of‑file.
+(`readChar`, `readLine`, `readByte`, …), which add a distinct `ReadEof` case for
+a clean end‑of‑file.
 
 ```pfun
 proc copyFile(src, dst) {
@@ -1693,16 +1692,12 @@ proc copyFile(src, dst) {
 
 - Use **`Option`** when absence carries no explanation (a lookup miss).
 - Use **`Result`** when failure has a message (I/O, parsing, the network).
-- Use a **dedicated named union** when a module has a few fallible operations
-  with *different* success payloads, to avoid the constructor unification
-  described in [§2.4](#24-constructor-monomorphism-and-generic-types).
-  `dbschema.pf` does this with `ColsResult`, `ConsResult`, `TableResult`, and
-  `SchemaResult` for its metadata loaders.
-- Use a **`generic type`** result union when one result shape must wrap *many*
-  different payloads across the module (as generated model code does):
-  `dbschema.pf`'s `generic type InsertResult`/`FindResult`/`MutResult` each wrap
-  whatever model record a given generated function returns. See
-  [§2.4](#24-constructor-monomorphism-and-generic-types).
+- Put a dedicated domain-error union in `Result`'s error slot when callers need
+  structured failures. Use a combined union when an operation can return errors
+  from several domains.
+- Use a separate outcome union only when the states are semantically different
+  from success/failure, as with `ReadResult`'s clean end-of-file state. Give its
+  variants distinct program-global names.
 
 ## 18. Asynchronous procedures
 
@@ -1874,32 +1869,15 @@ code, but they differ in how you bring them into scope:
 |---|---|---|---|
 | `Option` | `Some { value }` \| `None` | **always in scope** (no import) | `find`, `findSlice`, `readln`, `readChar`, `jsonSerialize`, `jsonDeserialize`, user code |
 | `Pair` | `{ key, value }` (generic record) | **always in scope** (no import) | `dictToList`/`listToDict`, db rows |
-| `Result` | `Ok { value }` \| `Err { message }` | in scope once you `import` a module that uses it | `file`, `http`, `db/*` |
-| `ReadResult` | `Ok { value }` \| `Eof` \| `Err { message }` | in scope once you `import "file"` | streaming file reads |
+| `Result` | `Ok { value }` \| `Err { message }` | **always in scope** (no import) | compiler, `file`, `http`, `db/*`, user code |
+| `ReadResult` | `ReadOk { value }` \| `ReadEof` \| `ReadErr { message }` | in scope once you `import "file"` | streaming file reads |
 
-`Option` and `Pair` are registered globally, so you can construct and match
-`Some`/`None`/`Pair` in any program. **`Ok`/`Err`/`Eof` are *not* standalone
-globals** — they enter scope through the module that defines them. Importing
-`file`, `http`, or a `db/*` driver makes `Ok`/`Err` (and, for `file`, `Eof`)
-available for both matching *and* construction; without such an import,
-`Ok { … }` reports *"Unknown type 'Ok'."* This is why library modules that want
-to return `Ok`/`Err` themselves **re-declare** the type locally (see the note
-below and [§29](#29-data-model-persistence)).
-
-Because `Ok`/`Err` are shared by `Result` and `ReadResult`, `match` uses the
-subject's type to decide which variants are required (see
-[§10.4](#104-matching-multi-variant-results)).
-
-> **Constructing `Ok`/`Err` in your own module.** If a module needs to *build*
-> `Ok`/`Err` values (rather than only match ones returned by `file`/`db`), the
-> reliable idiom — used throughout the corpus — is to declare the type in that
-> module:
-> ```pfun
-> generic type Result = { | Ok : value | Err : message }
-> ```
-> Declaring it `generic` also sidesteps the payload‑unification described in
-> [§2.4](#24-constructor-monomorphism-and-generic-types); a *plain* re‑declaration
-> makes `Ok`'s payload monomorphic within that module.
+`Option`, `Pair`, and `Result` are registered globally, so their constructors
+are available in every program. There is exactly one core `Result`; modules
+must not redeclare it or define collision-avoidance wrappers such as
+`FileResult`. Domain-specific error unions belong in `Result`'s error slot.
+`ReadResult` is a true three-state exception and deliberately uses distinct
+constructors (see [§10.4](#104-matching-multi-variant-results)).
 
 ## 21. `io` — console I/O
 
@@ -1943,8 +1921,8 @@ All file operations are impure (proc/top‑level only). They report success thro
 
 - **`FileMode`**: `Read` (must exist), `Write` (create/overwrite), `Append`
   (create/append).
-- **`Result`** `Ok { value } | Err { message }` — non‑read operations.
-- **`ReadResult`** `Ok { value } | Eof | Err { message }` — streaming reads.
+- **`Result<T, NativeError>`** `Ok { value } | Err { message }` — non‑read operations.
+- **`ReadResult<T, NativeError>`** `ReadOk { value } | ReadEof | ReadErr { message }` — streaming reads.
 
 ### 22.2 Convenience functions (no handle management)
 
@@ -1952,12 +1930,12 @@ All file operations are impure (proc/top‑level only). They report success thro
 |---|---|
 | `readFile(path)` | `Result` — `Ok { value }` is the file contents |
 | `writeFile(path, content)` | `Result` — `Ok { value }` is the character count |
-| `fileExists(path)` | `Bool` (no handle needed) |
+| `fileExists(path)` | `Result` — `Ok { value }` is the existence Boolean |
 
 ```pfun
 match writeFile(tmpPath, "Hello from Pfun!") with
-  | Ok o  -> println($"Wrote {o.value} chars")
-  | Err e -> println("Write error: " + e.message);
+  | Ok _  -> println("Wrote file")
+  | Err e -> println("Write error: " ++ nativeErrorMessage(e.message));
 ```
 
 ### 22.3 Handle‑based functions (explicit open/close)
@@ -1978,9 +1956,9 @@ match writeFile(tmpPath, "Hello from Pfun!") with
 
 | Function | Result |
 |---|---|
-| `readByte(handle)` | `ReadResult` — `Ok { Byte }` \| `Eof` \| `Err` |
+| `readByte(handle)` | `ReadResult` — `ReadOk { Byte }` \| `ReadEof` \| `ReadErr` |
 | `writeByte(handle, byte)` | `Result` — `Ok { 1 }` \| `Err` |
-| `readBytes(handle, n)` | `ReadResult` — `Ok { List<Byte> }` \| `Eof` \| `Err` |
+| `readBytes(handle, n)` | `ReadResult` — `ReadOk { List<Byte> }` \| `ReadEof` \| `ReadErr` |
 | `writeBytes(handle, list)` | `Result` — `Ok { n }` \| `Err` |
 | `readBuffer(handle, n, mode)` | `Result` — `Ok { Buffer }` \| `Err` |
 | `writeBuffer(handle, buffer)` | `Result` — `Ok { n }` \| `Err` |
@@ -2086,7 +2064,7 @@ This tagged format is also the wire protocol used by the HTTP client/server stac
 
 | Function | Signature → result |
 |---|---|
-| `sleep(ms)` | a Promise that resolves after `ms` milliseconds — `await` it |
+| `sleep(ms)` | a Promise resolving to `Result<Unit, NativeError>` after `ms` milliseconds |
 
 `await` is a keyword usable inside an `async` declaration (see
 [§18](#18-asynchronous-procedures)). `sleep` is the primitive delay; other
@@ -2604,11 +2582,9 @@ The `announcements_*` programs (`_schema.sql`, `_protocol`, `_repo`, `_server`,
 **Control & expression keywords:** `if`, `then`, `else`, `match`, `with`,
 `where`, `for`, `while`, `return`, `eval`, `await`, `true`, `false`.
 
-**Built‑in constructors always in scope:** `Some`, `None`, `Pair`; the literal
-keywords `dict` and `array`. (`Ok`, `Err`, and `Eof` are *not* unconditional
-globals — they come into scope by importing a module that defines them, `file` /
-`http` / `db/*`, or by a local `type Result`/`ReadResult` declaration; see
-[§20](#20-built-in-types).)
+**Built‑in constructors always in scope:** `Some`, `None`, `Pair`, `Ok`, and
+`Err`; the literal keywords `dict` and `array`. `ReadOk`, `ReadEof`, and
+`ReadErr` enter scope with `import "file"`; see [§20](#20-built-in-types).
 
 **Literal affixes:** `b` (byte suffix, `255b`), `0x` (hex prefix), `@` (raw
 string prefix), `$` (format string prefix).
@@ -3386,18 +3362,24 @@ type FileMode = { | Read | Write | Append }
 
 Passed to `fileOpen` to select the access mode.
 
-#### `Result<α>`
+#### `Result<α, ε>`
 
 ```
-type Result<α> = { | Ok : value | Err : message }
+type Result<α, ε> = { | Ok : value | Err : message }
 ```
 
-The standard two-outcome result type used throughout `file`. `Ok { value }` carries the success payload; `Err { message }` carries a human-readable error string.
+The ambient two-outcome result type used throughout `file`. `Ok { value }`
+carries the success payload; `Err { message }` carries a `NativeError` for
+native file operations.
 
-#### `ReadResult<α>`
+`NativeError` variants carry `operation` and `message` fields. File failures
+use `NativeIoError`; category-independent reporting can use
+`nativeErrorOperation(error)` and `nativeErrorMessage(error)`.
+
+#### `ReadResult<α, ε>`
 
 ```
-type ReadResult<α> = { | Ok : value | Eof | Err : message }
+type ReadResult<α, ε> = { | ReadOk : value | ReadEof | ReadErr : message }
 ```
 
 Used by `readChar` and `readByte` to distinguish a successful read, end-of-file, and an I/O error.
@@ -3423,10 +3405,12 @@ Passed to the handler proc by `watchDir` on each filesystem event. `eventType` i
 #### `fileExists(path)`
 
 ```
-fileExists : Str → Bool
+fileExists : Str → Result<Bool, NativeError>
 ```
 
-Returns `true` if a file or directory exists at `path`, `false` otherwise. Never throws.
+Returns `Ok { true }` if a file or directory exists and `Ok { false }` if the
+path is absent. Permission, validation, and platform failures are
+`Err { NativeIoError { ... } }`.
 
 #### `fileSize(path)`
 
@@ -3457,7 +3441,7 @@ Creates an empty file at `path` if it does not exist, or updates its modificatio
 #### `removeFile(path)`
 
 ```
-removeFile : Str → Result<unit>
+removeFile : Str → Result<unit, NativeError>
 ```
 
 Deletes the file at `path`. Returns `Ok { 0 }` or `Err`.
@@ -3473,7 +3457,7 @@ Renames (or moves) a file or directory. Overwrites the destination atomically if
 #### `mkdirP(path)`
 
 ```
-mkdirP : Str → Result<unit>
+mkdirP : Str → Result<unit, NativeError>
 ```
 
 Creates `path` and any missing parent directories. Equivalent to `mkdir -p`. Returns `Ok { 0 }` or `Err`.
@@ -3481,7 +3465,7 @@ Creates `path` and any missing parent directories. Equivalent to `mkdir -p`. Ret
 #### `readFile(path)`
 
 ```
-readFile : Str → Result<Str>
+readFile : Str → Result<Str, NativeError>
 ```
 
 Reads the entire file at `path` as a UTF-8 string. Returns `Ok { contents }` or `Err`.
@@ -3489,7 +3473,7 @@ Reads the entire file at `path` as a UTF-8 string. Returns `Ok { contents }` or 
 #### `writeFile(path, content)`
 
 ```
-writeFile : Str → Str → Result<unit>
+writeFile : Str → Str → Result<unit, NativeError>
 ```
 
 Writes `content` to `path`, creating or truncating the file. Returns `Ok { 0 }` or `Err`.
@@ -3517,7 +3501,7 @@ Watches `path` for filesystem changes. `handler` is a proc called with a `WatchE
 #### `fileOpen(path, mode)`
 
 ```
-fileOpen : Str → FileMode → Result<FileHandle>
+fileOpen : Str → FileMode → Result<FileHandle, NativeError>
 ```
 
 Opens the file at `path` in the given mode. Returns `Ok { handle }` or `Err`.
@@ -3525,47 +3509,49 @@ Opens the file at `path` in the given mode. Returns `Ok { handle }` or `Err`.
 #### `fileClose(handle)`
 
 ```
-fileClose : FileHandle → unit
+fileClose : FileHandle → Result<unit, NativeError>
 ```
 
-Closes an open file handle.
+Closes an open file handle. Closing an invalid or already-closed handle returns
+`Err`.
 
 #### `readChar(handle)`
 
 ```
-readChar : ReadHandle → ReadResult<Char>
+readChar : FileHandle → ReadResult<Char, NativeError>
 ```
 
-Reads one UTF-8 character from an open `ReadHandle`. Returns `Ok { char }`, `Eof`, or `Err`.
+Reads one UTF-8 character from an open `ReadHandle`. Returns `ReadOk { char }`, `ReadEof`, or `ReadErr`.
 
 #### `readLine(handle)`
 
 ```
-readLine : ReadHandle → ReadResult<Str>
+readLine : FileHandle → ReadResult<Str, NativeError>
 ```
 
-Reads one line (stripping the trailing newline) from an open `ReadHandle`. Returns `Ok { line }`, `Eof`, or `Err`.
+Reads one line (stripping the trailing newline) from an open `ReadHandle`. Returns `ReadOk { line }`, `ReadEof`, or `ReadErr`.
 
 #### `readByte(handle)`
 
 ```
-readByte : ReadHandle → ReadResult<Byte>
+readByte : FileHandle → ReadResult<Byte, NativeError>
 ```
 
-Reads one raw byte from an open `ReadHandle`. Returns `Ok { byte }`, `Eof`, or `Err`.
+Reads one raw byte from an open `ReadHandle`. Returns `ReadOk { byte }`, `ReadEof`, or `ReadErr`.
 
 #### `readBytes(handle, n)`
 
 ```
-readBytes : ReadHandle → Int → Result<List<Byte>>
+readBytes : FileHandle → Int → ReadResult<List<Byte>, NativeError>
 ```
 
-Reads up to `n` raw bytes from an open `ReadHandle`. Returns `Ok { bytes }` where `bytes` may be shorter than `n` at end-of-file, or `Err`.
+Reads up to `n` raw bytes. Returns `ReadOk { bytes }` where `bytes` may be
+shorter than `n`, `ReadEof`, or `ReadErr`.
 
 #### `writeChar(handle, char)`
 
 ```
-writeChar : WriteHandle → Char → Result<unit>
+writeChar : FileHandle → Char → Result<unit, NativeError>
 ```
 
 Writes a single character to an open `WriteHandle`.
@@ -3573,7 +3559,7 @@ Writes a single character to an open `WriteHandle`.
 #### `writeLine(handle, str)`
 
 ```
-writeLine : WriteHandle → Str → Result<unit>
+writeLine : FileHandle → Str → Result<unit, NativeError>
 ```
 
 Writes `str` followed by a newline to an open `WriteHandle`.
@@ -3581,7 +3567,7 @@ Writes `str` followed by a newline to an open `WriteHandle`.
 #### `writeByte(handle, byte)`
 
 ```
-writeByte : WriteHandle → Byte → Result<unit>
+writeByte : FileHandle → Byte → Result<unit, NativeError>
 ```
 
 Writes a single byte to an open `WriteHandle`.
@@ -3589,7 +3575,7 @@ Writes a single byte to an open `WriteHandle`.
 #### `writeBytes(handle, bytes)`
 
 ```
-writeBytes : WriteHandle → List<Byte> → Result<unit>
+writeBytes : FileHandle → List<Byte> → Result<unit, NativeError>
 ```
 
 Writes a list of raw bytes to an open `WriteHandle`.
@@ -3598,18 +3584,19 @@ Writes a list of raw bytes to an open `WriteHandle`.
 
 The `file` namespace re-exports the buffer API (see Appendix C §C.8) and adds `readBuffer` for bulk reads.
 
-#### `readBuffer(handle, buf, n)`
+#### `readBuffer(handle, n, mode)`
 
 ```
-readBuffer : ReadHandle → Buffer → Int → Result<Int>
+readBuffer : FileHandle → Int → BufferMode → Result<Buffer, NativeError>
 ```
 
-Reads up to `n` bytes from `handle` into `buf`. Returns `Ok { bytesRead }` (which may be less than `n` at end-of-file) or `Err`.
+Reads up to `n` bytes from `handle` into a new buffer in `ByteMode` or
+`CharMode`. Returns `Ok { buffer }` or `Err`.
 
 #### `writeBuffer(handle, buf)`
 
 ```
-writeBuffer : WriteHandle → Buffer → Result<unit>
+writeBuffer : FileHandle → Buffer → Result<unit, NativeError>
 ```
 
 Writes the entire contents of `buf` to `handle`.
@@ -3733,16 +3720,19 @@ import * from "async";
 ### `sleep(ms)`
 
 ```
-sleep : Int → Promise<unit>
+sleep : Int → Promise<Result<unit, NativeError>>
 ```
 
-Suspends the current task for at least `ms` milliseconds. Must be called with `await` inside an `async proc`.
+Suspends the current task for at least `ms` milliseconds. Must be called with
+`await` inside an `async proc`. Successful completion is `Ok { unit }`;
+invalid durations and scheduler failures are `Err { NativeTimerError }`.
 
 ```pfun
 async proc example() {
   println("before");
-  eval await sleep(1000);
-  println("after one second");
+  match await sleep(1000) with
+  | Ok _ -> println("after one second")
+  | Err failure -> println(nativeErrorMessage(failure.message));
 }
 ```
 
@@ -3772,13 +3762,14 @@ import * from "http";
 
 ### Types
 
-#### `HttpResult`
+#### `Result`
 
 ```
-type HttpResult<α> = { | Ok : value | Err : message }
+type Result<α, ε> = { | Ok : value | Err : error }
 ```
 
-All HTTP functions return `Promise<HttpResult<…>>`. `Ok { value }` carries a response record; `Err { message }` carries a human-readable network or connection error.
+All HTTP functions reuse the ambient `Result`. `Ok { value }` carries a
+response record; the error slot carries the HTTP module's domain error.
 
 The response record (the `value` field of `Ok`) has these fields:
 
@@ -3795,7 +3786,7 @@ All client functions are async procs and must be `await`-ed.
 #### `httpGet(url)`
 
 ```
-httpGet : Str → Promise<HttpResult<{ status, headers, body : Str }>>
+httpGet : Str → Promise<Result<{ status, headers, body : Str }, HttpError>>
 ```
 
 Performs an HTTP GET. The response body is decoded as UTF-8.
@@ -3803,7 +3794,7 @@ Performs an HTTP GET. The response body is decoded as UTF-8.
 #### `httpGetBytes(url)`
 
 ```
-httpGetBytes : Str → Promise<HttpResult<{ status, headers, body : List<Byte> }>>
+httpGetBytes : Str → Promise<Result<{ status, headers, body : List<Byte> }, HttpError>>
 ```
 
 Same as `httpGet` but the body is returned as raw bytes — use for binary content (images, archives, etc.) where UTF-8 decoding would corrupt the data.
@@ -3812,7 +3803,7 @@ Same as `httpGet` but the body is returned as raw bytes — use for binary conte
 
 ```
 httpRequest : Str → Str → Dict<Str,Str> → Str
-           → Promise<HttpResult<{ status, headers, body : Str }>>
+           → Promise<Result<{ status, headers, body : Str }, HttpError>>
 ```
 
 General HTTP client. `method` is `"GET"`, `"POST"`, `"PUT"`, `"PATCH"`, `"DELETE"`, etc. Pass `listToDict([])` for no custom headers. Pass `""` for no body (required for GET and HEAD). The response body is decoded as UTF-8.
@@ -3821,7 +3812,7 @@ General HTTP client. `method` is `"GET"`, `"POST"`, `"PUT"`, `"PATCH"`, `"DELETE
 
 ```
 httpRequestBytes : Str → Str → Dict<Str,Str> → Str
-                → Promise<HttpResult<{ status, headers, body : List<Byte> }>>
+                → Promise<Result<{ status, headers, body : List<Byte> }, HttpError>>
 ```
 
 Identical to `httpRequest` but the response body is returned as raw bytes.
@@ -3830,7 +3821,7 @@ Identical to `httpRequest` but the response body is returned as raw bytes.
 
 ```
 fetchWithTimeout : Str → Int
-                → Promise<HttpResult<{ status, headers, body : Str }>>
+                → Promise<Result<{ status, headers, body : Str }, HttpError>>
 ```
 
 GET with an abort-on-timeout. If no response arrives within `ms` milliseconds the in-flight connection is cancelled and `Err { "timeout after Nms" }` is returned.
@@ -3882,23 +3873,38 @@ import * from "timer";
 ### `setTimer(ms, action)`
 
 ```
-setTimer : Int → proc() → Int
+setTimer : Int → proc() → Result<TimerHandle, NativeError>
 ```
 
-Schedules `action()` to run once after `ms` milliseconds. `action` must be a proc with no arguments. Returns a timer ID (`Int`) that can be passed to `clearTimer`. The action runs as a spawned task, so it may use `await`. The timer keeps the process alive until it fires or is cleared.
+Schedules a synchronous zero-argument proc to run once after `ms` milliseconds.
+`Ok` carries an opaque `TimerHandle` that can be passed to `clearTimer`; `Err`
+carries `NativeTimerError`.
 
 ```pfun
 proc sayHello() { println("hello from timer"); }
-let id = setTimer(500, sayHello);
+match setTimer(500, sayHello) with
+| Err failure -> println(nativeErrorMessage(failure.message))
+| Ok timer -> clearTimer(timer.value);
 ```
+
+### `setAsyncTimer(ms, action)`
+
+```
+setAsyncTimer : Int → async proc() → Result<TimerHandle, NativeError>
+```
+
+Schedules an async zero-argument proc. This separate entry point preserves the
+language's distinction between sync and async proc types.
 
 ### `clearTimer(id)`
 
 ```
-clearTimer : Int → unit
+clearTimer : TimerHandle → Result<Unit, NativeError>
 ```
 
-Cancels a pending timer before it fires. Safe to call after the timer has already fired (no-op) and safe to call twice (idempotent).
+Cancels a pending timer before it fires. Calling it after the timer has fired or
+twice returns idempotent `Ok`; invalid host handles and cancellation failures
+return `NativeTimerError`.
 
 ---
 
@@ -4123,13 +4129,14 @@ Both namespaces expose the same three functions and the same types. The only dif
 
 ### Types
 
-#### `DbResult<α>`
+#### `Result<α, DbError>`
 
 ```
-type DbResult<α> = { | Ok : value | Err : message }
+type Result<α, ε> = { | Ok : value | Err : error }
 ```
 
-Wraps every database operation. `Ok { value }` carries the success payload; `Err { message }` carries a human-readable error.
+The database modules reuse the ambient `Result`. `Ok { value }` carries the
+success payload; the error slot carries `DbError`.
 
 #### `DbValue`
 
@@ -4168,7 +4175,7 @@ All database functions are async procs and must be `await`-ed.
 #### `dbConnect(connectionString)`
 
 ```
-dbConnect : Str → Promise<DbResult<Connection>>
+dbConnect : Str → Promise<Result<Connection, DbError>>
 ```
 
 Opens a connection to the database.
@@ -4181,7 +4188,7 @@ Returns `Ok { connection }` or `Err { message }`.
 #### `dbQuery(conn, sql, params)`
 
 ```
-dbQuery : Connection → Str → List<DbValue> → Promise<DbResult<QueryResult>>
+dbQuery : Connection → Str → List<DbValue> → Promise<Result<QueryResult, DbError>>
 ```
 
 Executes a parameterised SQL query. `params` is a list of `DbValue` values bound to `$1`, `$2`, … placeholders (PostgreSQL) or `?` placeholders (MariaDB). Returns `Ok { QueryResult }` or `Err { message }`.
@@ -4202,7 +4209,7 @@ match result with
 #### `dbClose(conn)`
 
 ```
-dbClose : Connection → Promise<DbResult<unit>>
+dbClose : Connection → Promise<Result<Unit, DbError>>
 ```
 
 Closes the database connection and releases the underlying driver client. Returns `Ok { 0 }` or `Err`.
@@ -4214,14 +4221,14 @@ Closes the database connection and releases the underlying driver client. Return
 | Import | Types added | Functions added |
 |--------|-------------|-----------------|
 | `"io"` | *(none)* | `print`, `println`, `flushStdout`, `readChar`, `readln`, `scriptArgs`, `getEnv`, `envVars` |
-| `"file"` | `FileHandle` (`ReadHandle`, `WriteHandle`), `FileMode` (`Read`, `Write`, `Append`), `Result` (`Ok`, `Err`), `ReadResult` (`Ok`, `Eof`, `Err`), `DirEntry`, `WatchEvent` | `fileExists`, `fileSize`, `isDir`, `touchFile`, `removeFile`, `renameFile`, `mkdirP`, `readFile`, `writeFile`, `listDir`, `watchDir`, `fileOpen`, `fileClose`, `readChar`, `readLine`, `readByte`, `readBytes`, `writeChar`, `writeLine`, `writeByte`, `writeBytes`, `readBuffer`, `writeBuffer` |
+| `"file"` | `FileHandle` (`ReadHandle`, `WriteHandle`), `FileMode` (`Read`, `Write`, `Append`), `ReadResult` (`ReadOk`, `ReadEof`, `ReadErr`), `DirEntry`, `WatchEvent`; ambient `Result` is reused | `fileExists`, `fileSize`, `isDir`, `touchFile`, `removeFile`, `renameFile`, `mkdirP`, `readFile`, `writeFile`, `listDir`, `watchDir`, `fileOpen`, `fileClose`, `readChar`, `readLine`, `readByte`, `readBytes`, `writeChar`, `writeLine`, `writeByte`, `writeBytes`, `readBuffer`, `writeBuffer` |
 | `"json"` | *(none)* | `jsonSerialize`, `jsonDeserialize` |
 | `"math"` | *(none)* | `pi`, `e`, `tau`, `inf`, `nan`, `abs`, `sign`, `min`, `max`, `clamp`, `lerp`, `sqrt`, `cbrt`, `exp`, `log`, `log2`, `log10`, `pow`, `hypot`, `fmod`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`, `sinh`, `cosh`, `tanh`, `formatFixed` |
 | `"async"` | *(none)* | `sleep`, `asyncAll`, `asyncRace` |
-| `"http"` | `HttpResult` (`Ok`, `Err`) | `httpGet`, `httpGetBytes`, `httpRequest`, `httpRequestBytes`, `fetchWithTimeout`, `urlEncode`, `httpListen` |
+| `"http"` | ambient `Result` (`Ok`, `Err`) | `httpGet`, `httpGetBytes`, `httpRequest`, `httpRequestBytes`, `fetchWithTimeout`, `urlEncode`, `httpListen` |
 | `"timer"` | *(none)* | `setTimer`, `clearTimer` |
 | `"foreign"` | `ForeignResult` (`FOk`, `FErr`) | `foreignRequire`, `foreignGlobal`, `foreignGet`, `foreignSet`, `foreignDelete`, `foreignCall`, `foreignInvoke`, `foreignNew`, `foreignTypeof`, `foreignAwait`, `foreignCallback`, `foreignApply`, `dForeign`, `dUnit`, `dBool`, `dInt`, `dFloat`, `dStr`, `dList`, `dOption`, `dDict`, `dField`, `dMap`, `dAndThen`, `dOneOf` |
-| `"db/postgresql"` | `DbResult` (`Ok`, `Err`), `DbValue` (`DbInt`, `DbFloat`, `DbText`, `DbBool`, `DbBytes`, `DbNull`), `QueryResult`, `Connection` | `dbConnect`, `dbQuery`, `dbClose` |
+| `"db/postgresql"` | ambient `Result` (`Ok`, `Err`), `DbValue` (`DbInt`, `DbFloat`, `DbText`, `DbBool`, `DbBytes`, `DbNull`), `QueryResult`, `Connection` | `dbConnect`, `dbQuery`, `dbClose` |
 | `"db/mariadb"` | *(same as db/postgresql)* | *(same as db/postgresql)* |
 
 *End of Appendix D.*

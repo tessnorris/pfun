@@ -4,8 +4,12 @@ import * from "io";
 
 proc main() {
 	match scanln() with
-	| None -> println("stdin:eof")
-	| Some line -> println("stdin:" ++ line.value)
+	| Err failure -> println(
+		"stdin:error:" ++ nativeErrorMessage(failure.message)
+	)
+	| Ok input -> match input.value with
+		| None -> println("stdin:eof")
+		| Some line -> println("stdin:" ++ line.value)
 }
 
 main();

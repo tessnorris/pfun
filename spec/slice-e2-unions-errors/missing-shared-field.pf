@@ -1,0 +1,23 @@
+type FirstError = {
+	| FirstProblem: message
+}
+
+type SecondError = {
+	| SecondProblem: code
+}
+
+type CombinedError = {
+	...FirstError
+	...SecondError
+}
+
+function choose(flag) {
+	if flag then { FirstProblem { "first" } }
+	else { SecondProblem { 2 } }
+}
+
+function invalid(error) {
+	error.message
+}
+
+let value = invalid(choose(true));

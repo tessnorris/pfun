@@ -1,0 +1,4 @@
+export type FileError = {
+	| FileMissing: message, code
+	| FileDenied: message, code
+}

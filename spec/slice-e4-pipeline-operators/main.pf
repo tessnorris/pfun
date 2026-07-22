@@ -1,0 +1,93 @@
+import * from "io";
+
+type ShapeError = {
+	| BadShape: message
+}
+
+type WindowError = {
+	| BadWindow: message
+}
+
+type PipelineError = {
+	...ShapeError
+	...WindowError
+}
+
+function positive(value) {
+	if value > 0 then { Some { value } } else { None }
+}
+
+function double(value) {
+	value * 2
+}
+
+function underTen(value) {
+	if value < 10 then { Some { value } } else { None }
+}
+
+function optionText(value) {
+	match value with
+	| Some found -> "Some " ++ str(found.value)
+	| None -> "None"
+}
+
+function transpose(rows) {
+	if length(rows) != 2 then {
+		Err { BadShape { "expected two rows" } }
+	} else {
+		let first = nthU(rows, 0);
+		let second = nthU(rows, 1);
+		if length(first) != 2 || length(second) != 2 then {
+			Err { BadShape { "expected two columns" } }
+		} else {
+			Ok {
+				[
+					[nthU(first, 0), nthU(second, 0)],
+					[nthU(first, 1), nthU(second, 1)]
+				]
+			}
+		}
+	}
+}
+
+function slide(rows) {
+	if length(rows) < 2 then {
+		Err { BadWindow { "need at least two rows" } }
+	} else {
+		Ok { take(2, rows) }
+	}
+}
+
+function resultText(value) {
+	match value with
+	| Ok rows -> "Ok " ++ str(rows.value)
+	| Err failure -> {
+		match failure.message with
+		| BadShape problem -> "ShapeError " ++ problem.message
+		| BadWindow problem -> "WindowError " ++ problem.message
+	}
+}
+
+proc main() {
+	let some = 3 |?> positive |?> double |?> underTen;
+	let none = -1 |?> positive |?> double |?> underTen;
+	println("option some = " ++ optionText(some));
+	println("option none = " ++ optionText(none));
+
+	let rows = [[1, 2], [3, 4]];
+	let transformed = rows
+		|!> transpose
+		|!> reverse
+		|!> slide
+		|!> reverse
+		|!> transpose;
+	println("result ok = " ++ resultText(transformed));
+
+	let failed = []
+		|!> transpose
+		|!> reverse
+		|!> slide;
+	println("result err = " ++ resultText(failed));
+}
+
+main();

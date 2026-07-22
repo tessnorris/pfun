@@ -28,16 +28,12 @@ import * as Compat from "../compat";
 import * as Emit from "./emit";
 import * as Link from "./link";
 
-// ── public result model ────────────────────────────────────────────────────
+// ── public compilation output ──────────────────────────────────────────────
 
-export type PipelineCheckResult = {
-	| PipelineCheckOk: checked
-	| PipelineCheckErr: diags
-}
-
-export type PipelineCompileResult = {
-	| PipelineCompileOk: checked, emitted, artifact
-	| PipelineCompileErr: diags
+export type PipelineCompileOutput = {
+	checked,
+	emitted,
+	artifact
 }
 
 // Internal state used while deriving singleton variant names. `blocked` keeps
@@ -142,7 +138,7 @@ function singletonIfaceEntriesLoop(entries, st) {
 	| Some cell -> {
 		let iface = cell.value.key.value;
 		let next = singletonUnionEntriesLoop(
-			IMS.imsEntries(iface.unions),
+			IMS.imsEntries(iface.ownUnions),
 			st
 		);
 		singletonIfaceEntriesLoop(
@@ -253,25 +249,24 @@ export function schemaFieldsFromIfaces(ifaces) {
 
 // Lower-level entry point for tests and future embedding. `builtinIfaces` must
 // be an imaps map with the same aliases accepted by checkGraph.
-export function checkWithBuiltins(raws, builtinIfaces) {
-	match MG.toposort(raws) with
-	| TopoErr bad -> PipelineCheckErr { bad.diags }
-	| TopoOk ordered -> {
+export generic function checkWithBuiltins(raws, builtinIfaces) {
+	MG.toposort(raws)
+	|!> fn ordered => {
 		let checked = Check.checkGraph(
-			ordered.modules,
+			ordered,
 			builtinIfaces
 		);
 		if hasDiags(checked.diags) then {
-			PipelineCheckErr { checked.diags }
+			Err { checked.diags }
 		} else {
-			PipelineCheckOk { checked }
+			Ok { checked }
 		}
 	}
 }
 
 // Normal compiler entry point. Builtin checker surfaces come from the manifest,
 // preserving builtins/spec.pf as the single source of truth.
-export function checkProgram(raws) {
+export generic function checkProgram(raws) {
 	checkWithBuiltins(
 		raws,
 		Spec.allBuiltinIfaces()
@@ -332,19 +327,16 @@ export function emitChecked(checked, target) {
 
 // ── complete pure compilation ──────────────────────────────────────────────
 
-export function compileWithBuiltins(
+export generic function compileWithBuiltins(
 	raws,
 	builtinIfaces,
 	target,
 	host
 ) {
-	match checkWithBuiltins(raws, builtinIfaces) with
-	| PipelineCheckErr bad -> PipelineCompileErr {
-		bad.diags
-	}
-	| PipelineCheckOk good -> {
+	checkWithBuiltins(raws, builtinIfaces)
+	|!> fn checked => {
 		let emitted = emitChecked(
-			good.checked,
+			checked,
 			target
 		);
 		let artifact = Link.link(
@@ -352,8 +344,8 @@ export function compileWithBuiltins(
 			target,
 			host
 		);
-		PipelineCompileOk {
-			checked = good.checked,
+		PipelineCompileOutput {
+			checked = checked,
 			emitted = emitted,
 			artifact = artifact
 		}
@@ -362,7 +354,7 @@ export function compileWithBuiltins(
 
 // Main pure production entry point used by CLI/build/run/serve/playground
 // drivers. No command needs a weaker or duplicated pipeline.
-export function compileProgram(raws, target, host) {
+export generic function compileProgram(raws, target, host) {
 	compileWithBuiltins(
 		raws,
 		Spec.allBuiltinIfaces(),

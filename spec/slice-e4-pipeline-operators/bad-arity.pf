@@ -1,0 +1,5 @@
+function add(left, right) {
+	left + right
+}
+
+let invalid = 1 |!> add;

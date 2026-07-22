@@ -35,8 +35,23 @@ assert.equal(
 	false
 );
 
-assert.equal(browser.$print("browser"), null);
-assert.equal(browser.$println("browser"), null);
-assert.equal(browser.$flushStdout(), null);
+assert.equal(browser.$print("browser").$t, "Ok");
+assert.equal(browser.$println("browser").$t, "Ok");
+assert.equal(browser.$flushStdout().$t, "Ok");
+
+const originalLog = globalThis.console.log;
+try {
+	globalThis.console.log = function failConsoleWrite() {
+		throw new Error("console write failed");
+	};
+	const failure = browser.$println("unwritable");
+	assert.equal(failure.$u, "Result");
+	assert.equal(failure.$t, "Err");
+	assert.equal(failure.message.$t, "NativeIoError");
+	assert.equal(failure.message.operation, "println");
+	assert.match(failure.message.message, /console write failed/);
+} finally {
+	globalThis.console.log = originalLog;
+}
 
 console.log("Browser host behavior passed.");

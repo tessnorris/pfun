@@ -6,10 +6,10 @@ This corpus tests the first Node effect boundary for ordinary V2 programs.
 
 - `scriptArgs : Proc<List<Str>>`;
 - `getEnv : Str -> Proc<Option<Str>>`;
-- `fileExists : Str -> Proc<Bool>`;
-- `mkdirP : Str -> Proc<Result<Unit, Str>>`;
-- `writeFile : Str, Str -> Proc<Result<Unit, Str>>`;
-- `readFile : Str -> Proc<Result<Str, Str>>`;
+- `fileExists : Str -> Proc<Result<Bool, NativeError>>`;
+- `mkdirP : Str -> Proc<Result<Unit, NativeError>>`;
+- `writeFile : Str, Str -> Proc<Result<Unit, NativeError>>`;
+- `readFile : Str -> Proc<Result<Str, NativeError>>`;
 - successful nested-directory creation;
 - idempotent `mkdirP`;
 - successful write/read round trip;

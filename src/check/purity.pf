@@ -156,7 +156,7 @@ function tableFromUnionEntries(entries, table) {
 
 function tableFromIface(iface) {
 	let table1 = tableFromKindEntries(IMS.imsEntries(iface.kinds), IMS.imsEmpty());
-	tableFromUnionEntries(IMS.imsEntries(iface.unions), table1)
+	tableFromUnionEntries(IMS.imsEntries(iface.ownUnions), table1)
 }
 
 function variantKindInVariants(variants, name) {
@@ -183,7 +183,7 @@ function variantKindInUnionEntries(entries, name) {
 function lookupIfaceNameKind(iface, name) {
 	match I.lookupKind(iface, name) with
 	| Some k -> Some { kindFromExportKind(k.value) }
-	| None -> variantKindInUnionEntries(IMS.imsEntries(iface.unions), name)
+	| None -> variantKindInUnionEntries(IMS.imsEntries(iface.ownUnions), name)
 }
 
 function ifacePathMatches(rawPath, iface) {
@@ -454,6 +454,10 @@ function checkPipe(st, ctx, lhs, rhs, span) {
 	}
 }
 
+function isPipeOperator(op) {
+	op == "|>" || op == "|?>" || op == "|!>"
+}
+
 function checkCompGens(st, ctx, gens) {
 	match Compat.uncons(gens) with
 	| None -> st
@@ -531,7 +535,7 @@ function checkExpr(st, ctx, expr) {
 	| EVar _ -> checkNamedValueUse(st, ctx, expr)
 	| EUnary e -> checkExpr(st, ctx, e.operand)
 	| EBinary e -> {
-		if e.op == "|>" then { checkPipe(st, ctx, e.lhs, e.rhs, e.span) }
+		if isPipeOperator(e.op) then { checkPipe(st, ctx, e.lhs, e.rhs, e.span) }
 		else {
 			let st1 = checkExpr(st, ctx, e.lhs);
 			checkExpr(st1, ctx, e.rhs)
@@ -673,7 +677,8 @@ function bindModuleNames(ast, deps, types) {
 }
 
 export generic function checkModule(ast, deps, types) {
-	let st0 = bindModuleNames(ast, deps, types);
+	let depsMap = I.normalizeIfaceMap(deps);
+	let st0 = bindModuleNames(ast, depsMap, types);
 	let st1 = checkStmtListLoop(st0, CtxTop, ast.stmts);
 	mkPurityResult(reverse(st1.diags))
 }

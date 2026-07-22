@@ -117,8 +117,9 @@ import * from "foreign";
 | V1 section | Disposition | V2-native example | Compiler/runtime dependency | Priority | Status |
 |---|---|---|---|---|---|
 | **4. Functions, Lambdas & Procedures** | **REWRITE** | Teach strict argument evaluation, exact arity, pure `function`/`fn`, effectful named `proc`, and explicit `generic function`/`generic proc`. Remove claims that functions have lazy arguments. Procs are callable names, not values. | Type inference, purity, exact-arity checking. | P0 | Ready |
-| **4b. Anonymous Proc Lambdas** | **REMOVE / REDESIGN** | Delete every `proc (...) => ...` example, every proc-valued parameter, and every stored proc closure. Replace simple cases with direct named proc calls. Replace effectful callback APIs with closed descriptor unions and exhaustive dispatch, or with a dedicated driver-owned entry convention. | No implementation should restore first-class procs. | P0 | Removed by design |
+| **4b. Anonymous Proc Lambdas** | **REDESIGN / IMPLEMENTED** | Use explicitly typed `proc (...) -> R { ... }` or `async proc (...) -> R { ... }`. Pure code may transport proc values but cannot invoke them; invocation remains restricted to proc/top-level context. Descriptor unions remain preferred for effect requests represented as data. | First-class `TProc` values and static purity checking. | P0 | Implemented in E1 |
 | **4c. Pipe Operator** | **REWRITE** | Keep `|>` for exact-arity functions. A named proc may appear on the right side only in proc context. Replace inline string `+` with `++`. Do not use pipe as hidden partial application. | Parser/checker/emitter. | P0 | Ready |
+| **4d. Option/Result Pipelines** | **NEW / IMPLEMENTED** | Use transparent `|?>` for Option and `|!>` for Result. A raw chain stays raw until its wrapper first appears; wrapped chains short-circuit `None`/`Err`, rewrap raw stages, and flatten wrapped stages. Result error slots join through declared combined unions. | Lexer/parser/checker/purity/emitter/host ABI. | P0 | Implemented in E4 |
 | **5a. Tail-call Optimization** | **KEEP** | Keep direct self-tail recursion, including tail calls in match arms. Add a deep list-pattern recursion example rather than relying only on `if`. Mutual tail recursion remains outside the guarantee unless explicitly added later. | Self-tail-call emission. | P0 | **Project update: fixed-point compiler now exercises match-arm TCO** |
 | **5b. Memoization** | **DEFER** | Keep syntax in a small disabled or later section until host memo caches are complete. State that memoization is an optimization only and never changes semantics. | Memo runtime and Equatable cache keys. | P2 | Planned runtime |
 | **5c. Currying & Partial Application** | **REMOVE / REWRITE** | V1 automatic currying is gone. Rewrite `clamp(0)(100)` as `fn x => clamp(0, 100, x)`, `map(f)` as `fn xs => map(f, xs)`, and similarly for `filter`, `reduce`, and `take`. | Exact-arity checking. | P0 | Removed by design |
@@ -140,7 +141,7 @@ import * from "foreign";
 | V1 section | Disposition | V2-native example | Compiler/runtime dependency | Priority | Status |
 |---|---|---|---|---|---|
 | **7. Records & Custom Types** | **KEEP / REWRITE** | Keep nominal records and all-named or all-positional construction. Replace string `+`. Demonstrate functional update by reconstruction. Across modules, prefer exported constructor helpers until full record shapes in interfaces are no longer a constraint. | Record interface shape is still a tracked refinement. | P0 | Mostly ready |
-| **8. Discriminated Unions** | **REWRITE** | Keep records and variants, but explain inferred nominal types rather than a mutable runtime registry. Add `generic` payload fields where reuse requires independent types. Avoid variant-name collisions in the current program-global variant namespace. | Generic payloads ready; variant namespace remains a design constraint. | P0 | Ready with caveat |
+| **8. Discriminated Unions** | **REWRITE** | Keep records and variants, but explain inferred nominal types rather than a mutable runtime registry. Add `generic` payload fields where reuse requires independent types. Demonstrate combined application errors with `...FileError`/`...DecodeError`, their directional widening, shared fields, and flattened exhaustive matching. Avoid variant-name collisions in the current program-global variant namespace. | Generic payloads and combined unions ready; variant namespace remains a design constraint. | P0 | Ready with caveat |
 | **9. Pattern Matching** | **MAJOR REWRITE** | Keep union and list patterns. Guarded arms **never count toward exhaustiveness**; every variant/list-length domain needs unguarded coverage. Rewrite V1 examples that prove totality using only guarded scalar arms. Prefer explicit renderer functions for foreign module-defined structures. | Exhaustiveness checker. | P0 | Ready |
 | **10. Option** | **REWRITE** | Keep ambient generic `Option`. Replace the V1 `safeDivide` body with `safeDiv`, `nonZero`, or a match that carries the proof expected by the checker. Use Option helpers from ordinary library modules where helpful. | Final `NonZero` enforcement and Option-read wiring. | P1 | Partial |
 | **19. Modules & Imports** | **REWRITE** | Keep named, aliased, namespace, and bare-library imports. Explain frozen module interfaces and topological checking. Ban the V1 workaround of re-declaring imported types. Keep externs private. Add `"list"` and `"string"` as ordinary Pfun library modules found through `$PFUN_HOME/lib`. | Module graph/interfaces ready; record shapes still a refinement. | P0 | Ready |
@@ -151,7 +152,7 @@ import * from "foreign";
 | V1 section | Disposition | V2-native example | Compiler/runtime dependency | Priority | Status |
 |---|---|---|---|---|---|
 | **13. Dictionaries** | **REDESIGN / DEFER** | Keep dicts as mutable procedural structures. Reads return `Option`; mutation is proc-only. Do not teach throwing or sentinel reads. Use immutable `imaps`/`imapi` only for compiler internals, not as the user-facing replacement. | Dict host intrinsics and total reads. | P2 | Planned/partial |
-| **18. Input** | **REWRITE / ISOLATE** | Use `scanChar` and `scanln`, both returning `Option`. Put blocking input in a separate opt-in example/module so the main conformance run is deterministic and non-interactive. | `io` host operations. | P1 | Ready surface |
+| **18. Input** | **REWRITE / ISOLATE** | Use `scanChar` and `scanln`, both returning `Result<Option<_>, NativeError>` (`Ok(None)` at EOF). Put blocking input in a separate opt-in example/module so the main conformance run is deterministic and non-interactive. | `io` host operations. | P1 | Ready surface |
 | **23. File I/O** | **SPLIT** | First milestone: `readFile`, `writeFile`, `fileExists`, `mkdirP`, all returning `Result`-family values. Later milestone: typed handles, line/char/byte reads, seeks, and buffers. Keep helper procs module-level where possible. | Node file host ABI. | P1/P2 | Partial |
 | **24. Arrays** | **REDESIGN / DEFER** | Keep arrays strict, mutable, homogeneous, and proc-only for mutation. Reads return `Option`; writes return `Bool` rather than throwing. Do not retain V1 unchecked indexing behavior. | Array host intrinsics. | P2 | Planned/partial |
 | **20. JSON Persistence** | **REWRITE** | Preserve `jsonSerialize : a -> Option<Str>` and `jsonDeserialize : Str -> Option<a>`, composed with file `Result`s. Do not promise round-trip support for functions, handles, lazy sequences, or raw native values. Verify nominal tag reconstruction before using deserialized data as a user record. | JSON host/library conformance. | P1 | Surface ready; conformance needed |
@@ -170,8 +171,8 @@ import * from "foreign";
 | **27. Random Library** | **PORT / DEFER** | Randomness is an effect. Public random generation should be proc-only or use an explicit state/seed value for a pure generator. Tests assert ranges and invariants, not exact unseeded output. No raw JS RNG value escapes. | Random host/library design. | P2 | Planned |
 | **28. String Library** | **PORT NOW** | Replace the old `stringlib` import with `import * from "string";`. Cover trimming, prefix/suffix, replacement, matching, prefix scans, padding, repetition, and search. Keep explicit V2 argument order documented. | Expanded `strx`, public facade, tests. | P0 | In progress |
 | **29. HTML Parsing** | **PORT / DEFER** | Keep a pure TagSoup-style parser returning a Pfun ADT. Replace partial list/string operations with list patterns and Option. Define node types in one module; consumers import them rather than re-declaring them. | String/list/Option libraries and record interfaces. | P2 | Planned |
-| **30. HTTP Client Extended** | **REDESIGN / DEFER** | Public HTTP operations return `Result` with fully wrapped Pfun request/response records. Remove process-exit hacks and raw native access. A server API cannot accept a proc-valued handler; settle `listen`/entry-module dispatch or descriptor-driven routing first. | `http` builtin module, async runtime, Node host. | P3 for server, P2 for client | Planned |
-| **31. Timers** | **REDESIGN / DEFER** | Delete callback-taking timer APIs. For one-shot sequencing use `await sleep`. For subscriptions use descriptor data plus exhaustive dispatch. Timer cancellation should use an opaque handle if exposed. | Async scheduler, timer module, descriptor runtime. | P3 | Planned |
+| **30. HTTP Client Extended** | **REDESIGN / DEFER** | Public HTTP operations reuse core `Result` with fully wrapped Pfun request/response records and a domain error union. Remove process-exit hacks and raw native access. Callback handlers may be typed proc values, while descriptor-driven routing remains useful for application effects. | `http` builtin module, async runtime, Node host. | P3 for server, P2 for client | Planned |
+| **31. Timers** | **REDESIGNED / IMPLEMENTED** | Use `await sleep` for simple sequencing. `sleep`, `setTimer`, `setAsyncTimer`, and `clearTimer` return `Result<_, NativeError>`; successful scheduling carries an opaque `TimerHandle`. Repeating application subscriptions remain descriptor-driven. | First-class proc values, async scheduler, shared timer host floor. | P3 | Implemented in D6/E6 |
 | **32. Compression** | **PORT / DEFER** | Private extern wrapper around host compression. Public API accepts/returns Pfun bytes and `Result`; no JS Buffer escapes. Keep round-trip and malformed-input tests. | Byte/buffer ABI and Node compression host floor. | P2 | Planned |
 | **33. Cryptography** | **PORT / DEFER** | Private extern wrapper. Model keys, password hashes, and cipher boxes with opaque/domain types. Random salt/nonce generation is effectful. Every host failure becomes `Result`; no raw JS objects or exceptions escape. | Byte/buffer ABI, random source, crypto host floor. | P2 | Planned |
 | **34. TOML** | **PORT EARLY** | This is an excellent pure-language shakedown after list/string/Option/Result. Port parsing and printing to V2 style: `++`, explicit `generic`, total reads, no re-declared imports, and domain-specific parse diagnostics/Result. | Current pure compiler and standard-library floor. | P1 | Planned port |
@@ -190,7 +191,7 @@ one compiler error at a time.
 | `let x = if c then { a } else { b };` | `let x = c ? a : b;`, or call a helper/block whose final statement is the `if`. |
 | `"count: " + n` | `$"count: {n}"`, or `"count: " ++ str(n)`. |
 | `xs + [x]` | `appendOne(xs, x)`, another named list operation, or `cons` into a reversed accumulator. |
-| `proc x => effect(x)` | Direct named proc call, descriptor union, or dedicated dispatcher. |
+| `proc x => effect(x)` | Typed `proc (x: T) -> R { effect(x); }`, or descriptor data when the value represents an effect request. |
 | `let f = namedProc;` | Illegal. Call `namedProc(...)` directly from proc context. |
 | `f(a)` where `f` expects three args and V1 returns a closure | `fn b, c => f(a, b, c)` or another explicit lambda matching the desired arity. |
 | `head(xs)` / `tail(xs)` as bare values | List pattern, or `match head(xs) with Some/None`. |
@@ -224,11 +225,14 @@ The V2 capstone should be modular:
 ```text
 examples/
   example.pf                 # imports modules; proc main; deterministic capstone
-  example/
+  example-v2/
     core.pf                  # strict values, operators, control flow, functions
     strings.pf               # raw/format strings, scalar Str, "string" library
     lists.pf                 # ambient list floor, comprehensions, "list" library
     types.pf                 # records, unions, Option, match, generic declarations
+    combined_errors.pf       # combined unions and unified Result errors
+    procs.pf                 # sync/async proc lambdas and callbacks
+    timers.pf                # cancellable one-shot timers
     modules.pf               # import/interface demonstrations
     io.pf                    # deterministic console + whole-file + JSON examples
     mutable.pf               # dict/array/buffer examples, added when runtime lands
@@ -285,7 +289,7 @@ Explicitly exclude for now:
 **Gate:**
 
 ```bash
-node bootstrap-stage2/pfc.js build examples/example.pf -o /tmp/example-v2.js
+PFUN_HOME="$PWD" node boot/pfc.js build examples/example.pf -o /tmp/example-v2.js
 node /tmp/example-v2.js
 ```
 

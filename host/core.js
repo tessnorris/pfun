@@ -31,6 +31,8 @@
   const SAFE_MIN = Number.MIN_SAFE_INTEGER;
   const SAFE_MAX = Number.MAX_SAFE_INTEGER;
   const BYTE_MASK = 0xff;
+  const NODE_REQUIRE =
+    typeof require === "function" ? require : null;
 
   // ── diagnostics / runtime assertions ────────────────────────────────────
 
@@ -84,12 +86,54 @@
     return $makeVariant("Ok", "Result", ["value"], [value]);
   }
 
-  function $err(message) {
-    return $makeVariant("Err", "Result", ["message"], [String(message)]);
+  function $err(error) {
+	return $makeVariant("Err", "Result", ["message"], [error]);
   }
 
   function $pair(key, value) {
-    return $makeRecord("Pair", ["key", "value"], [key, value]);
+	return $makeRecord("Pair", ["key", "value"], [key, value]);
+  }
+
+  const $nativeErrorVariants = new Set([
+	"NativeIoError",
+	"NativeProcessError",
+	"NativeTimerError",
+	"NativeBufferError",
+	"NativeJsonError",
+	"NativeNumericError",
+	"NativePlatformError"
+  ]);
+
+  function $nativeError(variant, operation, message) {
+	if (!$nativeErrorVariants.has(variant)) {
+	  $runtimeError("unknown NativeError variant " + String(variant));
+	}
+
+	return $makeVariant(
+	  variant,
+	  "NativeError",
+	  ["operation", "message"],
+	  [String(operation), String(message)]
+	);
+  }
+
+  function $requireNativeError(error) {
+	if (
+	  !error
+		|| error.$u !== "NativeError"
+		|| !$nativeErrorVariants.has(error.$t)
+	) {
+	  $runtimeError("expected NativeError");
+	}
+	return error;
+  }
+
+  function $nativeErrorOperation(error) {
+	return String($requireNativeError(error).operation);
+  }
+
+  function $nativeErrorMessage(error) {
+	return String($requireNativeError(error).message);
   }
 
   function $isSome(value) {
@@ -98,6 +142,28 @@
 
   function $isNone(value) {
     return !!value && value.$u === "Option" && value.$t === "None";
+  }
+
+  function $optionPipe(option, step, flatten) {
+    if ($isNone(option)) {
+      return option;
+    }
+    if (!$isSome(option)) {
+      $runtimeError("|?> expected an Option while continuing a wrapped pipeline");
+    }
+    const next = step(option.value);
+    return flatten ? next : $some(next);
+  }
+
+  function $resultPipe(result, step, flatten) {
+    if (!!result && result.$u === "Result" && result.$t === "Err") {
+      return result;
+    }
+    if (!result || result.$u !== "Result" || result.$t !== "Ok") {
+      $runtimeError("|!> expected a Result while continuing a wrapped pipeline");
+    }
+    const next = step(result.value);
+    return flatten ? next : $ok(next);
   }
 
   // ── Int helpers: hybrid number/bigint representation ────────────────────
@@ -1119,6 +1185,13 @@ $registerSchemas([
   { name: "Some", union: "Option", fields: ["value"], variant: true },
   { name: "Ok", union: "Result", fields: ["value"], variant: true },
   { name: "Err", union: "Result", fields: ["message"], variant: true },
+	{ name: "NativeIoError", union: "NativeError", fields: ["operation", "message"], variant: true },
+	{ name: "NativeProcessError", union: "NativeError", fields: ["operation", "message"], variant: true },
+	{ name: "NativeTimerError", union: "NativeError", fields: ["operation", "message"], variant: true },
+	{ name: "NativeBufferError", union: "NativeError", fields: ["operation", "message"], variant: true },
+	{ name: "NativeJsonError", union: "NativeError", fields: ["operation", "message"], variant: true },
+	{ name: "NativeNumericError", union: "NativeError", fields: ["operation", "message"], variant: true },
+	{ name: "NativePlatformError", union: "NativeError", fields: ["operation", "message"], variant: true },
 ]);
 
 function $jsonDescriptorTag(desc) {
@@ -1538,73 +1611,244 @@ function $jsonDeserialize(text, targetType) {
 
   // ── console / timing / math floor ───────────────────────────────────────
 
-  function $print(value) {
-    const s = $str(value);
-    if (typeof process !== "undefined" && process.stdout && process.stdout.write) {
-      process.stdout.write(s);
-    } else if (typeof console !== "undefined" && console.log) {
-      console.log(s);
+  function $caughtErrorMessage(error) {
+    if (
+      error
+        && typeof error.message === "string"
+        && error.message.length > 0
+    ) {
+      return error.message;
     }
-    return null;
+    return String(error);
+  }
+
+  function $ioError(operation, error) {
+    return $err(
+      $nativeError(
+        "NativeIoError",
+        operation,
+        $caughtErrorMessage(error)
+      )
+    );
+  }
+
+  function $writeStdout(value, newline, operation) {
+    try {
+      const text = $str(value) + (newline ? "\n" : "");
+
+      if (
+        NODE_REQUIRE
+          && typeof process !== "undefined"
+          && process.stdout
+          && Number.isInteger(process.stdout.fd)
+      ) {
+        const fs = NODE_REQUIRE("node:fs");
+        const NodeBuffer = NODE_REQUIRE("node:buffer").Buffer;
+        const bytes = NodeBuffer.from(text, "utf8");
+        let offset = 0;
+
+        while (offset < bytes.length) {
+          const written = fs.writeSync(
+            process.stdout.fd,
+            bytes,
+            offset,
+            bytes.length - offset
+          );
+          if (!Number.isInteger(written) || written <= 0) {
+            throw new Error("stdout write made no progress.");
+          }
+          offset += written;
+        }
+      } else if (
+        typeof process !== "undefined"
+          && process.stdout
+          && typeof process.stdout.write === "function"
+      ) {
+        process.stdout.write(text);
+      } else if (
+        typeof console !== "undefined"
+          && typeof console.log === "function"
+      ) {
+        console.log(text);
+      } else {
+        throw new Error("stdout is not available on this platform.");
+      }
+
+      return $ok(null);
+    } catch (error) {
+      return $ioError(operation, error);
+    }
+  }
+
+  function $print(value) {
+    return $writeStdout(value, false, "print");
   }
 
   function $println(value) {
-    const s = $str(value);
-    if (typeof process !== "undefined" && process.stdout && process.stdout.write) {
-      process.stdout.write(s + "\n");
-    } else if (typeof console !== "undefined" && console.log) {
-      console.log(s);
-    }
-    return null;
+    return $writeStdout(value, true, "println");
   }
 
   function $flushStdout() {
-    return null;
+    try {
+      if (
+        typeof process !== "undefined"
+          && process.stdout
+          && typeof process.stdout.flush === "function"
+      ) {
+        process.stdout.flush();
+      }
+      return $ok(null);
+    } catch (error) {
+      return $ioError("flushStdout", error);
+    }
   }
 
-function $sleep(ms) {
-		ms = $canonI(ms);
+  const $timerHandleBrand = Object.freeze({});
 
-		const maximum = 2147483647;
+  function $timerError(operation, error) {
+    return $err(
+      $nativeError(
+        "NativeTimerError",
+        operation,
+        $caughtErrorMessage(error)
+      )
+    );
+  }
 
-		if (typeof ms === "bigint") {
-			if (ms < 0n) {
-				$runtimeError(
-					"sleep duration must be non-negative."
-				);
-			}
+  function $timerMilliseconds(ms, operation) {
+    ms = $canonI(ms);
 
-			if (ms > 2147483647n) {
-				$runtimeError(
-					"sleep duration must be at most "
-						+ maximum
-						+ " milliseconds."
-				);
-			}
+    const maximum = 2147483647;
 
-			ms = Number(ms);
-		} else {
-			if (ms < 0) {
-				$runtimeError(
-					"sleep duration must be non-negative."
-				);
-			}
+    if (typeof ms === "bigint") {
+      if (ms < 0n) {
+        throw new Error(
+          operation + " duration must be non-negative."
+        );
+      }
 
-			if (ms > maximum) {
-				$runtimeError(
-					"sleep duration must be at most "
-						+ maximum
-						+ " milliseconds."
-				);
-			}
-		}
+      if (ms > 2147483647n) {
+        throw new Error(
+          operation + " duration must be at most "
+            + maximum
+            + " milliseconds."
+        );
+      }
 
-		return new Promise(function resolveLater(resolve) {
-			setTimeout(function done() {
-				resolve(null);
-			}, ms);
-		});
-	}
+      return Number(ms);
+    }
+
+    if (ms < 0) {
+      throw new Error(operation + " duration must be non-negative.");
+    }
+
+    if (ms > maximum) {
+      throw new Error(
+        operation + " duration must be at most "
+          + maximum
+          + " milliseconds."
+      );
+    }
+
+    return ms;
+  }
+
+  function $sleep(ms) {
+    try {
+      ms = $timerMilliseconds(ms, "sleep");
+
+      return new Promise(function resolveLater(resolve) {
+        try {
+          setTimeout(function done() {
+            resolve($ok(null));
+          }, ms);
+        } catch (error) {
+          resolve($timerError("sleep", error));
+        }
+      });
+    } catch (error) {
+      return Promise.resolve($timerError("sleep", error));
+    }
+  }
+
+  function $recordTimerCallbackFailure(handle, operation, error) {
+    handle.$timerFailure = $nativeError(
+      "NativeTimerError",
+      operation,
+      "callback failed: " + $caughtErrorMessage(error)
+    );
+  }
+
+  function $invokeTimerAction(handle, action, operation) {
+    let completion;
+
+    try {
+      completion = action();
+    } catch (error) {
+      $recordTimerCallbackFailure(handle, operation, error);
+      return;
+    }
+
+    if (completion && typeof completion.then === "function") {
+      Promise.resolve(completion).catch(function timerActionRejected(error) {
+        $recordTimerCallbackFailure(handle, operation, error);
+      });
+    }
+  }
+
+  function $scheduleTimer(ms, action, operation) {
+    try {
+      ms = $timerMilliseconds(ms, operation);
+
+      if (typeof action !== "function") {
+        throw new Error(operation + " action must be a procedure.");
+      }
+
+      const handle = {
+        $timerHandle: $timerHandleBrand,
+        $timerId: null,
+        $timerActive: true,
+        $timerFailure: null
+      };
+
+      handle.$timerId = setTimeout(function fireTimer() {
+        if (!handle.$timerActive) return;
+        handle.$timerActive = false;
+        handle.$timerId = null;
+        $invokeTimerAction(handle, action, operation);
+      }, ms);
+
+      return $ok(handle);
+    } catch (error) {
+      return $timerError(operation, error);
+    }
+  }
+
+  function $setTimer(ms, action) {
+    return $scheduleTimer(ms, action, "setTimer");
+  }
+
+  function $setAsyncTimer(ms, action) {
+    return $scheduleTimer(ms, action, "setAsyncTimer");
+  }
+
+  function $clearTimer(handle) {
+    try {
+      if (!handle || handle.$timerHandle !== $timerHandleBrand) {
+        throw new Error("clearTimer expects a TimerHandle.");
+      }
+
+      if (handle.$timerActive) {
+        clearTimeout(handle.$timerId);
+        handle.$timerActive = false;
+        handle.$timerId = null;
+      }
+
+      return $ok(null);
+    } catch (error) {
+      return $timerError("clearTimer", error);
+    }
+  }
 
   function $pi() { return Math.PI; }
   function $e() { return Math.E; }
@@ -1643,10 +1887,15 @@ function $sleep(ms) {
     $none,
     $some,
     $ok,
-    $err,
-    $pair,
+	$err,
+	$pair,
+	$nativeError,
+	$nativeErrorOperation,
+	$nativeErrorMessage,
     $isSome,
     $isNone,
+    $optionPipe,
+    $resultPipe,
 
     // errors
     $runtimeError,
@@ -1773,6 +2022,9 @@ function $sleep(ms) {
     $println,
     $flushStdout,
     $sleep,
+    $setTimer,
+    $setAsyncTimer,
+    $clearTimer,
 
     // math module floor
     $pi,

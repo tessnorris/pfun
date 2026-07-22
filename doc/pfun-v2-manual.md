@@ -401,7 +401,7 @@ proofs rather than conventions. `NonZero` is the canonical example.
 Loosest to tightest:
 
 ```text
-1  pipe              |>
+1  pipelines         |> |?> |!>
 2  ternary           ? :          right-assoc
 3  or                ||
 4  and               &&
@@ -492,7 +492,7 @@ Rules:
 - `if` cannot appear as a `let` initializer or inside an expression; use
   `? :` there, or bind through a helper.
 
-## 3.7 The pipe operator **[Implemented]**
+## 3.7 Pipeline operators **[Implemented]**
 
 `x |> f` applies `f` to `x`; pipes chain left to right:
 
@@ -503,6 +503,38 @@ raw |> trim |> parse |> render
 The right operand must be callable with exactly the piped value. A proc value
 may be used on the right only in proc context because the pipe desugars to an
 effectful call.
+
+`|?>` is the Option-aware pipeline and `|!>` is the Result-aware pipeline.
+Both are **transparent until their wrapper first appears**, so a chain may
+start from ordinary data and use one operator throughout:
+
+```pfun
+let transformed = rows
+	|!> transpose       // raw rows -> Result<Rows, ShapeError>
+	|!> reverse         // a raw Rows return is automatically rewrapped as Ok
+	|!> slide           // a Result return is flattened, never nested
+	|!> reverse
+	|!> transpose;
+```
+
+The rules are:
+
+- Before a stage returns the relevant wrapper, `x |?> f` and `x |!> f`
+  behave like `x |> f`. A raw return keeps the chain raw; an `Option` or
+  `Result` return starts wrapped mode for the following stage.
+- `None |?> f` and `Err { error } |!> f` return unchanged without invoking
+  `f`.
+- `Some { value } |?> f` invokes `f(value)`. A raw `B` return becomes
+  `Some<B>`; an `Option<B>` return is flattened.
+- `Ok { value } |!> f` invokes `f(value)`. A raw `B` return becomes
+  `Ok<B, E>`; a `Result<B, F>` return is flattened. The checker joins `E`
+  and `F` through the smallest declared combined union.
+- The operators do not recover failures and do not cross wrappers: `|?>`
+  handles only `Option`, and `|!>` handles only `Result`.
+
+All three operators have the same low precedence and associate left to right.
+Their right operand must be callable with exactly one argument. Invoking a proc
+through any pipeline follows the same purity rule as a direct proc call.
 
 ## 3.8 Indexing and field access **[Partial]**
 
@@ -631,8 +663,12 @@ async proc demonstrateProcLambdas() {
 	handler.action("second");
 
 	let delayed = async proc (value: Int) -> Int {
-		await sleep(0);
-		value + count
+		match await sleep(0) with
+		| Ok _ -> value + count
+		| Err failure -> {
+			println(nativeErrorMessage(failure.message));
+			value + count
+		}
 	};
 	println("async result = " ++ str(await delayed(40)));
 }
@@ -810,7 +846,50 @@ A constructed variant is statically known to *be* that variant: `c.radius`
 type-checks directly, and passing `c` where a `Shape` is expected widens it
 to the union (§9.4 explains the model).
 
-## 8.3 `Option` and `Result` **[Implemented]**
+## 8.3 Combined unions and unified errors **[Implemented]**
+
+A union may include the variants of one or more other unions:
+
+```pfun
+type FileError = {
+	| FileMissing: message, code
+	| FileDenied: message, code
+}
+
+type DecodeError = {
+	| InvalidData: message, code
+}
+
+type AppError = {
+	...FileError
+	...DecodeError
+	| InvalidConfig: message, code
+}
+```
+
+The original unions keep their identities and constructors. Inclusion adds a
+safe widening conversion: a `FileError` or `DecodeError` may flow wherever an
+`AppError` is required, but an arbitrary `AppError` may not flow back to either
+component union. Inclusion may be transitive.
+
+Branch and collection inference finds the smallest combined union that contains
+all produced component variants. This works through generic containers, so
+branches returning `Result<Value, FileError>` and `Result<Value, DecodeError>`
+join as `Result<Value, AppError>`. If two unrelated combined unions are equally
+good candidates, inference reports the ambiguity instead of selecting one by
+declaration order.
+
+Matching an `AppError` is exhaustive over the flattened set: every included and
+locally declared variant needs an unguarded arm. A field is directly available
+on the combined value only when every flattened variant has that field with a
+compatible type. In the example, `failure.message` and `failure.code` are safe
+without first matching the variant.
+
+Includes are written inside the union body as `...UnionName`; a trailing comma
+is optional. The checker rejects unknown or non-union includes, duplicate
+includes or variants, and inclusion cycles.
+
+## 8.4 `Option` and `Result` **[Implemented]**
 
 Builtin, ambient, and the backbone of totality:
 
@@ -826,15 +905,43 @@ module's `ReadResult` (chapter 15). The OptionX/ResultX libraries (chapter
 21) supply `withDefault`, `mapOption`, `andThenResult`, `collect`, and
 friends.
 
-## 8.4 Variant names are program-global **[Implemented — current model]**
+For linear transformations, `|?>` and `|!>` provide the same map/flat-map
+behavior inline while preserving `None`/`Err`; see §3.7. Result pipelines also
+join differing domain-error unions as the chain crosses fallible stages.
+
+There is exactly one `Result` declaration, owned by the ambient core module.
+Compiler packages, standard-library modules, and applications all reuse it;
+they do not redeclare `FileResult`, `ParseResult`, or package-local `Ok`/`Err`
+constructors merely to avoid collisions. Put a domain-specific union in the
+error slot instead:
+
+```pfun
+type LoadError = {
+	| MissingSource: message
+	| InvalidSource: message
+}
+
+function load(kind) {
+	if kind == 0 then { Ok { "source" } }
+	else { Err { MissingSource { "not found" } } }
+}
+```
+
+A genuinely different outcome shape may still have its own union. Its
+constructors must be distinct: streaming file reads use
+`ReadOk`/`ReadEof`/`ReadErr`, because clean end-of-file is a third state rather
+than an ordinary failure.
+
+## 8.5 Variant names are program-global **[Implemented — current model]**
 
 In the current model every variant name lives in one program-wide namespace:
 two unions in one program may not both declare a variant `Ok` and expect
 them to stay distinct — the later registration wins. The standard sources
-work within this (`Result`'s `Ok`/`Err` are shared deliberately with
-`ReadResult`; unrelated unions pick distinct names, e.g. `TokInt` vs `TInt`).
-A module-scoped variant model is future work; until then, treat variant
-names like exported names and prefix where collision is plausible.
+work within this by giving `Result` sole ownership of `Ok`/`Err` and giving
+the three-state `ReadResult` distinct `ReadOk`/`ReadEof`/`ReadErr`
+constructors. Unrelated unions likewise pick distinct names, e.g. `TokInt` vs
+`TInt`. A module-scoped variant model is future work; until then, treat
+variant names like exported names and prefix where collision is plausible.
 
 # 9. Pattern matching
 
@@ -955,7 +1062,7 @@ imports for anything nontrivial.
 
 Paths resolve in order: relative to the importing file (`./`, `../`); the
 library root `$PFUN_HOME/lib`; and the builtin module names (`io`, `file`,
-`json`, `async`, `math`). A missing `.pf` extension is appended. The core
+`json`, `async`, `timer`, `math`). A missing `.pf` extension is appended. The core
 builtin surface (chapter 19) is ambient — never imported.
 
 ## 10.4 Interfaces and checking order **[Implemented]**
@@ -1127,15 +1234,28 @@ host floor with a proc-only API. Specified in the host ABI phase.
 import * from "io";
 
 proc main() {
-	println("name?");
+	match println("name?") with
+	| Err failure -> {
+		nativeErrorMessage(failure.message);
+		{}
+	}
+	| Ok _ -> {}
+
 	match scanln() with
-	| Some line -> println("hello, " ++ line.value)
-	| None -> println("eof");
+	| Err failure -> println(
+		"input error: " ++ nativeErrorMessage(failure.message)
+	)
+	| Ok input -> match input.value with
+		| Some line -> println("hello, " ++ line.value)
+		| None -> println("eof");
 }
 ```
 
-`println`/`print` write; `scanln : () -> Option<Str>` and `scanChar` read
-(`None` at end of input). `scriptArgs()` returns the argument list;
+`println`/`print`/`eprintln`/`eprint` and `flushStdout` return
+`Result<Unit, NativeError>`. `scanln` returns
+`Result<Option<Str>, NativeError>` and `scanChar` returns
+`Result<Option<Char>, NativeError>`: `Ok(None)` means clean end of input, while
+`Err(NativeIoError)` means the read failed. `scriptArgs()` returns the argument list;
 `getEnv(name)` returns `Option<Str>`; `exit(code)` terminates.
 
 ## 15.2 `file` — files **[Implemented core, Partial surface]**
@@ -1146,20 +1266,29 @@ import * from "file";
 proc load(path) {
 	match readFile(path) with
 	| Ok r -> parse(r.value)
-	| Err e -> fail(e.message);
+	| Err e -> fail(nativeErrorMessage(e.message));
 }
 ```
 
 Convenience functions (`readFile`, `writeFile`, `fileExists`, `mkdirP`)
-return `Result`-family unions; the file module's `ReadResult` adds an `Eof`
-variant for streaming reads. Handle-based streaming (`fileOpen`/`fileClose`
-plus read/write/seek over handles) and binary buffer I/O are specified but
-thin today. **[Partial** — the convenience surface drives the bootstrap
-compiler itself; the handle/binary surface is Phase 15**]**
+return the ambient `Result<T, NativeError>`; notably, `fileExists` returns
+`Ok { true }`, `Ok { false }`, or an `Err` for a real native failure. The file
+module's three-state `ReadResult<T, NativeError>` uses `ReadOk`, `ReadEof`, and
+`ReadErr` for streaming reads. Handle-based streaming
+(`fileOpen`/`fileClose` plus read/write/seek over handles) and binary buffer I/O
+are specified but thin today. **[Partial** — the convenience surface drives
+the bootstrap compiler itself; the handle/binary surface is Phase 15**]**
+
+`NativeError` is an ambient union with `NativeIoError`,
+`NativeProcessError`, `NativeTimerError`, `NativeBufferError`,
+`NativeJsonError`, `NativeNumericError`, and `NativePlatformError` variants.
+Every variant carries `operation` and `message` fields. Use an exhaustive match
+when the category matters, or the ambient `nativeErrorOperation(error)` and
+`nativeErrorMessage(error)` accessors for category-independent reporting.
 
 # 16. Asynchronous procedures
 
-## 16.1 `async` and `await` **[Implemented syntax, Planned runtime]**
+## 16.1 `async` and `await` **[Implemented]**
 
 ```pfun
 async proc fetchBoth(a, b) {
@@ -1179,8 +1308,49 @@ Calling an `async proc` *without* `await` from proc context is legal and
 means fire-and-forget: the callee starts, control continues immediately.
 Dispatchers rely on this so slow effects never block an event loop.
 
-**[Planned** — async syntax, purity rules, and typing are implemented; the
-scheduler and async host intrinsics are Phase 15**]**
+The `async` builtin module provides `sleep(ms)`, which completes with
+`Result<Unit, NativeError>` after a non-negative duration of at most
+`2147483647` milliseconds. Invalid durations and scheduler failures resolve as
+`NativeTimerError`; they do not reject the awaited operation.
+
+## 16.3 Cancellable one-shot timers **[Implemented]**
+
+```pfun
+import * from "async";
+import * from "io";
+import * from "timer";
+
+async proc demonstrateTimers() {
+	let scheduled = setTimer(100, proc () -> Unit {
+		println("will not run");
+	});
+	match scheduled with
+	| Err failure -> println(nativeErrorMessage(failure.message))
+	| Ok timer -> {
+		match clearTimer(timer.value) with
+		| Ok _ -> println("canceled")
+		| Err failure -> println(nativeErrorMessage(failure.message));
+	};
+}
+```
+
+`setTimer(ms, action)` accepts `proc() -> Unit`; `setAsyncTimer(ms, action)`
+accepts `async proc() -> Unit`. Keeping the two entry points distinct preserves
+the language's sync/async proc type distinction. Each returns
+`Result<TimerHandle, NativeError>`. `clearTimer(handle)` returns
+`Result<Unit, NativeError>`, prevents a pending callback, and is an idempotent
+`Ok` after the handle has already been cleared or fired. Timer durations use
+the same bounds as `sleep`; failures use `NativeTimerError`.
+
+The scheduling `Result` covers validation and host scheduling. A callback runs
+later, after that result already exists. Unexpected callback throws and async
+rejections are contained by the host, while an observable callback-completion
+channel remains a separate future API.
+
+Scheduling and cancellation are effects and therefore require top-level or
+proc context. Pure code may still construct, store, and transport the callback
+proc value. Timers are one-shot; repeating application subscriptions remain
+better represented as descriptor data with exhaustive dispatch.
 
 # 17. Effects as data: descriptors and dispatch
 
@@ -1310,20 +1480,25 @@ type and wired through checking; host intrinsic completeness is Phase 15.
 
 Imported by bare name. Present in the manifest today:
 
-- **`io`** — `println`, `print`, `scanln : -> Option<Str>`, `scanChar`,
-  `scriptArgs`, `getEnv : -> Option<Str>`, `exit`. **[Implemented]**
+- **`io`** — Result-returning `println`, `print`, `eprintln`, `eprint`, and
+  `flushStdout`; `scanln : -> Result<Option<Str>, NativeError>` and
+  `scanChar : -> Result<Option<Char>, NativeError>`; `scriptArgs`,
+  `getEnv : -> Option<Str>`, and `exit`. **[Implemented]**
 - **`file`** — `readFile`/`writeFile`/`fileExists`/`mkdirP` returning
-  `Result`-family unions; `fileOpen`/`fileClose` handles. **[Partial** —
+  `Result<_, NativeError>`; `fileOpen`/`fileClose` handles. **[Partial** —
   handle read/write/seek and binary buffers are Phase 15**]**
 - **`json`** — `jsonSerialize : a -> Option<Str>`,
   `jsonDeserialize : Str -> Option<a>`. **[Implemented surface]**
-- **`async`** — `sleep(ms)` (async proc). **[Partial — scheduler is Phase 15]**
+- **`async`** — `sleep(ms)` returning
+  `Result<Unit, NativeError>` (async proc). **[Implemented]**
+- **`timer`** — `setTimer`, `setAsyncTimer`, and idempotent `clearTimer`, using
+  opaque `TimerHandle` values inside `Result`. **[Implemented]**
 - **`math`** — `pi`/`e`/`tau` (nullary), `sqrt`, `pow` (Float); `abs`,
   `min`, `max` (Int). **[Implemented surface]**
 
 Planned builtin modules, carrying the V1 surface forward behind the same
 private-extern discipline: **`http`** (server routes + client fetch),
-**`timer`**, **`db`** adapters (`dblibPostgresql`, `dblibMariadb`), and the
+**`db`** adapters (`dblibPostgresql`, `dblibMariadb`), and the
 browser DOM/mount floor for TEA. **[Planned]**
 
 # 21. The Pfun standard library
@@ -1454,7 +1629,7 @@ implementation.
 
 **Libraries and applications**
 
-16. `http`, `timer`, `db` builtin modules behind private externs.
+16. `http` and `db` builtin modules behind private externs (`timer` is done).
 17. Stdlib porting backlog (§21), each port doubling as conformance tests.
 18. TEA (Phase 14b): `tea.pf`, DOM floor, `Cmd`/`Sub` runtime.
 

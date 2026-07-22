@@ -8,14 +8,14 @@ import * as Compat from "../src/compat";
 
 function lexTokens(source) {
 	match Lex.lex("lexer-test.pf", source) with
-	| LexOk ok -> ok.tokens
-	| LexErr _ -> []
+	| Ok ok -> ok.value
+	| Err _ -> []
 }
 
 function lexDiagCount(source) {
 	match Lex.lex("lexer-test.pf", source) with
-	| LexOk _ -> 0
-	| LexErr err -> length(err.diags)
+	| Ok _ -> 0
+	| Err err -> length(err.message)
 }
 
 function tokKindAt(tokens, index) {
@@ -85,7 +85,7 @@ function testOpaqueKeyword() {
 
 //![test("uses longest operator matches")]
 function testLongestOperators() {
-	let tokens = lexTokens("a == b != c <= d >= e && f || g |> h -> i => j <- k << l >> m ++ n");
+	let tokens = lexTokens("a == b != c <= d >= e && f || g |> h |?> i |!> j -> k => l <- m << n >> o ++ p");
 	Assert.assertions([
 		tokenCheck(tokens, 1, "TokOp", "=="),
 		tokenCheck(tokens, 3, "TokOp", "!="),
@@ -94,12 +94,14 @@ function testLongestOperators() {
 		tokenCheck(tokens, 9, "TokOp", "&&"),
 		tokenCheck(tokens, 11, "TokOp", "||"),
 		tokenCheck(tokens, 13, "TokOp", "|>"),
-		tokenCheck(tokens, 15, "TokOp", "->"),
-		tokenCheck(tokens, 17, "TokOp", "=>"),
-		tokenCheck(tokens, 19, "TokOp", "<-"),
-		tokenCheck(tokens, 21, "TokOp", "<<"),
-		tokenCheck(tokens, 23, "TokOp", ">>"),
-		tokenCheck(tokens, 25, "TokOp", "++")
+		tokenCheck(tokens, 15, "TokOp", "|?>"),
+		tokenCheck(tokens, 17, "TokOp", "|!>"),
+		tokenCheck(tokens, 19, "TokOp", "->"),
+		tokenCheck(tokens, 21, "TokOp", "=>"),
+		tokenCheck(tokens, 23, "TokOp", "<-"),
+		tokenCheck(tokens, 25, "TokOp", "<<"),
+		tokenCheck(tokens, 27, "TokOp", ">>"),
+		tokenCheck(tokens, 29, "TokOp", "++")
 	])
 }
 

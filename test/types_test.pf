@@ -25,6 +25,74 @@ function testStringConcatSucceeds() {
 	H.assertOkDiags(H.typeDiags("string_concat.pf", "let x = \"a\" ++ \"b\";"))
 }
 
+//![test("ordinary forward pipe typechecks as a unary call")]
+function testForwardPipeSucceeds() {
+	let src =
+		"function addOne(value) { value + 1 }\n"
+		++ "function double(value) { value * 2 }\n"
+		++ "let answer = 3 |> addOne |> double;\n"
+		++ "let checked = answer + 1;";
+	H.assertOkDiags(H.typeDiags("forward_pipe.pf", src))
+}
+
+//![test("pipelines require exactly one argument")]
+function testPipelineArityFails() {
+	let src = "function add(a, b) { a + b }\nlet answer = 3 |> add;";
+	H.assertHasMessage(H.typeDiags("pipe_arity.pf", src), "exactly one")
+}
+
+//![test("Option pipe is transparent then maps and flattens")]
+function testOptionPipelineSucceeds() {
+	let src =
+		"function positive(value) {\n"
+		++ "  if value > 0 then { Some { value } } else { None }\n"
+		++ "}\n"
+		++ "function double(value) { value * 2 }\n"
+		++ "function underTen(value) {\n"
+		++ "  if value < 10 then { Some { value } } else { None }\n"
+		++ "}\n"
+		++ "let found = 3 |?> positive |?> double |?> underTen;\n"
+		++ "let missing = -1 |?> positive |?> double |?> underTen;\n"
+		++ "function render(value) {\n"
+		++ "  match value with | Some item -> item.value + 1 | None -> 0;\n"
+		++ "}\n"
+		++ "let total = render(found) + render(missing);";
+	H.assertOkDiags(H.typeDiagsWithBuiltins("option_pipeline.pf", src))
+}
+
+//![test("Result pipe maps raw stages and joins wrapped errors")]
+function testResultPipelineJoinsErrors() {
+	let src =
+		"type ShapeError = { | BadShape: message }\n"
+		++ "type WindowError = { | BadWindow: message }\n"
+		++ "type PipelineError = { ...ShapeError ...WindowError }\n"
+		++ "function shape(rows) {\n"
+		++ "  if length(rows) == 0 then { Err { BadShape { \"empty\" } } }\n"
+		++ "  else { Ok { reverse(rows) } }\n"
+		++ "}\n"
+		++ "function flip(rows) { reverse(rows) }\n"
+		++ "function window(rows) {\n"
+		++ "  if length(rows) == 0 then { Err { BadWindow { \"short\" } } }\n"
+		++ "  else { Ok { rows } }\n"
+		++ "}\n"
+		++ "let result = [[1, 2]] |!> shape |!> flip |!> window;\n"
+		++ "function render(value) {\n"
+		++ "  match value with\n"
+		++ "  | Ok rows -> length(rows.value)\n"
+		++ "  | Err failure -> match failure.message with\n"
+		++ "    | BadShape _ -> 1\n"
+		++ "    | BadWindow _ -> 2;\n"
+		++ "}\n"
+		++ "let answer = render(result) + 1;";
+	H.assertOkDiags(H.typeDiagsWithBuiltins("result_pipeline.pf", src))
+}
+
+//![test("Option and Result pipelines do not cross wrappers")]
+function testPipelineWrapperMismatchFails() {
+	let src = "function addOne(value) { value + 1 }\nlet bad = Some { 1 } |!> addOne;";
+	H.assertHasDiag(H.typeDiags("pipeline_wrapper_mismatch.pf", src))
+}
+
 //![test("concat number fails")]
 function testConcatNumberFails() {
 	H.assertHasMessage(H.typeDiags("concat_number.pf", "let x = \"count: \" ++ 3;"), "++")
@@ -302,6 +370,90 @@ function testTrailingIfJoinsSiblingVariants() {
 	H.assertOkDiags(H.typeDiags("trailing_if_join.pf", src))
 }
 
+//![test("combined unions join component errors through Result")]
+function testCombinedUnionResultJoin() {
+	let src =
+		"type FileError = { | Missing: message | Denied: message }\n"
+		++ "type JsonError = { | InvalidJson: message }\n"
+		++ "type AppError = { ...FileError ...JsonError | InvalidConfig: message }\n"
+		++ "function fail(kind) {\n"
+		++ "  if kind == 0 then { Err { Missing { \"missing\" } } }\n"
+		++ "  else if kind == 1 then { Err { InvalidJson { \"json\" } } }\n"
+		++ "  else { Err { InvalidConfig { \"config\" } } }\n"
+		++ "}\n"
+		++ "function message(result) {\n"
+		++ "  match result with\n"
+		++ "  | Ok _ -> \"ok\"\n"
+		++ "  | Err failure -> failure.message.message;\n"
+		++ "}\n"
+		++ "function kind(result) {\n"
+		++ "  match result with\n"
+		++ "  | Ok _ -> \"ok\"\n"
+		++ "  | Err failure -> match failure.message with\n"
+		++ "    | Missing _ -> \"file\"\n"
+		++ "    | Denied _ -> \"denied\"\n"
+		++ "    | InvalidJson _ -> \"json\"\n"
+		++ "    | InvalidConfig _ -> \"config\";\n"
+		++ "}\n"
+		++ "let text = kind(fail(0)) ++ message(fail(1));";
+	H.assertOkDiags(
+		H.typeDiagsWithBuiltins("combined_result_join.pf", src)
+	)
+}
+
+//![test("combined union shared fields require every variant")]
+function testCombinedUnionSharedFieldMustBeTotal() {
+	let src =
+		"type AError = { | AProblem: message }\n"
+		++ "type BError = { | BProblem: code }\n"
+		++ "type AppError = { ...AError ...BError }\n"
+		++ "function choose(flag) { if flag then { AProblem { \"a\" } } else { BProblem { 2 } } }\n"
+		++ "function bad(value) { value.message }\n"
+		++ "let x = bad(choose(true));";
+	H.assertHasMessage(
+		H.typeDiags("combined_shared_field_bad.pf", src),
+		"no field 'message'"
+	)
+}
+
+//![test("combined union does not flow into a component union")]
+function testCombinedUnionReverseFlowFails() {
+	let src =
+		"type AError = { | AProblem }\n"
+		++ "type BError = { | BProblem }\n"
+		++ "type AppError = { ...AError ...BError }\n"
+		++ "let choose = proc (flag: Bool) -> AppError { if flag then { AProblem } else { BProblem } };\n"
+		++ "let onlyA = proc (value: AError) -> Unit { };\n"
+		++ "proc run() { onlyA(choose(false)); }";
+	H.assertHasMessage(
+		H.typeDiags("combined_reverse_flow.pf", src),
+		"AppError"
+	)
+}
+
+//![test("combined union inclusion cycles fail")]
+function testCombinedUnionCycleFails() {
+	let src =
+		"type AError = { ...BError | AProblem }\n"
+		++ "type BError = { ...AError | BProblem }";
+	H.assertHasMessage(
+		H.typeDiags("combined_cycle.pf", src),
+		"Cyclic union inclusion"
+	)
+}
+
+//![test("combined union duplicate variants fail")]
+function testCombinedUnionDuplicateVariantFails() {
+	let src =
+		"type AError = { | Same: message }\n"
+		++ "type BError = { | Same: message }\n"
+		++ "type AppError = { ...AError ...BError }";
+	H.assertHasMessage(
+		H.typeDiags("combined_duplicate.pf", src),
+		"duplicate variant 'Same'"
+	)
+}
+
 //![test("sibling variant field access fails")]
 function testSiblingVariantFieldAccessFails() {
 	let src = "type T = { | A: n | B }\nfunction h(t) { match t with | A a -> a.n | B b -> b.n; }";
@@ -338,6 +490,95 @@ function testBuiltinCoreExportsAmbient() {
 	H.assertOkDiags(H.typeDiagsWithBuiltins("builtin_ambient.pf", src))
 }
 
+//![test("builtin NativeError variants and accessors succeed")]
+function testBuiltinNativeErrorSucceeds() {
+	let src =
+		"function describe(error) {\n"
+		++ "  match error with\n"
+		++ "  | NativeIoError found -> found.operation ++ \"/\" ++ found.message\n"
+		++ "  | NativeProcessError found -> found.operation ++ \"/\" ++ found.message\n"
+		++ "  | NativeTimerError found -> found.operation ++ \"/\" ++ found.message\n"
+		++ "  | NativeBufferError found -> found.operation ++ \"/\" ++ found.message\n"
+		++ "  | NativeJsonError found -> found.operation ++ \"/\" ++ found.message\n"
+		++ "  | NativeNumericError found -> found.operation ++ \"/\" ++ found.message\n"
+		++ "  | NativePlatformError found -> found.operation ++ \"/\" ++ found.message;\n"
+		++ "}\n"
+		++ "let error = NativeIoError { operation = \"readFile\", message = \"denied\" };\n"
+		++ "let text = describe(error) ++ nativeErrorOperation(error) ++ nativeErrorMessage(error);";
+	H.assertOkDiags(H.typeDiagsWithBuiltins("builtin_native_error.pf", src))
+}
+
+//![test("sleep and timer procedures return NativeError Results")]
+function testBuiltinTimerResultsSucceed() {
+	let src =
+		"import * from \"async\";\n"
+		++ "import * from \"timer\";\n"
+		++ "async proc run() {\n"
+		++ "  match await sleep(0) with\n"
+		++ "  | Err failure -> nativeErrorMessage(failure.message)\n"
+		++ "  | Ok _ -> {\n"
+		++ "      match setTimer(0, proc () -> Unit { }) with\n"
+		++ "      | Err failure -> nativeErrorMessage(failure.message)\n"
+		++ "      | Ok timer -> match clearTimer(timer.value) with\n"
+		++ "        | Err failure -> nativeErrorMessage(failure.message)\n"
+		++ "        | Ok _ -> \"ok\";\n"
+		++ "    }\n"
+		++ "}\n";
+	H.assertOkDiags(
+		H.typeDiagsWithBuiltins("builtin_timer_results.pf", src)
+	)
+}
+
+//![test("timer scheduling Result must be unwrapped")]
+function testBuiltinTimerResultMustBeUnwrapped() {
+	let src =
+		"import * from \"timer\";\n"
+		++ "proc run() {\n"
+		++ "  let handle = setTimer(0, proc () -> Unit { });\n"
+		++ "  clearTimer(handle);\n"
+		++ "}\n";
+	H.assertHasMessage(
+		H.typeDiagsWithBuiltins("builtin_timer_unwrap.pf", src),
+		"Result<TimerHandle, NativeError>"
+	)
+}
+
+//![test("console procedures return NativeError Results")]
+function testBuiltinConsoleResultsSucceed() {
+	let src =
+		"import * from \"io\";\n"
+		++ "proc run() {\n"
+		++ "  match println(\"hello\") with\n"
+		++ "  | Err failure -> nativeErrorMessage(failure.message)\n"
+		++ "  | Ok _ -> match scanln() with\n"
+		++ "    | Err failure -> nativeErrorMessage(failure.message)\n"
+		++ "    | Ok input -> match input.value with\n"
+		++ "      | None -> \"eof\"\n"
+		++ "      | Some line -> line.value;\n"
+		++ "}\n";
+	H.assertOkDiags(
+		H.typeDiagsWithBuiltins("builtin_console_results.pf", src)
+	)
+}
+
+//![test("stdin Result must be unwrapped before Option")]
+function testBuiltinStdinResultMustBeUnwrapped() {
+	let src =
+		"import * from \"io\";\n"
+		++ "function legacyLine(input) {\n"
+		++ "  match input with\n"
+		++ "  | None -> \"eof\"\n"
+		++ "  | Some line -> line.value;\n"
+		++ "}\n"
+		++ "proc run() {\n"
+		++ "  legacyLine(scanln());\n"
+		++ "}\n";
+	H.assertHasMessage(
+		H.typeDiagsWithBuiltins("builtin_stdin_unwrap.pf", src),
+		"Result<Option<Str>, NativeError>"
+	)
+}
+
 //![test("builtin Pair construction and field access succeed")]
 function testBuiltinPairSucceeds() {
 	let src = "let p = Pair { 1, \"x\" };\nlet k = p.key + 1;\nlet v = p.value ++ \"!\";";
@@ -358,11 +599,11 @@ function testSharedVariantNamesUseSubjectUnion() {
 		++ "  match fileOpen(\"ignored.txt\", Read) with\n"
 		++ "  | Ok opened -> {\n"
 		++ "      match readLine(opened.value) with\n"
-		++ "      | Ok line -> line.value ++ \"\"\n"
-		++ "      | Eof _ -> \"\"\n"
-		++ "      | Err failed -> failed.message;\n"
+		++ "      | ReadOk line -> line.value ++ \"\"\n"
+		++ "      | ReadEof _ -> \"\"\n"
+		++ "      | ReadErr failed -> nativeErrorMessage(failed.message);\n"
 		++ "    }\n"
-		++ "  | Err failed -> failed.message;\n"
+		++ "  | Err failed -> nativeErrorMessage(failed.message);\n"
 		++ "}\n";
 	let diags = H.typeDiagsWithBuiltins(
 		"shared_variant_subject.pf",

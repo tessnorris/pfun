@@ -1,0 +1,13 @@
+import * from "io";
+
+function legacyLine(input) {
+	match input with
+	| None -> "eof"
+	| Some line -> line.value
+}
+
+proc main() {
+	legacyLine(scanln());
+}
+
+main();

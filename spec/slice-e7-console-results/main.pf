@@ -1,0 +1,58 @@
+import * from "io";
+
+function writeState(result) {
+	match result with
+	| Ok _ -> "ok"
+	| Err failure -> {
+		"error:"
+		++ nativeErrorOperation(failure.message)
+		++ ":"
+		++ nativeErrorMessage(failure.message)
+	}
+}
+
+function lineState(result) {
+	match result with
+	| Err failure -> {
+		"Err("
+		++ nativeErrorOperation(failure.message)
+		++ ")"
+	}
+	| Ok input -> match input.value with
+		| None -> "None"
+		| Some line -> "Some(" ++ line.value ++ ")"
+}
+
+function charState(result) {
+	match result with
+	| Err failure -> {
+		"Err("
+		++ nativeErrorOperation(failure.message)
+		++ ")"
+	}
+	| Ok input -> match input.value with
+		| None -> "None"
+		| Some character -> "Some(" ++ str(character.value) ++ ")"
+}
+
+proc main() {
+	let printed = print("prefix:");
+	let linePrinted = println("line");
+	let flushed = flushStdout();
+
+	println("print=" ++ writeState(printed));
+	println("println=" ++ writeState(linePrinted));
+	println("flush=" ++ writeState(flushed));
+
+	println("scanln=" ++ lineState(scanln()));
+	println("scanChar=" ++ charState(scanChar()));
+	println("scanChar-eof=" ++ charState(scanChar()));
+
+	let errorPrinted = eprint("stderr:");
+	let errorLinePrinted = eprintln("line");
+	println("eprint=" ++ writeState(errorPrinted));
+	println("eprintln=" ++ writeState(errorLinePrinted));
+	println("SLICE E7 CONSOLE RESULTS OK");
+}
+
+main();

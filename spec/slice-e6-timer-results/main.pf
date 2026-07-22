@@ -1,0 +1,80 @@
+import * from "async";
+import * from "io";
+import * from "timer";
+
+function timerError(error) {
+	match error with
+	| NativeTimerError _ -> {
+		"timer:"
+		++ nativeErrorOperation(error)
+		++ ":"
+		++ str(length(nativeErrorMessage(error)) > 0)
+	}
+	| _ -> "wrong-error-variant"
+}
+
+generic proc showResult(label, result) {
+	match result with
+	| Ok _ -> println(label ++ "=ok")
+	| Err failure -> println(
+		label ++ "=" ++ timerError(failure.message)
+	);
+}
+
+proc clearScheduled(label, scheduled) {
+	match scheduled with
+	| Err failure -> println(
+		label ++ "=" ++ timerError(failure.message)
+	)
+	| Ok timer -> showResult(label, clearTimer(timer.value));
+}
+
+async proc main() {
+	showResult("sleep-negative", await sleep(-1));
+	showResult(
+		"sleep-too-large",
+		await sleep(2147483648)
+	);
+
+	let invalidTimer = setTimer(-1, proc () -> Unit { });
+	showResult("timer-negative", invalidTimer);
+
+	var count = 0;
+	let canceled = setTimer(0, proc () -> Unit {
+		println("canceled-callback-ran");
+		{}
+	});
+	showResult("cancel-schedule", canceled);
+	clearScheduled("cancel-clear", canceled);
+
+	let syncTimer = setTimer(0, proc () -> Unit {
+		count = count + 1;
+		println("sync-fired");
+		{}
+	});
+	showResult("sync-schedule", syncTimer);
+
+	let asyncTimer = setAsyncTimer(5, async proc () -> Unit {
+		match await sleep(0) with
+		| Err failure -> {
+			println(
+				"callback-sleep=" ++ timerError(failure.message)
+			);
+			{}
+		}
+		| Ok _ -> {
+			count = count + 1;
+			println("async-fired");
+			{}
+		};
+	});
+	showResult("async-schedule", asyncTimer);
+
+	showResult("wait", await sleep(40));
+	clearScheduled("clear-fired", syncTimer);
+	clearScheduled("clear-async-fired", asyncTimer);
+	println("callbacks=" ++ str(count));
+	println("SLICE E6 TIMER RESULTS OK");
+}
+
+main();

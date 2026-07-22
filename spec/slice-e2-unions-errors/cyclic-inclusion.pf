@@ -1,0 +1,9 @@
+type FirstError = {
+	...SecondError
+	| FirstProblem
+}
+
+type SecondError = {
+	...FirstError
+	| SecondProblem
+}

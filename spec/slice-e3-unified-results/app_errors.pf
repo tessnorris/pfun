@@ -1,0 +1,7 @@
+import { FileStageError } from "./file_stage";
+import { DecodeStageError } from "./decode_stage";
+
+export type StageError = {
+	...FileStageError
+	...DecodeStageError
+}

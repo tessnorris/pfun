@@ -16,7 +16,10 @@ import { runCoreExamples } from "./example-v2/core";
 import { runStringExamples } from "./example-v2/strings";
 import { runListExamples } from "./example-v2/lists";
 import { runTypeExamples } from "./example-v2/types";
+import { runPipelineExamples } from "./example-v2/pipelines";
+import { runCombinedErrorExamples } from "./example-v2/combined_errors";
 import { runProcLambdaExamples } from "./example-v2/procs";
+import { runTimerExamples } from "./example-v2/timers";
 import * from "io";
 
 async proc main() {
@@ -26,7 +29,10 @@ async proc main() {
 	runStringExamples();
 	runListExamples();
 	runTypeExamples();
+	runPipelineExamples();
+	runCombinedErrorExamples();
 	await runProcLambdaExamples();
+	await runTimerExamples();
 	println("");
 	println("All deterministic V2 examples completed.");
 }

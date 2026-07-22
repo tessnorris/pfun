@@ -10,8 +10,8 @@ import * as Compat from "../src/compat";
 
 function parseModule(path, source) {
 	match H.parseSource(path, source) with
-	| SourceOk ok -> ok.module
-	| SourceErr _ -> A.mkModule(path, [], 1)
+	| Ok ok -> ok.value
+	| Err _ -> A.mkModule(path, [], 1)
 }
 
 function ifaceFromSource(path, source) {

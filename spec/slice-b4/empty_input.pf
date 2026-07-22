@@ -4,14 +4,18 @@ import { println, scanln, scanChar } from "io";
 
 function lineState(value) {
 	match value with
-	| None -> "None"
-	| Some found -> "Some"
+	| Err _ -> "Err"
+	| Ok found -> match found.value with
+		| None -> "None"
+		| Some _ -> "Some"
 }
 
 function charState(value) {
 	match value with
-	| None -> "None"
-	| Some found -> "Some"
+	| Err _ -> "Err"
+	| Ok found -> match found.value with
+		| None -> "None"
+		| Some _ -> "Some"
 }
 
 proc main() {

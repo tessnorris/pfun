@@ -1,0 +1,94 @@
+// Slice D6: cancellable one-shot timers with sync and async proc callbacks.
+
+import * from "async";
+import * from "io";
+import * from "timer";
+
+function timerErrorText(error) {
+	nativeErrorOperation(error)
+	++ ":"
+	++ nativeErrorMessage(error)
+}
+
+proc clearScheduled(label, scheduled) {
+	match scheduled with
+	| Err failure -> {
+		println(
+			label ++ " schedule error: " ++ timerErrorText(failure.message)
+		);
+		{}
+	}
+	| Ok timer -> {
+		match clearTimer(timer.value) with
+		| Ok _ -> {}
+		| Err failure -> {
+			println(
+				label ++ " clear error: " ++ timerErrorText(failure.message)
+			);
+			{}
+		};
+	}
+}
+
+proc reportScheduled(label, scheduled) {
+	match scheduled with
+	| Ok _ -> {}
+	| Err failure -> {
+		println(
+			label ++ " schedule error: " ++ timerErrorText(failure.message)
+		);
+		{}
+	};
+}
+
+async proc main() {
+	println("timer start");
+
+	var count = 0;
+	let canceled = setTimer(0, proc () -> Unit {
+		println("canceled callback ran");
+		{}
+	});
+	clearScheduled("canceled", canceled);
+	clearScheduled("canceled-again", canceled);
+
+	let syncHandle = setTimer(0, proc () -> Unit {
+		count = count + 1;
+		println("sync " ++ str(count));
+		{}
+	});
+
+	let asyncHandle = setAsyncTimer(5, async proc () -> Unit {
+		match await sleep(0) with
+		| Err failure -> {
+			println(
+				"callback sleep error: "
+				++ timerErrorText(failure.message)
+			);
+			{}
+		}
+		| Ok _ -> {
+			count = count + 1;
+			println("async " ++ str(count));
+			{}
+		};
+	});
+	reportScheduled("sync", syncHandle);
+	reportScheduled("async", asyncHandle);
+
+	match await sleep(40) with
+	| Ok _ -> {}
+	| Err failure -> {
+		println(
+			"main sleep error: " ++ timerErrorText(failure.message)
+		);
+		{}
+	};
+
+	// Cancellation is harmless after a timer has fired and remains idempotent.
+	clearScheduled("sync", syncHandle);
+	clearScheduled("async", asyncHandle);
+	println("done " ++ str(count));
+}
+
+main();

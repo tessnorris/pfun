@@ -315,6 +315,56 @@ function testOperatorSpecialization() {
 	])
 }
 
+//![test("emits forward Option and Result pipelines")]
+function testPipelineEmission() {
+	let sp = testSpan();
+	let raw = A.eVar(1, "raw", sp);
+	let option = A.eVar(2, "option", sp);
+	let result = A.eVar(3, "result", sp);
+	let plainStep = A.eVar(4, "plainStep", sp);
+	let optionStep = A.eVar(5, "optionStep", sp);
+	let optionFlat = A.eVar(6, "optionFlat", sp);
+	let resultStep = A.eVar(7, "resultStep", sp);
+	let resultFlat = A.eVar(8, "resultFlat", sp);
+	let types = typeTable([
+		Pair { 1, TY.tInt() },
+		Pair { 2, TY.tNamed("Option", [TY.tInt()]) },
+		Pair { 3, TY.tNamed("Result", [TY.tInt(), TY.tStr()]) },
+		Pair { 4, TY.tFun([TY.tInt()], TY.tStr()) },
+		Pair { 5, TY.tFun([TY.tInt()], TY.tStr()) },
+		Pair { 6, TY.tFun([TY.tInt()], TY.tNamed("Option", [TY.tStr()])) },
+		Pair { 7, TY.tFun([TY.tInt()], TY.tStr()) },
+		Pair { 8, TY.tFun([TY.tInt()], TY.tNamed("Result", [TY.tStr(), TY.tStr()])) }
+	]);
+
+	Assert.assertions([
+		Assert.assertEqual(
+			"plainStep(raw);\n",
+			renderExpr(types, opts(), A.eBinary(20, "|>", raw, plainStep, sp))
+		),
+		Assert.assertEqual(
+			"plainStep(raw);\n",
+			renderExpr(types, opts(), A.eBinary(21, "|?>", raw, plainStep, sp))
+		),
+		Assert.assertEqual(
+			"$optionPipe(option, optionStep, false);\n",
+			renderExpr(types, opts(), A.eBinary(22, "|?>", option, optionStep, sp))
+		),
+		Assert.assertEqual(
+			"$optionPipe(option, optionFlat, true);\n",
+			renderExpr(types, opts(), A.eBinary(23, "|?>", option, optionFlat, sp))
+		),
+		Assert.assertEqual(
+			"$resultPipe(result, resultStep, false);\n",
+			renderExpr(types, opts(), A.eBinary(24, "|!>", result, resultStep, sp))
+		),
+		Assert.assertEqual(
+			"$resultPipe(result, resultFlat, true);\n",
+			renderExpr(types, opts(), A.eBinary(25, "|!>", result, resultFlat, sp))
+		)
+	])
+}
+
 //![test("emits format strings and strict or lazy list construction")]
 function testFmtAndListEmission() {
 	let sp = testSpan();
@@ -882,6 +932,7 @@ function __gen_suite_compile_emit_expressions() {
 		test("emits scalar literals and singleton variants", testScalarAndSingletonEmission),
 		test("emits records and payload variants with the shared ABI", testRecordAndVariantAbi),
 		test("specializes Int Float and string operators", testOperatorSpecialization),
+		test("emits forward Option and Result pipelines", testPipelineEmission),
 		test("emits format strings and strict or lazy list construction", testFmtAndListEmission),
 		test("emits strict and lazy comprehension descriptors", testComprehensionEmission)
 	])

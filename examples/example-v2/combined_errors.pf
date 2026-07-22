@@ -1,0 +1,60 @@
+// Combined unions let a module expose one error type without replacing the
+// smaller domain errors that produced it.
+
+import * from "io";
+
+type V2FileError = {
+	| V2FileMissing: message, code
+	| V2FileDenied: message, code
+}
+
+type V2DecodeError = {
+	| V2InvalidData: message, code
+}
+
+type V2AppError = {
+	...V2FileError
+	...V2DecodeError
+	| V2InvalidConfig: message, code
+}
+
+function exampleFailure(kind) {
+	if kind == 0 then {
+		Err { V2FileMissing { "settings file missing", 404 } }
+	} else if kind == 1 then {
+		Err { V2InvalidData { "settings are malformed", 422 } }
+	} else {
+		Err { V2InvalidConfig { "port is required", 400 } }
+	}
+}
+
+function errorLabel(result) {
+	match result with
+	| Ok _ -> "ok"
+	| Err failure -> {
+		match failure.message with
+		| V2FileMissing _ -> "file"
+		| V2FileDenied _ -> "permission"
+		| V2InvalidData _ -> "decode"
+		| V2InvalidConfig _ -> "config"
+	}
+}
+
+function errorMessage(result) {
+	match result with
+	| Ok _ -> "no error"
+	| Err failure -> failure.message.message
+}
+
+export proc runCombinedErrorExamples() {
+	println("");
+	println("--- Combined unions and unified errors ---");
+
+	let fileFailure = exampleFailure(0);
+	let decodeFailure = exampleFailure(1);
+	let configFailure = exampleFailure(2);
+
+	println(errorLabel(fileFailure) ++ " = " ++ errorMessage(fileFailure));
+	println(errorLabel(decodeFailure) ++ " = " ++ errorMessage(decodeFailure));
+	println(errorLabel(configFailure) ++ " = " ++ errorMessage(configFailure));
+}

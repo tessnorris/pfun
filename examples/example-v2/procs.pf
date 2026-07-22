@@ -20,6 +20,7 @@ export async proc runProcLambdaExamples() {
 	let onLine = proc (line: Str) -> Unit {
 		count = count + 1;
 		println(prefix ++ " " ++ str(count) ++ ": " ++ line);
+		{}
 	};
 
 	let handler = makeHandler(onLine);
@@ -27,8 +28,15 @@ export async proc runProcLambdaExamples() {
 	handler.action("second");
 
 	let delayed = async proc (value: Int) -> Int {
-		await sleep(0);
-		value + count
+		match await sleep(0) with
+		| Ok _ -> value + count
+		| Err failure -> {
+			println(
+				"sleep error: "
+				++ nativeErrorMessage(failure.message)
+			);
+			value + count
+		}
 	};
 	println("async result = " ++ str(await delayed(40)));
 }

@@ -12,10 +12,7 @@ export type CliPlan = {
 	| CliUsage: message
 }
 
-type BuildFlagsResult = {
-	| BuildFlagsOk: target, output, page
-	| BuildFlagsErr: message
-}
+type BuildFlags = { target, output, page }
 
 export function usageText() {
 	"Usage:\n"
@@ -72,11 +69,11 @@ function defaultBuildOutput(target) {
 
 function finishBuildFlags(target, output, page) {
 	if !validBuildTarget(target) then {
-		BuildFlagsErr {
+		Err {
 			"Unknown build target '" ++ target ++ "'."
 		}
 	} else if length(page) > 0 && target != "browser" then {
-		BuildFlagsErr {
+		Err {
 			"--page is only valid with --target browser."
 		}
 	} else {
@@ -87,10 +84,12 @@ function finishBuildFlags(target, output, page) {
 			? "Pfun Application"
 			: page;
 
-		BuildFlagsOk {
-			target = target,
-			output = finalOutput,
-			page = finalPage
+		Ok {
+			BuildFlags {
+				target = target,
+				output = finalOutput,
+				page = finalPage
+			}
 		}
 	}
 }
@@ -104,7 +103,7 @@ function parseBuildFlags(args, target, output, page) {
 
 		match Compat.uncons(afterFlag) with
 		| None -> {
-			BuildFlagsErr {
+			Err {
 				"Option '" ++ flag ++ "' requires a value."
 			}
 		}
@@ -113,7 +112,7 @@ function parseBuildFlags(args, target, output, page) {
 			let rest = valueCell.value.value;
 
 			if !validText(value) then {
-				BuildFlagsErr {
+				Err {
 					"Option '" ++ flag ++ "' requires a value."
 				}
 			} else if flag == "--target" then {
@@ -123,7 +122,7 @@ function parseBuildFlags(args, target, output, page) {
 			} else if flag == "--page" then {
 				parseBuildFlags(rest, target, output, value)
 			} else {
-				BuildFlagsErr {
+				Err {
 					"Unknown build option '" ++ flag ++ "'."
 				}
 			}
@@ -148,13 +147,13 @@ function parseBuild(args) {
 			"",
 			""
 		) with
-		| BuildFlagsErr failed -> usage(failed.message)
-		| BuildFlagsOk parsed -> {
+		| Err failed -> usage(failed.message)
+		| Ok parsed -> {
 			CliBuild {
 				entry = entry,
-				target = parsed.target,
-				output = parsed.output,
-				page = parsed.page
+				target = parsed.value.target,
+				output = parsed.value.output,
+				page = parsed.value.page
 			}
 		}
 	}

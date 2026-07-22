@@ -35,19 +35,19 @@ proc main() {
 	| Err _ -> println("openBytesRead:err")
 	| Ok opened -> {
 		match readByte(opened.value) with
-		| Ok byte -> println("byte1:" ++ str(byte.value))
-		| Eof _ -> println("byte1:eof")
-		| Err _ -> println("byte1:err");
+		| ReadOk byte -> println("byte1:" ++ str(byte.value))
+		| ReadEof _ -> println("byte1:eof")
+		| ReadErr _ -> println("byte1:err");
 
 		match readBytes(opened.value, 3) with
-		| Ok bytes -> println("bytes:" ++ str(bytes.value))
-		| Eof _ -> println("bytes:eof")
-		| Err _ -> println("bytes:err");
+		| ReadOk bytes -> println("bytes:" ++ str(bytes.value))
+		| ReadEof _ -> println("bytes:eof")
+		| ReadErr _ -> println("bytes:err");
 
 		match readByte(opened.value) with
-		| Ok byte -> println("byteEof:" ++ str(byte.value))
-		| Eof _ -> println("byteEof:yes")
-		| Err _ -> println("byteEof:err");
+		| ReadOk byte -> println("byteEof:" ++ str(byte.value))
+		| ReadEof _ -> println("byteEof:yes")
+		| ReadErr _ -> println("byteEof:err");
 
 		match fileClose(opened.value) with
 		| Ok _ -> println("closeBytesRead:ok")

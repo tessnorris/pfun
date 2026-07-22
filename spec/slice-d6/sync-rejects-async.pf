@@ -1,0 +1,3 @@
+import * from "timer";
+
+let result = setTimer(0, async proc () -> Unit { });

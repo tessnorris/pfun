@@ -1,9 +1,7 @@
 # Pfun V2 modular example
 
-`examples/example-V2.pf` is the V2-native language tour.
-
-The original `examples/example.pf` remains untouched because the V1 compiler
-tests still use it.
+`examples/example.pf` is the canonical V2-native language tour. The modules in
+this directory keep each feature demonstration focused and reusable.
 
 ## Current modules
 
@@ -15,17 +13,23 @@ tests still use it.
   opt-in `"list"` library.
 - `types.pf` — nominal records, unions, exhaustive matching, Option, and generic
   record fields.
+- `pipelines.pf` — ordinary `|>`, transparent Option `|?>`, transparent Result
+  `|!>`, raw and wrapped stages, short-circuiting, flattening, and joined errors.
+- `combined_errors.pf` — combined unions, shared error fields, nested `Result`
+  matching, and exhaustive handling of the flattened error set.
+- `procs.pf` — synchronous and asynchronous procedure lambdas as callbacks.
+- `timers.pf` — cancellable one-shot timers and awaited callbacks.
 
-This first slice is deterministic. It intentionally excludes interactive input,
-file I/O, mutable dictionaries/arrays, lazy lists, async operations, HTTP, and
-native-backed libraries until those V2 runtime layers are ready.
+The tour is deterministic. It intentionally excludes interactive input, file
+I/O, mutable dictionaries/arrays, lazy lists, HTTP, and native-backed libraries
+until those V2 runtime layers are ready.
 
 ## Build
 
 ```bash
-PFUN_HOME="$PWD" node bootstrap-stage2/pfc.js \
-  build examples/example-V2.pf \
-  -o output/example-V2.js
+PFUN_HOME="$PWD" node boot/pfc.js \
+  build examples/example.pf \
+  -o output/example.js
 
-node output/example-V2.js
+node output/example.js
 ```

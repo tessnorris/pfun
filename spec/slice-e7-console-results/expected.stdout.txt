@@ -1,0 +1,10 @@
+prefix:line
+print=ok
+println=ok
+flush=ok
+scanln=Some(alpha)
+scanChar=Some(β)
+scanChar-eof=None
+eprint=ok
+eprintln=ok
+SLICE E7 CONSOLE RESULTS OK

@@ -1,0 +1,8 @@
+import * from "timer";
+
+proc main() {
+	let handle = setTimer(0, proc () -> Unit { });
+	clearTimer(handle);
+}
+
+main();

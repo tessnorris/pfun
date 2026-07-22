@@ -161,6 +161,18 @@ function addIfaceUnionEntries(st, entries) {
 	}
 }
 
+function addInferredUnionEntries(st, entries) {
+	match Compat.uncons(entries) with
+	| None -> st
+	| Some cell -> {
+		let pair = cell.value.key;
+		addInferredUnionEntries(
+			addUnion(st, pair.key, pair.value.variants),
+			cell.value.value
+		)
+	}
+}
+
 function addDepIface(st, iface) {
 	addIfaceUnionEntries(st, IMS.imsEntries(iface.unions))
 }
@@ -558,8 +570,13 @@ function checkMaybeStmtList(st, infer, stmts) {
 // ── public entry points ───────────────────────────────────────────────────
 
 export generic function checkModule(ast, infer, deps) {
-	let st0 = initialState(ast, deps);
-	let st1 = checkStmtList(st0, infer, ast.stmts);
+	let depsMap = I.normalizeIfaceMap(deps);
+	let st0 = initialState(ast, depsMap);
+	let expanded = addInferredUnionEntries(
+		st0,
+		IMS.imsEntries(infer.unionShapes)
+	);
+	let st1 = checkStmtList(expanded, infer, ast.stmts);
 	mkExhaustResult(reverse(st1.diags))
 }
 
@@ -570,6 +587,6 @@ export generic function checkExhaustiveness(ast, infer, deps) {
 // Useful for early parser/AST tests before type inference exists. It returns no
 // diagnostics because real exhaustiveness needs subject types.
 export generic function checkSyntaxOnly(ast, deps) {
-	let st0 = initialState(ast, deps);
+	let st0 = initialState(ast, I.normalizeIfaceMap(deps));
 	mkExhaustResult(reverse(st0.diags))
 }

@@ -29,7 +29,7 @@ Buffer and buffer/file operations
 Whole-file and mutating operations use:
 
 ```text
-Result<T, Str> = Ok { value } | Err { message }
+Result<T, NativeError> = Ok { value } | Err { message }
 ```
 
 Successful writes, closes, directory creation, and removal carry Unit.
@@ -37,14 +37,19 @@ Successful writes, closes, directory creation, and removal carry Unit.
 Handle reads use:
 
 ```text
-ReadResult<T, Str> =
-  Ok { value }
-  | Eof
-  | Err { message }
+ReadResult<T, NativeError> =
+  ReadOk { value }
+  | ReadEof
+  | ReadErr { message }
 ```
 
 This distinguishes clean end-of-file from an operating-system or decoding
 failure.
+
+The error payload is a `NativeError`; file operations produce its
+`NativeIoError` variant. `fileExists` also uses `Result<Bool, NativeError>`:
+missing paths are `Ok { false }`, while permission and platform failures are
+`Err`. See Slice E5 for the shared native-error contract.
 
 ## Handle model
 
@@ -68,16 +73,15 @@ bash scripts/test-v2-slice-d2.sh
 
 ## Shared variant-name resolution
 
-D2 exercises both `Result` and `ReadResult`, which share `Ok` and `Err`.
-The checker resolves a match pattern from the statically known union of the
-subject rather than from a global variant-name entry. A bound `TVariant` also
-uses its recorded `unionName` when resolving payload fields.
+D2 originally exercised `Result` and `ReadResult` with shared constructor
+names. The streaming constructors are now globally distinct, while the checker
+continues to resolve match patterns from the statically known subject union.
 
 This is required for:
 
 ```text
 Result<T, E>     = Ok { value } | Err { message }
-ReadResult<T, E> = Ok { value } | Eof | Err { message }
+ReadResult<T, E> = ReadOk { value } | ReadEof | ReadErr { message }
 ```
 
 and for user-defined unions that intentionally reuse variant names.

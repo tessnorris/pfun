@@ -101,10 +101,88 @@ generic function mergeTypedExports(entries, acc) {
 	}
 }
 
+generic function mergeExpandedVariants(entries, exported, acc) {
+	match Compat.uncons(entries) with
+	| None -> acc
+	| Some cell -> {
+		let pair = cell.value.key;
+		let next = if IMS.imsHas(exported, pair.key) then {
+			IMS.imsPut(acc, pair.key, pair.value.variants)
+		} else {
+			acc
+		};
+		mergeExpandedVariants(
+			cell.value.value,
+			exported,
+			next
+		)
+	}
+}
+
+generic function mergeExpandedOwnVariants(entries, exported, acc) {
+	match Compat.uncons(entries) with
+	| None -> acc
+	| Some cell -> {
+		let pair = cell.value.key;
+		let next = if IMS.imsHas(exported, pair.key) then {
+			IMS.imsPut(acc, pair.key, pair.value.ownVariants)
+		} else {
+			acc
+		};
+		mergeExpandedOwnVariants(
+			cell.value.value,
+			exported,
+			next
+		)
+	}
+}
+
+generic function mergeExpandedMembers(entries, exported, acc) {
+	match Compat.uncons(entries) with
+	| None -> acc
+	| Some cell -> {
+		let pair = cell.value.key;
+		let next = if IMS.imsHas(exported, pair.key) then {
+			IMS.imsPut(acc, pair.key, pair.value.members)
+		} else {
+			acc
+		};
+		mergeExpandedMembers(
+			cell.value.value,
+			exported,
+			next
+		)
+	}
+}
+
 generic function ifaceFromInfer(ast, infer) {
 	let skeleton = I.ifaceOfAst(ast);
 	let typedExports = mergeTypedExports(IMS.imsEntries(infer.exports), skeleton.types);
-	I.mkIfaceWithRecords(ast.path, skeleton.kinds, typedExports, skeleton.records, skeleton.unions)
+	let entries = IMS.imsEntries(infer.unionShapes);
+	let expandedUnions = mergeExpandedVariants(
+		entries,
+		skeleton.unions,
+		skeleton.unions
+	);
+	let ownUnions = mergeExpandedOwnVariants(
+		entries,
+		skeleton.unions,
+		skeleton.ownUnions
+	);
+	let unionMembers = mergeExpandedMembers(
+		entries,
+		skeleton.unions,
+		skeleton.unionMembers
+	);
+	I.mkIfaceFull(
+		ast.path,
+		skeleton.kinds,
+		typedExports,
+		skeleton.records,
+		expandedUnions,
+		ownUnions,
+		unionMembers
+	)
 }
 
 // ── single-module checking ────────────────────────────────────────────────
@@ -117,9 +195,10 @@ generic function runExhaust(ast, infer, deps) {
 }
 
 export generic function checkModule(ast, deps) {
-	let infer = TY.inferModule(ast, deps);
-	let purity = P.checkModule(ast, deps, infer.types);
-	let exhaust = runExhaust(ast, infer, deps);
+	let depsMap = I.normalizeIfaceMap(deps);
+	let infer = TY.inferModule(ast, depsMap);
+	let purity = P.checkModule(ast, depsMap, infer.types);
+	let exhaust = runExhaust(ast, infer, depsMap);
 	let d1 = appendList(infer.diags, purity.diags);
 	let d2 = appendList(d1, exhaust.diags);
 	let iface = hasBlockingDiags(d2) ? I.emptyIface(ast.path) : ifaceFromInfer(ast, infer);
@@ -288,7 +367,7 @@ generic function checkedGraphLoop(mods, ifaces, checkedAcc, diagAcc, failedPaths
 }
 
 // `mods` must already be dependency-first, normally from graph/modgraph.pf's
-// `TopoOk.modules`. `builtinIfaces` is an imaps map from builtin module names
+// `Ok.value`. `builtinIfaces` is an imaps map from builtin module names
 // and/or `$builtin/<name>` paths to ModIface values.
 export generic function checkGraph(mods, builtinIfaces) {
 	checkedGraphLoop(mods, builtinIfaces, [], [], [])
@@ -298,9 +377,9 @@ export generic function checkGraphNoBuiltins(mods) {
 	checkGraph(mods, IMS.imsEmpty())
 }
 
-// Convenience for callers that have a `TopoResult` from graph/modgraph.pf.
+// Convenience for callers that have graph/modgraph.pf's core Result value.
 export generic function checkTopo(topo, builtinIfaces) {
 	match topo with
-	| TopoOk ok -> checkGraph(ok.modules, builtinIfaces)
-	| TopoErr bad -> mkCheckGraphResult([], builtinIfaces, bad.diags)
+	| Ok ok -> checkGraph(ok.value, builtinIfaces)
+	| Err bad -> mkCheckGraphResult([], builtinIfaces, bad.message)
 }

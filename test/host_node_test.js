@@ -154,7 +154,9 @@ try {
   const written = nodeHost.$writeFile(file, source);
   assert.equal(written.$t, "Ok");
   assert.equal(written.value, null);
-  assert.equal(nodeHost.$fileExists(file), true);
+  const exists = nodeHost.$fileExists(file);
+  assert.equal(exists.$t, "Ok");
+  assert.equal(exists.value, true);
 
   const read = nodeHost.$readFile(file);
   assert.equal(read.$t, "Ok");
@@ -190,7 +192,11 @@ const probe = `
     host.$scanChar(),
     host.$scanChar(),
     host.$scanChar()
-  ].map((value) => value.$t === "Some" ? value.value : null);
+  ].map((result) => {
+    if (result.$t !== "Ok") throw new Error("unexpected scan failure");
+    const value = result.value;
+    return value.$t === "Some" ? value.value : null;
+  });
   process.stdout.write(JSON.stringify(values));
 `;
 const scanned = childProcess.spawnSync(
@@ -200,6 +206,28 @@ const scanned = childProcess.spawnSync(
 );
 assert.equal(scanned.status, 0, scanned.stderr);
 assert.deepEqual(JSON.parse(scanned.stdout), ["alpha", "β", "z", null]);
+
+const stdinFailureProbe = `
+  const host = require(${JSON.stringify(nodePath)});
+  const fs = require("node:fs");
+  fs.readFileSync = function failStdinRead(fd) {
+    if (fd === 0) throw new Error("stdin read failed");
+    throw new Error("unexpected file read");
+  };
+  const result = host.$scanln();
+  process.stdout.write(JSON.stringify(result));
+`;
+const stdinFailure = childProcess.spawnSync(
+  process.execPath,
+  ["-e", stdinFailureProbe],
+  { encoding: "utf8" }
+);
+assert.equal(stdinFailure.status, 0, stdinFailure.stderr);
+const stdinFailureResult = JSON.parse(stdinFailure.stdout);
+assert.equal(stdinFailureResult.$t, "Err");
+assert.equal(stdinFailureResult.message.$t, "NativeIoError");
+assert.equal(stdinFailureResult.message.operation, "scanln");
+assert.match(stdinFailureResult.message.message, /stdin read failed/);
 
 
 // stderr output is separate from stdout and uses Pfun stringification.
@@ -218,6 +246,23 @@ assert.equal(stderrResult.status, 0, stderrResult.stderr);
 assert.equal(stderrResult.stdout, "output");
 assert.equal(stderrResult.stderr, "error:42\n");
 
+const originalWriteSync = fs.writeSync;
+try {
+	fs.writeSync = function failStderrWrite(fd, buffer, offset, length) {
+		if (fd === process.stderr.fd) {
+			throw new Error("stderr write failed");
+		}
+		return originalWriteSync(fd, buffer, offset, length);
+	};
+	const stderrFailure = nodeHost.$eprintln("unwritable");
+	assert.equal(stderrFailure.$t, "Err");
+	assert.equal(stderrFailure.message.$t, "NativeIoError");
+	assert.equal(stderrFailure.message.operation, "eprintln");
+	assert.match(stderrFailure.message.message, /stderr write failed/);
+} finally {
+	fs.writeSync = originalWriteSync;
+}
+
 
 // NodeBundle execution forwards arguments, streams, exit status, and cleanup.
 const runDirsBefore = fs.readdirSync(os.tmpdir())
@@ -235,7 +280,11 @@ const runBundleProbe = `
 		["alpha", "beta gamma"]
 	);
 	if (result.$t !== "Ok") {
-		process.stderr.write("probe-error:" + result.message + "\\n");
+		process.stderr.write(
+			"probe-error:"
+				+ host.$builtins.core.nativeErrorMessage(result.message)
+				+ "\\n"
+		);
 		process.exit(1);
 	}
 	process.stdout.write("result:" + String(result.value) + "\\n");
@@ -251,6 +300,15 @@ assert.equal(
 	"child-out:alpha,beta gamma\nresult:7\n"
 );
 assert.equal(runBundleResult.stderr, "child-err\n");
+
+const invalidBundle = nodeHost.$runNodeBundle(null, []);
+assert.equal(invalidBundle.$u, "Result");
+assert.equal(invalidBundle.$t, "Err");
+assert.equal(invalidBundle.message.$u, "NativeError");
+assert.equal(invalidBundle.message.$t, "NativeProcessError");
+assert.equal(invalidBundle.message.operation, "runNodeBundle");
+assert.match(invalidBundle.message.message, /must be a Str/);
+
 const runDirsAfter = fs.readdirSync(os.tmpdir())
 	.filter((name) => name.startsWith("pfun-run-"))
 	.sort();

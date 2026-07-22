@@ -19,32 +19,6 @@ import * as Link from "../compile/link";
 import * as MG from "../graph/modgraph";
 import * as Spec from "../builtins/spec";
 import * as Diag from "../check/diag";
-import * from "../data/resultx";
-
-type HostReadResult = {
-	| HostReadOk: host
-	| HostReadErr: message
-}
-
-type ArtifactWriteResult = {
-	| ArtifactWriteOk
-	| ArtifactWriteErr: message
-}
-
-export type CliCheckResult = {
-	| CliCheckOk: entry
-	| CliCheckErr: message
-}
-
-export type CliRunResult = {
-	| CliRunOk: code
-	| CliRunErr: message
-}
-
-export type CliBuildResult = {
-	| CliBuildOk: output
-	| CliBuildErr: message
-}
 
 // ── pure driver policy ─────────────────────────────────────────────────────
 
@@ -97,17 +71,17 @@ function hostBrowserPath(home) {
 
 proc readHostSources(home) {
 	match IO.readTextFile(hostCorePath(home)) with
-	| BErr coreErr -> HostReadErr {
+	| Err coreErr -> Err {
 		"Could not read Node host core: "
 		++ coreErr.message
 	}
-	| BOk core -> {
+	| Ok core -> {
 		match IO.readTextFile(hostNodePath(home)) with
-		| BErr nodeErr -> HostReadErr {
+		| Err nodeErr -> Err {
 			"Could not read Node platform host: "
 			++ nodeErr.message
 		}
-		| BOk node -> HostReadOk {
+		| Ok node -> Ok {
 			Link.hostSrc(
 				core.value,
 				node.value
@@ -118,22 +92,22 @@ proc readHostSources(home) {
 
 proc readBrowserHostSources(home) {
 	match IO.readTextFile(hostCorePath(home)) with
-	| BErr coreErr -> {
-		HostReadErr {
+	| Err coreErr -> {
+		Err {
 			"Could not read browser host core: "
 				++ coreErr.message
 		}
 	}
-	| BOk core -> {
+	| Ok core -> {
 		match IO.readTextFile(hostBrowserPath(home)) with
-		| BErr browserErr -> {
-			HostReadErr {
+		| Err browserErr -> {
+			Err {
 				"Could not read browser platform host: "
 					++ browserErr.message
 			}
 		}
-		| BOk browser -> {
-			HostReadOk {
+		| Ok browser -> {
+			Ok {
 				Link.hostSrc(
 					core.value,
 					browser.value
@@ -147,25 +121,25 @@ proc writeSingleJs(output, text) {
 	let dir = CliArgs.outputDir(output);
 
 	match IO.ensureDir(dir) with
-	| BErr mkdirErr -> {
-		ArtifactWriteErr {
+	| Err mkdirErr -> {
+		Err {
 			"Could not create output directory '"
 				++ dir
 				++ "': "
 				++ mkdirErr.message
 		}
 	}
-	| BOk _ -> {
+	| Ok _ -> {
 		match IO.writeTextFile(output, text) with
-		| BErr writeErr -> {
-			ArtifactWriteErr {
+		| Err writeErr -> {
+			Err {
 				"Could not write output file '"
 					++ output
 					++ "': "
 					++ writeErr.message
 			}
 		}
-		| BOk _ -> ArtifactWriteOk
+			| Ok _ -> Ok { true }
 	}
 }
 
@@ -173,37 +147,37 @@ proc writeOutFile(file) {
 	let dir = CliArgs.outputDir(file.relPath);
 
 	match IO.ensureDir(dir) with
-	| BErr mkdirErr -> {
-		ArtifactWriteErr {
+	| Err mkdirErr -> {
+		Err {
 			"Could not create output directory '"
 				++ dir
 				++ "': "
 				++ mkdirErr.message
 		}
 	}
-	| BOk _ -> {
+	| Ok _ -> {
 		match IO.writeTextFile(file.relPath, file.text) with
-		| BErr writeErr -> {
-			ArtifactWriteErr {
+		| Err writeErr -> {
+			Err {
 				"Could not write output file '"
 					++ file.relPath
 					++ "': "
 					++ writeErr.message
 			}
 		}
-		| BOk _ -> ArtifactWriteOk
+			| Ok _ -> Ok { true }
 	}
 }
 
 proc writeOutFiles(files) {
 	match Compat.uncons(files) with
-	| None -> ArtifactWriteOk
+	| None -> Ok { true }
 	| Some cell -> {
 		match writeOutFile(cell.value.key) with
-		| ArtifactWriteErr failed -> {
-			ArtifactWriteErr { failed.message }
+		| Err failed -> {
+			Err { failed.message }
 		}
-		| ArtifactWriteOk -> {
+		| Ok _ -> {
 			writeOutFiles(cell.value.value)
 		}
 	}
@@ -228,20 +202,20 @@ export proc check(entry, home) {
 	let env = searchEnv(home);
 
 	match Load.loadGraph(entry, env) with
-	| LoadErr failed -> {
-		CliCheckErr {
-			renderDiags(failed.diags)
+	| Err failed -> {
+		Err {
+			renderDiags(failed.message)
 		}
 	}
-	| LoadOk loaded -> {
-		match Pipeline.checkProgram(loaded.modules) with
-		| PipelineCheckErr failed -> {
-			CliCheckErr {
-				renderDiags(failed.diags)
+	| Ok loaded -> {
+		match Pipeline.checkProgram(loaded.value) with
+		| Err failed -> {
+			Err {
+				renderDiags(failed.message)
 			}
 		}
-		| PipelineCheckOk _ -> {
-			CliCheckOk { entry }
+		| Ok _ -> {
+			Ok { entry }
 		}
 	}
 }
@@ -282,32 +256,32 @@ proc compileLoaded(
 	);
 
 	match readBuildHostSources(targetName, home) with
-	| HostReadErr hostErr -> {
-		CliBuildErr { hostErr.message }
+	| Err hostErr -> {
+		Err { hostErr.message }
 	}
-	| HostReadOk hostOk -> {
+	| Ok hostOk -> {
 		match Pipeline.compileProgram(
 			raws,
 			target,
-			hostOk.host
+				hostOk.value
 		) with
-		| PipelineCompileErr failed -> {
-			CliBuildErr {
-				renderDiags(failed.diags)
+		| Err failed -> {
+			Err {
+				renderDiags(failed.message)
 			}
 		}
-		| PipelineCompileOk compiled -> {
+		| Ok compiled -> {
 			match writeArtifact(
-				compiled.artifact,
+				compiled.value.artifact,
 				output
 			) with
-			| ArtifactWriteErr writeErr -> {
-				CliBuildErr {
+			| Err writeErr -> {
+				Err {
 					writeErr.message
 				}
 			}
-			| ArtifactWriteOk -> {
-				CliBuildOk { output }
+			| Ok _ -> {
+				Ok { output }
 			}
 		}
 	}
@@ -323,14 +297,14 @@ export proc build(
 	let env = searchEnv(home);
 
 	match Load.loadGraph(entry, env) with
-	| LoadErr failed -> {
-		CliBuildErr {
-			renderDiags(failed.diags)
+	| Err failed -> {
+		Err {
+			renderDiags(failed.message)
 		}
 	}
-	| LoadOk loaded -> {
+	| Ok loaded -> {
 		compileLoaded(
-			loaded.modules,
+			loaded.value,
 			targetName,
 			output,
 			page,
@@ -343,40 +317,40 @@ export proc build(
 
 proc runLoaded(raws, args, home) {
 	match readHostSources(home) with
-	| HostReadErr hostErr -> {
-		CliRunErr { hostErr.message }
+	| Err hostErr -> {
+		Err { hostErr.message }
 	}
-	| HostReadOk hostOk -> {
+	| Ok hostOk -> {
 		match Pipeline.compileProgram(
 			raws,
 			Link.nodeBundle(),
-			hostOk.host
+			hostOk.value
 		) with
-		| PipelineCompileErr failed -> {
-			CliRunErr {
-				renderDiags(failed.diags)
+		| Err failed -> {
+			Err {
+				renderDiags(failed.message)
 			}
 		}
-		| PipelineCompileOk compiled -> {
-			match compiled.artifact with
+		| Ok compiled -> {
+			match compiled.value.artifact with
 			| SingleJs js -> {
 				match IO.executeNodeBundle(js.text, args) with
-				| BErr failure -> {
-					CliRunErr { failure.message }
+				| Err failure -> {
+					Err { failure.message }
 				}
-				| BOk completed -> {
-					CliRunOk { code = completed.value }
+				| Ok completed -> {
+					Ok { completed.value }
 				}
 			}
 			| FileSet _ -> {
-				CliRunErr {
+				Err {
 					"Internal compiler error: run expected a "
 					++ "single JavaScript artifact, but the linker "
 					++ "returned a file set."
 				}
 			}
 			| HtmlPage _ -> {
-				CliRunErr {
+				Err {
 					"Internal compiler error: run expected a "
 					++ "single JavaScript artifact, but the linker "
 					++ "returned an HTML page."
@@ -390,13 +364,13 @@ export proc run(entry, args, home) {
 	let env = searchEnv(home);
 
 	match Load.loadGraph(entry, env) with
-	| LoadErr failed -> {
-		CliRunErr {
-			renderDiags(failed.diags)
+	| Err failed -> {
+		Err {
+			renderDiags(failed.message)
 		}
 	}
-	| LoadOk loaded -> {
-		runLoaded(loaded.modules, args, home)
+	| Ok loaded -> {
+		runLoaded(loaded.value, args, home)
 	}
 }
 
@@ -413,15 +387,15 @@ proc runPlan(plan, home) {
 			command.entry,
 			home
 		) with
-		| CliCheckErr failed -> {
+		| Err failed -> {
 			IO.fail(
 				failed.message,
 				1
 			)
 		}
-		| CliCheckOk checked -> {
+		| Ok checked -> {
 			IO.printLines([
-				"Checked " ++ checked.entry
+					"Checked " ++ checked.value
 			]);
 			IO.exitOk();
 		}
@@ -432,11 +406,11 @@ proc runPlan(plan, home) {
 			command.args,
 			home
 		) with
-		| CliRunErr failed -> {
+		| Err failed -> {
 			IO.fail(failed.message, 1)
 		}
-		| CliRunOk completed -> {
-			IO.exitWith(completed.code)
+		| Ok completed -> {
+			IO.exitWith(completed.value)
 		}
 	}
 	| CliBuild command -> {
@@ -447,15 +421,15 @@ proc runPlan(plan, home) {
 			command.page,
 			home
 		) with
-		| CliBuildErr failed -> {
+		| Err failed -> {
 			IO.fail(
 				failed.message,
 				1
 			)
 		}
-		| CliBuildOk built -> {
+		| Ok built -> {
 			IO.printLines([
-				"Built " ++ built.output
+					"Built " ++ built.value
 			]);
 			IO.exitOk();
 		}

@@ -1,0 +1,22 @@
+type FirstError = {
+	| FirstProblem
+}
+
+type SecondError = {
+	| SecondProblem
+}
+
+type LeftCombined = {
+	...FirstError
+	...SecondError
+}
+
+type RightCombined = {
+	...FirstError
+	...SecondError
+}
+
+function ambiguous(flag) {
+	if flag then { FirstProblem }
+	else { SecondProblem }
+}

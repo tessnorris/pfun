@@ -1,0 +1,98 @@
+// Forward pipelines plus Option- and Result-aware short-circuiting.
+
+import * from "io";
+
+type MatrixError = {
+	| InvalidMatrix: message
+}
+
+type WindowError = {
+	| InvalidWindow: message
+}
+
+type TransformError = {
+	...MatrixError
+	...WindowError
+}
+
+function addOne(value) {
+	value + 1
+}
+
+function double(value) {
+	value * 2
+}
+
+function positive(value) {
+	if value > 0 then { Some { value } } else { None }
+}
+
+function underTen(value) {
+	if value < 10 then { Some { value } } else { None }
+}
+
+function optionText(value) {
+	match value with
+	| Some found -> "Some " ++ str(found.value)
+	| None -> "None"
+}
+
+// This compact example transposes a 2-by-2 matrix. A general list-library
+// implementation can use the same Result contract without changing the chain.
+function transpose(rows) {
+	if length(rows) != 2 then {
+		Err { InvalidMatrix { "expected two rows" } }
+	} else {
+		let first = nthU(rows, 0);
+		let second = nthU(rows, 1);
+		if length(first) != 2 || length(second) != 2 then {
+			Err { InvalidMatrix { "expected two columns" } }
+		} else {
+			Ok {
+				[
+					[nthU(first, 0), nthU(second, 0)],
+					[nthU(first, 1), nthU(second, 1)]
+				]
+			}
+		}
+	}
+}
+
+function slide(rows) {
+	if length(rows) < 2 then {
+		Err { InvalidWindow { "need two rows" } }
+	} else {
+		Ok { take(2, rows) }
+	}
+}
+
+function resultText(value) {
+	match value with
+	| Ok rows -> "Ok " ++ str(rows.value)
+	| Err failure -> {
+		match failure.message with
+		| InvalidMatrix problem -> "MatrixError " ++ problem.message
+		| InvalidWindow problem -> "WindowError " ++ problem.message
+	}
+}
+
+export proc runPipelineExamples() {
+	println("");
+	println("--- Forward, Option, and Result pipelines ---");
+
+	println("plain = " ++ str(3 |> addOne |> double));
+
+	let present = 3 |?> positive |?> double |?> underTen;
+	let absent = -1 |?> positive |?> double |?> underTen;
+	println("option present = " ++ optionText(present));
+	println("option absent = " ++ optionText(absent));
+
+	let rows = [[1, 2], [3, 4]];
+	let transformed = rows
+		|!> transpose
+		|!> reverse
+		|!> slide
+		|!> reverse
+		|!> transpose;
+	println("result = " ++ resultText(transformed));
+}

@@ -1,0 +1,7 @@
+proc touch(value) {
+	value;
+}
+
+function invalid() {
+	Ok { 1 } |!> touch
+}

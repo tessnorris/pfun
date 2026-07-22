@@ -15,12 +15,20 @@ function variant(name, unionName) {
 function expectResult(result, tag) {
 	assert.equal(result.$u, "Result");
 	assert.equal(result.$t, tag);
+	if (tag === "Err") {
+		assert.equal(result.message.$u, "NativeError");
+		assert.equal(result.message.$t, "NativeIoError");
+	}
 	return result;
 }
 
 function expectRead(result, tag) {
 	assert.equal(result.$u, "ReadResult");
 	assert.equal(result.$t, tag);
+	if (tag === "ReadErr") {
+		assert.equal(result.message.$u, "NativeError");
+		assert.equal(result.message.$t, "NativeIoError");
+	}
 	return result;
 }
 
@@ -79,20 +87,20 @@ try {
 		"Ok"
 	).value;
 	assert.equal(
-		expectRead(host.$readByte(reader), "Ok").value,
+		expectRead(host.$readByte(reader), "ReadOk").value,
 		0xde
 	);
 	assert.deepEqual(
-		expectRead(host.$readBytes(reader, 2), "Ok").value,
+		expectRead(host.$readBytes(reader, 2), "ReadOk").value,
 		[0xad, 0xbe]
 	);
 	assert.deepEqual(
-		expectRead(host.$readBytes(reader, 8), "Ok").value,
+		expectRead(host.$readBytes(reader, 8), "ReadOk").value,
 		[0xef]
 	);
-	expectRead(host.$readBytes(reader, 1), "Eof");
+	expectRead(host.$readBytes(reader, 1), "ReadEof");
 	assert.deepEqual(
-		expectRead(host.$readBytes(reader, 0), "Ok").value,
+		expectRead(host.$readBytes(reader, 0), "ReadOk").value,
 		[]
 	);
 	expectResult(host.$fileClose(reader), "Ok");
@@ -107,22 +115,22 @@ try {
 		"Ok"
 	).value;
 	assert.equal(
-		expectRead(host.$readByte(mixed), "Ok").value,
+		expectRead(host.$readByte(mixed), "ReadOk").value,
 		0x41
 	);
 	assert.equal(
-		expectRead(host.$readChar(mixed), "Ok").value,
+		expectRead(host.$readChar(mixed), "ReadOk").value,
 		"β"
 	);
 	assert.equal(
-		expectRead(host.$readLine(mixed), "Ok").value,
+		expectRead(host.$readLine(mixed), "ReadOk").value,
 		""
 	);
 	assert.equal(
-		expectRead(host.$readByte(mixed), "Ok").value,
+		expectRead(host.$readByte(mixed), "ReadOk").value,
 		0x42
 	);
-	expectRead(host.$readByte(mixed), "Eof");
+	expectRead(host.$readByte(mixed), "ReadEof");
 	expectResult(host.$fileClose(mixed), "Ok");
 
 	const raw = host.$makeBuffer(ByteMode);
@@ -196,7 +204,7 @@ try {
 		host.$fileOpen(binaryPath, Read),
 		"Ok"
 	).value;
-	expectRead(host.$readBytes(badReader, -1), "Err");
+	expectRead(host.$readBytes(badReader, -1), "ReadErr");
 	expectResult(host.$readBuffer(badReader, -1, ByteMode), "Err");
 	expectResult(host.$fileClose(badReader), "Ok");
 } finally {

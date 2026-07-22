@@ -11,17 +11,17 @@ import * from "../src/test/runner"; // added by gen-test-harness
 
 function parseSource(source) {
 	match Lex.lex("parser-test.pf", source) with
-	| LexErr e -> ParseErr { e.diags }
-	| LexOk toks -> Parser.parseModule("parser-test.pf", toks.tokens)
+	| Err e -> Err { e.message }
+	| Ok toks -> Parser.parseModule("parser-test.pf", toks.value)
 }
 
 function parseOkAssertion(source) {
 	match parseSource(source) with
-	| ParseOk _ -> Assert.assertTrue(true)
-	| ParseErr e -> {
+	| Ok _ -> Assert.assertTrue(true)
+	| Err e -> {
 		Assert.fail(
 			"Expected parse success, got "
-			++ __str__(length(e.diags))
+			++ __str__(length(e.message))
 			++ " diagnostic(s)."
 		)
 	}
@@ -29,8 +29,8 @@ function parseOkAssertion(source) {
 
 function parseErrAssertion(source) {
 	match parseSource(source) with
-	| ParseOk _ -> Assert.fail("Expected parse failure.")
-	| ParseErr e -> Assert.assertTrue(length(e.diags) > 0)
+	| Ok _ -> Assert.fail("Expected parse failure.")
+	| Err e -> Assert.assertTrue(length(e.message) > 0)
 }
 
 function stmtAt(module, index) {
@@ -39,14 +39,44 @@ function stmtAt(module, index) {
 
 function assertModuleStmtCount(source, expected) {
 	match parseSource(source) with
-	| ParseErr e -> {
+	| Err e -> {
 		Assert.fail(
 			"Expected parse success, got "
-			++ __str__(length(e.diags))
+			++ __str__(length(e.message))
 			++ " diagnostic(s)."
 		)
 	}
-	| ParseOk parsed -> Assert.assertEqual(expected, length(parsed.module.stmts))
+	| Ok parsed -> Assert.assertEqual(expected, length(parsed.value.stmts))
+}
+
+function assertCombinedUnionStmt(stmt) {
+	match stmt with
+	| SType typed -> {
+		match typed.decl with
+		| UnionDecl union -> {
+			if length(union.includes) == 2
+				&& nthU(union.includes, 0) == "FileError"
+				&& nthU(union.includes, 1) == "JsonError"
+				&& length(union.variants) == 1
+			then {
+				Assert.assertTrue(true)
+			} else {
+				Assert.fail("Combined union AST did not preserve inclusions.")
+			}
+		}
+		| RecordDecl _ -> Assert.fail("Expected a union declaration.")
+	}
+	| _ -> Assert.fail("Expected a type declaration.")
+}
+
+function assertCombinedUnion(source) {
+	match parseSource(source) with
+	| Err _ -> Assert.fail("Expected combined union to parse.")
+	| Ok parsed -> {
+		match stmtAt(parsed.value, 0) with
+		| None -> Assert.fail("Expected a type declaration.")
+		| Some stmt -> assertCombinedUnionStmt(stmt.value)
+	}
 }
 
 function assertTimesRhs(expr) {
@@ -81,17 +111,53 @@ function assertLetStmtPrecedence(stmt) {
 
 function assertLetPrecedence(source) {
 	match parseSource(source) with
-	| ParseErr e -> {
+	| Err e -> {
 		Assert.fail(
 			"Expected parse success, got "
-			++ __str__(length(e.diags))
+			++ __str__(length(e.message))
 			++ " diagnostic(s)."
 		)
 	}
-	| ParseOk parsed -> {
-		match stmtAt(parsed.module, 0) with
+	| Ok parsed -> {
+		match stmtAt(parsed.value, 0) with
 		| None -> Assert.fail("Expected first statement.")
 		| Some s -> assertLetStmtPrecedence(s.value)
+	}
+}
+
+function assertPipeOperatorsExpr(expr) {
+	match expr with
+	| EBinary resultPipe -> {
+		if resultPipe.op != "|!>" then {
+			Assert.fail("Expected outer result pipeline.")
+		} else {
+			match resultPipe.lhs with
+			| EBinary optionPipe -> {
+				if optionPipe.op != "|?>" then {
+					Assert.fail("Expected middle option pipeline.")
+				} else {
+					match optionPipe.lhs with
+					| EBinary plainPipe -> Assert.assertEqual("|>", plainPipe.op)
+					| _ -> Assert.fail("Expected inner forward pipeline.")
+				}
+			}
+			| _ -> Assert.fail("Expected left-associated pipeline chain.")
+		}
+	}
+	| _ -> Assert.fail("Expected a pipeline expression.")
+}
+
+function assertPipeOperators(source) {
+	match parseSource(source) with
+	| Err _ -> Assert.fail("Expected pipeline operators to parse.")
+	| Ok parsed -> {
+		match stmtAt(parsed.value, 0) with
+		| Some stmt -> {
+			match stmt.value with
+			| SLet binding -> assertPipeOperatorsExpr(binding.init)
+			| _ -> Assert.fail("Expected a let statement.")
+		}
+		| None -> Assert.fail("Expected a let statement.")
 	}
 }
 
@@ -125,18 +191,18 @@ function assertFunctionStmtPair(firstStmt, secondStmt) {
 
 function assertFunctionKinds(source) {
 	match parseSource(source) with
-	| ParseErr e -> {
+	| Err e -> {
 		Assert.fail(
 			"Expected parse success, got "
-			++ __str__(length(e.diags))
+			++ __str__(length(e.message))
 			++ " diagnostic(s)."
 		)
 	}
-	| ParseOk parsed -> {
-		match stmtAt(parsed.module, 0) with
+	| Ok parsed -> {
+		match stmtAt(parsed.value, 0) with
 		| None -> Assert.fail("Expected first function.")
 		| Some first -> {
-			match stmtAt(parsed.module, 1) with
+			match stmtAt(parsed.value, 1) with
 			| None -> Assert.fail("Expected second function.")
 			| Some second -> {
 				assertFunctionStmtPair(first.value, second.value)
@@ -175,15 +241,15 @@ function assertLazyStmt(stmt) {
 
 function assertLazyComprehension(source) {
 	match parseSource(source) with
-	| ParseErr e -> {
+	| Err e -> {
 		Assert.fail(
 			"Expected parse success, got "
-			++ __str__(length(e.diags))
+			++ __str__(length(e.message))
 			++ " diagnostic(s)."
 		)
 	}
-	| ParseOk parsed -> {
-		match stmtAt(parsed.module, 0) with
+	| Ok parsed -> {
+		match stmtAt(parsed.value, 0) with
 		| None -> Assert.fail("Expected let statement.")
 		| Some s -> assertLazyStmt(s.value)
 	}
@@ -219,15 +285,15 @@ function assertMatchStmt(stmt) {
 
 function assertMatchListPatterns(source) {
 	match parseSource(source) with
-	| ParseErr e -> {
+	| Err e -> {
 		Assert.fail(
 			"Expected parse success, got "
-			++ __str__(length(e.diags))
+			++ __str__(length(e.message))
 			++ " diagnostic(s)."
 		)
 	}
-	| ParseOk parsed -> {
-		match stmtAt(parsed.module, 0) with
+	| Ok parsed -> {
+		match stmtAt(parsed.value, 0) with
 		| None -> Assert.fail("Expected let statement.")
 		| Some s -> assertMatchStmt(s.value)
 	}
@@ -251,15 +317,15 @@ function assertIfStmt(stmt) {
 
 function assertIfStatementBlocks(source) {
 	match parseSource(source) with
-	| ParseErr e -> {
+	| Err e -> {
 		Assert.fail(
 			"Expected parse success, got "
-			++ __str__(length(e.diags))
+			++ __str__(length(e.message))
 			++ " diagnostic(s)."
 		)
 	}
-	| ParseOk parsed -> {
-		match stmtAt(parsed.module, 0) with
+	| Ok parsed -> {
+		match stmtAt(parsed.value, 0) with
 		| None -> Assert.fail("Expected if statement.")
 		| Some s -> assertIfStmt(s.value)
 	}
@@ -309,14 +375,14 @@ function assertThreeImportStmts(module) {
 
 function assertImportTypeExternExport(source) {
 	match parseSource(source) with
-	| ParseErr e -> {
+	| Err e -> {
 		Assert.fail(
 			"Expected parse success, got "
-			++ __str__(length(e.diags))
+			++ __str__(length(e.message))
 			++ " diagnostic(s)."
 		)
 	}
-	| ParseOk parsed -> assertThreeImportStmts(parsed.module)
+	| Ok parsed -> assertThreeImportStmts(parsed.value)
 }
 
 //![suite("syntax/parser")]
@@ -394,6 +460,22 @@ function testImportTypeExternExport() {
 	])
 }
 
+//![test("parses explicit combined-union inclusions")]
+function testCombinedUnionInclusions() {
+	Assert.assertions([
+		assertCombinedUnion(
+			"type AppError = { ...FileError, ...JsonError | ConfigInvalid: message }"
+		)
+	])
+}
+
+//![test("parses all pipelines at one left-associative precedence")]
+function testPipelineOperators() {
+	Assert.assertions([
+		assertPipeOperators("let value = source |> plain |?> optional |!> fallible;")
+	])
+}
+
 //![test("parses record dict array call field and index forms")]
 function testCompositeAndPostfixForms() {
 	let source =
@@ -459,6 +541,8 @@ function __gen_suite_syntax_parser() {
 		test("parses match list patterns", testMatchListPatterns),
 		test("parses statement if blocks", testIfStatementBlocks),
 		test("parses imports exported opaque types and extern signatures", testImportTypeExternExport),
+		test("parses explicit combined-union inclusions", testCombinedUnionInclusions),
+		test("parses all pipelines at one left-associative precedence", testPipelineOperators),
 		test("parses record dict array call field and index forms", testCompositeAndPostfixForms),
 		test("rejects unsupported or malformed parser inputs", testParseErrors),
 		test("parses interpolations containing embedded literals with braces", testFmtEmbeddedBraces),

@@ -1,0 +1,4 @@
+file-missing:missing file
+file-denied:permission denied
+json-invalid:invalid json
+config-invalid:invalid config

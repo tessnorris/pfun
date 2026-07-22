@@ -1,0 +1,23 @@
+type FirstError = {
+	| FirstProblem
+}
+
+type SecondError = {
+	| SecondProblem
+}
+
+type CombinedError = {
+	...FirstError
+	...SecondError
+}
+
+let choose = proc (flag: Bool) -> CombinedError {
+	if flag then { FirstProblem }
+	else { SecondProblem }
+};
+
+let acceptFirst = proc (error: FirstError) -> Unit { };
+
+proc invalid() {
+	acceptFirst(choose(false));
+}

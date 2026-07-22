@@ -123,8 +123,12 @@ readiness resume it.
 ```pfun
 import * from "async";
 async proc work() {
-  await sleep(10);
-  return 42;
+  match await sleep(10) with
+  | Ok _ -> 42
+  | Err failure -> {
+    println(nativeErrorMessage(failure.message));
+    0
+  }
 }
 async proc main() { println(await work()); }
 main();
@@ -153,5 +157,4 @@ async proc client() {
 }
 client();
 ```
-
 

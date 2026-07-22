@@ -18,20 +18,26 @@ function showEnv(value) {
 	| Some item -> item.value
 }
 
+function showExists(result) {
+	match result with
+	| Ok found -> str(found.value)
+	| Err _ -> "error"
+}
+
 proc runFileEffects(root) {
 	let nested = root ++ "/nested";
 	let filePath = nested ++ "/sample.txt";
 	let missingPath = root ++ "/missing.txt";
 	let content = "Hello from B2!";
 
-	println("exists-before=" ++ str(fileExists(nested)));
+	println("exists-before=" ++ showExists(fileExists(nested)));
 
 	let made = mkdirP(nested);
 	match made with
 	| Ok _ -> println("mkdir=Ok")
 	| Err error -> println("mkdir=Err")
 
-	println("exists-dir=" ++ str(fileExists(nested)));
+	println("exists-dir=" ++ showExists(fileExists(nested)));
 
 	let madeAgain = mkdirP(nested);
 	match madeAgain with
@@ -43,7 +49,7 @@ proc runFileEffects(root) {
 	| Ok _ -> println("write=Ok")
 	| Err error -> println("write=Err")
 
-	println("exists-file=" ++ str(fileExists(filePath)));
+	println("exists-file=" ++ showExists(fileExists(filePath)));
 
 	let readBack = readFile(filePath);
 	match readBack with

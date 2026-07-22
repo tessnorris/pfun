@@ -20,16 +20,6 @@ import * as Spec from "../src/builtins/spec";
 import * as StrX from "../src/data/strx";
 import * as Compat from "../src/compat";
 
-export type ParsedSource = {
-	| SourceOk: module
-	| SourceErr: diags
-}
-
-export type RawSource = {
-	| RawOk: raw
-	| RawErr: diags
-}
-
 function appendList(a, b) {
 	reduce(fn acc, x => cons(x, acc), b, reverse(a))
 }
@@ -48,50 +38,48 @@ export function checkerEnv() {
 
 export function parseSource(path, source) {
 	match Lex.lex(path, source) with
-	| LexErr e -> SourceErr { e.diags }
-	| LexOk l -> {
-		match Parser.parseModule(path, l.tokens) with
-		| ParseErr p -> SourceErr { p.diags }
-		| ParseOk p -> SourceOk { p.module }
+	| Err e -> Err { e.message }
+	| Ok l -> {
+		Parser.parseModule(path, l.value)
 	}
 }
 
 export function rawSource(path, source) {
 	match parseSource(path, source) with
-	| SourceErr e -> RawErr { e.diags }
-	| SourceOk parsed -> {
-		let edges = ModGraph.edgesOf(parsed.module, checkerEnv());
+	| Err e -> Err { e.message }
+	| Ok parsed -> {
+		let edges = ModGraph.edgesOf(parsed.value, checkerEnv());
 		match edges with
-		| EdgesErr bad -> RawErr { bad.diags }
-		| EdgesOk ok -> RawOk { ModGraph.mkRawModule(path, parsed.module, ok.edges) }
+		| Err bad -> Err { bad.message }
+		| Ok ok -> Ok { ModGraph.mkRawModule(path, parsed.value, ok.value) }
 	}
 }
 
 export function typeDiags(path, source) {
 	match parseSource(path, source) with
-	| SourceErr e -> e.diags
-	| SourceOk parsed -> {
-		let r = Types.inferModule(parsed.module, emptyDeps());
+	| Err e -> e.message
+	| Ok parsed -> {
+		let r = Types.inferModule(parsed.value, emptyDeps());
 		r.diags
 	}
 }
 
 export function purityDiags(path, source) {
 	match parseSource(path, source) with
-	| SourceErr e -> e.diags
-	| SourceOk parsed -> {
-		let infer = Types.inferModule(parsed.module, emptyDeps());
-		let r = Purity.checkModule(parsed.module, emptyDeps(), infer.types);
+	| Err e -> e.message
+	| Ok parsed -> {
+		let infer = Types.inferModule(parsed.value, emptyDeps());
+		let r = Purity.checkModule(parsed.value, emptyDeps(), infer.types);
 		r.diags
 	}
 }
 
 export function exhaustDiags(path, source) {
 	match parseSource(path, source) with
-	| SourceErr e -> e.diags
-	| SourceOk parsed -> {
-		let infer = Types.inferModule(parsed.module, emptyDeps());
-		let r = Exhaust.checkModule(parsed.module, infer, emptyDeps());
+	| Err e -> e.message
+	| Ok parsed -> {
+		let infer = Types.inferModule(parsed.value, emptyDeps());
+		let r = Exhaust.checkModule(parsed.value, infer, emptyDeps());
 		appendList(infer.diags, r.diags)
 	}
 }
@@ -102,8 +90,8 @@ function dummyModule(path) {
 
 export function checkUnit(path, source) {
 	match parseSource(path, source) with
-	| SourceErr e -> Check.mkCheckedUnit(path, dummyModule(path), Types.mkInferResult(IMI.imiEmpty(), IMS.imsEmpty(), e.diags), Iface.emptyIface(path), e.diags)
-	| SourceOk parsed -> Check.checkModule(parsed.module, emptyDeps())
+	| Err e -> Check.mkCheckedUnit(path, dummyModule(path), Types.mkInferResult(IMI.imiEmpty(), IMS.imsEmpty(), e.message), Iface.emptyIface(path), e.message)
+	| Ok parsed -> Check.checkModule(parsed.value, emptyDeps())
 }
 
 export generic function checkDiags(path, source) {
@@ -148,15 +136,15 @@ export function assertHasMessage(diags, needle) {
 
 export function typeDiagsWithBuiltins(path, source) {
 	match parseSource(path, source) with
-	| SourceErr e -> e.diags
-	| SourceOk parsed -> {
-		let r = Types.inferModule(parsed.module, Spec.allBuiltinIfaces());
+	| Err e -> e.message
+	| Ok parsed -> {
+		let r = Types.inferModule(parsed.value, Spec.allBuiltinIfaces());
 		r.diags
 	}
 }
 
 export generic function checkUnitWithDeps(path, source, deps) {
 	match parseSource(path, source) with
-	| SourceErr e -> Check.mkCheckedUnit(path, dummyModule(path), Types.mkInferResult(IMI.imiEmpty(), IMS.imsEmpty(), e.diags), Iface.emptyIface(path), e.diags)
-	| SourceOk parsed -> Check.checkModule(parsed.module, deps)
+	| Err e -> Check.mkCheckedUnit(path, dummyModule(path), Types.mkInferResult(IMI.imiEmpty(), IMS.imsEmpty(), e.message), Iface.emptyIface(path), e.message)
+	| Ok parsed -> Check.checkModule(parsed.value, deps)
 }

@@ -71,7 +71,13 @@ export type TcOut = { st, generic val }
 
 // `exports` is a slot: its scheme values embed per-module type variables that
 // must never lock into (or leak from) one shared field variable.
-export type InferResult = { types, generic exports, diags }
+export type ExpandedUnion = {
+	variants,
+	ownVariants,
+	members
+}
+
+export type InferResult = { types, generic exports, generic unionShapes, diags }
 
 // ── checker-private metadata ───────────────────────────────────────────────
 
@@ -80,13 +86,17 @@ export type InferResult = { types, generic exports, diags }
 type FieldShape = {
 	| FieldMono: t
 	| FieldSlot: index
+	// A field exposed on a union because every variant carries it. The member
+	// shapes are checked together at the access site, where concrete generic
+	// slot arguments are available.
+	| FieldCommon: shapes
 }
 
 type FieldInfo = { fname, shape }
 
 type VariantInfo = { vname, unionName, fields, slotCount }
 
-type TypeInfo = { tname, isUnion, fields, variants, slotCount }
+type TypeInfo = { tname, isUnion, fields, variants, slotCount, members }
 
 type FieldsOut = { fields, slotCount }
 
@@ -104,6 +114,10 @@ type BindingDecl = { name, stmt, deps }
 type DfsOut = { visited, order }
 type ComponentOut = { visited, members }
 type ComponentsOut = { visited, groups }
+type LocalUnion = { decl, span }
+type UnionExpandOut = { st, variants, members }
+type UnionChoice = { name, size, ambiguous }
+type JoinListOut = { st, types }
 
 type TcEntry = {
 	| TScheme: scheme
@@ -143,7 +157,11 @@ export function emptySubst() {
 }
 
 export generic function mkInferResult(types, exports, diags) {
-	InferResult { types, exports, diags }
+	InferResult { types, exports, unionShapes = IMS.imsEmpty(), diags }
+}
+
+export generic function mkInferResultWithUnions(types, exports, unionShapes, diags) {
+	InferResult { types, exports, unionShapes, diags }
 }
 
 generic function out(st, val) {
@@ -442,6 +460,18 @@ function fieldShapeFreeVars(st, ownName, shape) {
 		else { freeVars(apply(st.subst, f.t)) }
 	}
 	| FieldSlot _ -> []
+	| FieldCommon c -> fieldShapesFreeVars(st, ownName, c.shapes, [])
+}
+
+function fieldShapesFreeVars(st, ownName, shapes, acc) {
+	match Compat.uncons(shapes) with
+	| None -> acc
+	| Some cell -> fieldShapesFreeVars(
+		st,
+		ownName,
+		cell.value.value,
+		intUnion(acc, fieldShapeFreeVars(st, ownName, cell.value.key))
+	)
 }
 
 function fieldInfosFreeVars(st, ownName, fields, acc) {
@@ -604,7 +634,7 @@ function defaultResidualSlots(t) {
 
 function checkExportGround(st, stmt, path, bname, solved) {
 	if stmtIsGenericExport(stmt) then { st }
-	else if typeHasFreeVars(solved) then { addTypeDiag(st, path, A.stmtSpan(stmt), "Exported non-generic binding '" ++ bname ++ "' is not ground; add a constraining use, or declare it generic.") }
+	else if typeHasFreeVars(solved) then { addTypeDiag(st, path, A.stmtSpan(stmt), "Exported non-generic binding '" ++ bname ++ "' is not ground (inferred " ++ formatType(solved) ++ "); add a constraining use, or declare it generic.") }
 	else { st }
 }
 
@@ -631,13 +661,155 @@ function unifyTypeListsLoop(st, aTys, bTys, path, span) {
 	}
 }
 
-// Takes payload fields, not TNamed binders: a variant passed to a helper
-// widens to its union (design_variant_binder_widening.md, Rule 2).
-function unifyNamed(st, aName, aArgs, bName, bArgs, path, span) {
-	if aName != bName then {
-		addTypeDiag(st, path, span, "Cannot unify " ++ formatType(TNamed { aName, aArgs }) ++ " with " ++ formatType(TNamed { bName, bArgs }) ++ ".")
+function unionInfo(st, name) {
+	match IMS.imsGet(st.records, name) with
+	| Some info -> {
+		if info.value.isUnion then { Some { info.value } }
+		else { None }
+	}
+	| None -> None
+}
+
+function unionIncludes(st, superName, subName) {
+	if superName == subName then {
+		true
 	} else {
+		match unionInfo(st, superName) with
+		| None -> false
+		| Some info -> strListContains(info.value.members, subName)
+	}
+}
+
+function typeArgAt(args, index) {
+	match Compat.listAt(args, index) with
+	| None -> TUnknown
+	| Some arg -> arg.value
+}
+
+function unifyIncludedFieldArgs(st, subShape, superShape, subArgs, superArgs, path, span) {
+	match subShape with
+	| FieldSlot sub -> {
+		match superShape with
+		| FieldSlot sup -> unify(
+			st,
+			typeArgAt(subArgs, sub.index),
+			typeArgAt(superArgs, sup.index),
+			path,
+			span
+		)
+		| _ -> st
+	}
+	| _ -> st
+}
+
+function unifyIncludedVariantFields(st, subFields, superFields, subArgs, superArgs, path, span) {
+	match Compat.uncons(subFields) with
+	| None -> st
+	| Some cell -> {
+		let field = cell.value.key;
+		match findFieldByName(superFields, field.fname) with
+		| None -> unifyIncludedVariantFields(
+			st,
+			cell.value.value,
+			superFields,
+			subArgs,
+			superArgs,
+			path,
+			span
+		)
+		| Some superField -> {
+			let st1 = unifyIncludedFieldArgs(
+				st,
+				field.shape,
+				superField.value.shape,
+				subArgs,
+				superArgs,
+				path,
+				span
+			);
+			unifyIncludedVariantFields(
+				st1,
+				cell.value.value,
+				superFields,
+				subArgs,
+				superArgs,
+				path,
+				span
+			)
+		}
+	}
+}
+
+function unifyIncludedVariants(st, subVariants, superVariants, subArgs, superArgs, path, span) {
+	match Compat.uncons(subVariants) with
+	| None -> st
+	| Some cell -> {
+		let variant = cell.value.key;
+		match findVariantInfo(superVariants, variant.vname) with
+		| None -> st
+		| Some superVariant -> {
+			let st1 = unifyIncludedVariantFields(
+				st,
+				variant.fields,
+				superVariant.value.fields,
+				subArgs,
+				superArgs,
+				path,
+				span
+			);
+			unifyIncludedVariants(
+				st1,
+				cell.value.value,
+				superVariants,
+				subArgs,
+				superArgs,
+				path,
+				span
+			)
+		}
+	}
+}
+
+function unifyIncludedUnionArgs(st, subName, subArgs, superName, superArgs, path, span) {
+	if subName == superName then {
+		unifyTypeLists(st, subArgs, superArgs, path, span)
+	} else {
+		match unionInfo(st, subName) with
+		| None -> st
+		| Some subInfo -> {
+			match unionInfo(st, superName) with
+			| None -> st
+			| Some superInfo -> unifyIncludedVariants(
+				st,
+				subInfo.value.variants,
+				superInfo.value.variants,
+				subArgs,
+				superArgs,
+				path,
+				span
+			)
+		}
+	}
+}
+
+// Named unification is directional for explicit union inclusion: `a` is the
+// produced/actual type and `b` is the required type. Ordinary named types stay
+// invariant; an included union may flow into its declared combined union.
+function unifyNamed(st, aName, aArgs, bName, bArgs, path, span) {
+	if aName == bName then {
 		unifyTypeLists(st, aArgs, bArgs, path, span)
+	} else if unionIncludes(st, bName, aName) then {
+		unifyIncludedUnionArgs(
+			st,
+			aName,
+			aArgs,
+			bName,
+			bArgs,
+			path,
+			span
+		)
+	} else {
+		addTypeDiag(st, path, span, "Cannot unify " ++ formatType(TNamed { aName, aArgs }) ++ " with " ++ formatType(TNamed { bName, bArgs }) ++ ".")
 	}
 }
 
@@ -716,11 +888,31 @@ export function unify(st, a, b, path, span) {
 		// the same union (the join is the union), and widens to its union.
 		match b1 with
 		| TVariant bv -> {
-			if av.unionName == bv.unionName then { unifyTypeLists(st, av.args, bv.args, path, span) }
+			if unionIncludes(st, bv.unionName, av.unionName) then {
+				unifyIncludedUnionArgs(
+					st,
+					av.unionName,
+					av.args,
+					bv.unionName,
+					bv.args,
+					path,
+					span
+				)
+			}
 			else { addTypeDiag(st, path, span, "Expected " ++ formatType(a1) ++ ", got " ++ formatType(b1) ++ ".") }
 		}
 		| TNamed bn -> {
-			if av.unionName == bn.tname then { unifyTypeLists(st, av.args, bn.args, path, span) }
+			if unionIncludes(st, bn.tname, av.unionName) then {
+				unifyIncludedUnionArgs(
+					st,
+					av.unionName,
+					av.args,
+					bn.tname,
+					bn.args,
+					path,
+					span
+				)
+			}
 			else { addTypeDiag(st, path, span, "Expected " ++ formatType(a1) ++ ", got " ++ formatType(b1) ++ ".") }
 		}
 		| TVar bv -> bindVar(st, bv.v, a1, path, span)
@@ -738,6 +930,16 @@ export function unify(st, a, b, path, span) {
 			else { addTypeDiag(st, path, span, "Expected " ++ formatType(a1) ++ ", got " ++ formatType(b1) ++ ".") }
 		}
 	}
+}
+
+// Flow checks are directional for combined unions, but an unconstrained
+// required type variable must still be bound from the produced type. Calling
+// `unify` with a produced `Any` first would otherwise accept the flow without
+// grounding the required return/binding variable.
+function unifyProduced(st, produced, required, path, span) {
+	match apply(st.subst, required) with
+	| TVar _ -> unify(st, required, produced, path, span)
+	| _ -> unify(st, produced, required, path, span)
 }
 
 // ── constraints ────────────────────────────────────────────────────────────
@@ -824,7 +1026,16 @@ function recheckPending(st, path, c) {
 			| Some info -> {
 				match findFieldByName(info.value.fields, h.fname) with
 				| None -> addTypeDiag(st, path, h.span, "Type " ++ n.tname ++ " has no field '" ++ h.fname ++ "'.")
-				| Some f -> unify(st, h.ftype, fieldTypeFromShape(f.value.shape, n.args), path, h.span)
+				| Some f -> {
+					let field = checkedFieldType(
+						st,
+						f.value.shape,
+						n.args,
+						path,
+						h.span
+					);
+					unify(field.st, field.typ, h.ftype, path, h.span)
+				}
 			}
 		}
 		| _ -> addTypeDiag(st, path, h.span, "Cannot access field '." ++ h.fname ++ "' on " ++ formatType(t) ++ ".")
@@ -955,9 +1166,12 @@ function schemeFromIface(s) {
 
 function fieldMono(t) { FieldMono { t } }
 function fieldSlot(index) { FieldSlot { index } }
+function fieldCommon(shapes) { FieldCommon { shapes } }
 function fieldInfo(fname, shape) { FieldInfo { fname, shape } }
 function variantInfo(vname, unionName, fields, slotCount) { VariantInfo { vname, unionName, fields, slotCount } }
-function typeInfo(tname, isUnion, fields, variants, slotCount) { TypeInfo { tname, isUnion, fields, variants, slotCount } }
+function typeInfo(tname, isUnion, fields, variants, slotCount, members) {
+	TypeInfo { tname, isUnion, fields, variants, slotCount, members }
+}
 
 function fieldsFromDecls(st, fieldDecls, slotCount, acc) {
 	match Compat.uncons(fieldDecls) with
@@ -1007,7 +1221,14 @@ function declareType(st, env, stmt) {
 
 function registerRecord(st, env, tname, fieldDecls) {
 	let flds = fieldsFromDecls(st, fieldDecls, 0, []);
-	let info = typeInfo(tname, false, flds.value.fields, [], flds.value.slotCount);
+	let info = typeInfo(
+		tname,
+		false,
+		flds.value.fields,
+		[],
+		flds.value.slotCount,
+		[]
+	);
 	let st1 = withRecords(flds.key, IMS.imsPut(flds.key.records, tname, info));
 	let env1 = IMS.imsPut(env, tname, TTypeName { tname });
 	envOut(st1, env1)
@@ -1024,14 +1245,93 @@ function registerBuiltinTypes(st, env) {
 // union name and variant constructors into the environment. Used for local
 // union declarations and for unions arriving through dependency interfaces
 // (which carry the same AST VariantDecl lists).
-function registerUnion(st, env, unionName, variantDecls) {
+function shapesForCommonField(variants, name, acc) {
+	match Compat.uncons(variants) with
+	| None -> Some { reverse(acc) }
+	| Some cell -> {
+		match findFieldByName(cell.value.key.fields, name) with
+		| None -> None
+		| Some field -> shapesForCommonField(
+			cell.value.value,
+			name,
+			cons(field.value.shape, acc)
+		)
+	}
+}
+
+function commonFieldsLoop(firstFields, variants, acc) {
+	match Compat.uncons(firstFields) with
+	| None -> reverse(acc)
+	| Some cell -> {
+		let field = cell.value.key;
+		match shapesForCommonField(variants, field.fname, []) with
+		| None -> commonFieldsLoop(cell.value.value, variants, acc)
+		| Some shapes -> commonFieldsLoop(
+			cell.value.value,
+			variants,
+			cons(fieldInfo(field.fname, fieldCommon(shapes.value)), acc)
+		)
+	}
+}
+
+function commonFields(variants) {
+	match Compat.uncons(variants) with
+	| None -> []
+	| Some first -> commonFieldsLoop(
+		first.value.key.fields,
+		variants,
+		[]
+	)
+}
+
+function variantDeclNameExists(decls, name) {
+	match Compat.uncons(decls) with
+	| None -> false
+	| Some cell -> {
+		if cell.value.key.vname == name then { true }
+		else { variantDeclNameExists(cell.value.value, name) }
+	}
+}
+
+function ownVariantInfos(variants, ownDecls, acc) {
+	match Compat.uncons(variants) with
+	| None -> reverse(acc)
+	| Some cell -> {
+		let variant = cell.value.key;
+		let next = if variantDeclNameExists(ownDecls, variant.vname)
+			then { cons(variant, acc) }
+			else { acc };
+		ownVariantInfos(cell.value.value, ownDecls, next)
+	}
+}
+
+function registerUnionShape(st, env, unionName, variantDecls, ownDecls, members) {
 	let built = variantsFromDecls(st, unionName, variantDecls, 0, []);
-	let info = typeInfo(unionName, true, [], built.value.variants, built.value.slotCount);
+	let info = typeInfo(
+		unionName,
+		true,
+		commonFields(built.value.variants),
+		built.value.variants,
+		built.value.slotCount,
+		members
+	);
+	let own = ownVariantInfos(built.value.variants, ownDecls, []);
 	let st1 = withRecords(built.key, IMS.imsPut(built.key.records, unionName, info));
-	let st2 = putVariantInfos(st1, built.value.variants);
+	let st2 = putVariantInfos(st1, own);
 	let env1 = IMS.imsPut(env, unionName, TTypeName { unionName });
-	let env2 = bindVariantCtors(env1, built.value.variants);
+	let env2 = bindVariantCtors(env1, own);
 	envOut(st2, env2)
+}
+
+function registerUnion(st, env, unionName, variantDecls) {
+	registerUnionShape(
+		st,
+		env,
+		unionName,
+		variantDecls,
+		variantDecls,
+		[unionName]
+	)
 }
 
 // Register every union carried by dependency interfaces, before imports are
@@ -1051,13 +1351,28 @@ function registerIfaceRecordEntries(st, env, entries) {
 	}
 }
 
-function registerIfaceUnionEntries(st, env, entries) {
+function registerIfaceUnionEntries(st, env, iface, entries) {
 	match Compat.uncons(entries) with
 	| None -> envOut(st, env)
 	| Some cell -> {
 		let p = cell.value;
-		let one = registerUnion(st, env, p.key.key, p.key.value);
-		registerIfaceUnionEntries(one.st, one.env, p.value)
+		let name = p.key.key;
+		let variants = p.key.value;
+		let own = match IMS.imsGet(iface.ownUnions, name) with
+		| None -> variants
+		| Some found -> found.value;
+		let members = match IMS.imsGet(iface.unionMembers, name) with
+		| None -> [name]
+		| Some found -> found.value;
+		let one = registerUnionShape(
+			st,
+			env,
+			name,
+			variants,
+			own,
+			members
+		);
+		registerIfaceUnionEntries(one.st, one.env, iface, p.value)
 	}
 }
 
@@ -1094,6 +1409,7 @@ function registerDepTypesLoop(st, env, entries, seen) {
 			let one = registerIfaceUnionEntries(
 				records.st,
 				records.env,
+				iface,
 				IMS.imsEntries(iface.unions)
 			);
 			if isImplicitBuiltinPath(iface.path) then {
@@ -1144,6 +1460,270 @@ function declareTypes(st, env, stmts) {
 	}
 }
 
+// ── combined-union expansion ──────────────────────────────────────────────
+
+function localUnionFromStmt(acc, stmt) {
+	match stmt with
+	| SType s -> {
+		match s.decl with
+		| UnionDecl u -> IMS.imsPut(
+			acc,
+			u.tname,
+			LocalUnion { s.decl, s.span }
+		)
+		| RecordDecl _ -> acc
+	}
+	| SExport e -> localUnionFromStmt(acc, e.inner)
+	| _ -> acc
+}
+
+function localUnionsLoop(stmts, acc) {
+	match Compat.uncons(stmts) with
+	| None -> acc
+	| Some cell -> localUnionsLoop(
+		cell.value.value,
+		localUnionFromStmt(acc, cell.value.key)
+	)
+}
+
+function localUnions(stmts) {
+	localUnionsLoop(stmts, IMS.imsEmpty())
+}
+
+function fieldDeclFromShape(field) {
+	match field.shape with
+	| FieldMono _ -> A.mkFieldDecl(field.fname, false)
+	| FieldSlot _ -> A.mkFieldDecl(field.fname, true)
+	| FieldCommon _ -> A.mkFieldDecl(field.fname, false)
+}
+
+function variantDeclFromInfo(variant) {
+	A.mkVariantDecl(
+		variant.vname,
+		map(fieldDeclFromShape, variant.fields)
+	)
+}
+
+function variantDeclsFromInfo(info) {
+	map(variantDeclFromInfo, info.variants)
+}
+
+function addUniqueName(names, name) {
+	if strListContains(names, name) then { names }
+	else { appendOne(names, name) }
+}
+
+function mergeUniqueNames(names, more) {
+	match Compat.uncons(more) with
+	| None -> names
+	| Some cell -> mergeUniqueNames(
+		addUniqueName(names, cell.value.key),
+		cell.value.value
+	)
+}
+
+function includeCount(includes, name) {
+	match Compat.uncons(includes) with
+	| None -> 0
+	| Some cell -> {
+		let add = if cell.value.key == name then { 1 } else { 0 };
+		add + includeCount(cell.value.value, name)
+	}
+}
+
+function checkDuplicateIncludes(st, includes, path, span) {
+	match Compat.uncons(includes) with
+	| None -> st
+	| Some cell -> {
+		let name = cell.value.key;
+		let st1 = if includeCount(includes, name) > 1 then {
+			addTypeDiag(
+				st,
+				path,
+				span,
+				"Union includes '" ++ name ++ "' more than once."
+			)
+		} else {
+			st
+		};
+		checkDuplicateIncludes(st1, cell.value.value, path, span)
+	}
+}
+
+function expandExternalUnion(st, name, path, span) {
+	match IMS.imsGet(st.records, name) with
+	| None -> UnionExpandOut {
+		st = addTypeDiag(
+			st,
+			path,
+			span,
+			"Unknown included union '" ++ name ++ "'."
+		),
+		variants = [],
+		members = []
+	}
+	| Some info -> {
+		if info.value.isUnion then {
+			UnionExpandOut {
+				st,
+				variantDeclsFromInfo(info.value),
+				info.value.members
+			}
+		} else {
+			UnionExpandOut {
+				st = addTypeDiag(
+					st,
+					path,
+					span,
+					"Included type '" ++ name ++ "' is not a union."
+				),
+				variants = [],
+				members = []
+			}
+		}
+	}
+}
+
+function expandIncludedUnions(st, decls, includes, visiting, path, span, variants, members) {
+	match Compat.uncons(includes) with
+	| None -> UnionExpandOut { st, variants, members }
+	| Some cell -> {
+		let one = expandUnion(
+			st,
+			decls,
+			cell.value.key,
+			visiting,
+			path,
+			span
+		);
+		expandIncludedUnions(
+			one.st,
+			decls,
+			cell.value.value,
+			visiting,
+			path,
+			span,
+			appendList(variants, one.variants),
+			mergeUniqueNames(members, one.members)
+		)
+	}
+}
+
+function expandLocalUnion(st, decls, name, local, visiting, path) {
+	match local.decl with
+	| RecordDecl _ -> expandExternalUnion(st, name, path, local.span)
+	| UnionDecl u -> {
+		let st1 = checkDuplicateIncludes(st, u.includes, path, local.span);
+		let included = expandIncludedUnions(
+			st1,
+			decls,
+			u.includes,
+			cons(name, visiting),
+			path,
+			local.span,
+			[],
+			[name]
+		);
+		UnionExpandOut {
+			included.st,
+			appendList(included.variants, u.variants),
+			included.members
+		}
+	}
+}
+
+function expandUnion(st, decls, name, visiting, path, span) {
+	if strListContains(visiting, name) then {
+		UnionExpandOut {
+			st = addTypeDiag(
+				st,
+				path,
+				span,
+				"Cyclic union inclusion involving '" ++ name ++ "'."
+			),
+			variants = [],
+			members = []
+		}
+	} else {
+		match IMS.imsGet(decls, name) with
+		| Some local -> expandLocalUnion(
+			st,
+			decls,
+			name,
+			local.value,
+			visiting,
+			path
+		)
+		| None -> expandExternalUnion(st, name, path, span)
+	}
+}
+
+function duplicateVariantName(variants, seen) {
+	match Compat.uncons(variants) with
+	| None -> None
+	| Some cell -> {
+		let name = cell.value.key.vname;
+		if strListContains(seen, name) then { Some { name } }
+		else { duplicateVariantName(cell.value.value, cons(name, seen)) }
+	}
+}
+
+function resolveLocalUnionEntry(st, env, decls, name, local, path) {
+	let expanded = expandUnion(st, decls, name, [], path, local.span);
+	let st1 = match duplicateVariantName(expanded.variants, []) with
+	| None -> expanded.st
+	| Some duplicate -> addTypeDiag(
+		expanded.st,
+		path,
+		local.span,
+		"Combined union '" ++ name ++ "' contains duplicate variant '" ++ duplicate.value ++ "'."
+	);
+	match local.decl with
+	| RecordDecl _ -> envOut(st1, env)
+	| UnionDecl u -> registerUnionShape(
+		st1,
+		env,
+		name,
+		expanded.variants,
+		u.variants,
+		expanded.members
+	)
+}
+
+function resolveLocalUnionsLoop(st, env, decls, entries, path) {
+	match Compat.uncons(entries) with
+	| None -> envOut(st, env)
+	| Some cell -> {
+		let entry = cell.value.key;
+		let one = resolveLocalUnionEntry(
+			st,
+			env,
+			decls,
+			entry.key,
+			entry.value,
+			path
+		);
+		resolveLocalUnionsLoop(
+			one.st,
+			one.env,
+			decls,
+			cell.value.value,
+			path
+		)
+	}
+}
+
+function resolveLocalUnions(st, env, stmts, path) {
+	let decls = localUnions(stmts);
+	resolveLocalUnionsLoop(
+		st,
+		env,
+		decls,
+		IMS.imsEntries(decls),
+		path
+	)
+}
+
 // Three-way result for namespace member lookup from an EField object.
 type NsLookup = {
 	| NsNotNamespace
@@ -1179,6 +1759,40 @@ function fieldTypeFromShape(shape, args) {
 		| None -> TUnknown
 		| Some t -> t.value
 	}
+	| FieldCommon _ -> TUnknown
+}
+
+function unifyCommonFieldShapes(st, shapes, args, resultT, path, span) {
+	match Compat.uncons(shapes) with
+	| None -> exprOut(st, apply(st.subst, resultT))
+	| Some cell -> {
+		let memberT = fieldTypeFromShape(cell.value.key, args);
+		let st1 = unify(st, memberT, resultT, path, span);
+		unifyCommonFieldShapes(
+			st1,
+			cell.value.value,
+			args,
+			resultT,
+			path,
+			span
+		)
+	}
+}
+
+function checkedFieldType(st, shape, args, path, span) {
+	match shape with
+	| FieldCommon common -> {
+		let result = freshVar(st);
+		unifyCommonFieldShapes(
+			result.key,
+			common.shapes,
+			args,
+			result.value,
+			path,
+			span
+		)
+	}
+	| _ -> exprOut(st, fieldTypeFromShape(shape, args))
 }
 
 function findFieldByName(fields, name) {
@@ -1687,13 +2301,420 @@ function inferCall(st, env, callee, args, span, path) {
 	| _ -> exprOut(addTypeDiag(co.st, path, span, "Cannot call value of type " ++ formatType(ct) ++ "."), TUnknown)
 }
 
+// ── forward and wrapper-aware pipelines ──────────────────────────────────
+
+function isPipeOperator(op) {
+	op == "|>" || op == "|?>" || op == "|!>"
+}
+
+function typeArgsFor(t, name) {
+	match widenVariant(t) with
+	| TNamed named -> {
+		if named.tname == name then { Some { named.args } }
+		else { None }
+	}
+	| _ -> None
+}
+
+function unaryPipeArityDiag(st, path, span, op, actual) {
+	addTypeDiag(
+		st,
+		path,
+		span,
+		"Pipeline operator '"
+		++ op
+		++ "' requires a callable accepting exactly one argument; got "
+		++ __str__(actual)
+		++ "."
+	)
+}
+
+function inferKnownPipeCallable(st, path, span, op, inputT, params, ret) {
+	if length(params) != 1 then {
+		exprOut(
+			unaryPipeArityDiag(st, path, span, op, length(params)),
+			TUnknown
+		)
+	} else {
+		match Compat.listAt(params, 0) with
+		| None -> exprOut(st, TUnknown)
+		| Some param -> {
+			let st1 = unify(st, inputT, param.value, path, span);
+			exprOut(st1, apply(st1.subst, ret))
+		}
+	}
+}
+
+function inferPipeCallable(st, path, span, op, inputT, callableT) {
+	let callable = apply(st.subst, callableT);
+	match callable with
+	| TFun fnType -> inferKnownPipeCallable(
+		st,
+		path,
+		span,
+		op,
+		inputT,
+		fnType.params,
+		fnType.ret
+	)
+	| TProc procType -> inferKnownPipeCallable(
+		st,
+		path,
+		span,
+		op,
+		inputT,
+		procType.params,
+		procType.ret
+	)
+	| TVar _ -> {
+		let ret = freshVar(st);
+		let required = TFun { [inputT], ret.value };
+		let st1 = unify(ret.key, callable, required, path, span);
+		exprOut(st1, apply(st1.subst, ret.value))
+	}
+	| TUnknown -> exprOut(st, TUnknown)
+	| TAny -> exprOut(st, TUnknown)
+	| _ -> exprOut(
+		addTypeDiag(
+			st,
+			path,
+			span,
+			"Cannot pipe into value of type " ++ formatType(callable) ++ "."
+		),
+		TUnknown
+	)
+}
+
+function inferOptionPipe(st, path, span, leftT, rightT) {
+	let left = apply(st.subst, leftT);
+	match typeArgsFor(left, "Option") with
+	| None -> inferPipeCallable(st, path, span, "|?>", left, rightT)
+	| Some args -> {
+		let valueT = maybeFirst(args.value, TUnknown);
+		let called = inferPipeCallable(
+			st,
+			path,
+			span,
+			"|?>",
+			valueT,
+			rightT
+		);
+		let returned = apply(called.st.subst, called.typ);
+		match typeArgsFor(returned, "Option") with
+		| Some _ -> exprOut(called.st, widenVariant(returned))
+		| None -> exprOut(called.st, tOption(returned))
+	}
+}
+
+function inferResultPipe(st, path, span, leftT, rightT) {
+	let left = apply(st.subst, leftT);
+	match typeArgsFor(left, "Result") with
+	| None -> inferPipeCallable(st, path, span, "|!>", left, rightT)
+	| Some leftArgs -> {
+		let valueT = maybeFirst(leftArgs.value, TUnknown);
+		let errorT = match Compat.listAt(leftArgs.value, 1) with
+			| None -> TUnknown
+			| Some error -> error.value;
+		let called = inferPipeCallable(
+			st,
+			path,
+			span,
+			"|!>",
+			valueT,
+			rightT
+		);
+		let returned = apply(called.st.subst, called.typ);
+		match typeArgsFor(returned, "Result") with
+		| None -> exprOut(
+			called.st,
+			tResult(returned, apply(called.st.subst, errorT))
+		)
+		| Some rightArgs -> {
+			let resultT = maybeFirst(rightArgs.value, TUnknown);
+			let nextErrorT = match Compat.listAt(rightArgs.value, 1) with
+				| None -> TUnknown
+				| Some error -> error.value;
+			let joined = joinTypes(
+				called.st,
+				errorT,
+				nextErrorT,
+				path,
+				span
+			);
+			exprOut(
+				joined.st,
+				tResult(
+					apply(joined.st.subst, resultT),
+					joined.typ
+				)
+			)
+		}
+	}
+}
+
+function inferPipeline(st, path, span, op, leftT, rightT) {
+	if op == "|?>" then {
+		inferOptionPipe(st, path, span, leftT, rightT)
+	} else if op == "|!>" then {
+		inferResultPipe(st, path, span, leftT, rightT)
+	} else {
+		inferPipeCallable(st, path, span, "|>", leftT, rightT)
+	}
+}
+
+// ── least-upper-bound joins for combined unions ───────────────────────────
+
+function unionChoice(name, size, ambiguous) {
+	UnionChoice { name, size, ambiguous }
+}
+
+function betterUnionChoice(choice, name, size) {
+	if choice.name == "" || size < choice.size then {
+		unionChoice(name, size, false)
+	} else if size == choice.size && name != choice.name then {
+		unionChoice(choice.name, choice.size, true)
+	} else {
+		choice
+	}
+}
+
+function commonUnionChoiceLoop(entries, leftName, rightName, choice) {
+	match Compat.uncons(entries) with
+	| None -> choice
+	| Some cell -> {
+		let entry = cell.value.key;
+		let info = entry.value;
+		let next = if info.isUnion
+			&& strListContains(info.members, leftName)
+			&& strListContains(info.members, rightName)
+			then {
+				betterUnionChoice(choice, entry.key, length(info.members))
+			} else {
+				choice
+			};
+		commonUnionChoiceLoop(
+			cell.value.value,
+			leftName,
+			rightName,
+			next
+		)
+	}
+}
+
+function commonUnionChoice(st, leftName, rightName) {
+	commonUnionChoiceLoop(
+		IMS.imsEntries(st.records),
+		leftName,
+		rightName,
+		unionChoice("", 0, false)
+	)
+}
+
+function joinTypeLists(st, left, right, path, span, acc) {
+	match Compat.uncons(left) with
+	| None -> JoinListOut { st, reverse(acc) }
+	| Some lcell -> {
+		match Compat.uncons(right) with
+		| None -> JoinListOut { st, reverse(acc) }
+		| Some rcell -> {
+			let joined = joinTypes(
+				st,
+				lcell.value.key,
+				rcell.value.key,
+				path,
+				span
+			);
+			joinTypeLists(
+				joined.st,
+				lcell.value.value,
+				rcell.value.value,
+				path,
+				span,
+				cons(joined.typ, acc)
+			)
+		}
+	}
+}
+
+function joinIntoUnion(st, leftName, leftArgs, rightName, rightArgs, superName, path, span) {
+	match unionInfo(st, superName) with
+	| None -> exprOut(st, TUnknown)
+	| Some info -> {
+		let args = freshTypeList(st, info.value.slotCount);
+		let leftSt = unifyIncludedUnionArgs(
+			args.st,
+			leftName,
+			leftArgs,
+			superName,
+			args.types,
+			path,
+			span
+		);
+		let rightSt = unifyIncludedUnionArgs(
+			leftSt,
+			rightName,
+			rightArgs,
+			superName,
+			args.types,
+			path,
+			span
+		);
+		exprOut(
+			rightSt,
+			TNamed {
+				superName,
+				map(fn arg => apply(rightSt.subst, arg), args.types)
+			}
+		)
+	}
+}
+
+function joinDifferentNamed(st, leftName, leftArgs, rightName, rightArgs, path, span) {
+	let choice = commonUnionChoice(st, leftName, rightName);
+	if choice.name == "" then {
+		let st1 = unify(
+			st,
+			TNamed { leftName, leftArgs },
+			TNamed { rightName, rightArgs },
+			path,
+			span
+		);
+		exprOut(st1, TNamed { leftName, leftArgs })
+	} else if choice.ambiguous then {
+		exprOut(
+			addTypeDiag(
+				st,
+				path,
+				span,
+				"Ambiguous combined-union join for "
+					++ leftName
+					++ " and "
+					++ rightName
+					++ "."
+			),
+			TUnknown
+		)
+	} else {
+		joinIntoUnion(
+			st,
+			leftName,
+			leftArgs,
+			rightName,
+			rightArgs,
+			choice.name,
+			path,
+			span
+		)
+	}
+}
+
+function joinNamed(st, leftName, leftArgs, rightName, rightArgs, path, span) {
+	if leftName == rightName then {
+		if length(leftArgs) != length(rightArgs) then {
+			exprOut(
+				addTypeDiag(st, path, span, "Arity mismatch while joining named types."),
+				TUnknown
+			)
+		} else {
+			let args = joinTypeLists(
+				st,
+				leftArgs,
+				rightArgs,
+				path,
+				span,
+				[]
+			);
+			exprOut(args.st, TNamed { leftName, args.types })
+		}
+	} else {
+		joinDifferentNamed(
+			st,
+			leftName,
+			leftArgs,
+			rightName,
+			rightArgs,
+			path,
+			span
+		)
+	}
+}
+
+function joinTypes(st, left0, right0, path, span) {
+	let left1 = widenVariant(apply(st.subst, left0));
+	let right1 = widenVariant(apply(st.subst, right0));
+	match left1 with
+	| TNamed left -> {
+		match right1 with
+		| TNamed right -> joinNamed(
+			st,
+			left.tname,
+			left.args,
+			right.tname,
+			right.args,
+			path,
+			span
+		)
+		| TVar _ -> {
+			let st1 = unify(st, left1, right1, path, span);
+			exprOut(st1, apply(st1.subst, right1))
+		}
+		| _ -> {
+			let st1 = unify(st, left1, right1, path, span);
+			exprOut(st1, apply(st1.subst, left1))
+		}
+	}
+	| TList left -> {
+		match right1 with
+		| TList right -> {
+			let elem = joinTypes(st, left.elem, right.elem, path, span);
+			exprOut(elem.st, TList { elem.typ })
+		}
+		| _ -> {
+			let st1 = unify(st, left1, right1, path, span);
+			exprOut(st1, apply(st1.subst, left1))
+		}
+	}
+	| TArray left -> {
+		match right1 with
+		| TArray right -> {
+			let elem = joinTypes(st, left.elem, right.elem, path, span);
+			exprOut(elem.st, TArray { elem.typ })
+		}
+		| _ -> {
+			let st1 = unify(st, left1, right1, path, span);
+			exprOut(st1, apply(st1.subst, left1))
+		}
+	}
+	| TVar _ -> {
+		let st1 = unify(st, left1, right1, path, span);
+		exprOut(st1, apply(st1.subst, left1))
+	}
+	| _ -> {
+		let st1 = unify(st, left1, right1, path, span);
+		exprOut(st1, apply(st1.subst, left1))
+	}
+}
+
+function replaceJoinVar(st, raw, joined) {
+	match raw with
+	| TVar v -> withSubst(st, substPut(st.subst, v.v, joined))
+	| _ -> st
+}
+
 function inferListElems(st, env, elems, elemT, path) {
 	match Compat.uncons(elems) with
 	| None -> exprOut(st, TList { elemT })
 	| Some cell -> {
 		let p = cell.value;
 		let eo = cgenExpr(st, env, p.key, path);
-		let st1 = unify(eo.st, eo.typ, elemT, path, A.exprSpan(p.key));
+		let joined = joinTypes(
+			eo.st,
+			apply(eo.st.subst, elemT),
+			eo.typ,
+			path,
+			A.exprSpan(p.key)
+		);
+		let st1 = replaceJoinVar(joined.st, elemT, joined.typ);
 		inferListElems(st1, env, p.value, elemT, path)
 	}
 }
@@ -1717,7 +2738,14 @@ function inferArrayElems(st, env, elems, elemT, path) {
 	| Some cell -> {
 		let p = cell.value;
 		let eo = cgenExpr(st, env, p.key, path);
-		let st1 = unify(eo.st, eo.typ, elemT, path, A.exprSpan(p.key));
+		let joined = joinTypes(
+			eo.st,
+			apply(eo.st.subst, elemT),
+			eo.typ,
+			path,
+			A.exprSpan(p.key)
+		);
+		let st1 = replaceJoinVar(joined.st, elemT, joined.typ);
 		inferArrayElems(st1, env, p.value, elemT, path)
 	}
 }
@@ -1819,12 +2847,12 @@ function inferFieldAccess(
 				)
 			}
 			| Some f -> {
-				exprOut(
+				checkedFieldType(
 					st,
-					fieldTypeFromShape(
-						f.value.shape,
-						v.args
-					)
+					f.value.shape,
+					v.args,
+					path,
+					span
 				)
 			}
 		}
@@ -1868,12 +2896,12 @@ function inferFieldAccess(
 				)
 			}
 			| Some f -> {
-				exprOut(
+				checkedFieldType(
 					st,
-					fieldTypeFromShape(
-						f.value.shape,
-						n.args
-					)
+					f.value.shape,
+					n.args,
+					path,
+					span
 				)
 			}
 		}
@@ -2096,7 +3124,15 @@ function bindListPatternElems(env, elems, elemT) {
 	}
 }
 
-function inferMatchArms(st, env, arms, subjectT, resultT, path) {
+function joinMatchResult(st, hasResult, resultT, bodyT, path, span) {
+	if hasResult then {
+		joinTypes(st, resultT, bodyT, path, span)
+	} else {
+		exprOut(st, apply(st.subst, bodyT))
+	}
+}
+
+function inferMatchArmsLoop(st, env, arms, subjectT, resultT, hasResult, path) {
 	match Compat.uncons(arms) with
 	| None -> exprOut(st, resultT)
 	| Some cell -> {
@@ -2110,8 +3146,115 @@ function inferMatchArms(st, env, arms, subjectT, resultT, path) {
 				unify(go.st, go.typ, TBool, path, A.exprSpan(g.value))
 			};
 		let bo = cgenExpr(st1, bound.env, arm.body, path);
-		let st2 = unify(bo.st, bo.typ, resultT, path, A.exprSpan(arm.body));
-		inferMatchArms(st2, env, p.value, subjectT, resultT, path)
+		let joined = joinMatchResult(
+			bo.st,
+			hasResult,
+			resultT,
+			bo.typ,
+			path,
+			A.exprSpan(arm.body)
+		);
+		inferMatchArmsLoop(
+			joined.st,
+			env,
+			p.value,
+			subjectT,
+			joined.typ,
+			true,
+			path
+		)
+	}
+}
+
+function inferMatchArms(st, env, arms, subjectT, path) {
+	inferMatchArmsLoop(
+		st,
+		env,
+		arms,
+		subjectT,
+		TUnknown,
+		false,
+		path
+	)
+}
+
+function patternUnionNames(st, arms, acc) {
+	match Compat.uncons(arms) with
+	| None -> reverse(acc)
+	| Some cell -> {
+		let next = match cell.value.key.pattern with
+		| PVariant pattern -> {
+			match IMS.imsGet(st.variants, pattern.vname) with
+			| None -> acc
+			| Some info -> cons(info.value.unionName, acc)
+		}
+		| _ -> acc;
+		patternUnionNames(st, cell.value.value, next)
+	}
+}
+
+function nextCommonPatternUnionName(st, current, candidate) {
+	if current == "" then {
+		candidate
+	} else if current == candidate then {
+		current
+	} else {
+		let choice = commonUnionChoice(st, current, candidate);
+		if choice.name == "" || choice.ambiguous then { "" }
+		else { choice.name }
+	}
+}
+
+function commonPatternUnionName(st, names, current) {
+	match Compat.uncons(names) with
+	| None -> current
+	| Some cell -> {
+		let next = nextCommonPatternUnionName(
+			st,
+			current,
+			cell.value.key
+		);
+		commonPatternUnionName(st, cell.value.value, next)
+	}
+}
+
+function constrainMatchSubject(st, subjectT, arms, path, span) {
+	match apply(st.subst, subjectT) with
+	| TVar _ -> constrainUnknownMatchSubject(
+		st,
+		subjectT,
+		arms,
+		path,
+		span
+	)
+	| TUnknown -> constrainUnknownMatchSubject(
+		st,
+		subjectT,
+		arms,
+		path,
+		span
+	)
+	| _ -> st
+}
+
+function constrainUnknownMatchSubject(st, subjectT, arms, path, span) {
+	let names = patternUnionNames(st, arms, []);
+	let unionName = commonPatternUnionName(st, names, "");
+	if unionName == "" then {
+		st
+	} else {
+		match unionInfo(st, unionName) with
+		| None -> st
+		| Some info -> {
+			let args = freshTypeList(st, info.value.slotCount);
+			unify(
+				args.st,
+				subjectT,
+				TNamed { unionName, args.types },
+				path,
+				span
+			)
+		}
 	}
 }
 
@@ -2163,7 +3306,11 @@ export function cgenExpr(st, env, e, path) {
 	| EBinary x -> {
 		let lo = cgenExpr(st, env, x.lhs, path);
 		let ro = cgenExpr(lo.st, env, x.rhs, path);
-		let bo = inferBinaryExpr(ro.st, path, x.span, x.op, x.rhs, lo.typ, ro.typ);
+		let bo = if isPipeOperator(x.op) then {
+			inferPipeline(ro.st, path, x.span, x.op, lo.typ, ro.typ)
+		} else {
+			inferBinaryExpr(ro.st, path, x.span, x.op, x.rhs, lo.typ, ro.typ)
+		};
 		exprOut(addTypedNode(bo.st, x.id, bo.typ), bo.typ)
 	}
 	| EIf x -> {
@@ -2171,13 +3318,11 @@ export function cgenExpr(st, env, e, path) {
 		let st1 = unify(co.st, co.typ, TBool, path, A.exprSpan(x.cond));
 		let to = cgenExpr(st1, env, x.thenE, path);
 		let eo = cgenExpr(to.st, env, x.elseE, path);
-		// Rule 3: merge the branches through a fresh variable so sibling
-		// variants join to their union (eager widening in bindVar).
-		let j = freshVar(eo.st);
-		let st2 = unify(j.key, j.value, to.typ, path, x.span);
-		let st3 = unify(st2, j.value, eo.typ, path, x.span);
-		let typ = apply(st3.subst, j.value);
-		exprOut(addTypedNode(st3, x.id, typ), typ)
+		let joined = joinTypes(eo.st, to.typ, eo.typ, path, x.span);
+		exprOut(
+			addTypedNode(joined.st, x.id, joined.typ),
+			joined.typ
+		)
 	}
 	| ECall x -> {
 		let co = inferCall(st, env, x.callee, x.args, x.span, path);
@@ -2197,7 +3342,7 @@ export function cgenExpr(st, env, e, path) {
 		let ret = inferTypeExpr(ps.key, x.ret);
 		let env1 = bindParams(env, typedParamNames(x.params), ps.value);
 		let bo = inferBody(ret.key, env1, x.body, path);
-		let st1 = unify(bo.st, ret.value, bo.typ, path, x.span);
+		let st1 = unifyProduced(bo.st, bo.typ, ret.value, path, x.span);
 		let raw = TProc { ps.value, ret.value, x.isAsync };
 		let typ = apply(st1.subst, raw);
 		exprOut(addTypedNode(st1, x.id, typ), typ)
@@ -2260,9 +3405,21 @@ export function cgenExpr(st, env, e, path) {
 	}
 	| EMatch x -> {
 		let so = cgenExpr(st, env, x.subject, path);
-		let rt = freshVar(so.st);
-		let mo = inferMatchArms(rt.key, env, x.arms, so.typ, rt.value, path);
-		let typ = apply(mo.st.subst, rt.value);
+		let constrained = constrainMatchSubject(
+			so.st,
+			so.typ,
+			x.arms,
+			path,
+			x.span
+		);
+		let mo = inferMatchArms(
+			constrained,
+			env,
+			x.arms,
+			so.typ,
+			path
+		);
+		let typ = apply(mo.st.subst, mo.typ);
 		exprOut(addTypedNode(mo.st, x.id, typ), typ)
 	}
 	| EDict x -> {
@@ -2329,12 +3486,17 @@ function inferBodyLoop(st, env, stmts, lastT, path) {
 				| None -> bodyOut(addTypedNode(thenOut.st, sx.id, TUnit), TUnit)
 				| Some es -> {
 					let elseOut = inferBody(thenOut.st, env, es.value, path);
-					// Rule 3: merge through a fresh variable (see EIf).
-					let j = freshVar(elseOut.st);
-					let st2 = unify(j.key, j.value, thenOut.typ, path, sx.span);
-					let st3 = unify(st2, j.value, elseOut.typ, path, sx.span);
-					let typ = apply(st3.subst, j.value);
-					bodyOut(addTypedNode(st3, sx.id, typ), typ)
+					let joined = joinTypes(
+						elseOut.st,
+						thenOut.typ,
+						elseOut.typ,
+						path,
+						sx.span
+					);
+					bodyOut(
+						addTypedNode(joined.st, sx.id, joined.typ),
+						joined.typ
+					)
 				}
 			} else {
 				let so = cgenStmt(st, env, p.key, path);
@@ -3215,10 +4377,10 @@ function inferFunctionAgainstPredecl(
 ) {
 	let env1 = bindParams(env, params, paramTypes);
 	let bo = inferBody(st, env1, body, path);
-	let st1 = unify(
+	let st1 = unifyProduced(
 		bo.st,
-		returnType,
 		bo.typ,
+		returnType,
 		path,
 		span
 	);
@@ -3337,10 +4499,10 @@ function inferPredeclaredValue(
 	| None -> value.st
 	| Some entry -> {
 		match entry.value with
-		| TMono mono -> unify(
+		| TMono mono -> unifyProduced(
 			value.st,
-			mono.t,
 			value.typ,
+			mono.t,
 			path,
 			span
 		)
@@ -3774,10 +4936,10 @@ function inferFunctionDecl(
 	);
 	let env1 = bindParams(recursiveEnv, params, ps.types);
 	let bo = inferBody(ret.key, env1, body, path);
-	let st1 = unify(
+	let st1 = unifyProduced(
 		bo.st,
-		ret.value,
 		bo.typ,
+		ret.value,
 		path,
 		span
 	);
@@ -3861,7 +5023,7 @@ export function cgenStmt(st, env, s, path) {
 		| Some e -> {
 			let rhs = cgenExpr(st, env, x.value, path);
 			let target = match e.value with | TMono m -> m.t | TScheme sc -> sc.scheme.body | _ -> TUnknown;
-			let st1 = unify(rhs.st, target, rhs.typ, path, x.span);
+			let st1 = unifyProduced(rhs.st, rhs.typ, target, path, x.span);
 			envOut(addTypedNode(st1, x.id, TUnit), env)
 		}
 	}
@@ -3874,7 +5036,13 @@ export function cgenStmt(st, env, s, path) {
 		let expected = match slot.typ with
 			| TNamed opt -> { match Compat.listAt(opt.args, 0) with | None -> TUnknown | Some v -> v.value }
 			| _ -> TUnknown;
-		let st2 = unify(rhs.st, expected, rhs.typ, path, A.exprSpan(x.value));
+		let st2 = unifyProduced(
+			rhs.st,
+			rhs.typ,
+			expected,
+			path,
+			A.exprSpan(x.value)
+		);
 		envOut(addTypedNode(st2, x.id, TUnit), env)
 	}
 	| SFun x -> inferFunctionDecl(
@@ -4101,18 +5269,65 @@ function applyTypesMap(types, subst) {
 	IMI.imiMap(fn t => apply(subst, t), types)
 }
 
+function expandedUnionShape(info, ownVariants) {
+	ExpandedUnion {
+		variantDeclsFromInfo(info),
+		ownVariants,
+		info.members
+	}
+}
+
+function collectExpandedUnionShapes(st, entries, acc) {
+	match Compat.uncons(entries) with
+	| None -> acc
+	| Some cell -> {
+		let entry = cell.value.key;
+		let next = match entry.value.decl with
+		| RecordDecl _ -> acc
+		| UnionDecl u -> {
+			match IMS.imsGet(st.records, entry.key) with
+			| None -> acc
+			| Some info -> IMS.imsPut(
+				acc,
+				entry.key,
+				expandedUnionShape(info.value, u.variants)
+			)
+		};
+		collectExpandedUnionShapes(
+			st,
+			cell.value.value,
+			next
+		)
+	}
+}
+
+function expandedUnionShapes(st, stmts) {
+	collectExpandedUnionShapes(
+		st,
+		IMS.imsEntries(localUnions(stmts)),
+		IMS.imsEmpty()
+	)
+}
+
 // ── public entry point ─────────────────────────────────────────────────────
 
 export generic function inferModule(ast, deps) {
+	let depsMap = I.normalizeIfaceMap(deps);
 	let st0 = emptyState();
 	let env0 = builtinEnv();
 	let intrinsic = registerBuiltinTypes(st0, env0);
-	let seeded = registerDepTypes(intrinsic.st, intrinsic.env, deps);
-	let imported = bindImports(seeded.st, seeded.env, ast.stmts, deps);
+	let seeded = registerDepTypes(intrinsic.st, intrinsic.env, depsMap);
+	let imported = bindImports(seeded.st, seeded.env, ast.stmts, depsMap);
 	let declared = declareTypes(imported.st, imported.env, ast.stmts);
-	let externed = inferExterns(
+	let resolved = resolveLocalUnions(
 		declared.st,
 		declared.env,
+		ast.stmts,
+		ast.path
+	);
+	let externed = inferExterns(
+		resolved.st,
+		resolved.env,
 		ast.stmts,
 		ast.path
 	);
@@ -4138,12 +5353,13 @@ export generic function inferModule(ast, deps) {
 		ast.stmts,
 		ast.path
 	);
-	mkInferResult(
+	mkInferResultWithUnions(
 		applyTypesMap(
 			exported.key.types,
 			exported.key.subst
 		),
 		exported.value,
+		expandedUnionShapes(exported.key, ast.stmts),
 		reverse(exported.key.diags)
 	)
 }

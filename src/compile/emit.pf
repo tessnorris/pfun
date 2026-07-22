@@ -828,6 +828,59 @@ function emitComparison(ctx, op, lhs, rhs, left, right) {
 	}
 }
 
+function isNamedType(t, name) {
+	match t with
+	| TNamed named -> named.tname == name
+	| TVariant variant -> variant.unionName == name
+	| _ -> false
+}
+
+function callableReturnType(t) {
+	match t with
+	| TFun fnType -> fnType.ret
+	| TProc procType -> procType.ret
+	| _ -> TUnknown
+}
+
+function emitPipeline(ctx, op, lhs, rhs, left, right) {
+	let leftType = typeOfExpr(ctx, lhs);
+	if op == "|>" then {
+		J.jsCall(right, [left])
+	} else if op == "|?>" && isNamedType(leftType, "Option") then {
+		hostCall(
+			"$optionPipe",
+			[
+				left,
+				right,
+				J.jsBool(
+					isNamedType(
+						callableReturnType(typeOfExpr(ctx, rhs)),
+						"Option"
+					)
+				)
+			]
+		)
+	} else if op == "|!>" && isNamedType(leftType, "Result") then {
+		hostCall(
+			"$resultPipe",
+			[
+				left,
+				right,
+				J.jsBool(
+					isNamedType(
+						callableReturnType(typeOfExpr(ctx, rhs)),
+						"Result"
+					)
+				)
+			]
+		)
+	} else {
+		// Wrapper-aware pipes are transparent until the chain first produces
+		// their wrapper type.
+		J.jsCall(right, [left])
+	}
+}
+
 // Architecture entry point. Uses checked operand types to select the host ABI.
 function specializeBin(ctx, op, lhs, rhs) {
 	let left = emitExpr(ctx, lhs);
@@ -835,7 +888,9 @@ function specializeBin(ctx, op, lhs, rhs) {
 	let lt = typeOfExpr(ctx, lhs);
 	let rt = typeOfExpr(ctx, rhs);
 
-	if op == "++" then {
+	if op == "|>" || op == "|?>" || op == "|!>" then {
+		emitPipeline(ctx, op, lhs, rhs, left, right)
+	} else if op == "++" then {
 		hostCall("$concatS", [left, right])
 	} else if op == "==" || op == "!=" then {
 		emitEquality(ctx, op, lhs, rhs, left, right)

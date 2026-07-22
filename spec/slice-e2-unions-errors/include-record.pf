@@ -1,0 +1,8 @@
+type ErrorRecord = {
+	message
+}
+
+type CombinedError = {
+	...ErrorRecord
+	| LocalProblem
+}

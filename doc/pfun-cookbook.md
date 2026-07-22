@@ -1841,13 +1841,15 @@ is what most code should use, and it composes naturally with the validation reci
 File access is pure effect, so it lives in `proc`s. The `file` module (and `io`) provide the
 building blocks the corpus uses directly:
 
-* Whole-file: `readFile(path)` and `writeFile(path, content)`, each returning a `Response`
-  (`Ok o` with `o.value`, or `Err e` with `e.message`).
+* Whole-file: `readFile(path)` and `writeFile(path, content)`, each returning a
+  `Result<_, NativeError>` (`Ok o` with `o.value`, or `Err e` whose
+  `e.message` is a structured native error).
 * Streaming: `fileOpen(path, mode)` with modes `Read`/`Write`/`Append`, then `readLine`,
   `writeLine`, `writeBytes`, `readBytes`, `readBuffer`, and `fileClose`. Line/byte reads return a
-  three-way `Ok` / `Eof` / `Err` result.
-* Existence and directories: `fileExists(path)` returns a plain `Bool`; `mkdirP(path)` returns a
-  `Response`.
+  three-way `ReadOk` / `ReadEof` / `ReadErr` result.
+* Existence and directories: `fileExists(path)` returns
+  `Result<Bool, NativeError>`; `mkdirP(path)` returns
+  `Result<Unit, NativeError>`.
 
 Anything the corpus lacks — directory listing, file metadata, rename, watch, compression — is a
 foreign wrapper from **Appendix A** (built on Node's `fs`, `path`, `os`, and `zlib`). Two reused
@@ -2034,12 +2036,15 @@ let defaultConfig = Config(host="localhost", port=8080, debug=false);
 
 // whole-file fallback (the json4 pattern): bad/missing file -> defaults
 proc loadConfig(path) {
-  if !fileExists(path) then defaultConfig
-  else match readFile(path) with
-    | Err _ -> defaultConfig
-    | Ok c  -> match jsonDeserialize(c.value) with
-      | Some s -> s.value
-      | None   -> defaultConfig;
+  match fileExists(path) with
+  | Err _ -> defaultConfig
+  | Ok found -> if !found.value then defaultConfig else {
+      match readFile(path) with
+      | Err _ -> defaultConfig
+      | Ok c  -> match jsonDeserialize(c.value) with
+        | Some s -> s.value
+        | None   -> defaultConfig;
+    }
 }
 
 proc saveConfig(path, cfg) {
@@ -2073,18 +2078,20 @@ each file by renaming it aside once it grows past a threshold. The pieces are th
 ```pfun
 // statSize : (String) -> Response<Int>     (Appendix A)
 proc rotateIfNeeded(path, maxBytes) {
-  if fileExists(path) then
-    match statSize(path) with
-    | Ok s  -> if s.value >= maxBytes then { rename(path, path + ".1"); 0 } else 0
-    | Err _ -> 0
-  else 0;
+  match fileExists(path) with
+  | Err _ -> 0
+  | Ok found -> if found.value then {
+      match statSize(path) with
+      | Ok s  -> if s.value >= maxBytes then { rename(path, path + ".1"); 0 } else 0
+      | Err _ -> 0;
+    } else 0;
 }
 
 proc logLine(path, line, maxBytes) {
   rotateIfNeeded(path, maxBytes);
   match fileOpen(path, Append) with
   | Ok o  -> { writeLine(o.value, line); fileClose(o.value); }
-  | Err e -> println("log open failed: " + e.message);
+  | Err e -> println("log open failed: " ++ nativeErrorMessage(e.message));
 }
 
 logLine("./app.log", "service started", 1048576);   // rotate at 1 MiB
@@ -4258,8 +4265,9 @@ Used in Recipes 91–94, 97, 98. (Recipe 98's `b64uBytes` is a one-line convenie
 | `gunzipFile(src, dst)` | `Response` | stream `src` → `zlib.createGunzip()` → `dst` | effectful |
 | `gzipBytes(bytes)` / `gunzipBytes(bytes)` | `Response<List<Byte>>` | `zlib.gzipSync` / `zlib.gunzipSync` | deterministic |
 
-Used in Chapter 5 (Recipes 42–49) and 44/46. The corpus already provides `mkdirP` (Response),
-`fileExists` (Bool), `readFile`/`writeFile`, and the `fileOpen` family.
+Used in Chapter 5 (Recipes 42–49) and 44/46. The corpus already provides
+`mkdirP`, `fileExists`, `readFile`/`writeFile`, and the `fileOpen` family; all
+fallible native file operations return `Result<_, NativeError>`.
 
 ---
 
@@ -4619,10 +4627,10 @@ Pair     = { key, value }                            // Pair { k, v } or Pair(ke
 | Module | Provides |
 |---|---|
 | `io` | `print(s)`, `println(s)`, `readln() -> Option<String>`, `flushStdout()` |
-| `file` | `readFile -> Response`, `writeFile -> Response`, `fileOpen(path, Read|Write|Append) -> Response`, `fileClose`, `readLine -> Ok/Eof/Err`, `writeLine`, `readBytes(h,n) -> Ok/Eof/Err`, `writeBytes(h, bytes)`, `readBuffer(h, n, CharMode|ByteMode)`, `bufferToString`, `bufferLength`, `bufferToBytes`, `fileExists -> Bool`, `mkdirP -> Response` |
+| `file` | `readFile -> Result<_, NativeError>`, `writeFile -> Result<_, NativeError>`, `fileOpen(path, Read\|Write\|Append) -> Result<_, NativeError>`, `fileClose`, `readLine -> ReadOk/ReadEof/ReadErr`, `writeLine`, `readBytes(h,n) -> ReadOk/ReadEof/ReadErr`, `writeBytes(h, bytes)`, `readBuffer(h, n, CharMode\|ByteMode)`, `bufferToString`, `bufferLength`, `bufferToBytes`, `fileExists -> Result<Bool, NativeError>`, `mkdirP -> Result<_, NativeError>` |
 | `json` | `jsonSerialize(v) -> Option<String>`, `jsonDeserialize(s) -> Option<value>` (uses `__pfun` tags to round-trip records/unions) |
 | `http` | client: `httpGet(url)`, `httpGetBytes(url)`, `httpPost(url, v)` (all `Response`, awaited); server: `httpListen(port, handler)`, `req.{method,path,query,body,bodyBytes}`, `res.text(s,b)` / `res.json(s,v)` / `res.bytes(s,bytes,ct)` |
-| `async` | `sleep(ms)`, `await`, `async proc` |
+| `async` | `sleep(ms) -> Result<Unit, NativeError>`, `await`, `async proc` |
 | `math` | `sqrt`, `pow`, `abs`, `round`, `lerp` |
 | `db/postgresql`, `db/mariadb` | `dbConnect(connStr) -> Response<Conn>`, `dbQuery(conn, sql, params) -> Response<{rowCount, rows}>`, `dbClose(conn) -> Response`; params/values: `DbText` · `DbInt` · `DbFloat` · `DbBool` · `DbBytes` · `DbNull`; a row is a list of `Pair { key=column, value=Db* }` (Postgres `$1` placeholders; MariaDB `?`) |
 
@@ -4651,5 +4659,3 @@ tokenizer, recursive descent, environments); `counter.pf`, `hello_web.pf`, `clie
 ---
 
 *End of the Pfun Programming Cookbook.*
-
-

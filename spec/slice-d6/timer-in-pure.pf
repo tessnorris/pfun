@@ -1,0 +1,5 @@
+import * from "timer";
+
+function forbidden() {
+	setTimer(0, proc () -> Unit { })
+}

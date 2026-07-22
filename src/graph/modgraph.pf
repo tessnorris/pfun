@@ -29,21 +29,6 @@ export type RawModule = { path, ast, edges }
 // actually exist.
 export type SearchEnv = { libDir, pfunHome, builtinNames }
 
-export type ResolveResult = {
-	| ResolveOk: resolved
-	| ResolveErr: diag
-}
-
-export type EdgesResult = {
-	| EdgesOk: edges
-	| EdgesErr: diags
-}
-
-export type TopoResult = {
-	| TopoOk: modules
-	| TopoErr: diags
-}
-
 // Internal DFS state for toposort.
 type VisitState = {
 	| NotVisited
@@ -239,7 +224,7 @@ function publicNamespacePath(rawPath, env) {
 // enqueue BuiltinPath edges.
 export function resolveImport(rawPath, fromDir, env) {
 	if isRelativeImport(rawPath) then {
-		ResolveOk {
+		Ok {
 			userPath(
 				canonicalUserPath(
 					joinPath(fromDir, rawPath)
@@ -247,15 +232,15 @@ export function resolveImport(rawPath, fromDir, env) {
 			)
 		}
 	} else if isPublicNamespaceImport(rawPath) then {
-		ResolveOk {
+		Ok {
 			userPath(
 				publicNamespacePath(rawPath, env)
 			)
 		}
 	} else if isBuiltinImport(rawPath, env) then {
-		ResolveOk { builtinPath(rawPath) }
+		Ok { builtinPath(rawPath) }
 	} else if env.libDir != "" then {
-		ResolveOk {
+		Ok {
 			userPath(
 				canonicalUserPath(
 					joinPath(env.libDir, rawPath)
@@ -263,7 +248,7 @@ export function resolveImport(rawPath, fromDir, env) {
 			)
 		}
 	} else {
-		ResolveErr {
+		Err {
 			diagForResolve(fromDir, rawPath)
 		}
 	}
@@ -275,11 +260,11 @@ function edgeOfImport(stmt, modulePath, fromDir, env) {
 	match stmt with
 	| SImport s -> {
 		match resolveImport(s.rawPath, fromDir, env) with
-		| ResolveOk r -> EdgesOk { [mkImportEdge(s.spec, s.rawPath, r.resolved, s.span)] }
-		| ResolveErr e -> EdgesErr { [e.diag] }
+		| Ok r -> Ok { [mkImportEdge(s.spec, s.rawPath, r.value, s.span)] }
+		| Err e -> Err { [e.message] }
 	}
 	| SExport e -> edgeOfImport(e.inner, modulePath, fromDir, env)
-	| _ -> EdgesOk { [] }
+	| _ -> Ok { [] }
 }
 
 function appendEdges(a, b) {
@@ -291,13 +276,13 @@ function appendEdges(a, b) {
 function edgeLoop(stmts, modulePath, fromDir, env, edges, diags) {
 	match Compat.uncons(stmts) with
 	| None -> {
-		if hasDiags(diags) then { EdgesErr { reverse(diags) } }
-		else { EdgesOk { edges } }
+		if hasDiags(diags) then { Err { reverse(diags) } }
+		else { Ok { edges } }
 	}
 	| Some cell -> {
 		match edgeOfImport(cell.value.key, modulePath, fromDir, env) with
-		| EdgesOk e -> edgeLoop(cell.value.value, modulePath, fromDir, env, appendEdges(edges, e.edges), diags)
-		| EdgesErr d -> edgeLoop(cell.value.value, modulePath, fromDir, env, edges, appendEdges(diags, d.diags))
+		| Ok e -> edgeLoop(cell.value.value, modulePath, fromDir, env, appendEdges(edges, e.value), diags)
+		| Err d -> edgeLoop(cell.value.value, modulePath, fromDir, env, edges, appendEdges(diags, d.message))
 	}
 }
 
@@ -400,8 +385,8 @@ function visitModuleValue(module, st) {
 function topoLoop(mods, st) {
 	match Compat.uncons(mods) with
 	| None -> {
-		if hasDiags(st.diags) then { TopoErr { reverse(st.diags) } }
-		else { TopoOk { reverse(st.acc) } }
+		if hasDiags(st.diags) then { Err { reverse(st.diags) } }
+		else { Ok { reverse(st.acc) } }
 	}
 	| Some cell -> {
 		match visitModuleValue(cell.value.key, st) with
@@ -423,9 +408,20 @@ function graphGroundingWitness() {
 	let sf = mkSourceFile("", "");
 	let env = mkSearchEnv("", "", [""]);
 	let m = A.mkModule("", [], 0);
-	let raw = mkRawModule("", m, [mkImportEdge(A.iStar(), "", userPath(""), fallbackSpan())]);
+	let edge = mkImportEdge(A.iStar(), "", userPath(""), fallbackSpan());
+	let raw = mkRawModule("", m, [edge]);
 	let b = isBuiltinImport("", env);
 	let r = resolveImport("", "", env);
 	let e = edgesOf(m, env);
-	sf.path ++ raw.path
+	let topo = toposort([raw]);
+	let rText = match r with
+	| Ok found -> resolvedPathToStr(found.value)
+	| Err failed -> failed.message.message;
+	let eCount = match e with
+	| Ok found -> length(cons(edge, found.value))
+	| Err failed -> length(cons(diagForResolve("", ""), failed.message));
+	let topoCount = match topo with
+	| Ok found -> length(cons(raw, found.value))
+	| Err failed -> length(cons(diagForResolve("", ""), failed.message));
+	sf.path ++ raw.path ++ rText ++ __str__(eCount + topoCount)
 }

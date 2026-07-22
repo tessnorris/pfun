@@ -6,14 +6,12 @@
 
 import * from "io";
 import * from "file";
-import * from "../data/resultx";
-
 export function okText(text) {
-	BOk { text ++ "" }
+	Ok { text ++ "" }
 }
 
 export generic function errText(message) {
-	BErr { message ++ "" }
+	Err { message ++ "" }
 }
 
 export proc args() {
@@ -26,26 +24,28 @@ export proc env(name) {
 
 export proc readTextFile(path) {
 	match readFile(path) with
-	| Ok o -> BOk { o.value }
-	| Err e -> BErr { e.message }
+	| Ok o -> Ok { o.value }
+	| Err e -> Err { nativeErrorMessage(e.message) }
 }
 
 export proc writeTextFile(path, text) {
 	match writeFile(path, text) with
-	| Ok o -> BOk { o.value }
-	| Err e -> BErr { e.message }
+	| Ok o -> Ok { o.value }
+	| Err e -> Err { nativeErrorMessage(e.message) }
 }
 
 export proc ensureDir(path) {
 	match mkdirP(path) with
-	| Ok o -> BOk { o.value }
-	| Err e -> BErr { e.message }
+	| Ok o -> Ok { o.value }
+	| Err e -> Err { nativeErrorMessage(e.message) }
 }
 
 export proc executeNodeBundle(source, args) {
 	match runNodeBundle(source, args) with
-	| Ok result -> BOk { result.value }
-	| Err failure -> BErr { failure.message }
+	| Ok result -> Ok { result.value }
+	| Err failure -> Err {
+		nativeErrorMessage(failure.message)
+	}
 }
 
 export generic proc printLines(lines) {

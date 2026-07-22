@@ -1,0 +1,8 @@
+import * from "file";
+
+proc legacyRead(handle) {
+	match readLine(handle) with
+	| Ok line -> line.value
+	| Eof -> ""
+	| Err error -> error.message
+}

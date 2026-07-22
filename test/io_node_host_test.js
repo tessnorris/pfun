@@ -33,12 +33,18 @@ const registrySource = `
 			throw new Error("missing io." + name);
 		}
 	}
-	host.$builtins.io.print(["out", 2, true]);
-	host.$builtins.io.println("!");
-	host.$builtins.io.eprint(["err", 3, false]);
-	host.$builtins.io.eprintln("!");
-	if (host.$builtins.io.flushStdout() !== null) {
-		throw new Error("flushStdout did not return Unit");
+	const results = [
+		host.$builtins.io.print(["out", 2, true]),
+		host.$builtins.io.println("!"),
+		host.$builtins.io.eprint(["err", 3, false]),
+		host.$builtins.io.eprintln("!"),
+		host.$builtins.io.flushStdout()
+	];
+	if (results.some((result) => result.$t !== "Ok")) {
+		throw new Error("an io operation did not return Ok");
+	}
+	if (results.some((result) => result.value !== null)) {
+		throw new Error("an io operation did not return Unit inside Ok");
 	}
 `;
 const registry = probe(registrySource, "");
@@ -54,7 +60,11 @@ const scannerSource = `
 		host.$scanln(),
 		host.$scanChar(),
 		host.$scanln()
-	].map((value) => value.$t === "Some" ? value.value : null);
+	].map((result) => {
+		if (result.$t !== "Ok") throw new Error("unexpected scan failure");
+		const value = result.value;
+		return value.$t === "Some" ? value.value : null;
+	});
 	process.stdout.write(JSON.stringify(values));
 `;
 const scanner = probe(
@@ -71,9 +81,12 @@ const unicodeSource = `
 	const host = require(${JSON.stringify(nodePath)});
 	const first = host.$scanChar();
 	const second = host.$scanChar();
+	if (first.$t !== "Ok" || second.$t !== "Ok") {
+		throw new Error("unexpected scan failure");
+	}
 	process.stdout.write(JSON.stringify([
-		first.$t === "Some" ? first.value : null,
-		second.$t === "Some" ? second.value : null
+		first.value.$t === "Some" ? first.value.value : null,
+		second.value.$t === "Some" ? second.value.value : null
 	]));
 `;
 const unicode = probe(unicodeSource, "𐐷");

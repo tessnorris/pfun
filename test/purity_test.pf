@@ -87,6 +87,28 @@ function testProcContextCanInvokeProcLambda() {
 	H.assertOkDiags(H.purityDiags("proc_calls_proc_lambda.pf", src))
 }
 
+//![test("pure code cannot invoke procs through any pipeline")]
+function testPureCodeCannotPipeIntoProc() {
+	let src =
+		"proc touch(value) { value; }\n"
+		++ "function badPlain() { 1 |> touch; }\n"
+		++ "function badOption() { Some { 1 } |?> touch; }\n"
+		++ "function badResult() { Ok { 1 } |!> touch; }";
+	H.assertHasMessage(H.purityDiags("pure_proc_pipelines.pf", src), "Pure code")
+}
+
+//![test("proc context may invoke procs through wrapper pipelines")]
+function testProcContextCanPipeIntoProc() {
+	let src =
+		"proc touch(value) { value; }\n"
+		++ "proc run() {\n"
+		++ "  let a = 1 |> touch;\n"
+		++ "  let b = Some { 1 } |?> touch;\n"
+		++ "  let c = Ok { 1 } |!> touch;\n"
+		++ "}";
+	H.assertOkDiags(H.purityDiags("proc_pipelines.pf", src))
+}
+
 //![test("proc lambda body has procedural mutation context")]
 function testProcLambdaBodyAllowsMutation() {
 	let src =

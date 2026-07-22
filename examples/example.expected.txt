@@ -42,13 +42,29 @@ circle area = 25
 rectangle area = 12
 classify small = small circle
 classify large = large circle
-option = found 2
-missing option = not found
+value at index 2 = found 30
+value at index 99 = not found
 generic boxes = 42/pfun
+
+--- Forward, Option, and Result pipelines ---
+plain = 8
+option present = Some 6
+option absent = None
+result = Ok [[1, 2], [3, 4]]
+
+--- Combined unions and unified errors ---
+file = settings file missing
+decode = settings are malformed
+config = port is required
 
 --- Procedure lambdas and callbacks ---
 event 1: first
 event 2: second
 async result = 42
+
+--- Cancellable one-shot timers ---
+sync timer fired
+async timer fired
+timers completed = 2
 
 All deterministic V2 examples completed.

@@ -26,18 +26,6 @@ import * as IMS from "../data/imaps";
 import * as Compat from "../compat";
 import * as IO from "./iofloor";
 
-// A local result shape avoids sharing generic Ok/Err constructors across
-// lexer, parser, graph, and file modules during the bootstrap.
-export type ParseOneResult = {
-	| ParseOneOk: module
-	| ParseOneErr: diags
-}
-
-export type LoadResult = {
-	| LoadOk: modules
-	| LoadErr: diags
-}
-
 // Queue entries retain the importing source location so missing-file
 // diagnostics point at the import that requested the file.
 type LoadPending = {
@@ -158,23 +146,19 @@ function readSourceDiag(pending, message) {
 // Lexes, parses, and extracts resolved import edges for one source file.
 export function parseOne(path, text, env) {
 	let canonical = canonicalPath(path);
-	match Lex.lex(canonical, text) with
-	| LexErr e -> ParseOneErr { e.diags }
-	| LexOk l -> {
-		match Parser.parseModule(canonical, l.tokens) with
-		| ParseErr e -> ParseOneErr { e.diags }
-		| ParseOk p -> {
-			match MG.edgesOf(p.module, env) with
-			| EdgesErr e -> ParseOneErr { e.diags }
-			| EdgesOk g -> ParseOneOk {
-				MG.mkRawModule(
+	Lex.lex(canonical, text)
+		|!> fn tokens => Parser.parseModule(
+			canonical,
+			tokens
+		)
+		|!> fn ast => {
+			MG.edgesOf(ast, env)
+				|!> fn edges => MG.mkRawModule(
 					canonical,
-					p.module,
-					g.edges
+					ast,
+					edges
 				)
-			}
 		}
-	}
 }
 
 // ── pending-edge helpers ───────────────────────────────────────────────────
@@ -221,7 +205,7 @@ function appendPending(left, right) {
 
 function loadMemLoop(files, pending, seen, raws, env) {
 	match Compat.uncons(pending) with
-	| None -> LoadOk { reverse(raws) }
+	| None -> Ok { reverse(raws) }
 	| Some cell -> {
 		let task = cell.value.key;
 		let rest = cell.value.value;
@@ -230,12 +214,12 @@ function loadMemLoop(files, pending, seen, raws, env) {
 			loadMemLoop(files, rest, seen, raws, env)
 		} else {
 			match IMS.imsGet(files, task.path) with
-			| None -> LoadErr { [missingSourceDiag(task)] }
+			| None -> Err { [missingSourceDiag(task)] }
 			| Some source -> {
 				match parseOne(task.path, source.value, env) with
-				| ParseOneErr e -> LoadErr { e.diags }
-				| ParseOneOk parsed -> {
-					let module = parsed.module;
+				| Err e -> Err { e.message }
+				| Ok parsed -> {
+					let module = parsed.value;
 					let seen2 = IMS.imsPut(
 						seen,
 						task.path,
@@ -273,7 +257,7 @@ export function loadGraphMem(files, entryPath, env) {
 
 proc loadDiskLoop(pending, seen, raws, env) {
 	match Compat.uncons(pending) with
-	| None -> LoadOk { reverse(raws) }
+	| None -> Ok { reverse(raws) }
 	| Some cell -> {
 		let task = cell.value.key;
 		let rest = cell.value.value;
@@ -282,14 +266,14 @@ proc loadDiskLoop(pending, seen, raws, env) {
 			loadDiskLoop(rest, seen, raws, env)
 		} else {
 			match IO.readTextFile(task.path) with
-			| BErr e -> LoadErr {
+			| Err e -> Err {
 				[readSourceDiag(task, e.message)]
 			}
-			| BOk source -> {
+			| Ok source -> {
 				match parseOne(task.path, source.value, env) with
-				| ParseOneErr e -> LoadErr { e.diags }
-				| ParseOneOk parsed -> {
-					let module = parsed.module;
+				| Err e -> Err { e.message }
+				| Ok parsed -> {
+					let module = parsed.value;
 					let seen2 = IMS.imsPut(
 						seen,
 						task.path,

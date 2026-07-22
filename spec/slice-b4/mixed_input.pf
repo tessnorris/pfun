@@ -4,14 +4,18 @@ import { println, scanln, scanChar } from "io";
 
 function showLine(value) {
 	match value with
-	| None -> "None"
-	| Some found -> "Some(" ++ found.value ++ ")"
+	| Err failure -> "Err(" ++ nativeErrorMessage(failure.message) ++ ")"
+	| Ok found -> match found.value with
+		| None -> "None"
+		| Some line -> "Some(" ++ line.value ++ ")"
 }
 
 function showChar(value) {
 	match value with
-	| None -> "None"
-	| Some found -> "Some(" ++ str(found.value) ++ ")"
+	| Err failure -> "Err(" ++ nativeErrorMessage(failure.message) ++ ")"
+	| Ok found -> match found.value with
+		| None -> "None"
+		| Some character -> "Some(" ++ str(character.value) ++ ")"
 }
 
 proc main() {

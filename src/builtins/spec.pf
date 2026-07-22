@@ -65,7 +65,8 @@ function dictOf(k, v) { TY.tDict(k, v) }
 function optionOf(t) { TY.tNamed("Option", [t]) }
 function resultOf(v, e) { TY.tNamed("Result", [v, e]) }
 function pairOf(k, v) { TY.tNamed("Pair", [k, v]) }
-function ioResult(t) { resultOf(t, TY.tStr()) }
+function nativeErrorT() { TY.tNamed("NativeError", []) }
+function nativeResult(t) { resultOf(t, nativeErrorT()) }
 
 generic function sch(vars, body) {
 	I.mkScheme(vars, [], TY.typeToIface(body))
@@ -119,11 +120,65 @@ function resultVariants() {
 	]
 }
 
+function nativeErrorVariants() {
+	[
+		A.mkVariantDecl(
+			"NativeIoError",
+			[
+				A.mkFieldDecl("operation", false),
+				A.mkFieldDecl("message", false)
+			]
+		),
+		A.mkVariantDecl(
+			"NativeProcessError",
+			[
+				A.mkFieldDecl("operation", false),
+				A.mkFieldDecl("message", false)
+			]
+		),
+		A.mkVariantDecl(
+			"NativeTimerError",
+			[
+				A.mkFieldDecl("operation", false),
+				A.mkFieldDecl("message", false)
+			]
+		),
+		A.mkVariantDecl(
+			"NativeBufferError",
+			[
+				A.mkFieldDecl("operation", false),
+				A.mkFieldDecl("message", false)
+			]
+		),
+		A.mkVariantDecl(
+			"NativeJsonError",
+			[
+				A.mkFieldDecl("operation", false),
+				A.mkFieldDecl("message", false)
+			]
+		),
+		A.mkVariantDecl(
+			"NativeNumericError",
+			[
+				A.mkFieldDecl("operation", false),
+				A.mkFieldDecl("message", false)
+			]
+		),
+		A.mkVariantDecl(
+			"NativePlatformError",
+			[
+				A.mkFieldDecl("operation", false),
+				A.mkFieldDecl("message", false)
+			]
+		)
+	]
+}
+
 function readResultVariants() {
 	[
-		A.mkVariantDecl("Ok", [A.mkFieldDecl("value", true)]),
-		A.mkVariantDecl("Eof", []),
-		A.mkVariantDecl("Err", [A.mkFieldDecl("message", true)])
+		A.mkVariantDecl("ReadOk", [A.mkFieldDecl("value", true)]),
+		A.mkVariantDecl("ReadEof", []),
+		A.mkVariantDecl("ReadErr", [A.mkFieldDecl("message", true)])
 	]
 }
 
@@ -188,7 +243,13 @@ function coreTypeIface() {
 		]
 	);
 	let iface4 = putBuiltinType(iface3, "NonZero", 0);
-	iface4
+	let iface5 = putBuiltinUnion(
+		iface4,
+		"NativeError",
+		nativeErrorVariants(),
+		0
+	);
+	iface5
 }
 
 // ── builtin module specs ──────────────────────────────────────────────────
@@ -230,7 +291,18 @@ function coreExports() {
 		pure("isFinite", sch([], fn1(TY.tFloat(), TY.tBool())), "$isFinite"),
 		pure("nonZero", sch([], fn1(TY.tInt(), optionOf(TY.tNonZero()))), "$nonZero"),
 		pure("safeDiv", sch([], fn2(TY.tInt(), TY.tInt(), optionOf(TY.tInt()))), "$safeDiv"),
-		pure("safeMod", sch([], fn2(TY.tInt(), TY.tInt(), optionOf(TY.tInt()))), "$safeMod")
+		pure("safeMod", sch([], fn2(TY.tInt(), TY.tInt(), optionOf(TY.tInt()))), "$safeMod"),
+
+		pure(
+			"nativeErrorOperation",
+			sch([], fn1(nativeErrorT(), TY.tStr())),
+			"$nativeErrorOperation"
+		),
+		pure(
+			"nativeErrorMessage",
+			sch([], fn1(nativeErrorT(), TY.tStr())),
+			"$nativeErrorMessage"
+		)
 	]
 }
 
@@ -238,37 +310,37 @@ function ioExports() {
 	[
 		procEntry(
 			"print",
-			sch([0], proc1(tv(0), TY.tUnit(), false)),
+			sch([0], proc1(tv(0), nativeResult(TY.tUnit()), false)),
 			"$print"
 		),
 		procEntry(
 			"println",
-			sch([0], proc1(tv(0), TY.tUnit(), false)),
+			sch([0], proc1(tv(0), nativeResult(TY.tUnit()), false)),
 			"$println"
 		),
 		nodeProc(
 			"eprint",
-			sch([0], proc1(tv(0), TY.tUnit(), false)),
+			sch([0], proc1(tv(0), nativeResult(TY.tUnit()), false)),
 			"$eprint"
 		),
 		nodeProc(
 			"eprintln",
-			sch([0], proc1(tv(0), TY.tUnit(), false)),
+			sch([0], proc1(tv(0), nativeResult(TY.tUnit()), false)),
 			"$eprintln"
 		),
 		procEntry(
 			"flushStdout",
-			sch([], proc0(TY.tUnit(), false)),
+			sch([], proc0(nativeResult(TY.tUnit()), false)),
 			"$flushStdout"
 		),
 		nodeProc(
 			"scanln",
-			sch([], proc0(optionOf(TY.tStr()), false)),
+			sch([], proc0(nativeResult(optionOf(TY.tStr())), false)),
 			"$scanln"
 		),
 		nodeProc(
 			"scanChar",
-			sch([], proc0(optionOf(TY.tChar()), false)),
+			sch([], proc0(nativeResult(optionOf(TY.tChar())), false)),
 			"$scanChar"
 		),
 		nodeProc(
@@ -288,7 +360,7 @@ function ioExports() {
 				proc2(
 					TY.tStr(),
 					listOf(TY.tStr()),
-					ioResult(TY.tInt()),
+					nativeResult(TY.tInt()),
 					false
 				)
 			),
@@ -320,19 +392,19 @@ function fileExports() {
 	let bufferMode = TY.tNamed("BufferMode", []);
 	let charRead = TY.tNamed(
 		"ReadResult",
-		[TY.tChar(), TY.tStr()]
+		[TY.tChar(), nativeErrorT()]
 	);
 	let lineRead = TY.tNamed(
 		"ReadResult",
-		[TY.tStr(), TY.tStr()]
+		[TY.tStr(), nativeErrorT()]
 	);
 	let byteRead = TY.tNamed(
 		"ReadResult",
-		[TY.tByte(), TY.tStr()]
+		[TY.tByte(), nativeErrorT()]
 	);
 	let bytesRead = TY.tNamed(
 		"ReadResult",
-		[listOf(TY.tByte()), TY.tStr()]
+		[listOf(TY.tByte()), nativeErrorT()]
 	);
 
 	[
@@ -342,7 +414,7 @@ function fileExports() {
 				[],
 				proc1(
 					TY.tStr(),
-					ioResult(TY.tStr()),
+					nativeResult(TY.tStr()),
 					false
 				)
 			),
@@ -355,7 +427,7 @@ function fileExports() {
 				proc2(
 					TY.tStr(),
 					TY.tStr(),
-					ioResult(TY.tUnit()),
+					nativeResult(TY.tUnit()),
 					false
 				)
 			),
@@ -367,7 +439,7 @@ function fileExports() {
 				[],
 				proc1(
 					TY.tStr(),
-					TY.tBool(),
+					nativeResult(TY.tBool()),
 					false
 				)
 			),
@@ -379,7 +451,7 @@ function fileExports() {
 				[],
 				proc1(
 					TY.tStr(),
-					ioResult(TY.tUnit()),
+					nativeResult(TY.tUnit()),
 					false
 				)
 			),
@@ -391,7 +463,7 @@ function fileExports() {
 				[],
 				proc1(
 					TY.tStr(),
-					ioResult(TY.tUnit()),
+					nativeResult(TY.tUnit()),
 					false
 				)
 			),
@@ -404,7 +476,7 @@ function fileExports() {
 				proc2(
 					TY.tStr(),
 					mode,
-					ioResult(handle),
+					nativeResult(handle),
 					false
 				)
 			),
@@ -416,7 +488,7 @@ function fileExports() {
 				[],
 				proc1(
 					handle,
-					ioResult(TY.tUnit()),
+					nativeResult(TY.tUnit()),
 					false
 				)
 			),
@@ -457,7 +529,7 @@ function fileExports() {
 				proc2(
 					handle,
 					TY.tChar(),
-					ioResult(TY.tUnit()),
+					nativeResult(TY.tUnit()),
 					false
 				)
 			),
@@ -470,7 +542,7 @@ function fileExports() {
 				proc2(
 					handle,
 					TY.tStr(),
-					ioResult(TY.tUnit()),
+					nativeResult(TY.tUnit()),
 					false
 				)
 			),
@@ -483,7 +555,7 @@ function fileExports() {
 				proc2(
 					handle,
 					TY.tByte(),
-					ioResult(TY.tUnit()),
+					nativeResult(TY.tUnit()),
 					false
 				)
 			),
@@ -496,7 +568,7 @@ function fileExports() {
 				proc2(
 					handle,
 					listOf(TY.tByte()),
-					ioResult(TY.tUnit()),
+					nativeResult(TY.tUnit()),
 					false
 				)
 			),
@@ -510,7 +582,7 @@ function fileExports() {
 					handle,
 					TY.tInt(),
 					bufferMode,
-					ioResult(buffer),
+					nativeResult(buffer),
 					false
 				)
 			),
@@ -523,7 +595,7 @@ function fileExports() {
 				proc2(
 					handle,
 					buffer,
-					ioResult(TY.tUnit()),
+					nativeResult(TY.tUnit()),
 					false
 				)
 			),
@@ -598,7 +670,62 @@ function jsonExports() {
 
 function asyncExports() {
 	[
-		procEntry("sleep", sch([], proc1(TY.tInt(), TY.tUnit(), true)), "$sleep")
+		procEntry(
+			"sleep",
+			sch(
+				[],
+				proc1(
+					TY.tInt(),
+					nativeResult(TY.tUnit()),
+					true
+				)
+			),
+			"$sleep"
+		)
+	]
+}
+
+function timerExports() {
+	let handle = TY.tNamed("TimerHandle", []);
+	[
+		procEntry(
+			"setTimer",
+			sch(
+				[],
+				proc2(
+					TY.tInt(),
+					proc0(TY.tUnit(), false),
+					nativeResult(handle),
+					false
+				)
+			),
+			"$setTimer"
+		),
+		procEntry(
+			"setAsyncTimer",
+			sch(
+				[],
+				proc2(
+					TY.tInt(),
+					proc0(TY.tUnit(), true),
+					nativeResult(handle),
+					false
+				)
+			),
+			"$setAsyncTimer"
+		),
+		procEntry(
+			"clearTimer",
+			sch(
+				[],
+				proc1(
+					handle,
+					nativeResult(TY.tUnit()),
+					false
+				)
+			),
+			"$clearTimer"
+		)
 	]
 }
 
@@ -616,7 +743,15 @@ function mathExports() {
 }
 
 export function coreModuleSpec() {
-	builtinModule("$builtin/core", coreExports(), [builtinUnion("Option", optionVariants()), builtinUnion("Result", resultVariants())])
+	builtinModule(
+		"$builtin/core",
+		coreExports(),
+		[
+			builtinUnion("Option", optionVariants()),
+			builtinUnion("Result", resultVariants()),
+			builtinUnion("NativeError", nativeErrorVariants())
+		]
+	)
 }
 
 export function ioModuleSpec() {
@@ -636,8 +771,7 @@ export function fileModuleSpec() {
 			builtinUnion(
 				"ReadResult",
 				readResultVariants()
-			),
-			builtinUnion("Result", resultVariants())
+			)
 		]
 	)
 }
@@ -648,6 +782,10 @@ export function jsonModuleSpec() {
 
 export function asyncModuleSpec() {
 	builtinModule("async", asyncExports(), [])
+}
+
+export function timerModuleSpec() {
+	builtinModule("timer", timerExports(), [])
 }
 
 export function mathModuleSpec() {
@@ -661,6 +799,7 @@ export function allModuleSpecs() {
 		fileModuleSpec(),
 		jsonModuleSpec(),
 		asyncModuleSpec(),
+		timerModuleSpec(),
 		mathModuleSpec()
 	]
 }
@@ -700,7 +839,7 @@ export generic function ifaceOfSpec(spec) {
 	addUnionsToIface(spec.unions, iface1)
 }
 
-function putSpecIface(m, spec) {
+generic function putSpecIface(m, spec) {
 	let iface = ifaceOfSpec(spec);
 	let m1 = IMS.imsPut(m, spec.path, iface);
 	let m2 = spec.path == "$builtin/core" ? IMS.imsPut(m1, "core", iface) : m1;
@@ -708,7 +847,13 @@ function putSpecIface(m, spec) {
 }
 
 export function allBuiltinIfaces() {
-	reduce(fn m, spec => putSpecIface(m, spec), IMS.imsEmpty(), allModuleSpecs())
+	I.normalizeIfaceMap(
+		reduce(
+			fn m, spec => putSpecIface(m, spec),
+			IMS.imsEmpty(),
+			allModuleSpecs()
+		)
+	)
 }
 
 export function builtinNames() {

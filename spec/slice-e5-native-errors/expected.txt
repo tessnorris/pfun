@@ -1,0 +1,12 @@
+io:readFile:denied
+process:runNodeBundle:spawn failed
+timer:setTimer:timer failed
+buffer:bufferToString:decode failed
+json:jsonDeserialize:invalid json
+numeric:floatToInt:out of range
+platform:unsupported:not available
+exists-before=false
+write=ok
+exists-after=true
+missing-read=io:readFile:true
+SLICE E5 NATIVE ERRORS OK

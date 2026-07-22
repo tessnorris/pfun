@@ -42,6 +42,7 @@
 	const os = nodeRequire("node:os");
 	const nodePath = nodeRequire("node:path");
 	const childProcess = nodeRequire("node:child_process");
+	const NodeBuffer = nodeRequire("node:buffer").Buffer;
 
     function own(object, key) {
       return Object.prototype.hasOwnProperty.call(object, key);
@@ -73,11 +74,17 @@
       return value;
     }
 
-    function resultOf(thunk) {
+    function resultOf(variant, operation, thunk) {
       try {
         return core.$ok(thunk());
       } catch (error) {
-        return core.$err(errorMessage(error));
+		return core.$err(
+			core.$nativeError(
+				variant,
+				operation,
+				errorMessage(error)
+			)
+		);
       }
     }
 
@@ -92,17 +99,22 @@
 	}
 
 	function $runNodeBundle(source, args) {
-		source = pathText(source, "runNodeBundle source");
-		const childArgs = nodeArgs(args);
-
-		return resultOf(function executeNodeBundle() {
+		return resultOf(
+			"NativeProcessError",
+			"runNodeBundle",
+			function executeNodeBundle() {
+			const checkedSource = pathText(
+				source,
+				"runNodeBundle source"
+			);
+			const childArgs = nodeArgs(args);
 			const tempDir = fs.mkdtempSync(
 				nodePath.join(os.tmpdir(), "pfun-run-")
 			);
 			const scriptPath = nodePath.join(tempDir, "main.js");
 
 			try {
-				fs.writeFileSync(scriptPath, source, "utf8");
+				fs.writeFileSync(scriptPath, checkedSource, "utf8");
 				const child = childProcess.spawnSync(
 					process.execPath,
 					[scriptPath, ...childArgs],
@@ -128,18 +140,41 @@
 			} finally {
 				fs.rmSync(tempDir, { recursive: true, force: true });
 			}
-		});
+			}
+		);
 	}
 // ── stdin / process ──────────────────────────────────────────────────
 
     	function $eprint(value) {
-		process.stderr.write(core.$str(value));
-		return null;
+		return resultOf("NativeIoError", "eprint", function writeStderr() {
+			writeStderrSync(core.$str(value));
+			return null;
+		});
 	}
 
 	function $eprintln(value) {
-		process.stderr.write(core.$str(value) + "\n");
-		return null;
+		return resultOf("NativeIoError", "eprintln", function writeStderrLine() {
+			writeStderrSync(core.$str(value) + "\n");
+			return null;
+		});
+	}
+
+	function writeStderrSync(text) {
+		const bytes = NodeBuffer.from(text, "utf8");
+		let offset = 0;
+
+		while (offset < bytes.length) {
+			const written = fs.writeSync(
+				process.stderr.fd,
+				bytes,
+				offset,
+				bytes.length - offset
+			);
+			if (!Number.isInteger(written) || written <= 0) {
+				throw new Error("stderr write made no progress.");
+			}
+			offset += written;
+		}
 	}
 
 	let stdinText = null;
@@ -173,42 +208,46 @@
 	}
 
 	function $scanln() {
-		const text = ensureStdin();
+		return resultOf("NativeIoError", "scanln", function scanLine() {
+			const text = ensureStdin();
 
-		if (stdinOffset >= text.length) {
-			return core.$none();
-		}
+			if (stdinOffset >= text.length) {
+				return core.$none();
+			}
 
-		const boundary = nextLineBreak(text, stdinOffset);
+			const boundary = nextLineBreak(text, stdinOffset);
 
-		if (boundary < 0) {
-			const line = text.slice(stdinOffset);
-			stdinOffset = text.length;
+			if (boundary < 0) {
+				const line = text.slice(stdinOffset);
+				stdinOffset = text.length;
+				return core.$some(line);
+			}
+
+			const line = text.slice(stdinOffset, boundary);
+			stdinOffset = afterLineBreak(text, boundary);
 			return core.$some(line);
-		}
-
-		const line = text.slice(stdinOffset, boundary);
-		stdinOffset = afterLineBreak(text, boundary);
-		return core.$some(line);
+		});
 	}
 
 	function $scanChar() {
-		const text = ensureStdin();
+		return resultOf("NativeIoError", "scanChar", function scanCharacter() {
+			const text = ensureStdin();
 
-		if (stdinOffset >= text.length) {
-			return core.$none();
-		}
+			if (stdinOffset >= text.length) {
+				return core.$none();
+			}
 
-		const codePoint = text.codePointAt(stdinOffset);
+			const codePoint = text.codePointAt(stdinOffset);
 
-		if (codePoint === undefined) {
-			stdinOffset = text.length;
-			return core.$none();
-		}
+			if (codePoint === undefined) {
+				stdinOffset = text.length;
+				return core.$none();
+			}
 
-		const value = String.fromCodePoint(codePoint);
-		stdinOffset += value.length;
-		return core.$some(value);
+			const value = String.fromCodePoint(codePoint);
+			stdinOffset += value.length;
+			return core.$some(value);
+		});
 	}
 
 	    function $scriptArgs() {
@@ -248,49 +287,59 @@
     // ── filesystem ───────────────────────────────────────────────────────
 
 	function $readFile(path) {
-		path = pathText(path, "readFile path");
-		return resultOf(function readText() {
-			return fs.readFileSync(path, "utf8");
+		return resultOf("NativeIoError", "readFile", function readText() {
+			return fs.readFileSync(
+				pathText(path, "readFile path"),
+				"utf8"
+			);
 		});
 	}
 
 	function $writeFile(path, content) {
-		path = pathText(path, "writeFile path");
-
-		if (typeof content !== "string") {
-			throw new Error("writeFile content must be a Str.");
-		}
-
-		return resultOf(function writeText() {
-			fs.writeFileSync(path, content, "utf8");
+		return resultOf("NativeIoError", "writeFile", function writeText() {
+			const checkedPath = pathText(path, "writeFile path");
+			if (typeof content !== "string") {
+				throw new Error("writeFile content must be a Str.");
+			}
+			fs.writeFileSync(checkedPath, content, "utf8");
 			return null;
 		});
 	}
 
 	function $fileExists(path) {
-		path = pathText(path, "fileExists path");
-
 		try {
-			return fs.existsSync(path);
-		} catch (_error) {
-			return false;
+			fs.accessSync(
+				pathText(path, "fileExists path"),
+				fs.constants.F_OK
+			);
+			return core.$ok(true);
+		} catch (error) {
+			if (error && (error.code === "ENOENT" || error.code === "ENOTDIR")) {
+				return core.$ok(false);
+			}
+			return core.$err(
+				core.$nativeError(
+					"NativeIoError",
+					"fileExists",
+					errorMessage(error)
+				)
+			);
 		}
 	}
 
 	function $mkdirP(path) {
-		path = pathText(path, "mkdirP path");
-
-		return resultOf(function makeDirectory() {
-			fs.mkdirSync(path, { recursive: true });
+		return resultOf("NativeIoError", "mkdirP", function makeDirectory() {
+			fs.mkdirSync(
+				pathText(path, "mkdirP path"),
+				{ recursive: true }
+			);
 			return null;
 		});
 	}
 
 	function $removeFile(path) {
-		path = pathText(path, "removeFile path");
-
-		return resultOf(function removePath() {
-			fs.unlinkSync(path);
+		return resultOf("NativeIoError", "removeFile", function removePath() {
+			fs.unlinkSync(pathText(path, "removeFile path"));
 			return null;
 		});
 	}
@@ -341,32 +390,38 @@
 		return handle;
 	}
 
-	function readOk(value) {
-		return core.$makeVariant(
-			"Ok",
-			"ReadResult",
-			["value"],
-			[value]
-		);
-	}
+    function readOk(value) {
+      return core.$makeVariant(
+        "ReadOk",
+        "ReadResult",
+        ["value"],
+        [value]
+      );
+    }
 
-	function readEof() {
-		return core.$makeVariant(
-			"Eof",
-			"ReadResult",
-			[],
-			[]
-		);
-	}
+    function readEof() {
+      return core.$makeVariant(
+        "ReadEof",
+        "ReadResult",
+        [],
+        []
+      );
+    }
 
-	function readErr(error) {
-		return core.$makeVariant(
-			"Err",
-			"ReadResult",
-			["message"],
-			[errorMessage(error)]
-		);
-	}
+    function readErr(operation, error) {
+      return core.$makeVariant(
+        "ReadErr",
+        "ReadResult",
+        ["message"],
+		[
+			core.$nativeError(
+				"NativeIoError",
+				operation,
+				errorMessage(error)
+			)
+		]
+      );
+    }
 
 	function readHandleByte(handle) {
 		if (handle.pending.length > 0) {
@@ -453,14 +508,13 @@
 	}
 
 	function $fileOpen(path, mode) {
-		path = pathText(path, "fileOpen path");
-
-		return resultOf(function openFile() {
+		return resultOf("NativeIoError", "fileOpen", function openFile() {
+			const checkedPath = pathText(path, "fileOpen path");
 			const modeName = fileModeName(mode);
 
 			return {
 				$file: true,
-				fd: fs.openSync(path, openFlags(modeName)),
+				fd: fs.openSync(checkedPath, openFlags(modeName)),
 				mode: modeName,
 				closed: false,
 				pending: []
@@ -469,7 +523,7 @@
 	}
 
 	function $fileClose(handle) {
-		return resultOf(function closeFile() {
+		return resultOf("NativeIoError", "fileClose", function closeFile() {
 			requireFileHandle(
 				handle,
 				"fileClose",
@@ -495,7 +549,7 @@
 				? readEof()
 				: readOk(value);
 		} catch (error) {
-			return readErr(error);
+			return readErr("readChar", error);
 		}
 	}
 
@@ -541,21 +595,18 @@
 				bytes.push(byte);
 			}
 		} catch (error) {
-			return readErr(error);
+			return readErr("readLine", error);
 		}
 	}
 
 	function $writeChar(handle, value) {
-		if (
-			typeof value !== "string"
-				|| Array.from(value).length !== 1
-		) {
-			return core.$err(
-				"writeChar value must be a Char."
-			);
-		}
-
-		return resultOf(function writeCharacter() {
+		return resultOf("NativeIoError", "writeChar", function writeCharacter() {
+			if (
+				typeof value !== "string"
+					|| Array.from(value).length !== 1
+			) {
+				throw new Error("writeChar value must be a Char.");
+			}
 			requireFileHandle(
 				handle,
 				"writeChar",
@@ -567,13 +618,10 @@
 	}
 
 	function $writeLine(handle, value) {
-		if (typeof value !== "string") {
-			return core.$err(
-				"writeLine value must be a Str."
-			);
-		}
-
-		return resultOf(function writeTextLine() {
+		return resultOf("NativeIoError", "writeLine", function writeTextLine() {
+			if (typeof value !== "string") {
+				throw new Error("writeLine value must be a Str.");
+			}
 			requireFileHandle(
 				handle,
 				"writeLine",
@@ -692,7 +740,7 @@
 			const byte = readHandleByte(handle);
 			return byte === null ? readEof() : readOk(byte);
 		} catch (error) {
-			return readErr(error);
+			return readErr("readByte", error);
 		}
 	}
 
@@ -710,12 +758,12 @@
 				? readEof()
 				: readOk(bytes);
 		} catch (error) {
-			return readErr(error);
+			return readErr("readBytes", error);
 		}
 	}
 
 	function $writeByte(handle, byte) {
-		return resultOf(function writeOneByte() {
+		return resultOf("NativeIoError", "writeByte", function writeOneByte() {
 			requireFileHandle(
 				handle,
 				"writeByte",
@@ -730,7 +778,7 @@
 	}
 
 	function $writeBytes(handle, bytes) {
-		return resultOf(function writeManyBytes() {
+		return resultOf("NativeIoError", "writeBytes", function writeManyBytes() {
 			requireFileHandle(
 				handle,
 				"writeBytes",
@@ -745,7 +793,7 @@
 	}
 
 	function $readBuffer(handle, count, mode) {
-		return resultOf(function readIntoNewBuffer() {
+		return resultOf("NativeIoError", "readBuffer", function readIntoNewBuffer() {
 			requireFileHandle(
 				handle,
 				"readBuffer",
@@ -762,7 +810,7 @@
 	}
 
 	function $writeBuffer(handle, buffer) {
-		return resultOf(function writeWholeBuffer() {
+		return resultOf("NativeIoError", "writeBuffer", function writeWholeBuffer() {
 			requireFileHandle(
 				handle,
 				"writeBuffer",
@@ -866,7 +914,9 @@
       isFinite: core.$isFinite,
       nonZero: core.$nonZero,
       safeDiv: core.$safeDiv,
-      safeMod: core.$safeMod
+      safeMod: core.$safeMod,
+      nativeErrorOperation: core.$nativeErrorOperation,
+      nativeErrorMessage: core.$nativeErrorMessage
     });
 
     const ioModule = Object.freeze({
@@ -922,6 +972,12 @@
       sleep: core.$sleep
     });
 
+    const timerModule = Object.freeze({
+      setTimer: core.$setTimer,
+      setAsyncTimer: core.$setAsyncTimer,
+      clearTimer: core.$clearTimer
+    });
+
 	const mathModule = Object.freeze({
       pi: core.$pi,
       e: core.$e,
@@ -940,6 +996,7 @@
       file: fileModule,
       json: jsonModule,
       async: asyncModule,
+      timer: timerModule,
       math: mathModule
     });
 

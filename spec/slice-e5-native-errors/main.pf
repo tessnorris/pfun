@@ -1,0 +1,91 @@
+import * from "file";
+import * from "io";
+
+function errorKind(error) {
+	match error with
+	| NativeIoError _ -> "io"
+	| NativeProcessError _ -> "process"
+	| NativeTimerError _ -> "timer"
+	| NativeBufferError _ -> "buffer"
+	| NativeJsonError _ -> "json"
+	| NativeNumericError _ -> "numeric"
+	| NativePlatformError _ -> "platform"
+}
+
+function describe(error) {
+	errorKind(error)
+	++ ":"
+	++ nativeErrorOperation(error)
+	++ ":"
+	++ nativeErrorMessage(error)
+}
+
+function hasMessage(error) {
+	str(length(nativeErrorMessage(error)) > 0)
+}
+
+function showExists(result) {
+	match result with
+	| Ok found -> str(found.value)
+	| Err failure -> "error:" ++ describe(failure.message)
+}
+
+proc exerciseFiles(root) {
+	let path = root ++ "/native-errors.txt";
+	let missing = root ++ "/missing.txt";
+
+	println("exists-before=" ++ showExists(fileExists(path)));
+
+	match writeFile(path, "typed native failure") with
+	| Ok _ -> println("write=ok")
+	| Err failure -> println("write=" ++ describe(failure.message));
+
+	println("exists-after=" ++ showExists(fileExists(path)));
+
+	match readFile(missing) with
+	| Ok _ -> println("missing-read=unexpected-ok")
+	| Err failure -> println(
+		"missing-read="
+		++ errorKind(failure.message)
+		++ ":"
+		++ nativeErrorOperation(failure.message)
+		++ ":"
+		++ hasMessage(failure.message)
+	);
+}
+
+println(describe(NativeIoError {
+	operation = "readFile",
+	message = "denied"
+}));
+println(describe(NativeProcessError {
+	operation = "runNodeBundle",
+	message = "spawn failed"
+}));
+println(describe(NativeTimerError {
+	operation = "setTimer",
+	message = "timer failed"
+}));
+println(describe(NativeBufferError {
+	operation = "bufferToString",
+	message = "decode failed"
+}));
+println(describe(NativeJsonError {
+	operation = "jsonDeserialize",
+	message = "invalid json"
+}));
+println(describe(NativeNumericError {
+	operation = "floatToInt",
+	message = "out of range"
+}));
+println(describe(NativePlatformError {
+	operation = "unsupported",
+	message = "not available"
+}));
+
+match scriptArgs() with
+| [] -> println("missing-runtime-root")
+| [root, ...rest] -> {
+	exerciseFiles(root);
+	println("SLICE E5 NATIVE ERRORS OK");
+}

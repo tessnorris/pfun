@@ -1,0 +1,4 @@
+timer start
+sync 1
+async 2
+done 2

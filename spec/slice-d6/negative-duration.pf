@@ -1,0 +1,14 @@
+import * from "timer";
+import * from "io";
+
+proc main() {
+	match setTimer(-1, proc () -> Unit { }) with
+	| Ok _ -> println("unexpected success")
+	| Err failure -> println(
+		nativeErrorOperation(failure.message)
+		++ ":"
+		++ nativeErrorMessage(failure.message)
+	);
+}
+
+main();

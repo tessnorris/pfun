@@ -78,19 +78,19 @@ function testParseOneSuccess() {
 		++ "let x = 1;";
 
 	match Load.parseOne("src/main", text, env()) with
-	| ParseOneErr e -> Assert.assertions([
+	| Err e -> Assert.assertions([
 		Assert.fail(
 			"Expected parseOne success, got "
-			++ __str__(length(e.diags))
+			++ __str__(length(e.message))
 			++ " diagnostics."
 		)
 	])
-	| ParseOneOk ok -> Assert.assertions([
-		Assert.assertEqual("src/main.pf", ok.module.path),
-		Assert.assertEqual(2, length(ok.module.edges)),
+	| Ok ok -> Assert.assertions([
+		Assert.assertEqual("src/main.pf", ok.value.path),
+		Assert.assertEqual(2, length(ok.value.edges)),
 		Assert.assertEqual(
 			"$builtin/io",
-			firstEdgeText(ok.module)
+			firstEdgeText(ok.value)
 		)
 	])
 }
@@ -102,14 +102,14 @@ function testParseOneLexError() {
 		"let x = \"unterminated;",
 		env()
 	) with
-	| ParseOneOk _ -> Assert.assertions([
+	| Ok _ -> Assert.assertions([
 		Assert.fail("Expected lexer diagnostics.")
 	])
-	| ParseOneErr e -> Assert.assertions([
-		Assert.assertTrue(length(e.diags) > 0),
+	| Err e -> Assert.assertions([
+		Assert.assertTrue(length(e.message) > 0),
 		Assert.assertTrue(
 			containsText(
-				firstDiagMessage(e.diags),
+				firstDiagMessage(e.message),
 				"Unterminated string"
 			)
 		)
@@ -123,11 +123,11 @@ function testParseOneParseError() {
 		"let x = ;",
 		env()
 	) with
-	| ParseOneOk _ -> Assert.assertions([
+	| Ok _ -> Assert.assertions([
 		Assert.fail("Expected parser diagnostics.")
 	])
-	| ParseOneErr e -> Assert.assertions([
-		Assert.assertTrue(length(e.diags) > 0)
+	| Err e -> Assert.assertions([
+		Assert.assertTrue(length(e.message) > 0)
 	])
 }
 
@@ -155,23 +155,23 @@ function testLoadMemFollowsImports() {
 		"./src/main",
 		env()
 	) with
-	| LoadErr e -> Assert.assertions([
+	| Err e -> Assert.assertions([
 		Assert.fail(
 			"Expected graph success, got "
-			++ __str__(length(e.diags))
+			++ __str__(length(e.message))
 			++ " diagnostics."
 		)
 	])
-	| LoadOk ok -> Assert.assertions([
-		Assert.assertEqual(3, length(ok.modules)),
+	| Ok ok -> Assert.assertions([
+		Assert.assertEqual(3, length(ok.value)),
 		Assert.assertTrue(
-			containsModule(ok.modules, "src/main.pf")
+			containsModule(ok.value, "src/main.pf")
 		),
 		Assert.assertTrue(
-			containsModule(ok.modules, "src/dep.pf")
+			containsModule(ok.value, "src/dep.pf")
 		),
 		Assert.assertTrue(
-			containsModule(ok.modules, "src/leaf.pf")
+			containsModule(ok.value, "src/leaf.pf")
 		)
 	])
 }
@@ -196,11 +196,11 @@ function testLoadMemDeduplicates() {
 		"src/main.pf",
 		env()
 	) with
-	| LoadErr _ -> Assert.assertions([
+	| Err _ -> Assert.assertions([
 		Assert.fail("Expected duplicate imports to load.")
 	])
-	| LoadOk ok -> Assert.assertions([
-		Assert.assertEqual(2, length(ok.modules))
+	| Ok ok -> Assert.assertions([
+		Assert.assertEqual(2, length(ok.value))
 	])
 }
 
@@ -218,13 +218,13 @@ function testLoadMemSkipsBuiltins() {
 		"main.pf",
 		env()
 	) with
-	| LoadErr _ -> Assert.assertions([
+	| Err _ -> Assert.assertions([
 		Assert.fail("Expected builtin import to be skipped.")
 	])
-	| LoadOk ok -> Assert.assertions([
-		Assert.assertEqual(1, length(ok.modules)),
+	| Ok ok -> Assert.assertions([
+		Assert.assertEqual(1, length(ok.value)),
 		Assert.assertTrue(
-			containsModule(ok.modules, "main.pf")
+			containsModule(ok.value, "main.pf")
 		)
 	])
 }
@@ -254,23 +254,23 @@ function testLoadMemLibraryImport() {
 		"src/main.pf",
 		env()
 	) with
-	| LoadErr _ -> Assert.assertions([
+	| Err _ -> Assert.assertions([
 		Assert.fail(
 			"Expected stdlib and public namespace "
 			++ "imports to load."
 		)
 	])
-	| LoadOk ok -> Assert.assertions([
-		Assert.assertEqual(3, length(ok.modules)),
+	| Ok ok -> Assert.assertions([
+		Assert.assertEqual(3, length(ok.value)),
 		Assert.assertTrue(
 			containsModule(
-				ok.modules,
+				ok.value,
 				"src/stdlib/widgets.pf"
 			)
 		),
 		Assert.assertTrue(
 			containsModule(
-				ok.modules,
+				ok.value,
 				"src/testing/assertions.pf"
 			)
 		)
@@ -292,14 +292,14 @@ function testLoadMemMissingSource() {
 		"src/main.pf",
 		env()
 	) with
-	| LoadOk _ -> Assert.assertions([
+	| Ok _ -> Assert.assertions([
 		Assert.fail("Expected missing-source diagnostic.")
 	])
-	| LoadErr e -> Assert.assertions([
-		Assert.assertTrue(length(e.diags) > 0),
+	| Err e -> Assert.assertions([
+		Assert.assertTrue(length(e.message) > 0),
 		Assert.assertTrue(
 			containsText(
-				firstDiagMessage(e.diags),
+				firstDiagMessage(e.message),
 				"src/missing.pf"
 			)
 		)
@@ -320,14 +320,14 @@ function testLoadMemCanonicalPaths() {
 		"src/./main",
 		env()
 	) with
-	| LoadErr _ -> Assert.assertions([
+	| Err _ -> Assert.assertions([
 		Assert.fail("Expected canonical source lookup.")
 	])
-	| LoadOk ok -> Assert.assertions([
-		Assert.assertEqual(1, length(ok.modules)),
+	| Ok ok -> Assert.assertions([
+		Assert.assertEqual(1, length(ok.value)),
 		Assert.assertEqual(
 			"src/main.pf",
-			firstModulePath(ok.modules)
+			firstModulePath(ok.value)
 		)
 	])
 }
@@ -350,22 +350,22 @@ function testLoadMemTopoIntegration() {
 		"src/main.pf",
 		env()
 	) with
-	| LoadErr _ -> Assert.assertions([
+	| Err _ -> Assert.assertions([
 		Assert.fail("Expected loader success.")
 	])
-	| LoadOk loaded -> {
-		match MG.toposort(loaded.modules) with
-		| TopoErr _ -> Assert.assertions([
+	| Ok loaded -> {
+		match MG.toposort(loaded.value) with
+		| Err _ -> Assert.assertions([
 			Assert.fail("Expected toposort success.")
 		])
-		| TopoOk sorted -> Assert.assertions([
+		| Ok sorted -> Assert.assertions([
 			Assert.assertEqual(
 				"src/dep.pf",
-				firstModulePath(sorted.modules)
+				firstModulePath(sorted.value)
 			),
 			Assert.assertEqual(
 				"src/main.pf",
-				secondModulePath(sorted.modules)
+				secondModulePath(sorted.value)
 			)
 		])
 	}

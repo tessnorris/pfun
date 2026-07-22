@@ -13,6 +13,16 @@ function assertSomeValue(opt, message) {
 	| None -> Assert.fail(message)
 }
 
+generic function unionHasVariant(iface, unionName, variantName) {
+	match Iface.lookupUnion(iface, unionName) with
+	| None -> false
+	| Some variants -> ListX.containsBy(
+		fn a, b => a == b,
+		variantName,
+		map(fn variant => variant.vname, variants.value)
+	)
+}
+
 //![suite("builtins/spec")]
 //![test("platform constructors return expected variants")]
 function testPlatformConstructors() {
@@ -32,6 +42,7 @@ function testAllModuleSpecsIncludeFloor() {
 		Assert.assertTrue(ListX.containsBy(fn a, b => a == b, "file", names)),
 		Assert.assertTrue(ListX.containsBy(fn a, b => a == b, "json", names)),
 		Assert.assertTrue(ListX.containsBy(fn a, b => a == b, "async", names)),
+		Assert.assertTrue(ListX.containsBy(fn a, b => a == b, "timer", names)),
 		Assert.assertTrue(ListX.containsBy(fn a, b => a == b, "math", names))
 	])
 }
@@ -45,13 +56,34 @@ function testCoreIfaceExposesBuiltinTypesAndFunctions() {
 		Assert.assertions([
 			Assert.assertTrue(Iface.hasExport(i, "Option")),
 			Assert.assertTrue(Iface.hasExport(i, "Result")),
+			Assert.assertTrue(Iface.hasExport(i, "NativeError")),
+			Assert.assertTrue(
+				unionHasVariant(
+					i,
+					"NativeError",
+					"NativeIoError"
+				)
+			),
+			Assert.assertTrue(
+				unionHasVariant(
+					i,
+					"NativeError",
+					"NativeProcessError"
+				)
+			),
 			Assert.assertTrue(Iface.hasExport(i, "Pair")),
 			match Iface.lookupRecord(i, "Pair") with
 			| None -> Assert.fail("Missing Pair record declaration.")
 			| Some fields -> Assert.assertEqual(2, length(fields.value)),
 			Assert.assertTrue(Iface.hasExport(i, "length")),
 			Assert.assertTrue(Iface.hasExport(i, "map")),
-			Assert.assertTrue(Iface.hasExport(i, "reduce"))
+			Assert.assertTrue(Iface.hasExport(i, "reduce")),
+			Assert.assertTrue(
+				Iface.hasExport(i, "nativeErrorOperation")
+			),
+			Assert.assertTrue(
+				Iface.hasExport(i, "nativeErrorMessage")
+			)
 		])
 	}
 }
@@ -108,7 +140,7 @@ function testIntrinsicLookupReturnsHostNames() {
 	])
 }
 
-//![test("file iface includes FileMode and ReadResult unions")]
+//![test("file iface reuses core Result and owns distinct ReadResult variants")]
 function testFileIfaceIncludesUnions() {
 	match lookupBuiltinIface("file") with
 	| None -> Assert.assertions([Assert.fail("Missing file builtin iface.")])
@@ -116,6 +148,12 @@ function testFileIfaceIncludesUnions() {
 		Assert.assertions([
 			assertSomeValue(Iface.lookupUnion(iface.value, "FileMode"), "Missing FileMode union."),
 			assertSomeValue(Iface.lookupUnion(iface.value, "ReadResult"), "Missing ReadResult union."),
+			Assert.assertNone(Iface.lookupUnion(iface.value, "Result")),
+			Assert.assertTrue(unionHasVariant(iface.value, "ReadResult", "ReadOk")),
+			Assert.assertTrue(unionHasVariant(iface.value, "ReadResult", "ReadEof")),
+			Assert.assertTrue(unionHasVariant(iface.value, "ReadResult", "ReadErr")),
+			Assert.assertFalse(unionHasVariant(iface.value, "ReadResult", "Ok")),
+			Assert.assertFalse(unionHasVariant(iface.value, "ReadResult", "Err")),
 			Assert.assertTrue(Iface.hasExport(iface.value, "readFile")),
 			Assert.assertTrue(Iface.hasExport(iface.value, "writeFile"))
 		])
@@ -226,6 +264,45 @@ function testIoIfaceExposesD5ProcessEnvironment() {
 			Assert.assertTrue(Iface.hasExport(i, "scriptArgs")),
 			Assert.assertTrue(Iface.hasExport(i, "getEnv")),
 			Assert.assertTrue(Iface.hasExport(i, "envVars"))
+		])
+	}
+}
+
+//![test("timer iface exposes typed D6 scheduling procedures")]
+function testTimerIfaceExposesD6Procedures() {
+	match lookupBuiltinIface("timer") with
+	| None -> {
+		Assert.assertions([
+			Assert.fail("Missing timer builtin iface.")
+		])
+	}
+	| Some iface -> {
+		let i = iface.value;
+
+		Assert.assertions([
+			Assert.assertTrue(Iface.hasExport(i, "setTimer")),
+			Assert.assertTrue(Iface.hasExport(i, "setAsyncTimer")),
+			Assert.assertTrue(Iface.hasExport(i, "clearTimer")),
+			match Iface.lookupKind(i, "setTimer") with
+			| None -> Assert.fail("Missing setTimer kind.")
+			| Some kind -> {
+				Assert.assertEqual("proc", Iface.kindToStr(kind.value))
+			},
+			match intrinsicName("timer", "setTimer") with
+			| None -> Assert.fail("Missing setTimer intrinsic.")
+			| Some intrinsic -> {
+				Assert.assertEqual("$setTimer", intrinsic.value)
+			},
+			match intrinsicName("timer", "setAsyncTimer") with
+			| None -> Assert.fail("Missing setAsyncTimer intrinsic.")
+			| Some intrinsic -> {
+				Assert.assertEqual("$setAsyncTimer", intrinsic.value)
+			},
+			match intrinsicName("timer", "clearTimer") with
+			| None -> Assert.fail("Missing clearTimer intrinsic.")
+			| Some intrinsic -> {
+				Assert.assertEqual("$clearTimer", intrinsic.value)
+			}
 		])
 	}
 }

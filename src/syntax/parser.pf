@@ -22,12 +22,9 @@ type PResult = {
 	| PErr: diags
 }
 
-export type ParseResult = {
-	| ParseOk: module
-	| ParseErr: diags
-}
-
 type BlockOut = { stmts, span }
+
+type UnionBody = { variants, includes }
 
 generic function ok(st, node) {
 	POk { st, node }
@@ -409,11 +406,11 @@ function parseFmtExpr(outerSt, text, base) {
 		)
 	} else {
 		match Lex.lex(outerSt.path, text) with
-		| LexErr e -> PErr { map(fn d => remapFmtDiag(base, d), e.diags) }
-		| LexOk l -> {
+		| Err e -> PErr { map(fn d => remapFmtDiag(base, d), e.message) }
+		| Ok l -> {
 			let innerSt = PSt {
 				outerSt.path,
-				map(fn t => remapFmtToken(base, t), l.tokens),
+				map(fn t => remapFmtToken(base, t), l.value),
 				0,
 				outerSt.nextId,
 				false
@@ -522,8 +519,8 @@ function pFormatToken(st0, id, start, body) {
 export generic function parseModule(path, tokens) {
 	let st = PSt { path, tokens, 0, 1, false };
 	match pModuleLoop(st, []) with
-	| PErr e -> ParseErr { e.diags }
-	| POk o -> ParseOk { A.mkModule(path, o.node, o.st.nextId) }
+	| PErr e -> Err { e.diags }
+	| POk o -> Ok { A.mkModule(path, o.node, o.st.nextId) }
 }
 
 function pModuleLoop(st, acc) {
@@ -925,13 +922,25 @@ function pTypeStmt(st, isOpaque) {
 			match expectOp(eq.st, "{", "to start type body") with
 			| PErr e -> PErr { e.diags }
 			| POk open -> {
-				if atOp(open.st, "|") then {
-					match pVariants(open.st, []) with
+				if atOp(open.st, "|") || atEllipsis(open.st) then {
+					match pVariants(open.st, [], []) with
 					| PErr e -> PErr { e.diags }
 					| POk vs -> {
 						let st2 = eatOp(vs.st, ";");
 						let f = freshId(st2);
-						ok(f.key, A.sType(f.value, A.unionDecl(name.node, vs.node), isOpaque, spanFromStartToPrev(start, st2)))
+						ok(
+							f.key,
+							A.sType(
+								f.value,
+								A.unionDeclWithIncludes(
+									name.node,
+									vs.node.variants,
+									vs.node.includes
+								),
+								isOpaque,
+								spanFromStartToPrev(start, st2)
+							)
+						)
 					}
 				} else {
 					match pRecordFields(open.st, []) with
@@ -969,9 +978,22 @@ function pRecordFields(st, acc) {
 	}
 }
 
-function pVariants(st, acc) {
+function pVariants(st, variants, includes) {
 	if atOp(st, "}") then {
-		ok(advance(st), reverse(acc))
+		ok(
+			advance(st),
+			UnionBody {
+				reverse(variants),
+				reverse(includes)
+			}
+		)
+	} else if atEllipsis(st) then {
+		match expectIdent(consumeEllipsis(st), "after '...' in union declaration") with
+		| PErr e -> PErr { e.diags }
+		| POk name -> {
+			let next = eatOp(name.st, ",");
+			pVariants(next, variants, cons(name.node, includes))
+		}
 	} else if atOp(st, "|") then {
 		let st1 = advance(st);
 		match expectIdent(st1, "as variant name") with
@@ -980,13 +1002,21 @@ function pVariants(st, acc) {
 			if atOp(name.st, ":") then {
 				match pVariantFields(advance(name.st), []) with
 				| PErr e -> PErr { e.diags }
-				| POk fs -> pVariants(fs.st, cons(A.mkVariantDecl(name.node, fs.node), acc))
+				| POk fs -> pVariants(
+					fs.st,
+					cons(A.mkVariantDecl(name.node, fs.node), variants),
+					includes
+				)
 			} else {
-				pVariants(name.st, cons(A.mkVariantDecl(name.node, []), acc))
+				pVariants(
+					name.st,
+					cons(A.mkVariantDecl(name.node, []), variants),
+					includes
+				)
 			}
 		}
 	} else {
-		failHere(st, "Expected variant arm or '}' in union declaration.")
+		failHere(st, "Expected variant arm, included union, or '}' in union declaration.")
 	}
 }
 
@@ -1277,7 +1307,7 @@ function pInfix(st, left, minPrec) {
 
 function precedenceOf(st, op) {
 	if st.inMatchArms && op == "|" then { 0 }
-	else if op == "|>" then { 1 }
+	else if op == "|>" || op == "|?>" || op == "|!>" then { 1 }
 	else if op == "||" then { 3 }
 	else if op == "&&" then { 4 }
 	else if op == "==" || op == "!=" then { 5 }

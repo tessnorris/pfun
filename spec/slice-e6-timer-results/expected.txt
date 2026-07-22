@@ -1,0 +1,14 @@
+sleep-negative=timer:sleep:true
+sleep-too-large=timer:sleep:true
+timer-negative=timer:setTimer:true
+cancel-schedule=ok
+cancel-clear=ok
+sync-schedule=ok
+async-schedule=ok
+sync-fired
+async-fired
+wait=ok
+clear-fired=ok
+clear-async-fired=ok
+callbacks=2
+SLICE E6 TIMER RESULTS OK

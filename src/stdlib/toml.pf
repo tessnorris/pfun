@@ -595,11 +595,10 @@ function parseArrayTokens(
 		}
 	}
 	| [token, ...rest] -> {
-		match parseScalarValue(token) with
-		| Err error -> Err { error.message }
-		| Ok parsed -> {
+		parseScalarValue(token)
+		|!> fn parsed => {
 			let foundKind = scalarKind(
-				parsed.value
+				parsed
 			);
 
 			if hasKind && foundKind != kind then {
@@ -612,7 +611,7 @@ function parseArrayTokens(
 					true,
 					foundKind,
 					cons(
-						parsed.value,
+						parsed,
 						valuesRev
 					)
 				)
@@ -633,11 +632,10 @@ function parseArrayValue(text) {
 			text
 		);
 
-		match splitArrayElements(inner) with
-		| Err error -> Err { error.message }
-		| Ok tokens -> {
+		splitArrayElements(inner)
+		|!> fn tokens => {
 			parseArrayTokens(
-				tokens.value,
+				tokens,
 				false,
 				"",
 				[]

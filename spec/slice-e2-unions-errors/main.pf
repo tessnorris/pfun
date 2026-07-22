@@ -1,0 +1,44 @@
+import * from "io";
+import * from "./file_errors";
+import * from "./json_errors";
+import * from "./app_errors";
+
+function fail(kind) {
+	if kind == 0 then {
+		Err { FileMissing { "missing file", 404 } }
+	} else if kind == 1 then {
+		Err { FileDenied { "permission denied", 403 } }
+	} else if kind == 2 then {
+		Err { JsonInvalid { "invalid json", 422 } }
+	} else {
+		Err { ConfigInvalid { "invalid config", 400 } }
+	}
+}
+
+function errorMessage(result) {
+	match result with
+	| Ok _ -> "ok"
+	| Err failure -> failure.message.message
+}
+
+function errorKind(result) {
+	match result with
+	| Ok _ -> "ok"
+	| Err failure -> {
+		match failure.message with
+		| FileMissing _ -> "file-missing"
+		| FileDenied _ -> "file-denied"
+		| JsonInvalid _ -> "json-invalid"
+		| ConfigInvalid _ -> "config-invalid"
+	}
+}
+
+proc show(kind) {
+	let result = fail(kind);
+	println(errorKind(result) ++ ":" ++ errorMessage(result));
+}
+
+show(0);
+show(1);
+show(2);
+show(3);

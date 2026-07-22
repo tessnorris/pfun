@@ -79,3 +79,29 @@ function testNestedMatchOnBinderCoversUnion() {
 	let src = "type T = { | A: n | B }\nfunction h(t) { match t with | A a -> (match a with | A x -> x.n) | B -> 0; }";
 	H.assertHasMessage(H.exhaustDiags("nested_binder.pf", src), "missing")
 }
+
+//![test("combined union match covers included and own variants")]
+function testCombinedUnionExhaustiveMatchSucceeds() {
+	let src =
+		"type FileError = { | Missing | Denied }\n"
+		++ "type JsonError = { | InvalidJson }\n"
+		++ "type AppError = { ...FileError ...JsonError | InvalidConfig }\n"
+		++ "function choose(n) { if n == 0 then { Missing } else if n == 1 then { InvalidJson } else { InvalidConfig } }\n"
+		++ "function code(error) { match error with | Missing -> 1 | Denied -> 2 | InvalidJson -> 3 | InvalidConfig -> 4; }\n"
+		++ "let n = code(choose(0));";
+	H.assertOkDiags(H.exhaustDiags("combined_union_ok.pf", src))
+}
+
+//![test("combined union match reports an omitted included variant")]
+function testCombinedUnionMissingIncludedVariantFails() {
+	let src =
+		"type FileError = { | Missing | Denied }\n"
+		++ "type JsonError = { | InvalidJson }\n"
+		++ "type AppError = { ...FileError ...JsonError | InvalidConfig }\n"
+		++ "function code(error) { match error with | Missing -> 1 | Denied -> 2 | InvalidConfig -> 4; }\n"
+		++ "let n = code(InvalidJson);";
+	H.assertHasMessage(
+		H.exhaustDiags("combined_union_missing.pf", src),
+		"InvalidJson"
+	)
+}

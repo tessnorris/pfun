@@ -3,7 +3,7 @@
 D4 closes the first asynchronous host slice:
 
 ```text
-sleep : Int -> async Proc<Unit>
+sleep : Int -> async Proc<Result<Unit, NativeError>>
 ```
 
 The language already had `async proc`, `await`, asynchronous proc types, and
@@ -15,11 +15,13 @@ whole path under acceptance tests.
 `sleep(ms)` accepts an integer duration from `0` through `2147483647`
 milliseconds.
 
-- Negative durations are runtime errors.
-- Larger durations are runtime errors rather than inheriting Node timer
-  overflow behavior.
+- Negative durations return `Err { NativeTimerError { ... } }`.
+- Larger durations return `Err` rather than inheriting Node timer overflow
+  behavior.
 - `sleep(0)` still resolves on a later event-loop turn.
-- Successful completion produces Unit.
+- Successful completion produces `Ok { Unit }`.
+- Expected validation or scheduling failures resolve as `Result`; `sleep`
+  does not reject for them.
 
 ## Async execution
 

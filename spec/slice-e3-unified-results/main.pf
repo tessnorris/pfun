@@ -1,0 +1,32 @@
+import * from "io";
+import * as ResultX from "../../src/data/resultx";
+import * from "./file_stage";
+import * from "./decode_stage";
+import * from "./app_errors";
+
+function stage(kind) {
+	if kind < 3 then { loadStage(kind) }
+	else { decodeStage(kind) }
+}
+
+function describe(result) {
+	match result with
+	| Ok value -> "ok:" ++ str(value.value)
+	| Err failure -> {
+		match failure.message with
+		| StageFileMissing error -> "file-missing:" ++ error.message
+		| StageFileDenied error -> "file-denied:" ++ error.message
+		| StageDecodeInvalid error -> "decode-invalid:" ++ error.message
+	}
+}
+
+proc show(kind) {
+	let result = ResultX.mapResult(fn value => value + 1, stage(kind));
+	println(describe(result));
+}
+
+show(0);
+show(1);
+show(2);
+show(3);
+show(4);

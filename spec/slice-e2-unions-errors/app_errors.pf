@@ -1,0 +1,12 @@
+import { FileError } from "./file_errors";
+import { JsonError } from "./json_errors";
+
+export type DataError = {
+	...FileError
+	...JsonError
+}
+
+export type AppError = {
+	...DataError
+	| ConfigInvalid: message, code
+}

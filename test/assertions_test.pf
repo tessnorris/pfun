@@ -16,7 +16,6 @@ import {
 	resultMessages as subjectResultMessages,
 	resultOk as subjectResultOk
 } from "../src/test/assertions";
-import * from "../src/data/resultx";
 
 function subjectFailureCount(items) {
 	length(subjectResultMessages(subjectAssertions(items)))
@@ -77,16 +76,16 @@ function testResultAssertions() {
 		Assert.assertTrue(
 			subjectResultOk(
 				subjectAssertions([
-					subjectAssertOk(BOk { 1 }),
-					subjectAssertErr(BErr { "bad" })
+					subjectAssertOk(Ok { 1 }),
+					subjectAssertErr(Err { "bad" })
 				])
 			)
 		),
 		Assert.assertEqual(
 			2,
 			subjectFailureCount([
-				subjectAssertOk(BErr { "bad" }),
-				subjectAssertErr(BOk { 1 })
+				subjectAssertOk(Err { "bad" }),
+				subjectAssertErr(Ok { 1 })
 			])
 		)
 	])

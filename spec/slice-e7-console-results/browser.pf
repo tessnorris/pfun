@@ -1,0 +1,9 @@
+import * from "io";
+
+proc main() {
+	match println("browser console Result") with
+	| Ok _ -> {}
+	| Err _ -> {}
+}
+
+main();

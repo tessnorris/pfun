@@ -3,8 +3,6 @@
 // Test bodies stay pure and return TestResult. Effectful printing/exiting lives
 // in runner.pf or in generated harnesses.
 
-import * from "../data/resultx";
-
 export type Assertion = {
 	| AssertPass
 	| AssertFail: message
@@ -69,14 +67,14 @@ export generic function assertNone(opt) {
 
 export generic function assertOk(r) {
 	match r with
-	| BOk _ -> AssertPass
-	| BErr e -> AssertFail { "Expected BOk, got BErr(" ++ e.message ++ ")." }
+	| Ok _ -> AssertPass
+	| Err e -> AssertFail { "Expected Ok, got Err(" ++ __str__(e.message) ++ ")." }
 }
 
 export generic function assertErr(r) {
 	match r with
-	| BOk x -> AssertFail { "Expected BErr, got BOk(" ++ __str__(x.value) ++ ")." }
-	| BErr _ -> AssertPass
+	| Ok x -> AssertFail { "Expected Err, got Ok(" ++ __str__(x.value) ++ ")." }
+	| Err _ -> AssertPass
 }
 
 function collectAssertion(st, a) {

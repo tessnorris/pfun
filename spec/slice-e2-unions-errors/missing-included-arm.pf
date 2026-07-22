@@ -1,0 +1,12 @@
+import * from "./file_errors";
+import * from "./json_errors";
+import * from "./app_errors";
+
+function incomplete(error) {
+	match error with
+	| FileMissing _ -> 1
+	| FileDenied _ -> 2
+	| ConfigInvalid _ -> 4
+}
+
+let value = incomplete(JsonInvalid { "bad", 422 });

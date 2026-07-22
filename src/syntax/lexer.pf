@@ -1,8 +1,7 @@
 // syntax/lexer.pf — Phase 3 scanner.
 //
-// Pure source scanner for the bootstrap compiler. The public result is a local
-// union instead of the generic built-in Result so this module does not depend on
-// any V1/V2-divergent Result import behavior.
+// Pure source scanner for the bootstrap compiler. The public boundary uses the
+// ambient generic Result<List<Token>, List<Diag>>.
 
 import * as T from "./token";
 import * as D from "../check/diag";
@@ -16,11 +15,6 @@ type LexStep = {
 	| LexSkip: st
 	| LexDone: st
 	| LexFail: diag
-}
-
-export type LexResult = {
-	| LexOk: tokens
-	| LexErr: diags
 }
 
 // ── position/state helpers ──────────────────────────────────────────────────
@@ -218,6 +212,12 @@ function isKeywordText(s) {
 	s == "where" || s == "extern" || s == "opaque" || s == "lazy"
 }
 
+function threeCharOp(st) {
+	let three = textAt(st.src, st.len, st.offset, 3);
+	if three == "|?>" || three == "|!>" then { Some { three } }
+	else { None }
+}
+
 function twoCharOp(st) {
 	let two = textAt(st.src, st.len, st.offset, 2);
 	if two == "==" || two == "!=" || two == "<=" || two == ">=" ||
@@ -247,11 +247,11 @@ function scan(st) {
 	match step(st1) with
 	| LexDone d -> {
 		let eof = T.eofToken(posOf(d.st));
-		LexOk { reverse(cons(eof, d.st.acc)) }
+		Ok { reverse(cons(eof, d.st.acc)) }
 	}
 	| LexTok t -> scan(addToken(t.st, t.token))
 	| LexSkip s -> scan(s.st)
-	| LexFail f -> LexErr { [f.diag] }
+	| LexFail f -> Err { [f.diag] }
 }
 
 // Scans one token or one trivia span. Whitespace and line comments are consumed
@@ -647,20 +647,27 @@ function scanIdentOrKw(st) {
 
 function scanOperatorOrFail(st) {
 	let start = posOf(st);
-	match twoCharOp(st) with
-	| Some two -> {
-		let fin = advanceN(st, 2);
-		LexTok { fin, T.opTok(two.value, spanFrom(start, fin)) }
+	match threeCharOp(st) with
+	| Some three -> {
+		let fin = advanceN(st, 3);
+		LexTok { fin, T.opTok(three.value, spanFrom(start, fin)) }
 	}
 	| None -> {
-		match current(st) with
-		| None -> LexDone { st }
-		| Some c -> {
-			if isSingleOp(c.value) then {
-				let fin = advanceOne(st);
-				LexTok { fin, T.opTok(c.value, spanFrom(start, fin)) }
-			} else {
-				LexFail { lexDiagAt(advanceOne(st), start, "Unexpected character '" ++ c.value ++ "'.") }
+		match twoCharOp(st) with
+		| Some two -> {
+			let fin = advanceN(st, 2);
+			LexTok { fin, T.opTok(two.value, spanFrom(start, fin)) }
+		}
+		| None -> {
+			match current(st) with
+			| None -> LexDone { st }
+			| Some c -> {
+				if isSingleOp(c.value) then {
+					let fin = advanceOne(st);
+					LexTok { fin, T.opTok(c.value, spanFrom(start, fin)) }
+				} else {
+					LexFail { lexDiagAt(advanceOne(st), start, "Unexpected character '" ++ c.value ++ "'.") }
+				}
 			}
 		}
 	}

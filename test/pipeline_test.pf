@@ -141,7 +141,7 @@ function testBuiltinSingletons() {
 		),
 		Assert.assertEqual(
 			"ReadResult",
-			match IMS.imsGet(singletons, "Eof") with
+			match IMS.imsGet(singletons, "ReadEof") with
 			| None -> "<missing>"
 			| Some found -> found.value
 		),
@@ -208,30 +208,30 @@ function testAmbiguousSingletons() {
 //![test("topologically orders before checking")]
 function testCheckOrdersModules() {
 	match loadedTwoModuleGraph() with
-	| LoadErr e -> Assert.assertions([
+	| Err e -> Assert.assertions([
 		Assert.fail(
 			"Expected loader success, got "
-			++ __str__(length(e.diags))
+			++ __str__(length(e.message))
 			++ " diagnostics."
 		)
 	])
-	| LoadOk loaded -> {
-		match Pipeline.checkProgram(loaded.modules) with
-		| PipelineCheckErr bad -> Assert.assertions([
+	| Ok loaded -> {
+		match Pipeline.checkProgram(loaded.value) with
+		| Err bad -> Assert.assertions([
 			Assert.fail(
 				"Expected checking success, got "
-				++ __str__(length(bad.diags))
+				++ __str__(length(bad.message))
 				++ " diagnostics."
 			)
 		])
-		| PipelineCheckOk good -> Assert.assertions([
+		| Ok good -> Assert.assertions([
 			Assert.assertEqual(
 				"src/dep.pf",
-				firstCheckedPath(good.checked.modules)
+				firstCheckedPath(good.value.modules)
 			),
 			Assert.assertEqual(
 				"src/main.pf",
-				secondCheckedPath(good.checked.modules)
+				secondCheckedPath(good.value.modules)
 			)
 		])
 	}
@@ -251,19 +251,19 @@ function testCheckCycleError() {
 	]);
 
 	match Load.loadGraphMem(files, "src/a.pf", env()) with
-	| LoadErr _ -> Assert.assertions([
+	| Err _ -> Assert.assertions([
 		Assert.fail("Expected cyclic sources to load.")
 	])
-	| LoadOk loaded -> {
-		match Pipeline.checkProgram(loaded.modules) with
-		| PipelineCheckOk _ -> Assert.assertions([
+	| Ok loaded -> {
+		match Pipeline.checkProgram(loaded.value) with
+		| Ok _ -> Assert.assertions([
 			Assert.fail("Expected import-cycle diagnostics.")
 		])
-		| PipelineCheckErr bad -> Assert.assertions([
-			Assert.assertTrue(length(bad.diags) > 0),
+		| Err bad -> Assert.assertions([
+			Assert.assertTrue(length(bad.message) > 0),
 			Assert.assertTrue(
 				containsText(
-					firstDiagMessage(bad.diags),
+					firstDiagMessage(bad.message),
 					"Import cycle"
 				)
 			)
@@ -281,16 +281,16 @@ function testCheckTypeError() {
 	]);
 
 	match Load.loadGraphMem(files, "src/main.pf", env()) with
-	| LoadErr _ -> Assert.assertions([
+	| Err _ -> Assert.assertions([
 		Assert.fail("Expected source loading success.")
 	])
-	| LoadOk loaded -> {
-		match Pipeline.checkProgram(loaded.modules) with
-		| PipelineCheckOk _ -> Assert.assertions([
+	| Ok loaded -> {
+		match Pipeline.checkProgram(loaded.value) with
+		| Ok _ -> Assert.assertions([
 			Assert.fail("Expected type diagnostics.")
 		])
-		| PipelineCheckErr bad -> Assert.assertions([
-			Assert.assertTrue(length(bad.diags) > 0)
+		| Err bad -> Assert.assertions([
+			Assert.assertTrue(length(bad.message) > 0)
 		])
 	}
 }
@@ -299,32 +299,32 @@ function testCheckTypeError() {
 //![test("emits every checked module and links a Node bundle")]
 function testCompileNodeBundle() {
 	match loadedTwoModuleGraph() with
-	| LoadErr _ -> Assert.assertions([
+	| Err _ -> Assert.assertions([
 		Assert.fail("Expected loader success.")
 	])
-	| LoadOk loaded -> {
+	| Ok loaded -> {
 		match Pipeline.compileProgram(
-			loaded.modules,
+			loaded.value,
 			Link.nodeBundle(),
 			host()
 		) with
-		| PipelineCompileErr bad -> Assert.assertions([
+		| Err bad -> Assert.assertions([
 			Assert.fail(
 				"Expected compilation success, got "
-				++ __str__(length(bad.diags))
+				++ __str__(length(bad.message))
 				++ " diagnostics."
 			)
 		])
-		| PipelineCompileOk good -> {
-			let text = artifactText(good.artifact);
+		| Ok good -> {
+			let text = artifactText(good.value.artifact);
 			Assert.assertions([
 				Assert.assertEqual(
 					2,
-					length(good.emitted)
+					length(good.value.emitted)
 				),
 				Assert.assertEqual(
 					"src/dep.pf",
-					firstEmittedId(good.emitted)
+					firstEmittedId(good.value.emitted)
 				),
 				Assert.assertTrue(
 					containsText(text, "\"src/dep\"")
@@ -356,24 +356,24 @@ function testCompileImportedRecordField() {
 	]);
 
 	match Load.loadGraphMem(files, "src/main.pf", env()) with
-	| LoadErr _ -> Assert.assertions([
+	| Err _ -> Assert.assertions([
 		Assert.fail("Expected imported-record graph to load.")
 	])
-	| LoadOk loaded -> {
+	| Ok loaded -> {
 		match Pipeline.compileProgram(
-			loaded.modules,
+			loaded.value,
 			Link.nodeBundle(),
 			host()
 		) with
-		| PipelineCompileErr bad -> Assert.assertions([
+		| Err bad -> Assert.assertions([
 			Assert.fail(
 				"Expected imported-record compilation success, got "
-				++ __str__(length(bad.diags))
+				++ __str__(length(bad.message))
 				++ " diagnostics."
 			)
 		])
-		| PipelineCompileOk good -> {
-			let text = artifactText(good.artifact);
+		| Ok good -> {
+			let text = artifactText(good.value.artifact);
 			Assert.assertions([
 				Assert.assertTrue(
 					containsText(text, ".f[0]")
@@ -400,24 +400,24 @@ function testCompileBuiltinImport() {
 	]);
 
 	match Load.loadGraphMem(files, "src/main.pf", env()) with
-	| LoadErr _ -> Assert.assertions([
+	| Err _ -> Assert.assertions([
 		Assert.fail("Expected loader success.")
 	])
-	| LoadOk loaded -> {
+	| Ok loaded -> {
 		match Pipeline.compileProgram(
-			loaded.modules,
+			loaded.value,
 			Link.nodeBundle(),
 			host()
 		) with
-		| PipelineCompileErr bad -> Assert.assertions([
+		| Err bad -> Assert.assertions([
 			Assert.fail(
 				"Expected builtin compilation success, got "
-				++ __str__(length(bad.diags))
+				++ __str__(length(bad.message))
 				++ " diagnostics."
 			)
 		])
-		| PipelineCompileOk good -> {
-			let text = artifactText(good.artifact);
+		| Ok good -> {
+			let text = artifactText(good.value.artifact);
 			Assert.assertions([
 				Assert.assertTrue(
 					containsText(
@@ -439,24 +439,24 @@ function testCompileBuiltinImport() {
 //![test("links NodeFiles artifacts without driver effects")]
 function testCompileNodeFiles() {
 	match loadedTwoModuleGraph() with
-	| LoadErr _ -> Assert.assertions([
+	| Err _ -> Assert.assertions([
 		Assert.fail("Expected loader success.")
 	])
-	| LoadOk loaded -> {
+	| Ok loaded -> {
 		match Pipeline.compileProgram(
-			loaded.modules,
+			loaded.value,
 			Link.nodeFiles("out"),
 			host()
 		) with
-		| PipelineCompileErr bad -> Assert.assertions([
+		| Err bad -> Assert.assertions([
 			Assert.fail(
 				"Expected NodeFiles success, got "
-				++ __str__(length(bad.diags))
+				++ __str__(length(bad.message))
 				++ " diagnostics."
 			)
 		])
-		| PipelineCompileOk good -> {
-			match good.artifact with
+		| Ok good -> {
+			match good.value.artifact with
 			| SingleJs _ -> Assert.assertions([
 				Assert.fail("Expected FileSet artifact.")
 			])

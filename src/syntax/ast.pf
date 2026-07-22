@@ -87,7 +87,7 @@ export type VariantDecl = { vname, fields }
 
 export type TypeDecl = {
 	| RecordDecl: tname, fields
-	| UnionDecl: tname, variants
+	| UnionDecl: tname, variants, includes
 }
 
 export type ImportName = { name, alias }
@@ -201,7 +201,7 @@ function astTypeWitness() {
 	let fnKinds = [kind, ProcFn { false, false }];
 	let typeDecls = [
 		typeDecl,
-		UnionDecl { "U", [variantDecl] }
+		unionDeclWithIncludes("U", [variantDecl], ["Base"])
 	];
 	let importSpecs = [
 		importSpec,
@@ -403,7 +403,11 @@ export function recordDecl(tname, fields) {
 }
 
 export function unionDecl(tname, variants) {
-	UnionDecl { tname, variants }
+	UnionDecl { tname, variants, [] }
+}
+
+export function unionDeclWithIncludes(tname, variants, includes) {
+	UnionDecl { tname, variants, includes }
 }
 
 export function mkImportName(name, alias) {

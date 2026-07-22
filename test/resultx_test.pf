@@ -3,22 +3,22 @@
 import * as Assert from "../src/test/assertions";
 import * from "../src/data/resultx";
 
-function bOkIntIs(result, expected) {
+generic function resultOkIntIs(result, expected) {
 	match result with
-	| BOk ok -> ok.value == expected
-	| BErr _ -> false
+	| Ok ok -> ok.value == expected
+	| Err _ -> false
 }
 
-function bOkStrIs(result, expected) {
+generic function resultOkStrIs(result, expected) {
 	match result with
-	| BOk ok -> ok.value == expected
-	| BErr _ -> false
+	| Ok ok -> ok.value == expected
+	| Err _ -> false
 }
 
-generic function bErrIs(result, expected) {
+generic function resultErrIs(result, expected) {
 	match result with
-	| BOk _ -> false
-	| BErr err -> err.message == expected
+	| Ok _ -> false
+	| Err err -> err.message == expected
 }
 
 function optionIntIs(opt, expected) {
@@ -31,10 +31,10 @@ function intListText(xs) {
 	join(map(fn x => __str__(x), xs), ",")
 }
 
-function bOkIntListIs(result, expectedText) {
+generic function resultOkIntListIs(result, expectedText) {
 	match result with
-	| BOk ok -> intListText(ok.value) == expectedText
-	| BErr _ -> false
+	| Ok ok -> intListText(ok.value) == expectedText
+	| Err _ -> false
 }
 
 //![suite("data/resultx")]
@@ -53,31 +53,31 @@ function testConstructorsAndPredicates() {
 function testMapResultAndMapErr() {
 	Assert.assertions([
 		Assert.assertTrue(
-			bOkIntIs(
-				mapResult(fn x => x + 1, BOk { 3 }),
+			resultOkIntIs(
+				mapResult(fn x => x + 1, Ok { 3 }),
 				4
 			)
 		),
 		Assert.assertTrue(
-			bErrIs(
-				mapResult(fn x => x + 1, BErr { "bad" }),
+			resultErrIs(
+				mapResult(fn x => x + 1, Err { "bad" }),
 				"bad"
 			)
 		),
 		Assert.assertTrue(
-			bErrIs(
+			resultErrIs(
 				mapErr(
 					fn message => message ++ "!",
-					BErr { "bad" }
+					Err { "bad" }
 				),
 				"bad!"
 			)
 		),
 		Assert.assertTrue(
-			bOkIntIs(
+			resultOkIntIs(
 				mapErr(
 					fn message => message ++ "!",
-					BOk { 3 }
+					Ok { 3 }
 				),
 				3
 			)
@@ -89,25 +89,25 @@ function testMapResultAndMapErr() {
 function testAndThenAndDefault() {
 	Assert.assertions([
 		Assert.assertTrue(
-			bOkIntIs(
+			resultOkIntIs(
 				andThenResult(
-					BOk { 3 },
-					fn x => BOk { x * 2 }
+					Ok { 3 },
+					fn x => Ok { x * 2 }
 				),
 				6
 			)
 		),
 		Assert.assertTrue(
-			bErrIs(
+			resultErrIs(
 				andThenResult(
-					BErr { "bad" },
-					fn x => BOk { x * 2 }
+					Err { "bad" },
+					fn x => Ok { x * 2 }
 				),
 				"bad"
 			)
 		),
-		Assert.assertEqual(3, withDefault(0, BOk { 3 })),
-		Assert.assertEqual(0, withDefault(0, BErr { "bad" }))
+		Assert.assertEqual(3, withDefault(0, Ok { 3 })),
+		Assert.assertEqual(0, withDefault(0, Err { "bad" }))
 	])
 }
 
@@ -115,17 +115,17 @@ function testAndThenAndDefault() {
 function testOptionConversion() {
 	Assert.assertions([
 		Assert.assertTrue(
-			optionIntIs(toOption(BOk { 3 }), 3)
+			optionIntIs(toOption(Ok { 3 }), 3)
 		),
-		Assert.assertNone(toOption(BErr { "bad" })),
+		Assert.assertNone(toOption(Err { "bad" })),
 		Assert.assertTrue(
-			bOkIntIs(
+			resultOkIntIs(
 				fromOption("missing", Some { 3 }),
 				3
 			)
 		),
 		Assert.assertTrue(
-			bErrIs(
+			resultErrIs(
 				fromOption("missing", None),
 				"missing"
 			)
@@ -137,28 +137,28 @@ function testOptionConversion() {
 function testCombine() {
 	Assert.assertions([
 		Assert.assertTrue(
-			bOkStrIs(
+			resultOkStrIs(
 				combine(
-					BOk { "left" },
-					BOk { "right" }
+					Ok { "left" },
+					Ok { "right" }
 				),
 				"right"
 			)
 		),
 		Assert.assertTrue(
-			bErrIs(
+			resultErrIs(
 				combine(
-					BErr { "left bad" },
-					BOk { "right" }
+					Err { "left bad" },
+					Ok { "right" }
 				),
 				"left bad"
 			)
 		),
 		Assert.assertTrue(
-			bErrIs(
+			resultErrIs(
 				combine(
-					BOk { "left" },
-					BErr { "right bad" }
+					Ok { "left" },
+					Err { "right bad" }
 				),
 				"right bad"
 			)
@@ -170,21 +170,21 @@ function testCombine() {
 function testCollect() {
 	Assert.assertions([
 		Assert.assertTrue(
-			bOkIntListIs(
+			resultOkIntListIs(
 				collect([
-					BOk { 1 },
-					BOk { 2 },
-					BOk { 3 }
+					Ok { 1 },
+					Ok { 2 },
+					Ok { 3 }
 				]),
 				"1,2,3"
 			)
 		),
 		Assert.assertTrue(
-			bErrIs(
+			resultErrIs(
 				collect([
-					BOk { 1 },
-					BErr { "bad" },
-					BOk { 3 }
+					Ok { 1 },
+					Err { "bad" },
+					Ok { 3 }
 				]),
 				"bad"
 			)

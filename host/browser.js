@@ -3,8 +3,8 @@
 // host/browser.js — minimal browser platform host for compiler-produced pages.
 //
 // C4 needs the target boundary and platform-neutral builtin floor. DOM mounting,
-// TEA events, fetch, timers beyond the core sleep primitive, and sandbox
-// messaging land in the later browser/serve/playground slices.
+// TEA events, fetch, and sandbox messaging land in later browser slices. The
+// shared core provides sleep and cancellable one-shot timers.
 
 (function attachPfunBrowser(root, factory) {
 	const core = root.PfunCore;
@@ -26,13 +26,34 @@
 })(
 	typeof globalThis !== "undefined" ? globalThis : this,
 	function buildPfunBrowser(core, root) {
-		function writeConsole(value, newline) {
-			const text = core.$str(value);
+		function ioError(operation, error) {
+			const message = error
+				&& typeof error.message === "string"
+				&& error.message.length > 0
+					? error.message
+					: String(error);
+			return core.$err(
+				core.$nativeError(
+					"NativeIoError",
+					operation,
+					message
+				)
+			);
+		}
 
-			if (
-				root.console
-				&& typeof root.console.log === "function"
-			) {
+		function writeConsole(value, newline, operation) {
+			try {
+				const text = core.$str(value);
+
+				if (
+					!root.console
+						|| typeof root.console.log !== "function"
+				) {
+					throw new Error(
+						"browser console is not available."
+					);
+				}
+
 				if (newline) {
 					root.console.log(text);
 				} else if (
@@ -42,21 +63,23 @@
 				} else {
 					root.console.log(text);
 				}
-			}
 
-			return null;
+				return core.$ok(null);
+			} catch (error) {
+				return ioError(operation, error);
+			}
 		}
 
 		function $print(value) {
-			return writeConsole(value, false);
+			return writeConsole(value, false, "print");
 		}
 
 		function $println(value) {
-			return writeConsole(value, true);
+			return writeConsole(value, true, "println");
 		}
 
 		function $flushStdout() {
-			return null;
+			return core.$ok(null);
 		}
 
 		const coreModule = Object.freeze({
@@ -90,6 +113,8 @@
 			nonZero: core.$nonZero,
 			safeDiv: core.$safeDiv,
 			safeMod: core.$safeMod,
+			nativeErrorOperation: core.$nativeErrorOperation,
+			nativeErrorMessage: core.$nativeErrorMessage,
 		});
 
 		const ioModule = Object.freeze({
@@ -106,6 +131,12 @@
 
 		const asyncModule = Object.freeze({
 			sleep: core.$sleep,
+		});
+
+		const timerModule = Object.freeze({
+			setTimer: core.$setTimer,
+			setAsyncTimer: core.$setAsyncTimer,
+			clearTimer: core.$clearTimer,
 		});
 
 		const mathModule = Object.freeze({
@@ -125,6 +156,7 @@
 			io: ioModule,
 			json: jsonModule,
 			async: asyncModule,
+			timer: timerModule,
 			math: mathModule,
 		});
 

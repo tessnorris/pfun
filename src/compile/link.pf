@@ -732,7 +732,7 @@ function embeddedHostText(label, text, levels) {
 
 function hostText(host, levels) {
 	let prefix = StrX.strRepeat(" ", levels * 2);
-	let abiNames = "$addI, $arrGet, $arrSet, $asc, $bitAndI, $bitNotI, $bitOrI, $bytesToChar, $ceil, $charBytes, $chr, $chrU, $cmpF, $compLazy, $compStrict, $concatS, $cons, $dictFromEntries, $dictGet, $dictSet, $divI, $eq, $eqF, $eqI, $extern, $field, $filter, $find, $findSlice, $floor, $geI, $gtI, $index, $indexSet, $isFinite, $jsonDeserialize, $jsonSerialize, $isNaN, $join, $lazyList, $leI, $length, $listExactLen, $listMinLen, $listRest, $ltI, $makeRecord, $makeVariant, $map, $matchFail, $memoize, $modI, $mulI, $negI, $newArray, $nonZero, $nth, $nthU, $range, $reduce, $registerSchemas, $reverse, $round, $safeDiv, $safeMod, $shlI, $shrI, $slice, $split, $starGet, $str, $strAt, $subI, $take, $toF";
+	let abiNames = "$addI, $arrGet, $arrSet, $asc, $bitAndI, $bitNotI, $bitOrI, $bytesToChar, $ceil, $charBytes, $chr, $chrU, $cmpF, $compLazy, $compStrict, $concatS, $cons, $dictFromEntries, $dictGet, $dictSet, $divI, $eq, $eqF, $eqI, $extern, $field, $filter, $find, $findSlice, $floor, $geI, $gtI, $index, $indexSet, $isFinite, $jsonDeserialize, $jsonSerialize, $isNaN, $join, $lazyList, $leI, $length, $listExactLen, $listMinLen, $listRest, $ltI, $makeRecord, $makeVariant, $map, $matchFail, $memoize, $modI, $mulI, $nativeError, $nativeErrorMessage, $nativeErrorOperation, $negI, $newArray, $nonZero, $nth, $nthU, $optionPipe, $range, $reduce, $registerSchemas, $resultPipe, $reverse, $round, $safeDiv, $safeMod, $shlI, $shrI, $slice, $split, $starGet, $str, $strAt, $subI, $take, $toF";
 	embeddedHostText("host core", host.coreText, levels)
 	++ prefix
 	++ "/* PfunCore ABI bindings */\n"

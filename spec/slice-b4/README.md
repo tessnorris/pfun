@@ -6,8 +6,8 @@ permission-denied test deferred from B2.
 ## Interactive procedures
 
 ```text
-scanln   : Proc<Option<Str>>
-scanChar : Proc<Option<Char>>
+scanln   : Proc<Result<Option<Str>, NativeError>>
+scanChar : Proc<Result<Option<Char>, NativeError>>
 ```
 
 The acceptance programs are never executed with an attached terminal. Every
@@ -21,7 +21,7 @@ Covered behavior:
 - a final line without a trailing newline;
 - CRLF stripping for `scanln`;
 - ASCII, multibyte Unicode, and supplementary-plane Unicode characters;
-- EOF as `None`;
+- EOF as `Ok(None)`, distinct from `Err(NativeIoError)`;
 - `scanln` and `scanChar` sharing one input cursor;
 - pure functions being unable to call either procedure.
 

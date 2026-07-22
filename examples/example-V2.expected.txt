@@ -42,8 +42,8 @@ circle area = 25
 rectangle area = 12
 classify small = small circle
 classify large = large circle
-option = found 2
-missing option = not found
+value at index 2 = found 30
+value at index 99 = not found
 generic boxes = 42/pfun
 
 All deterministic V2 examples completed.

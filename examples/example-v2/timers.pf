@@ -1,0 +1,88 @@
+// Cancellable one-shot timers with sync and async procedure callbacks.
+
+import * from "async";
+import * from "io";
+import * from "timer";
+
+function timerErrorText(error) {
+	nativeErrorOperation(error)
+	++ ":"
+	++ nativeErrorMessage(error)
+}
+
+proc clearScheduled(label, scheduled) {
+	match scheduled with
+	| Err failure -> {
+		println(
+			label ++ " schedule error: " ++ timerErrorText(failure.message)
+		);
+		{}
+	}
+	| Ok timer -> {
+		match clearTimer(timer.value) with
+		| Ok _ -> {}
+		| Err failure -> {
+			println(
+				label ++ " clear error: " ++ timerErrorText(failure.message)
+			);
+			{}
+		};
+	}
+}
+
+proc reportScheduled(label, scheduled) {
+	match scheduled with
+	| Ok _ -> {}
+	| Err failure -> {
+		println(
+			label ++ " schedule error: " ++ timerErrorText(failure.message)
+		);
+		{}
+	};
+}
+
+export async proc runTimerExamples() {
+	println("");
+	println("--- Cancellable one-shot timers ---");
+
+	var completed = 0;
+	let canceled = setTimer(0, proc () -> Unit {
+		println("canceled timer should not run");
+		{}
+	});
+	clearScheduled("canceled", canceled);
+
+	let syncTimer = setTimer(0, proc () -> Unit {
+		completed = completed + 1;
+		println("sync timer fired");
+		{}
+	});
+	reportScheduled("sync", syncTimer);
+
+	let asyncTimer = setAsyncTimer(5, async proc () -> Unit {
+		match await sleep(0) with
+		| Err failure -> {
+			println(
+				"callback sleep error: "
+				++ timerErrorText(failure.message)
+			);
+			{}
+		}
+		| Ok _ -> {
+			completed = completed + 1;
+			println("async timer fired");
+			{}
+		};
+	});
+	reportScheduled("async", asyncTimer);
+
+	match await sleep(40) with
+	| Ok _ -> {}
+	| Err failure -> {
+		println(
+			"main sleep error: " ++ timerErrorText(failure.message)
+		);
+		{}
+	};
+	println("timers completed = " ++ str(completed));
+}

@@ -1,0 +1,11 @@
+export type DecodeStageError = {
+	| StageDecodeInvalid: message, code
+}
+
+export function decodeStage(kind) {
+	if kind == 3 then {
+		Ok { 20 }
+	} else {
+		Err { StageDecodeInvalid { "invalid data", 422 } }
+	}
+}

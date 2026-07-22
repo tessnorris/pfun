@@ -1,0 +1,12 @@
+type FirstError = {
+	| SameProblem: message
+}
+
+type SecondError = {
+	| SameProblem: message
+}
+
+type CombinedError = {
+	...FirstError
+	...SecondError
+}

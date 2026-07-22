@@ -4,8 +4,10 @@ import { println, scanln } from "io";
 
 function showLine(label, value) {
 	match value with
-	| None -> label ++ "=None"
-	| Some found -> label ++ "=Some(" ++ found.value ++ ")"
+	| Err failure -> label ++ "=Err(" ++ nativeErrorMessage(failure.message) ++ ")"
+	| Ok found -> match found.value with
+		| None -> label ++ "=None"
+		| Some line -> label ++ "=Some(" ++ line.value ++ ")"
 }
 
 proc main() {

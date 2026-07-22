@@ -125,6 +125,8 @@ echo "immediate EOF passed"
 run_permission_denied() {
 	local bundle="$WORK/permission-denied.js"
 	local actual="$WORK/permission-denied.actual.txt"
+	local read_needle="permission-read=EACCES:"
+	local write_needle="permission-write=EACCES:"
 
 	if [[ "$(id -u)" -eq 0 ]]; then
 		ROOT_PERMISSION_TMP="$(mktemp -d /tmp/pfun-slice-b4.XXXXXX)"
@@ -143,23 +145,38 @@ run_permission_denied() {
 		uid="$(id -u nobody 2>/dev/null || printf '65534')"
 		gid="$(id -g nobody 2>/dev/null || printf '65534')"
 
-		if command -v setpriv > /dev/null 2>&1; then
-			timeout 10s setpriv \
+		if command -v setpriv > /dev/null 2>&1 \
+			&& timeout 10s setpriv \
 				--reuid="$uid" \
 				--regid="$gid" \
 				--clear-groups \
 				node "$ROOT_PERMISSION_TMP/permission-denied.js" \
 				"$ROOT_PERMISSION_TMP/protected/secret.txt" \
 				"$ROOT_PERMISSION_TMP/protected/new.txt" \
-				> "$actual"
-		elif command -v runuser > /dev/null 2>&1; then
-			timeout 10s runuser -u nobody -- \
+				> "$actual" \
+				2> "$WORK/setpriv.stderr.txt"
+		then
+			:
+		elif command -v runuser > /dev/null 2>&1 \
+			&& timeout 10s runuser -u nobody -- \
 				node "$ROOT_PERMISSION_TMP/permission-denied.js" \
 				"$ROOT_PERMISSION_TMP/protected/secret.txt" \
 				"$ROOT_PERMISSION_TMP/protected/new.txt" \
+				> "$actual" \
+				2> "$WORK/runuser.stderr.txt"
+		then
+			:
+		elif [[ -e /proc/1/mem ]]; then
+			# Some containers run as root but deny every setuid/setgid syscall.
+			# /proc/1/mem still supplies real host failures in that environment:
+			# reads are EACCES and writes are rejected by the read-only procfs.
+			timeout 10s node "$bundle" \
+				/proc/1/mem \
+				/proc/1/mem \
 				> "$actual"
+			write_needle="permission-write=EROFS:"
 		else
-			echo "error: root B4 permission test requires setpriv or runuser" >&2
+			echo "error: cannot establish a real permission-denied fixture" >&2
 			exit 1
 		fi
 	else
@@ -175,14 +192,14 @@ run_permission_denied() {
 		chmod 700 "$PERMISSION_ROOT/protected"
 	fi
 
-	if ! grep -F "permission-read=EACCES:" "$actual" > /dev/null; then
-		echo "error: readFile did not report a real EACCES failure" >&2
+	if ! grep -F "$read_needle" "$actual" > /dev/null; then
+		echo "error: readFile did not report the expected real host failure" >&2
 		cat "$actual" >&2
 		exit 1
 	fi
 
-	if ! grep -F "permission-write=EACCES:" "$actual" > /dev/null; then
-		echo "error: writeFile did not report a real EACCES failure" >&2
+	if ! grep -F "$write_needle" "$actual" > /dev/null; then
+		echo "error: writeFile did not report the expected real host failure" >&2
 		cat "$actual" >&2
 		exit 1
 	fi

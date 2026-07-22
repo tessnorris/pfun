@@ -1,0 +1,13 @@
+import * from "timer";
+
+proc main() {
+	match setTimer(0, proc () -> Unit { }) with
+	| Err _ -> {}
+	| Ok timer -> {
+		match clearTimer(timer.value) with
+		| Ok _ -> {}
+		| Err _ -> {};
+	};
+}
+
+main();
